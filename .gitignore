@@ -1,0 +1,26 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+java_pid*.hprof
+/app/build/
+AUDIT.md
+CLAUDE.md
+docs/notes-*.md
+.kotlin
+# ---- fork additions: never commit signing material or build output ----
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.b64
+fork-release.*
+release.keystore
+/dist/
+/app/release/

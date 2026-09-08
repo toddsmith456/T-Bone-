@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Relay traffic is always WSS (TLS) and the Orbot proxy endpoint is local-only.
+
+  Cleartext (HTTP) is permitted so that inline note images hosted without TLS
+  (common on Nostr) can be fetched and displayed in-app. This matches the
+  behavior of opening such URLs in a browser and only affects image fetches —
+  relay connections remain encrypted. When Tor is enabled, all of this traffic
+  still routes through the Orbot proxy (127.0.0.1, allowed below).
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>

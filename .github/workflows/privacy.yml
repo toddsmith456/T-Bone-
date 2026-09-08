@@ -1,0 +1,22 @@
+name: Privacy gate
+
+# Runs the no-Google-services / no-tracking check on every PR and every
+# push to main. A failing check blocks the merge — see docs/PRIVACY.md.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags-ignore: ['v*']
+
+jobs:
+  privacy-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Run privacy check
+        run: |
+          chmod +x scripts/privacy-check.sh
+          ./scripts/privacy-check.sh

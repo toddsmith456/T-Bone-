@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Exposes filesDir/logs/ for log file sharing via FileProvider -->
+    <files-path name="logs" path="logs/" />
+    <!-- Exposes filesDir/recordings/ for voice-note sharing via FileProvider -->
+    <files-path name="recordings" path="recordings/" />
+</paths>
