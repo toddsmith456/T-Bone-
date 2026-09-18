@@ -10,7 +10,6 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.youniversal.theme.YouniversalTheme
 import dev.youniversal.theme.YouniversalThemeState
-import dev.youniversal.theme.rememberYouniversalThemeState
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -36,7 +35,13 @@ fun ThemeHost(content: @Composable () -> Unit) {
     val uiTheme by viewModel.uiTheme.collectAsStateWithLifecycle()
     val mode by viewModel.themeMode.collectAsStateWithLifecycle()
     val accentHex by viewModel.accentColor.collectAsStateWithLifecycle()
-    val youniversalState = rememberYouniversalThemeState()
+    val youniversalState = viewModel.youniversalState
+
+    // Keep Youniversal's own enabled flag in sync with the app's UiTheme
+    // so selecting YOUNIVERSAL in settings actually lights up the engine.
+    androidx.compose.runtime.LaunchedEffect(uiTheme) {
+        youniversalState.setEnabled(uiTheme == UiTheme.YOUNIVERSAL)
+    }
 
     if (uiTheme == UiTheme.YOUNIVERSAL) {
         // Youniversal is the primary engine; its fallback is the Bony theme so
@@ -74,6 +79,7 @@ fun AppThemeHost(content: @Composable () -> Unit) = ThemeHost(content)
 @HiltViewModel
 class ThemeViewModel @Inject constructor(
     private val appSettings: AppSettings,
+    val youniversalState: YouniversalThemeState,
 ) : ViewModel() {
 
     val themeMode: StateFlow<ThemeMode> = appSettings.themeMode
@@ -94,7 +100,21 @@ class ThemeViewModel @Inject constructor(
         viewModelScope.launch { appSettings.setAccentColor(hex) }
     }
 
+    init {
+        // Bridge UiTheme → YouniversalThemeState.enabled so the persisted
+        // Youniversal flag doesn't get stuck false after launch before
+        // DataStore emits.
+        viewModelScope.launch {
+            appSettings.uiTheme.collect { theme ->
+                youniversalState.setEnabled(theme == UiTheme.YOUNIVERSAL)
+            }
+        }
+    }
+
     fun setUiTheme(theme: UiTheme) {
-        viewModelScope.launch { appSettings.setUiTheme(theme) }
+        viewModelScope.launch {
+            appSettings.setUiTheme(theme)
+            youniversalState.setEnabled(theme == UiTheme.YOUNIVERSAL)
+        }
     }
 }

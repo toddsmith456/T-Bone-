@@ -41,9 +41,9 @@ import social.tbone.settings.ThemeMode
 import social.tbone.settings.UiTheme
 import dev.youniversal.theme.YouniversalBackgroundStyle
 import dev.youniversal.theme.YouniversalContrast
-import dev.youniversal.theme.rememberYouniversalThemeState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material3.MaterialTheme
+import social.tbone.ui.theme.ThemeViewModel
 import social.tbone.ui.components.DotAvatar
 import social.tbone.ui.components.SectionHeader
 import social.tbone.ui.onboarding.BonyButton
@@ -82,7 +82,8 @@ fun SettingsScreen(
     val activeAccount by viewModel.activeAccount.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
     var showAccentSheet by remember { mutableStateOf(false) }
-    val youniversalState = rememberYouniversalThemeState()
+    val themeViewModel: ThemeViewModel = hiltViewModel()
+    val youniversalState = themeViewModel.youniversalState
 
     Column(
         modifier = Modifier

@@ -28,7 +28,7 @@ import androidx.compose.ui.text.font.FontFamily
  * ```
  */
 @Stable
-public class YouniversalThemeState internal constructor(context: Context) {
+public class YouniversalThemeState constructor(context: Context) {
 
     private val preferences: SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
