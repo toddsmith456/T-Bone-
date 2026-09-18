@@ -32,6 +32,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: ''
 
       - name: Decode release keystore (if secrets configured)
         id: keystore
@@ -46,6 +48,23 @@ jobs:
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
             echo "No KEYSTORE_BASE64 secret — release APK will use the debug key (labeled in notes)."
+          fi
+
+      - name: Ensure debug keystore exists (fallback signing)
+        if: steps.keystore.outputs.present != 'true'
+        run: |
+          KS="$HOME/.android/debug.keystore"
+          if [ ! -f "$KS" ]; then
+            mkdir -p "$HOME/.android"
+            keytool -genkeypair -v \
+              -keystore "$KS" \
+              -storepass android -keypass android \
+              -alias androiddebugkey \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+            echo "Created fallback debug keystore at $KS"
+          else
+            echo "Runner already has a debug keystore at $KS"
           fi
 
       - name: Build APKs
