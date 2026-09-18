@@ -46,6 +46,8 @@ class AppSettings @Inject constructor(
         private val THEME_MODE = stringPreferencesKey("theme_mode")
         // Custom accent color as "#RRGGBB"; null/absent = default green.
         private val ACCENT_COLOR = stringPreferencesKey("accent_color")
+        // UI engine: bony (default) vs youniversal
+        private val UI_THEME = stringPreferencesKey("ui_theme")
         // Screenshot blocker (FLAG_SECURE) — app-wide.
         private val SCREENSHOT_BLOCK_ENABLED = booleanPreferencesKey("screenshot_block_enabled")
         // Toolbox-only settings.
@@ -121,6 +123,9 @@ class AppSettings @Inject constructor(
 
     private val _accentColor = MutableStateFlow<String?>(null)
     val accentColor = _accentColor.asStateFlow()
+
+    private val _uiTheme = MutableStateFlow(UiTheme.BONY)
+    val uiTheme = _uiTheme.asStateFlow()
 
     private val _screenshotBlockEnabled = MutableStateFlow(false)
     val screenshotBlockEnabled = _screenshotBlockEnabled.asStateFlow()
@@ -199,6 +204,7 @@ class AppSettings @Inject constructor(
                 _notificationEnabledTypes.value = prefs[NOTIFICATION_ENABLED_TYPES] ?: emptySet()
                 _themeMode.value = ThemeMode.fromPref(prefs[THEME_MODE])
                 _accentColor.value = prefs[ACCENT_COLOR]
+                _uiTheme.value = UiTheme.fromPref(prefs[UI_THEME])
                 _screenshotBlockEnabled.value = prefs[SCREENSHOT_BLOCK_ENABLED] ?: false
                 _toolboxScreenshotBlockEnabled.value = prefs[TOOLBOX_SCREENSHOT_BLOCK_ENABLED] ?: false
                 _toolboxPinEnabled.value = prefs[TOOLBOX_PIN_ENABLED] ?: false
@@ -279,6 +285,10 @@ class AppSettings @Inject constructor(
 
     suspend fun setThemeMode(mode: ThemeMode) {
         dataStore.edit { it[THEME_MODE] = mode.prefValue }
+    }
+
+    suspend fun setUiTheme(theme: UiTheme) {
+        dataStore.edit { it[UI_THEME] = theme.prefValue }
     }
 
     /** Custom accent color as "#RRGGBB", or null to use the default green. */

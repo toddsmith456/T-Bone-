@@ -1,5 +1,6 @@
 package social.tbone.ui.theme
 
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -125,6 +126,26 @@ object BonyColors {
     /** Sets a custom accent color (or resets to the default green when null). */
     fun setAccent(color: Color?) {
         Accent = color ?: DefaultAccent
+    }
+
+    /** Mirrors a Material3 [ColorScheme] (e.g. Youniversal) into the Bony palette so legacy screens
+     *  that read `BonyColors.*` still look correct when the Youniversal engine is active. */
+    fun applyYouniversal(scheme: ColorScheme) {
+        Bg = scheme.background
+        Surface = scheme.surface
+        SurfaceAlt = scheme.surfaceContainer
+        Rule = scheme.outlineVariant
+        RuleStrong = scheme.outline
+        Text = scheme.onBackground
+        TextDim = scheme.onSurfaceVariant
+        TextMute = scheme.onSurfaceVariant.copy(alpha = 0.6f)
+        // Map Youniversal primary/tertiary/error to Bony's semantic roles
+        Accent = scheme.primary
+        Danger = scheme.error
+        Link = scheme.primary
+        Warn = scheme.tertiary
+        WarnDim = scheme.onTertiaryContainer
+        WarnBg = scheme.tertiaryContainer.copy(alpha = 0.12f)
     }
 }
 

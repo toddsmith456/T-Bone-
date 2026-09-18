@@ -20,6 +20,7 @@ import social.tbone.settings.AvatarMode
 import social.tbone.settings.ImageLoadMode
 import social.tbone.settings.OrbotHelper
 import social.tbone.settings.ThemeMode
+import social.tbone.settings.UiTheme
 import javax.inject.Inject
 
 @HiltViewModel
@@ -60,6 +61,9 @@ class SettingsViewModel @Inject constructor(
 
     /** Custom accent as "#RRGGBB", or null for the default green. */
     val accentColor: StateFlow<String?> = appSettings.accentColor
+
+    val uiTheme: StateFlow<UiTheme> = appSettings.uiTheme
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UiTheme.BONY)
 
     // ── content filters ─────────────────────────────────────────────────────
     val hideNsfw: StateFlow<Boolean> = appSettings.hideNsfw
@@ -181,6 +185,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setAccentColor(hex: String?) {
         viewModelScope.launch { appSettings.setAccentColor(hex) }
+    }
+
+    fun setUiTheme(theme: UiTheme) {
+        viewModelScope.launch { appSettings.setUiTheme(theme) }
     }
 
     fun setScreenshotBlockEnabled(enabled: Boolean) {

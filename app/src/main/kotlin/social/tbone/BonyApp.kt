@@ -19,6 +19,7 @@ import social.tbone.nostr.relay.RelayConnection
 import social.tbone.settings.AppSettings
 import social.tbone.settings.OrbotHelper
 import social.tbone.settings.OrbotStatus
+import social.tbone.settings.UiTheme
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.parseHexColor
 import timber.log.Timber
@@ -54,11 +55,16 @@ class BonyApp : Application() {
 
         // Apply the persisted theme mode + accent as soon as DataStore emits,
         // so the very first frame renders with the user's palette.
+        // When the user has chosen Youniversal we leave BonyColors alone — the
+        // Youniversal composition will mirror its scheme into BonyColors via
+        // ThemeHost's LaunchedEffect so legacy BonyColors usages stay in sync.
         applicationScope.launch {
-            combine(appSettings.themeMode, appSettings.accentColor) { mode, accent -> mode to accent }
-                .collect { (mode, accent) ->
-                    BonyColors.applyMode(mode)
-                    BonyColors.setAccent(parseHexColor(accent))
+            combine(appSettings.uiTheme, appSettings.themeMode, appSettings.accentColor) { uiTheme, mode, accent -> Triple(uiTheme, mode, accent) }
+                .collect { (uiTheme, mode, accent) ->
+                    if (uiTheme == UiTheme.BONY) {
+                        BonyColors.applyMode(mode)
+                        BonyColors.setAccent(parseHexColor(accent))
+                    }
                 }
         }
 

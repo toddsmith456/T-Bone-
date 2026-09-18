@@ -38,6 +38,12 @@ import social.tbone.settings.AvatarMode
 import social.tbone.settings.ImageLoadMode
 import social.tbone.settings.ORBOT_ZAPSTORE_URL
 import social.tbone.settings.ThemeMode
+import social.tbone.settings.UiTheme
+import dev.youniversal.theme.YouniversalBackgroundStyle
+import dev.youniversal.theme.YouniversalContrast
+import dev.youniversal.theme.rememberYouniversalThemeState
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.material3.MaterialTheme
 import social.tbone.ui.components.DotAvatar
 import social.tbone.ui.components.SectionHeader
 import social.tbone.ui.onboarding.BonyButton
@@ -72,9 +78,11 @@ fun SettingsScreen(
     val avatarAnimated by viewModel.avatarAnimated.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val accentColor by viewModel.accentColor.collectAsStateWithLifecycle()
+    val uiTheme by viewModel.uiTheme.collectAsStateWithLifecycle()
     val activeAccount by viewModel.activeAccount.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
     var showAccentSheet by remember { mutableStateOf(false) }
+    val youniversalState = rememberYouniversalThemeState()
 
     Column(
         modifier = Modifier
@@ -336,73 +344,326 @@ fun SettingsScreen(
         }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
-        // ── Appearance section ────────────────────────────────────────────────
-        SectionHeader("APPEARANCE")
-
+        // ── Theme engine (Bony vs Youniversal) ──────────────────────────────
+        SectionHeader("THEME ENGINE")
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 12.dp),
         ) {
-            Text("theme", style = BonyType.body.copy(color = BonyColors.Text))
+            Text("UI theme", style = BonyType.body.copy(color = BonyColors.Text))
             Spacer(Modifier.height(2.dp))
             Text(
-                text = when (themeMode) {
-                    ThemeMode.LIGHT -> "light · bright paper"
-                    ThemeMode.DARK -> "dark · pure black, the default look"
-                    ThemeMode.CREAM -> "cream · warm old-book-page"
-                },
+                text = if (uiTheme == UiTheme.BONY) "T-Bone classic · JetBrains Mono" else "Youniversal · Light/Dark/Cream/Auto + Material You",
                 style = BonyType.meta.copy(color = BonyColors.TextMute),
             )
             Spacer(Modifier.height(10.dp))
-            Row {
-                ThemeMode.entries.forEach { mode ->
-                    val active = mode == themeMode
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                UiTheme.entries.forEach { theme ->
+                    val active = theme == uiTheme
                     Column(
                         modifier = Modifier
                             .weight(1f)
                             .border(1.dp, if (active) BonyColors.Accent else BonyColors.Rule)
-                            .clickable { viewModel.setThemeMode(mode) }
-                            .padding(vertical = 8.dp),
+                            .clickable { viewModel.setUiTheme(theme) }
+                            .padding(vertical = 10.dp, horizontal = 8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
-                            text = mode.label,
+                            text = theme.label,
                             style = BonyType.tag.copy(
                                 color = if (active) BonyColors.Accent else BonyColors.TextMute,
                             ),
                         )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = theme.description,
+                            style = BonyType.metaDim.copy(
+                                color = if (active) BonyColors.TextDim else BonyColors.TextMute,
+                            ),
+                            maxLines = 2,
+                        )
                     }
                 }
             }
-            Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
+            if (uiTheme == UiTheme.YOUNIVERSAL) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Youniversal adds Auto, Dynamic Color (Android 12+ wallpaper), high contrast, accent seeds, and polished shapes. Use the controls below — they save instantly and survive restarts.",
+                    style = BonyType.meta.copy(color = BonyColors.TextMute),
+                )
+            }
+        }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+
+        // ── Appearance section ────────────────────────────────────────────────
+        SectionHeader("APPEARANCE")
+
+        if (uiTheme == UiTheme.BONY) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("accent color", style = BonyType.body.copy(color = BonyColors.Text))
-                    Text(
-                        text = "replaces the default green · tap to choose",
-                        style = BonyType.meta.copy(color = BonyColors.TextMute),
+                Text("theme", style = BonyType.body.copy(color = BonyColors.Text))
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = when (themeMode) {
+                        ThemeMode.LIGHT -> "light · bright paper"
+                        ThemeMode.DARK -> "dark · pure black, the default look"
+                        ThemeMode.CREAM -> "cream · warm old-book-page"
+                    },
+                    style = BonyType.meta.copy(color = BonyColors.TextMute),
+                )
+                Spacer(Modifier.height(10.dp))
+                Row {
+                    ThemeMode.entries.forEach { mode ->
+                        val active = mode == themeMode
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .border(1.dp, if (active) BonyColors.Accent else BonyColors.Rule)
+                                .clickable { viewModel.setThemeMode(mode) }
+                                .padding(vertical = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                text = mode.label,
+                                style = BonyType.tag.copy(
+                                    color = if (active) BonyColors.Accent else BonyColors.TextMute,
+                                ),
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("accent color", style = BonyType.body.copy(color = BonyColors.Text))
+                        Text(
+                            text = "replaces the default green · tap to choose",
+                            style = BonyType.meta.copy(color = BonyColors.TextMute),
+                        )
+                    }
+                    // Live preview of the current accent.
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .border(1.dp, BonyColors.RuleStrong, CircleShape)
+                            .background(
+                                parseHexColor(accentColor) ?: BonyColors.DefaultAccent,
+                                CircleShape,
+                            ),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    BonyButton(
+                        label = "CHOOSE",
+                        primary = false,
+                        onClick = { showAccentSheet = true },
                     )
                 }
-                // Live preview of the current accent.
-                Box(
+            }
+        } else {
+            // Youniversal controls — live, persisted via YouniversalThemeState (SharedPreferences)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text("Youniversal theme", style = BonyType.body.copy(color = BonyColors.Text))
+                Text(
+                    "Light · Dark · Cream · Auto + Material You on Android 12+. Everything below saves instantly.",
+                    style = BonyType.meta.copy(color = BonyColors.TextMute),
+                )
+
+                // Background
+                Text("background", style = BonyType.meta.copy(color = BonyColors.TextMute))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    YouniversalBackgroundStyle.entries.forEach { style ->
+                        val active = style == youniversalState.backgroundStyle
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .border(1.dp, if (active) BonyColors.Accent else BonyColors.Rule)
+                                .clickable { youniversalState.setBackgroundStyle(style) }
+                                .padding(vertical = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                text = style.label,
+                                style = BonyType.tag.copy(
+                                    color = if (active) BonyColors.Accent else BonyColors.TextMute,
+                                ),
+                            )
+                        }
+                    }
+                }
+
+                // Contrast
+                Text("contrast", style = BonyType.meta.copy(color = BonyColors.TextMute))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    YouniversalContrast.entries.forEach { c ->
+                        val active = c == youniversalState.contrast
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .border(1.dp, if (active) BonyColors.Accent else BonyColors.Rule)
+                                .clickable { youniversalState.setContrast(c) }
+                                .padding(vertical = 8.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                text = c.name.lowercase().replaceFirstChar { it.uppercase() },
+                                style = BonyType.tag.copy(
+                                    color = if (active) BonyColors.Accent else BonyColors.TextMute,
+                                ),
+                            )
+                        }
+                    }
+                }
+
+                // Dynamic color
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Material You", style = BonyType.body.copy(color = BonyColors.Text))
+                        val available = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
+                        val seedActive = youniversalState.accentSeed != androidx.compose.ui.graphics.Color.Unspecified
+                        Text(
+                            text = when {
+                                !available -> "Requires Android 12+"
+                                seedActive -> "Paused while accent seed is active"
+                                else -> "Derive palette from wallpaper"
+                            },
+                            style = BonyType.meta.copy(color = BonyColors.TextMute),
+                        )
+                    }
+                    BonyToggle(
+                        checked = youniversalState.dynamicColor,
+                        enabled = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S && youniversalState.accentSeed == androidx.compose.ui.graphics.Color.Unspecified,
+                        onCheckedChange = { youniversalState.setDynamicColor(it) },
+                    )
+                }
+
+                // Accent seed
+                Text("accent seed", style = BonyType.meta.copy(color = BonyColors.TextMute))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    val seeds = listOf(
+                        "Brand" to androidx.compose.ui.graphics.Color.Unspecified,
+                        "Teal" to androidx.compose.ui.graphics.Color(0xFF0F9C8E),
+                        "Rose" to androidx.compose.ui.graphics.Color(0xFFC2185B),
+                        "Forest" to androidx.compose.ui.graphics.Color(0xFF1B7F3B),
+                        "Amber" to androidx.compose.ui.graphics.Color(0xFFB26A00),
+                        "Violet" to androidx.compose.ui.graphics.Color(0xFF6A3FB5),
+                    )
+                    seeds.forEach { (name, color) ->
+                        val selected = youniversalState.accentSeed == color
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.clickable { youniversalState.setAccentSeed(color) },
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .border(
+                                        width = if (selected) 2.dp else 1.dp,
+                                        color = if (selected) BonyColors.Accent else BonyColors.Rule,
+                                        shape = CircleShape,
+                                    )
+                                    .background(
+                                        if (color == androidx.compose.ui.graphics.Color.Unspecified) BonyColors.SurfaceAlt else color,
+                                        CircleShape,
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (color == androidx.compose.ui.graphics.Color.Unspecified) {
+                                    Text("Y", style = BonyType.tag.copy(color = BonyColors.TextMute))
+                                } else if (selected) {
+                                    Text("✓", style = BonyType.tag.copy(color = androidx.compose.ui.graphics.Color.White))
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(name, style = BonyType.metaDim.copy(color = BonyColors.TextMute))
+                        }
+                    }
+                }
+                Text(
+                    "A seed generates all colors from one brand color — works on any Android version.",
+                    style = BonyType.meta.copy(color = BonyColors.TextMute),
+                )
+
+                // Corner scale
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("corner radius", style = BonyType.body.copy(color = BonyColors.Text))
+                        Text(
+                            "${(youniversalState.cornerScale * 100).toInt()}% of default",
+                            style = BonyType.meta.copy(color = BonyColors.TextMute),
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        BonyButton(label = "−", primary = false, onClick = { youniversalState.setCornerScale((youniversalState.cornerScale - 0.2f).coerceIn(0f, 2f)) })
+                        BonyButton(label = "+", primary = false, onClick = { youniversalState.setCornerScale((youniversalState.cornerScale + 0.2f).coerceIn(0f, 2f)) })
+                    }
+                }
+
+                // Font scale
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("text size", style = BonyType.body.copy(color = BonyColors.Text))
+                        Text(
+                            "${(youniversalState.fontScale * 100).toInt()}% of default",
+                            style = BonyType.meta.copy(color = BonyColors.TextMute),
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        BonyButton(label = "−", primary = false, onClick = { youniversalState.setFontScale((youniversalState.fontScale - 0.1f).coerceIn(0.7f, 1.8f)) })
+                        BonyButton(label = "+", primary = false, onClick = { youniversalState.setFontScale((youniversalState.fontScale + 0.1f).coerceIn(0.7f, 1.8f)) })
+                    }
+                }
+
+                // Animate
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("animate theme changes", style = BonyType.body.copy(color = BonyColors.Text))
+                        Text("morph colors instead of snapping", style = BonyType.meta.copy(color = BonyColors.TextMute))
+                    }
+                    BonyToggle(
+                        checked = youniversalState.animateTransitions,
+                        enabled = true,
+                        onCheckedChange = { youniversalState.setAnimateTransitions(it) },
+                    )
+                }
+
+                // Reset
+                Row(
                     modifier = Modifier
-                        .size(28.dp)
-                        .border(1.dp, BonyColors.RuleStrong, CircleShape)
-                        .background(
-                            parseHexColor(accentColor) ?: BonyColors.DefaultAccent,
-                            CircleShape,
-                        ),
-                )
-                Spacer(Modifier.width(8.dp))
-                BonyButton(
-                    label = "CHOOSE",
-                    primary = false,
-                    onClick = { showAccentSheet = true },
-                )
+                        .fillMaxWidth()
+                        .border(1.dp, BonyColors.Rule)
+                        .clickable { youniversalState.reset() }
+                        .padding(vertical = 10.dp),
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    Text("RESET YOUNIVERSAL TO DEFAULTS", style = BonyType.tag.copy(color = BonyColors.TextMute))
+                }
             }
         }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))

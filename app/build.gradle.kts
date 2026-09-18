@@ -56,8 +56,8 @@ android {
         applicationId = "social.tbone.fork"
         minSdk = 26
         targetSdk = 34
-        versionCode = 44
-        versionName = "0.3.36"
+        versionCode = 45
+        versionName = "0.3.37"
     }
 
     signingConfigs {
@@ -155,6 +155,8 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
+    implementation("androidx.compose.foundation:foundation")
+    implementation("androidx.compose.animation:animation")
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     // Room
