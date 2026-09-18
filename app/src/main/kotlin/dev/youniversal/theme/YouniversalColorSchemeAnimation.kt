@@ -56,18 +56,6 @@ internal fun ColorScheme.youniversalBlend(other: ColorScheme, fraction: Float): 
         surfaceContainerHighest = lerp(surfaceContainerHighest, other.surfaceContainerHighest, fraction),
         surfaceContainerLow = lerp(surfaceContainerLow, other.surfaceContainerLow, fraction),
         surfaceContainerLowest = lerp(surfaceContainerLowest, other.surfaceContainerLowest, fraction),
-        primaryFixed = lerp(primaryFixed, other.primaryFixed, fraction),
-        primaryFixedDim = lerp(primaryFixedDim, other.primaryFixedDim, fraction),
-        onPrimaryFixed = lerp(onPrimaryFixed, other.onPrimaryFixed, fraction),
-        onPrimaryFixedVariant = lerp(onPrimaryFixedVariant, other.onPrimaryFixedVariant, fraction),
-        secondaryFixed = lerp(secondaryFixed, other.secondaryFixed, fraction),
-        secondaryFixedDim = lerp(secondaryFixedDim, other.secondaryFixedDim, fraction),
-        onSecondaryFixed = lerp(onSecondaryFixed, other.onSecondaryFixed, fraction),
-        onSecondaryFixedVariant = lerp(onSecondaryFixedVariant, other.onSecondaryFixedVariant, fraction),
-        tertiaryFixed = lerp(tertiaryFixed, other.tertiaryFixed, fraction),
-        tertiaryFixedDim = lerp(tertiaryFixedDim, other.tertiaryFixedDim, fraction),
-        onTertiaryFixed = lerp(onTertiaryFixed, other.onTertiaryFixed, fraction),
-        onTertiaryFixedVariant = lerp(onTertiaryFixedVariant, other.onTertiaryFixedVariant, fraction),
     )
 
 /**

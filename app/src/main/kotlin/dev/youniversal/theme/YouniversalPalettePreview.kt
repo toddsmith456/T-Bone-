@@ -67,18 +67,6 @@ public fun youniversalColorRoles(scheme: ColorScheme): List<Pair<String, Color>>
         "surfaceContainer" to scheme.surfaceContainer,
         "surfaceContainerHigh" to scheme.surfaceContainerHigh,
         "surfaceContainerHighest" to scheme.surfaceContainerHighest,
-        "primaryFixed" to scheme.primaryFixed,
-        "primaryFixedDim" to scheme.primaryFixedDim,
-        "onPrimaryFixed" to scheme.onPrimaryFixed,
-        "onPrimaryFixedVariant" to scheme.onPrimaryFixedVariant,
-        "secondaryFixed" to scheme.secondaryFixed,
-        "secondaryFixedDim" to scheme.secondaryFixedDim,
-        "onSecondaryFixed" to scheme.onSecondaryFixed,
-        "onSecondaryFixedVariant" to scheme.onSecondaryFixedVariant,
-        "tertiaryFixed" to scheme.tertiaryFixed,
-        "tertiaryFixedDim" to scheme.tertiaryFixedDim,
-        "onTertiaryFixed" to scheme.onTertiaryFixed,
-        "onTertiaryFixedVariant" to scheme.onTertiaryFixedVariant,
     )
 
 /** A single labeled color chip. */

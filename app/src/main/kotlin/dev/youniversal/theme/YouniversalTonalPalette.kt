@@ -96,12 +96,6 @@ public object YouniversalTonalPalette {
                 surfaceContainerLowest = neutral(4), surfaceContainerLow = neutral(10),
                 surfaceContainer = neutral(12), surfaceContainerHigh = neutral(17),
                 surfaceContainerHighest = neutral(22),
-                primaryFixed = primary(90), primaryFixedDim = primary(80), onPrimaryFixed = primary(10),
-                onPrimaryFixedVariant = primary(30),
-                secondaryFixed = secondary(90), secondaryFixedDim = secondary(80), onSecondaryFixed = secondary(10),
-                onSecondaryFixedVariant = secondary(30),
-                tertiaryFixed = tertiary(90), tertiaryFixedDim = tertiary(80), onTertiaryFixed = tertiary(10),
-                onTertiaryFixedVariant = tertiary(30),
             )
         } else {
             lightColorScheme(
@@ -121,12 +115,6 @@ public object YouniversalTonalPalette {
                 surfaceContainerLowest = neutral(100), surfaceContainerLow = neutral(96),
                 surfaceContainer = neutral(94), surfaceContainerHigh = neutral(92),
                 surfaceContainerHighest = neutral(90),
-                primaryFixed = primary(90), primaryFixedDim = primary(80), onPrimaryFixed = primary(10),
-                onPrimaryFixedVariant = primary(30),
-                secondaryFixed = secondary(90), secondaryFixedDim = secondary(80), onSecondaryFixed = secondary(10),
-                onSecondaryFixedVariant = secondary(30),
-                tertiaryFixed = tertiary(90), tertiaryFixedDim = tertiary(80), onTertiaryFixed = tertiary(10),
-                onTertiaryFixedVariant = tertiary(30),
             )
         }
     }

@@ -55,18 +55,6 @@ public fun youniversalLightColorScheme(): ColorScheme =
         surfaceContainerHighest = Color(0xFFE2E2E6),
         surfaceContainerLow = Color(0xFFF3F3F7),
         surfaceContainerLowest = Color(0xFFFFFFFF),
-        primaryFixed = Color(0xFFE1E0FF),
-        primaryFixedDim = Color(0xFFC1C1FE),
-        onPrimaryFixed = Color(0xFF00184A),
-        onPrimaryFixedVariant = Color(0xFF013FA4),
-        secondaryFixed = Color(0xFFDFE0FE),
-        secondaryFixedDim = Color(0xFFC1C4E9),
-        onSecondaryFixed = Color(0xFF131A35),
-        onSecondaryFixedVariant = Color(0xFF404564),
-        tertiaryFixed = Color(0xFF82F6E6),
-        tertiaryFixedDim = Color(0xFF64D9C9),
-        onTertiaryFixed = Color(0xFF00201C),
-        onTertiaryFixedVariant = Color(0xFF015048),
     )
 
 public fun youniversalDarkColorScheme(): ColorScheme =
@@ -107,18 +95,6 @@ public fun youniversalDarkColorScheme(): ColorScheme =
         surfaceContainerHighest = Color(0xFF343437),
         surfaceContainerLow = Color(0xFF1B1B1E),
         surfaceContainerLowest = Color(0xFF0E0E11),
-        primaryFixed = Color(0xFFE1E0FF),
-        primaryFixedDim = Color(0xFFC1C1FE),
-        onPrimaryFixed = Color(0xFF00184A),
-        onPrimaryFixedVariant = Color(0xFF013FA4),
-        secondaryFixed = Color(0xFFDFE0FE),
-        secondaryFixedDim = Color(0xFFC1C4E9),
-        onSecondaryFixed = Color(0xFF131A35),
-        onSecondaryFixedVariant = Color(0xFF404564),
-        tertiaryFixed = Color(0xFF82F6E6),
-        tertiaryFixedDim = Color(0xFF64D9C9),
-        onTertiaryFixed = Color(0xFF00201C),
-        onTertiaryFixedVariant = Color(0xFF015048),
     )
 
 public fun youniversalCreamColorScheme(): ColorScheme =
@@ -159,18 +135,6 @@ public fun youniversalCreamColorScheme(): ColorScheme =
         surfaceContainerHighest = Color(0xFFD1C5B6),
         surfaceContainerLow = Color(0xFFEDE0D2),
         surfaceContainerLowest = Color(0xFFF6E9DA),
-        primaryFixed = Color(0xFFFFDBCC),
-        primaryFixedDim = Color(0xFFFEB697),
-        onPrimaryFixed = Color(0xFF321200),
-        onPrimaryFixedVariant = Color(0xFF7B2E0C),
-        secondaryFixed = Color(0xFFEEE0D2),
-        secondaryFixedDim = Color(0xFFD2C4B7),
-        onSecondaryFixed = Color(0xFF231A0F),
-        onSecondaryFixedVariant = Color(0xFF50453A),
-        tertiaryFixed = Color(0xFFDFE997),
-        tertiaryFixedDim = Color(0xFFC3CD7C),
-        onTertiaryFixed = Color(0xFF1B1D00),
-        onTertiaryFixedVariant = Color(0xFF3F4C00),
     )
 /** The Youniversal [ColorScheme] for [style], resolved against the system dark mode. */
 public fun youniversalColorScheme(
