@@ -71,12 +71,19 @@ android {
                 // Fallback: sign release with the debug key so CI / local
                 // builds never break when no keystore is configured.
                 // The workflow marks such APKs clearly in the release notes.
+                //
+                // NOTE: we must go through signingConfigs.getByName("debug").
+                // The bare `debug` accessor is only available inside
+                // buildTypes { } (AGP registers it there), so referencing
+                // `debug.signingConfig` from inside signingConfigs { } fails
+                // Kotlin DSL script compilation and breaks the whole build.
+                val debugSigning = signingConfigs.getByName("debug")
                 storeFile = file("${System.getProperty("user.home")}/.android/debug.keystore")
                     .takeIf { it.exists() }
-                    ?: debug.signingConfig?.storeFile
-                storePassword = debug.signingConfig?.storePassword
-                keyAlias = debug.signingConfig?.keyAlias
-                keyPassword = debug.signingConfig?.keyPassword
+                    ?: debugSigning.storeFile
+                storePassword = debugSigning.storePassword
+                keyAlias = debugSigning.keyAlias
+                keyPassword = debugSigning.keyPassword
             }
             // Sign with v1 + v2 + v3 for maximum installer compatibility
             // (GrapheneOS and other strict installers are happiest with v1
