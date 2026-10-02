@@ -308,6 +308,9 @@ private fun ThreadRow(
             pollVoteVersion = pollVoteVersion,
             onPollVote = onPollVote,
             activePubkey = activePubkey,
+            // Resolved quotes/references so inline note links in a thread note
+            // render as embedded notes too.
+            quotedEvents = quotedEvents,
         )
 
         if (hidden > 0) {
