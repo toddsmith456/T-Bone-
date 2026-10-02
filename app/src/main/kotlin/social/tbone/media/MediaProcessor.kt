@@ -25,13 +25,36 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /**
+ * A file that has been prepared for upload, together with the MIME type and
+ * extension that **describe the bytes on disk**.
+ *
+ * The MIME type is not cosmetic: Blossom servers validate it against the body
+ * (`Content-Type header does not match the file content`) and store it as the
+ * blob's `Content-Type`, which is what every client uses to render the media
+ * afterwards. Reporting the *original* picker MIME while sending re-encoded
+ * JPEG bytes — as the previous implementation did — is what made some servers
+ * refuse uploads outright.
+ */
+data class PreparedMedia(
+    val file: File,
+    val mime: String,
+    val extension: String,
+) {
+    val sizeBytes: Long get() = file.length()
+}
+
+/**
  * Prepares media before upload:
- *  - IMAGES: re-encoded (which strips all EXIF/embedded metadata), orientation
- *    applied, optionally compressed — with a quality loop that keeps the file
- *    under an optional byte cap (used for the 800 KB avatar/banner limit).
+ *  - IMAGES: re-encoded as JPEG (which strips all EXIF/embedded metadata),
+ *    orientation applied, optionally compressed — with a quality loop that
+ *    keeps the file under an optional byte cap (used for the 800 KB
+ *    avatar/banner limit).
  *  - VIDEOS: optionally transcoded with Media3 Transformer (re-encode also
  *    drops embedded metadata); otherwise copied as-is (honest: a raw copy
  *    keeps whatever metadata the source file had).
+ *
+ * Every entry point returns a [PreparedMedia] so callers always know the true
+ * MIME type and extension of the prepared file.
  */
 object MediaProcessor {
 
@@ -40,12 +63,66 @@ object MediaProcessor {
 
     private const val MAX_IMAGE_DIMENSION = 2048
 
-    /** Re-encodes an image URI to a clean file. */
-    suspend fun prepareImage(
+    /** MIME + extension of the re-encoded image pipeline (always JPEG). */
+    private const val IMAGE_MIME = "image/jpeg"
+    private const val IMAGE_EXT = "jpg"
+
+    /** MIME + extension of the Media3 transcode output (always MP4). */
+    private const val VIDEO_MIME = "video/mp4"
+    private const val VIDEO_EXT = "mp4"
+
+    /** Re-encodes an image URI to a clean JPEG and reports it as such. */
+    suspend fun prepareImageMedia(
         context: Context,
         uri: Uri,
         maxBytes: Long? = null,
         compress: Boolean = true,
+    ): PreparedMedia? = prepareImageFile(context, uri, maxBytes, compress)
+        ?.let { PreparedMedia(it, IMAGE_MIME, IMAGE_EXT) }
+
+    /**
+     * Prepares a video for upload. When [compress] is true the video is
+     * transcoded to MP4 with Media3 Transformer; otherwise the bytes are copied
+     * untouched and keep the source's own MIME type (and its metadata).
+     */
+    suspend fun prepareVideoMedia(
+        context: Context,
+        uri: Uri,
+        compress: Boolean = true,
+    ): PreparedMedia? {
+        if (!compress) {
+            val sourceMime = sourceMimeOf(context, uri) ?: VIDEO_MIME
+            val sourceExt = MimeTypes.extensionFor(sourceMime)
+            return copyToCache(context, uri, sourceExt)?.let {
+                PreparedMedia(it, sourceMime, sourceExt)
+            }
+        }
+        return transcodeVideo(context, uri)?.let {
+            PreparedMedia(it, VIDEO_MIME, VIDEO_EXT)
+        }
+    }
+
+    /** The MIME type the content resolver reports for [uri] (may be null). */
+    private fun sourceMimeOf(context: Context, uri: Uri): String? =
+        runCatching { context.contentResolver.getType(uri) }.getOrNull()
+
+    private suspend fun copyToCache(context: Context, uri: Uri, extension: String): File? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val suffix = if (extension.isBlank()) "bin" else extension
+                val out = File(context.cacheDir, "tbone_video_${System.currentTimeMillis()}.$suffix")
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    out.outputStream().use { output -> input.copyTo(output) }
+                }
+                out.takeIf { it.exists() && it.length() > 0 }
+            }.getOrNull()
+        }
+
+    private suspend fun prepareImageFile(
+        context: Context,
+        uri: Uri,
+        maxBytes: Long?,
+        compress: Boolean,
     ): File? = withContext(Dispatchers.IO) {
         runCatching {
             val src = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
@@ -66,7 +143,7 @@ object MediaProcessor {
 
             val out = File(context.cacheDir, "tbone_media_${System.currentTimeMillis()}.jpg")
             var quality = if (compress) 88 else 100
-            var targetBytes: Long? = maxBytes
+            val targetBytes: Long? = maxBytes
 
             // Compress loop: lower quality until under the cap (or min quality).
             while (true) {
@@ -74,13 +151,11 @@ object MediaProcessor {
                     bmp.compress(Bitmap.CompressFormat.JPEG, quality, fos)
                 }
                 val size = out.length()
-                val cap = targetBytes
-                if (cap == null || size <= cap || quality <= 55) break
+                if (targetBytes == null || size <= targetBytes || quality <= 55) break
                 quality -= 8
             }
             if (out.length() > (maxBytes ?: Long.MAX_VALUE)) {
                 // Still too big at min quality — downscale and retry.
-                var b = bmp
                 var maxDim = 1600
                 while (maxDim >= 400) {
                     val scale = maxDim.toFloat() / maxOf(bmp.width, bmp.height)
@@ -91,7 +166,6 @@ object MediaProcessor {
                     FileOutputStream(out).use { fos ->
                         scaled.compress(Bitmap.CompressFormat.JPEG, 70, fos)
                     }
-                    b = scaled
                     if (out.length() <= (maxBytes ?: Long.MAX_VALUE)) break
                     maxDim -= 300
                 }
@@ -99,27 +173,6 @@ object MediaProcessor {
             bmp.recycle()
             out
         }.getOrNull()
-    }
-
-    /**
-     * Prepares a video for upload. When [compress] is true the video is
-     * transcoded with Media3 Transformer (re-encode → embedded metadata gone,
-     * resolution capped to 1280px, reasonable bitrate). Otherwise the bytes are
-     * copied untouched.
-     */
-    suspend fun prepareVideo(context: Context, uri: Uri, compress: Boolean): File? {
-        if (!compress) {
-            return withContext(Dispatchers.IO) {
-                runCatching {
-                    val out = File(context.cacheDir, "tbone_video_${System.currentTimeMillis()}.mp4")
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        out.outputStream().use { output -> input.copyTo(output) }
-                    }
-                    out
-                }.getOrNull()
-            }
-        }
-        return transcodeVideo(context, uri)
     }
 
     private suspend fun transcodeVideo(context: Context, uri: Uri): File? {

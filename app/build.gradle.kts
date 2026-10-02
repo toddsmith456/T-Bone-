@@ -56,8 +56,8 @@ android {
         applicationId = "social.tbone.fork"
         minSdk = 26
         targetSdk = 34
-        versionCode = 46
-        versionName = "0.3.38"
+        versionCode = 47
+        versionName = "0.3.39"
     }
 
     signingConfigs {
@@ -144,6 +144,14 @@ android {
     }
 }
 
+// Unit tests run on the JVM, which does not inherit the Gradle CLI's system
+// properties. Forward the opt-in flag for the live-network Blossom test
+// (BlossomLiveTest) so `-DblossomLive=1` works; it stays empty — and the test
+// stays skipped — for normal builds and CI.
+tasks.withType<Test>().configureEach {
+    systemProperty("blossomLive", System.getProperty("blossomLive") ?: "")
+}
+
 dependencies {
     // AndroidX Core
     implementation(libs.androidx.core.ktx)
@@ -207,5 +215,8 @@ dependencies {
 
     // Unit tests (JVM only — build-time, never shipped in the APK)
     testImplementation("junit:junit:4.13.2")
+    // Unit-test HTTP against a real socket: verifies the exact bytes/headers
+    // an upload sends, which is where the Blossom breakage lived.
+    testImplementation(libs.okhttp.mockwebserver)
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
 }

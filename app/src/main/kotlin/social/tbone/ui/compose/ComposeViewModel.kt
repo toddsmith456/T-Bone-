@@ -20,7 +20,7 @@ import kotlinx.serialization.json.buildJsonArray
 import social.tbone.Tunables
 import social.tbone.account.signer.NostrSignerFactory
 import social.tbone.db.EventRepository
-import social.tbone.media.BlossomUploader
+import social.tbone.media.blossom.BlossomUploader
 import social.tbone.media.MediaProcessor
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
@@ -140,24 +140,34 @@ class ComposeViewModel @Inject constructor(
 
     fun setBlossomServer(url: String?) = _uiState.update { it.copy(blossomServer = url) }
 
-    /** Uploads [uri] to Blossom and exposes the resulting URL via lastUploadUrl. */
-    fun attachMedia(uri: Uri, kind: String, mime: String) {
+    /**
+     * Uploads [uri] to Blossom and exposes the resulting URL via lastUploadUrl.
+     *
+     * The MIME type sent to the server is taken from the *prepared* file, not
+     * from the picker: [MediaProcessor] re-encodes images to JPEG, so sending
+     * the original picker type (e.g. `image/png`) described bytes that were no
+     * longer PNG.
+     */
+    fun attachMedia(uri: Uri, kind: String) {
         viewModelScope.launch {
             _uiState.update { it.copy(isUploading = true, uploadError = null) }
             try {
                 val signer = signerFactory.forActiveAccount()
                     ?: error("no active account")
                 val compress = appSettings.blossomCompress.value
-                val prepared = if (kind == "image") {
-                    MediaProcessor.prepareImage(context, uri, compress = compress)
+                val isImage = kind == "image"
+                val prepared = if (isImage) {
+                    MediaProcessor.prepareImageMedia(context, uri, compress = compress)
                 } else {
-                    MediaProcessor.prepareVideo(context, uri, compress = compress)
+                    MediaProcessor.prepareVideoMedia(context, uri, compress = compress)
                 } ?: error("could not read media")
                 val url = blossomUploader.upload(
-                    file = prepared,
-                    mime = mime,
+                    file = prepared.file,
+                    mime = prepared.mime,
                     preferredServer = _uiState.value.blossomServer,
                     signer = signer,
+                    alt = if (isImage) "Uploading image" else "Uploading video",
+                    extension = prepared.extension,
                 )
                 _uiState.update { it.copy(isUploading = false, lastUploadUrl = url) }
             } catch (e: Exception) {

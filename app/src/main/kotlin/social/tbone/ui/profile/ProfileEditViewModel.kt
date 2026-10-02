@@ -16,7 +16,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import social.tbone.account.AccountRepository
 import social.tbone.account.signer.NostrSignerFactory
-import social.tbone.media.BlossomUploader
+import social.tbone.media.blossom.BlossomUploader
 import social.tbone.media.MediaProcessor
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
@@ -67,17 +67,19 @@ class ProfileEditViewModel @Inject constructor(
             try {
                 val signer = signerFactory.forActiveAccount()
                     ?: error("no active account")
-                val prepared = MediaProcessor.prepareImage(
+                val prepared = MediaProcessor.prepareImageMedia(
                     context = context,
                     uri = uri,
                     maxBytes = MediaProcessor.AVATAR_MAX_BYTES,
                     compress = true,
                 ) ?: error("could not read image")
                 val url = blossomUploader.upload(
-                    file = prepared,
-                    mime = "image/jpeg",
+                    file = prepared.file,
+                    mime = prepared.mime,
                     preferredServer = null, // default or random from the pool
                     signer = signer,
+                    alt = if (banner) "Uploading profile banner" else "Uploading profile picture",
+                    extension = prepared.extension,
                 )
 
                 val existing = profileRepository.getProfile(signer.pubkey) ?: ProfileContent()

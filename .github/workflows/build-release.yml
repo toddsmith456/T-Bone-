@@ -77,6 +77,14 @@ jobs:
           chmod +x gradlew
           ./gradlew :app:assembleRelease :app:assembleDebug --stacktrace
 
+      - name: Unit tests (release aborts on failure)
+        run: |
+          chmod +x gradlew
+          # Blossom upload regression suite (auth token, request shape, server
+          # selection, descriptor parsing) + the rest of the unit tests.
+          # The live-network test is skipped here: it is opt-in via -DblossomLive=1.
+          ./gradlew :app:testDebugUnitTest --stacktrace
+
       - name: Rename APKs + checksums
         id: apks
         run: |

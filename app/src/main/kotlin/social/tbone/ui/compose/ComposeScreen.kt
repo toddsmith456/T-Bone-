@@ -80,12 +80,12 @@ fun ComposeScreen(
     val imagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri ->
-        uri?.let { viewModel.attachMedia(it, "image", "image/jpeg") }
+        uri?.let { viewModel.attachMedia(it, "image") }
     }
     val videoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri ->
-        uri?.let { viewModel.attachMedia(it, "video", "video/mp4") }
+        uri?.let { viewModel.attachMedia(it, "video") }
     }
     var fieldValue by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(""))

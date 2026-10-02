@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
+import social.tbone.media.blossom.BlossomServerUrl
 import social.tbone.nostr.geohash.GeohashChannelEntry
 import social.tbone.nostr.geohash.GeohashChannelStore
 import androidx.datastore.preferences.core.edit
@@ -218,8 +219,17 @@ class AppSettings @Inject constructor(
                 _bleepWords.value = prefs[BLEEP_WORDS] ?: emptySet()
                 _hideWords.value = prefs[HIDE_WORDS] ?: emptySet()
                 _parentalPinEnabled.value = prefs[PARENTAL_PIN_ENABLED] ?: false
-                _blossomServers.value = prefs[BLOSSOM_SERVERS]?.takeIf { it.isNotEmpty() } ?: BLOSSOM_DEFAULTS
-                _blossomDefaultServer.value = prefs[BLOSSOM_DEFAULT_SERVER]
+                // Normalise on load: earlier builds stored whatever the user typed,
+                // so a scheme-less entry ("blossom.example.com") would be handed to
+                // OkHttp verbatim and every upload failed before leaving the device.
+                val storedServers = prefs[BLOSSOM_SERVERS]
+                    ?.mapNotNull { BlossomServerUrl.normalize(it) }
+                    ?.toSet()
+                    .orEmpty()
+                _blossomServers.value = storedServers.ifEmpty { BLOSSOM_DEFAULTS }
+                _blossomDefaultServer.value =
+                    prefs[BLOSSOM_DEFAULT_SERVER]?.let { BlossomServerUrl.normalize(it) }
+                        ?.takeIf { it in storedServers }
                 _blossomCompress.value = prefs[BLOSSOM_COMPRESS] ?: true
                 _screenTimeEnabled.value = prefs[SCREEN_TIME_ENABLED] ?: false
                 _screenTimeMinutes.value = prefs[SCREEN_TIME_MINUTES] ?: 120
@@ -368,8 +378,9 @@ class AppSettings @Inject constructor(
     }
 
     suspend fun addBlossomServer(url: String) {
-        val normalized = url.trim().trimEnd('/')
-        if (normalized.isBlank()) return
+        // Accepts what people actually type: "blossom.example.com" gets an
+        // https:// scheme, trailing slashes are dropped, junk is ignored.
+        val normalized = BlossomServerUrl.normalize(url) ?: return
         val next = (_blossomServers.value + normalized)
         _blossomServers.value = next
         dataStore.edit { it[BLOSSOM_SERVERS] = next }
