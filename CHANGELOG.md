@@ -5,6 +5,8 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.3.38] — 2026-10-02
+
 ### Added
 - **Offline follow list** (Settings → OFFLINE LISTS). A fully local follow list
   with an on/off switch. First switch-on pulls your follows from the relays
