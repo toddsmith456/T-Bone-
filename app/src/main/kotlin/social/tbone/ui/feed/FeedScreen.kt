@@ -53,6 +53,8 @@ import social.tbone.nostr.Nip19
 import social.tbone.nostr.quotedEventId
 import social.tbone.nostr.relay.RelayStatus
 import social.tbone.ui.components.AccountSwitcherSheet
+import social.tbone.ui.components.BonyBottomBar
+import social.tbone.ui.components.BottomTab
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 
@@ -236,6 +238,7 @@ fun FeedScreen(
                                 pollVoteVersion = pollVoteVersion,
                                 onPollVote = viewModel::voteOnPoll,
                                 activePubkey = activeAccount?.pubkey,
+                                quotedEvents = quotedEvents,
                             )
                         }
                         item {
@@ -254,14 +257,18 @@ fun FeedScreen(
         }
 
         // ── Bottom tab bar ───────────────────────────────────────────────────
-        BonyTabBar(
-            currentFeed = currentFeed,
+        BonyBottomBar(
+            selected = if (currentFeed == FeedTab.HOME) BottomTab.HOME else null,
             hasNotifications = notifUnread,
-            onHome = { viewModel.switchFeed(FeedTab.HOME) },
-            onCompose = onComposeClick,
-            onNotifications = onNotificationsClick,
-            onToolbox = onToolboxClick,
-            onSettings = onSettingsClick,
+            onSelect = { tab ->
+                when (tab) {
+                    BottomTab.HOME -> viewModel.switchFeed(FeedTab.HOME)
+                    BottomTab.COMPOSE -> onComposeClick()
+                    BottomTab.NOTIF -> onNotificationsClick()
+                    BottomTab.TOOLS -> onToolboxClick()
+                    BottomTab.CONF -> onSettingsClick()
+                }
+            },
         )
     }
 
@@ -451,100 +458,5 @@ private fun FeedTabStrip(
                 .background(BonyColors.Rule)
                 .align(Alignment.BottomCenter),
         )
-    }
-}
-
-// ── Bottom navigation bar ─────────────────────────────────────────────────────
-
-private data class TabItem(
-    val glyph: String,
-    val label: String,
-    val icon: ImageVector? = null,
-)
-
-@Composable
-fun BonyTabBar(
-    currentFeed: FeedTab,
-    hasNotifications: Boolean = false,
-    onHome: () -> Unit,
-    onCompose: () -> Unit,
-    onNotifications: () -> Unit,
-    onToolbox: () -> Unit,
-    onSettings: () -> Unit,
-) {
-    val tabs = listOf(
-        TabItem("", "HOME", icon = Icons.Outlined.Home) to onHome,
-        TabItem("", "WRITE", icon = Icons.Outlined.Edit) to onCompose,
-        TabItem("", "NOTIF", icon = Icons.Filled.Notifications) to onNotifications,
-        TabItem("", "TOOLS", icon = Icons.Outlined.Construction) to onToolbox,
-        TabItem("", "CONF", icon = Icons.Outlined.Settings) to onSettings,
-    )
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(BonyColors.Surface),
-    ) {
-        // Top hairline
-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding(),
-        ) {
-            tabs.forEachIndexed { i, (item, action) ->
-                val isActive = i == 0 && currentFeed == FeedTab.HOME
-                val contentColor = if (isActive) BonyColors.Accent else BonyColors.TextMute
-
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable { action() }
-                        .then(
-                            if (isActive) Modifier.border(
-                                width = 1.dp, color = BonyColors.Accent,
-                                shape = RectangleShape,
-                            ) else Modifier
-                        )
-                        .padding(vertical = 8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    if (item.icon != null) {
-                        // Bell tab shows a small dot when there are unread notifications.
-                        val showDot = hasNotifications && item.icon == Icons.Filled.Notifications
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = item.icon,
-                                contentDescription = item.label,
-                                tint = contentColor,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            if (showDot) {
-                                Box(
-                                    modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .size(6.dp)
-                                        .background(BonyColors.Accent, CircleShape),
-                                )
-                            }
-                        }
-                    } else {
-                        Text(
-                            text = item.glyph,
-                            style = BonyType.title.copy(
-                                color = contentColor,
-                                fontSize = androidx.compose.ui.unit.TextUnit(16f, androidx.compose.ui.unit.TextUnitType.Sp),
-                            ),
-                        )
-                    }
-                    Text(
-                        text = item.label,
-                        style = BonyType.caption.copy(color = contentColor),
-                    )
-                }
-            }
-        }
     }
 }

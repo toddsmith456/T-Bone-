@@ -66,6 +66,8 @@ fun NoteCard(
     onShare: ((Event) -> Unit)? = null,
     reactors: Set<String>? = null,
     activePubkey: String? = null,
+    /** Quoted/reposted notes already resolved by the caller, keyed by id. */
+    quotedEvents: Map<String, Event> = emptyMap(),
     /** Reply counts per note id (from RepliesRepository). */
     replies: Map<String, Int> = emptyMap(),
     /** Notes the active account replied to (from RepliesRepository). */
@@ -80,6 +82,11 @@ fun NoteCard(
     onPollVote: ((Event, List<String>) -> Unit)? = null,
     /** When true the body text is not truncated — used for notes opened in a thread. */
     fullContent: Boolean = false,
+    /**
+     * When false the "↳ replying to …" line is suppressed. The thread screen
+     * draws its own nesting rails, so the extra line there is just noise.
+     */
+    showReplyContext: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val cardBg = when {
@@ -128,6 +135,7 @@ fun NoteCard(
                     event = target,
                     profile = profiles[target.pubkey],
                     profiles = profiles,
+                    quotedEvents = quotedEvents,
                     onThreadClick = onThreadClick,
                     onProfileClick = onProfileClick,
                     onHashtagClick = onHashtagClick,
@@ -279,7 +287,7 @@ fun NoteCard(
             .padding(start = 14.dp, end = 14.dp, top = 14.dp, bottom = 12.dp),
     ) {
         // Reply context line
-        if (event.parsedTags.isReply) {
+        if (showReplyContext && event.parsedTags.isReply) {
             val replyPubkeys = event.parsedTags.replyToPubkeys
             val replyLabel = replyPubkeys.take(1).joinToString { pk ->
                 profiles[pk]?.bestName?.take(20) ?: pk.phraseHandle()
@@ -362,6 +370,7 @@ fun NoteCard(
                         onHashtagClick = onHashtagClick,
                         onOpenNote = { onThreadClick?.invoke(event.id) },
                         profiles = profiles,
+                        quotedEvents = quotedEvents,
                     )
                 }
 
@@ -383,6 +392,7 @@ fun NoteCard(
                             onProfileClick = onProfileClick,
                             onHashtagClick = onHashtagClick,
                             fullContent = fullContent,
+                            quotedEvents = quotedEvents,
                         )
                     } else {
                         Text(
@@ -415,6 +425,9 @@ fun NoteCard(
 
 // ── Quoted / nested card ─────────────────────────────────────────────────────
 
+/** Body lines shown inside a quoted note before "show more". */
+private const val QUOTED_MAX_LINES = 6
+
 @Composable
 fun QuotedNoteCard(
     event: Event,
@@ -425,6 +438,10 @@ fun QuotedNoteCard(
     onHashtagClick: ((tag: String) -> Unit)? = null,
     /** When true the quoted body is not truncated (thread view). */
     fullContent: Boolean = false,
+    /** Already-resolved quoted notes, so a quote-of-a-quote can render inline. */
+    quotedEvents: Map<String, Event> = emptyMap(),
+    /** Nesting counter — quotes stop nesting after one level so a quote cycle cannot recurse. */
+    nestingDepth: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     val parsed = remember(event.id) { parseNoteContent(event.content, profiles) }
@@ -471,13 +488,40 @@ fun QuotedNoteCard(
             NoteBodyText(
                 content = parsed.text,
                 style = BonyType.bodyDim.copy(color = BonyColors.TextDim),
-                maxLines = 6,
+                maxLines = QUOTED_MAX_LINES,
                 expandable = !fullContent,
                 onThreadClick = onThreadClick,
                 onProfileClick = onProfileClick,
                 onHashtagClick = onHashtagClick,
                 onOpenNote = { onThreadClick?.invoke(event.id) },
                 profiles = profiles,
+                quotedEvents = quotedEvents,
+            )
+        }
+
+        // Media inside a quoted note. This used to be dropped entirely, which is
+        // why an image in a quoted note was invisible on the feed.
+        if (parsed.mediaItems.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            NoteMediaContent(mediaItems = parsed.mediaItems)
+        }
+
+        // Quote of a quote still renders (one level, so a cycle cannot recurse).
+        val nestedId = event.parsedTags.quotedEventId
+            ?: event.parsedTags.firstOrNull { it.name == "q" }?.value()
+        val nested = nestedId?.let { quotedEvents[it] }
+        if (nested != null && nested.id != event.id && nestingDepth < 1) {
+            Spacer(Modifier.height(8.dp))
+            QuotedNoteCard(
+                event = nested,
+                profile = profiles[nested.pubkey],
+                profiles = profiles,
+                onThreadClick = onThreadClick,
+                onProfileClick = onProfileClick,
+                onHashtagClick = onHashtagClick,
+                fullContent = false,
+                quotedEvents = quotedEvents,
+                nestingDepth = nestingDepth + 1,
             )
         }
     }

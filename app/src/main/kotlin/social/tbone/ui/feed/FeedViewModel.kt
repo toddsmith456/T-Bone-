@@ -758,8 +758,10 @@ class FeedViewModel @Inject constructor(
             val stillMissing = missing.filter { it !in cached }
             if (stillMissing.isEmpty()) return@launch
 
+            // Kind-agnostic on purpose: a quoted poll or repost was never
+            // resolved before, so the reference stayed as a dead link.
             val subId = pool.subscribe(
-                listOf(Filter(ids = stillMissing, kinds = listOf(EventKind.TEXT_NOTE))),
+                listOf(Filter(ids = stillMissing)),
                 label = "quote",
             )
             quoteSubIds.add(subId)

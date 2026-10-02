@@ -42,11 +42,27 @@ import social.tbone.nostr.EventKind
 import social.tbone.nostr.Filter
 import social.tbone.nostr.ProfileContent
 import social.tbone.nostr.UnsignedEvent
+import social.tbone.nostr.isReply
+import social.tbone.nostr.quotedEventId
+import social.tbone.ui.feed.MediaItem
+import social.tbone.ui.feed.extractInlineQuoteId
+import social.tbone.ui.feed.parseNoteContent
 import social.tbone.nostr.relay.RelayMessage
 import social.tbone.nostr.relay.RelayPool
 import social.tbone.profile.ProfileRepository
 import timber.log.Timber
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
+
+/** Profile feed tabs. */
+enum class ProfileTab(val label: String) {
+    ALL("ALL"),
+    REPLIES("REPLIES"),
+    MEDIA("MEDIA"),
+}
+
+/** One image in the profile's media gallery. */
+data class ProfileImage(val url: String, val noteId: String)
 
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
@@ -71,8 +87,37 @@ class ProfileViewModel @Inject constructor(
         .map { it[pubkey] }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), profileRepository.getProfile(pubkey))
 
+    /** All known profiles — used to render quoted notes and mention names. */
+    val profiles: StateFlow<Map<String, ProfileContent>> = profileRepository.profiles
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    private val _tab = MutableStateFlow(ProfileTab.ALL)
+    /** Which feed the profile is showing. */
+    val tab: StateFlow<ProfileTab> = _tab.asStateFlow()
+
+    fun selectTab(newTab: ProfileTab) {
+        if (_tab.value != newTab) _tab.value = newTab
+    }
+
+    /** Every event on the profile feed, newest first (notes, polls and reposts). */
     private val _notes = MutableStateFlow<List<Event>>(emptyList())
     val notes: StateFlow<List<Event>> = _notes.asStateFlow()
+
+    /** Only the profile's replies — every note carrying a NIP-10 reply marker. */
+    private val _replyNotes = MutableStateFlow<List<Event>>(emptyList())
+    val replyNotes: StateFlow<List<Event>> = _replyNotes.asStateFlow()
+
+    /** Every image in the profile's own notes, newest note first (media tab). */
+    private val _mediaImages = MutableStateFlow<List<ProfileImage>>(emptyList())
+    val mediaImages: StateFlow<List<ProfileImage>> = _mediaImages.asStateFlow()
+
+    /** Quoted/reposted notes, resolved so the cards can render them. */
+    private val _quotedEvents = MutableStateFlow<Map<String, Event>>(emptyMap())
+    val quotedEvents: StateFlow<Map<String, Event>> = _quotedEvents.asStateFlow()
+
+    private val requestedQuoteIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val quoteSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val allSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
@@ -165,15 +210,24 @@ class ProfileViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private var notesSubId: String? = null
-    private var metadataSubId: String? = null
 
     init {
+        // Kind 6 (reposts) included: the "all" feed is supposed to show what the
+        // profile amplified, not just what they wrote.
         notesSubId = pool.subscribe(listOf(
-            Filter(authors = listOf(pubkey), kinds = listOf(EventKind.TEXT_NOTE, EventKind.POLL), limit = 50)
-        ))
-        metadataSubId = pool.subscribe(listOf(
-            Filter(authors = listOf(pubkey), kinds = listOf(EventKind.METADATA), limit = 1)
-        ))
+            Filter(
+                authors = listOf(pubkey),
+                kinds = listOf(
+                    EventKind.TEXT_NOTE,
+                    EventKind.REPOST,
+                    EventKind.POLL,
+                    EventKind.COMMENT,
+                ),
+                limit = PROFILE_FEED_LIMIT,
+            ),
+            Filter(authors = listOf(pubkey), kinds = listOf(EventKind.METADATA), limit = 1),
+        ), label = "profile")
+        notesSubId?.let { allSubIds.add(it) }
 
         viewModelScope.launch(Dispatchers.Default) {
             pool.messages.collect { (_, message) ->
@@ -181,33 +235,48 @@ class ProfileViewModel @Inject constructor(
                     is RelayMessage.EventMessage -> {
                         val event = message.event
                         if (!event.verify()) return@collect
+                        // Quote/repost targets resolved by a side subscription.
+                        if (message.subscriptionId in quoteSubIds ||
+                            event.id in requestedQuoteIds
+                        ) {
+                            handleQuotedEvent(event)
+                            return@collect
+                        }
                         when (event.kind) {
                             EventKind.METADATA -> profileRepository.processEvent(event)
-                            EventKind.TEXT_NOTE, EventKind.POLL -> if (event.pubkey == pubkey) {
-                                // Hide if the viewer blocked them / nsfw / hidden words.
-                                if (social.tbone.settings.ContentFilter.shouldHide(
-                                        event,
-                                        muteRepository.effectiveMuted.value,
-                                        appSettings.hideNsfw.value,
-                                        appSettings.hideWords.value,
-                                    )
-                                ) {
-                                    return@collect
+                            EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL,
+                            EventKind.COMMENT ->
+                                if (event.pubkey == pubkey) {
+                                    // Hide if the viewer blocked them / nsfw / hidden words.
+                                    if (social.tbone.settings.ContentFilter.shouldHide(
+                                            event,
+                                            muteRepository.effectiveMuted.value,
+                                            appSettings.hideNsfw.value,
+                                            appSettings.hideWords.value,
+                                        )
+                                    ) {
+                                        return@collect
+                                    }
+                                    ingest(event)
+                                    // Persist so a tapped note opens a thread instantly.
+                                    viewModelScope.launch { eventRepository.save(event, "") }
+                                    reactionsRepository.subscribeTo(listOf(event.id))
+                                    repliesRepository.subscribeTo(listOf(event.id))
+                                    if (event.kind == EventKind.POLL) {
+                                        pollsRepository.subscribeTo(listOf(event.id))
+                                    }
+                                    fetchQuotesFor(listOf(event))
+                                    fetchMetadataFor(listOf(event.pubkey))
                                 }
-                                _notes.update { existing ->
-                                    (existing + event)
-                                        .distinctBy { it.id }
-                                        .sortedByDescending { it.createdAt }
-                                }
-                                // Persist so a tapped note opens a thread instantly.
-                                viewModelScope.launch { eventRepository.save(event, "") }
-                                reactionsRepository.subscribeTo(listOf(event.id))
-                                repliesRepository.subscribeTo(listOf(event.id))
-                                if (event.kind == EventKind.POLL) pollsRepository.subscribeTo(listOf(event.id))
-                            }
                         }
                     }
-                    is RelayMessage.EndOfStoredEvents -> _isLoading.update { false }
+                    is RelayMessage.EndOfStoredEvents -> {
+                        if (message.subscriptionId in quoteSubIds) {
+                            quoteSubIds -= message.subscriptionId
+                            pool.unsubscribe(message.subscriptionId)
+                        }
+                        _isLoading.update { false }
+                    }
                     else -> Unit
                 }
             }
@@ -217,6 +286,95 @@ class ProfileViewModel @Inject constructor(
             delay(10_000)
             _isLoading.update { false }
         }
+    }
+
+    /**
+     * Adds an event to the profile feed and refreshes the three derived views:
+     * all, replies-only, and the media gallery.
+     */
+    private fun ingest(event: Event) {
+        val merged = (_notes.value + event)
+            .distinctBy { it.id }
+            .sortedByDescending { it.createdAt }
+            .take(MAX_FEED_EVENTS)
+        _notes.value = merged
+        _replyNotes.value = merged.filter { event ->
+            // NIP-22 comments (kind 1111) are replies by definition; plain notes
+            // count when they carry a NIP-10 reply marker.
+            event.kind == EventKind.COMMENT ||
+                (event.kind == EventKind.TEXT_NOTE && event.parsedTags.isReply)
+        }
+        _mediaImages.value = merged
+            .filter { it.kind == EventKind.TEXT_NOTE || it.kind == EventKind.COMMENT }
+            .flatMap { note ->
+                parseNoteContent(note.content).mediaItems
+                    .filterIsInstance<MediaItem.Image>()
+                    .map { image -> ProfileImage(url = image.url, noteId = note.id) }
+            }
+            .distinctBy { it.url }
+    }
+
+    private fun handleQuotedEvent(event: Event) {
+        _quotedEvents.update { it + (event.id to event) }
+        viewModelScope.launch { eventRepository.save(event, "") }
+        fetchMetadataFor(listOf(event.pubkey))
+    }
+
+    /**
+     * Resolves what the profile's notes point at: repost payloads (kind 6) and
+     * quoted notes. Explicitly **kind-agnostic** — a quoted poll or repost used
+     * to stay unresolved because only kind 1 was requested.
+     */
+    private fun fetchQuotesFor(events: List<Event>) {
+        val toResolve = mutableListOf<String>()
+        for (event in events) {
+            when (event.kind) {
+                EventKind.REPOST -> {
+                    val embedded = if (event.content.length > MAX_REPOST_CONTENT_BYTES) null
+                    else runCatching { Event.fromJson(event.content) }.getOrNull()
+                    if (embedded != null && embedded.verify()) {
+                        _quotedEvents.update { it + (embedded.id to embedded) }
+                        viewModelScope.launch { eventRepository.save(embedded, "") }
+                        fetchMetadataFor(listOf(embedded.pubkey))
+                    } else {
+                        event.parsedTags.firstOrNull { it.name == "e" }?.value()
+                            ?.takeIf { it !in requestedQuoteIds }
+                            ?.let { toResolve += it }
+                    }
+                }
+                EventKind.TEXT_NOTE, EventKind.COMMENT -> {
+                    (event.parsedTags.quotedEventId ?: extractInlineQuoteId(event.content))
+                        ?.takeIf { it !in requestedQuoteIds }
+                        ?.let { toResolve += it }
+                }
+                else -> Unit
+            }
+        }
+        val missing = toResolve.distinct().filter { it !in _quotedEvents.value }
+        if (missing.isEmpty()) return
+        missing.forEach { requestedQuoteIds += it }
+
+        viewModelScope.launch {
+            val cached = eventRepository.getByIds(missing).associateBy { it.id }
+            if (cached.isNotEmpty()) {
+                _quotedEvents.update { it + cached }
+                fetchMetadataFor(cached.values.map { it.pubkey })
+            }
+            val stillMissing = missing.filter { it !in cached }
+            if (stillMissing.isEmpty()) return@launch
+            val subId = pool.subscribe(listOf(Filter(ids = stillMissing)), label = "profile-quote")
+            quoteSubIds += subId
+        }
+    }
+
+    private fun fetchMetadataFor(pubkeys: List<String>) {
+        val unknown = pubkeys.distinct().filter { profileRepository.profiles.value[it] == null }
+        if (unknown.isEmpty()) return
+        val subId = pool.subscribe(
+            listOf(Filter(authors = unknown, kinds = listOf(EventKind.METADATA))),
+            label = "profile-metadata",
+        )
+        allSubIds += subId
     }
 
     fun react(event: Event) = reactionsRepository.react(event)
@@ -319,6 +477,17 @@ class ProfileViewModel @Inject constructor(
 
     override fun onCleared() {
         notesSubId?.let { pool.unsubscribe(it) }
-        metadataSubId?.let { pool.unsubscribe(it) }
+        allSubIds.forEach { pool.unsubscribe(it) }
+        quoteSubIds.forEach { pool.unsubscribe(it) }
+    }
+
+    companion object {
+        /** Notes/reposts/polls requested per profile page. */
+        private const val PROFILE_FEED_LIMIT = 150
+
+        /** Upper bound on retained profile events. */
+        private const val MAX_FEED_EVENTS = 400
+
+        private val MAX_REPOST_CONTENT_BYTES get() = social.tbone.Tunables.MAX_REPOST_CONTENT_BYTES
     }
 }

@@ -11,6 +11,7 @@ object EventKind {
     const val ENCRYPTED_DM = 4       // NIP-04: encrypted direct message (legacy)
     const val DELETE = 5             // NIP-09: event deletion
     const val REPOST = 6             // NIP-18: repost
+    const val COMMENT = 1111         // NIP-22: comment (replies to any event kind)
     const val REACTION = 7           // NIP-25: reaction (like/+1)
     const val SEAL = 13              // NIP-59: sealed event wrapper
     const val GIFT_WRAP = 1059       // NIP-59: gift wrap

@@ -21,6 +21,12 @@ data class Filter(
     @SerialName("until") val until: Long? = null,
     val limit: Int? = null,
     @SerialName("#e") val eTags: List<String>? = null,
+    /**
+     * NIP-22 comments (kind 1111) name the thread root with an **uppercase**
+     * `E` tag, which is a different filter key to `#e`. Without this,
+     * comments written by NIP-22 clients were invisible in threads.
+     */
+    @SerialName("#E") val bigETags: List<String>? = null,
     @SerialName("#p") val pTags: List<String>? = null,
     @SerialName("#t") val tTags: List<String>? = null,
     @SerialName("#g") val gTags: List<String>? = null,

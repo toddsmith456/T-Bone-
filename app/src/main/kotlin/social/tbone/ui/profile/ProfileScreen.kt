@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.SnackbarHost
@@ -48,13 +49,25 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import social.tbone.nostr.Event
+import social.tbone.nostr.EventKind
 import social.tbone.nostr.Nip19
+import social.tbone.nostr.quotedEventId
 import social.tbone.nostr.identity.Phrase
 import social.tbone.ui.components.UserAvatar
 import social.tbone.ui.feed.NoteCard
 import social.tbone.ui.onboarding.BonyButton
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
+
+@Composable
+private fun EmptyTabLabel(text: String) {
+    Box(
+        modifier = Modifier.fillMaxWidth().padding(32.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text = text, style = BonyType.meta.copy(color = BonyColors.TextMute))
+    }
+}
 
 private val BANNER_HEIGHT = 80.dp
 private val AVATAR_SIZE = 56.dp
@@ -73,6 +86,11 @@ fun ProfileScreen(
 ) {
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val notes by viewModel.notes.collectAsStateWithLifecycle()
+    val replyNotes by viewModel.replyNotes.collectAsStateWithLifecycle()
+    val mediaImages by viewModel.mediaImages.collectAsStateWithLifecycle()
+    val quotedEvents by viewModel.quotedEvents.collectAsStateWithLifecycle()
+    val selectedTab by viewModel.tab.collectAsStateWithLifecycle()
+    val profiles by viewModel.profiles.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val isActiveUserProfile by viewModel.isActiveUserProfile.collectAsStateWithLifecycle()
     val isFollowing by viewModel.isFollowing.collectAsStateWithLifecycle()
@@ -106,6 +124,17 @@ fun ProfileScreen(
             ))
         }
     }
+    // Which cards the current tab shows. "all" keeps every note plus reposts,
+    // "replies" is filtered to replies only, and "media" is the gallery below.
+    val visibleNotes = when (selectedTab) {
+        ProfileTab.ALL -> notes
+        ProfileTab.REPLIES -> replyNotes
+        ProfileTab.MEDIA -> emptyList()
+    }
+
+    // Index of the tapped gallery image (null = viewer closed).
+    var galleryViewerIndex by remember { mutableStateOf<Int?>(null) }
+
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     androidx.compose.runtime.LaunchedEffect(viewModel) {
@@ -383,16 +412,24 @@ fun ProfileScreen(
                         .background(BonyColors.Surface)
                         .padding(horizontal = 14.dp, vertical = 8.dp),
                 ) {
-                    Text("NOTES", style = BonyType.tag.copy(color = BonyColors.Accent))
-                    Spacer(Modifier.width(20.dp))
-                    Text("REPLIES", style = BonyType.tag.copy(color = BonyColors.TextMute))
-                    Spacer(Modifier.width(20.dp))
-                    Text("MEDIA", style = BonyType.tag.copy(color = BonyColors.TextMute))
+                    ProfileTab.entries.forEachIndexed { index, tab ->
+                        if (index > 0) Spacer(Modifier.width(20.dp))
+                        val isSelected = tab == selectedTab
+                        Text(
+                            text = tab.label,
+                            style = BonyType.tag.copy(
+                                color = if (isSelected) BonyColors.Accent else BonyColors.TextMute,
+                            ),
+                            modifier = Modifier
+                                .clickable { viewModel.selectTab(tab) }
+                                .padding(vertical = 2.dp),
+                        )
+                    }
                 }
                 Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
             }
 
-            if (isLoading && notes.isEmpty()) {
+            if (isLoading && visibleNotes.isEmpty() && mediaImages.isEmpty()) {
                 item {
                     Box(
                         modifier = Modifier.fillMaxWidth().padding(32.dp),
@@ -403,27 +440,75 @@ fun ProfileScreen(
                 }
             }
 
-            items(notes, key = { it.id }) { event ->
-                NoteCard(
-                    event = event,
-                    profile = profile,
-                    onThreadClick = onThreadClick,
-                    onProfileClick = onProfileClick,
-                    onHashtagClick = onHashtagClick,
-                    onReply = onReplyClick,
-                    onBoost = viewModel::boost,
-                    onQuote = onQuoteClick,
-                    onLike = viewModel::react,
-                    onShare = onShareNote,
-                    reactors = reactions[event.id],
-                    replies = replies,
-                    repliedByMe = repliedByMe,
-                    pollVoteCounts = pollVoteCounts,
-                    pollMyVotes = pollMyVotes,
-                    pollVoteVersion = pollVoteVersion,
-                    onPollVote = viewModel::voteOnPoll,
-                    activePubkey = activePubkey,
-                )
+            // ── Media tab: five-wide gallery ──────────────────────────────────
+            if (selectedTab == ProfileTab.MEDIA) {
+                if (mediaImages.isEmpty()) {
+                    if (!isLoading) {
+                        item {
+                            EmptyTabLabel("no media yet")
+                        }
+                    }
+                } else {
+                    // One lazy item per gallery row (5 pictures wide) so only the
+                    // rows on screen are composed while flinging.
+                    val rows = mediaImages.chunked(GALLERY_COLUMNS)
+                    itemsIndexed(rows, key = { index, _ -> "media_row_$index" }) { rowIndex, row ->
+                        ProfileGalleryRow(
+                            images = row,
+                            baseIndex = rowIndex * GALLERY_COLUMNS,
+                            onImageClick = { index -> galleryViewerIndex = index },
+                        )
+                    }
+                }
+            } else {
+                if (visibleNotes.isEmpty() && !isLoading) {
+                    item {
+                        EmptyTabLabel(
+                            if (selectedTab == ProfileTab.REPLIES) "no replies yet" else "no notes yet",
+                        )
+                    }
+                }
+
+                items(visibleNotes, key = { it.id }) { event ->
+                    // Reposts show the note they boosted, so their reactions and
+                    // the embedded card both come from the resolved quote.
+                    val quotedEvent = remember(event.id, quotedEvents) {
+                        val refId = if (event.kind == EventKind.REPOST) {
+                            event.parsedTags.firstOrNull { it.name == "e" }?.value()
+                        } else {
+                            event.parsedTags.quotedEventId
+                                ?: social.tbone.ui.feed.extractInlineQuoteId(event.content)
+                        }
+                        refId?.let { quotedEvents[it] }
+                    }
+                    NoteCard(
+                        event = event,
+                        profile = profile,
+                        profiles = profiles,
+                        quotedEvent = quotedEvent,
+                        quotedEvents = quotedEvents,
+                        onThreadClick = onThreadClick,
+                        onProfileClick = onProfileClick,
+                        onHashtagClick = onHashtagClick,
+                        onReply = onReplyClick,
+                        onBoost = viewModel::boost,
+                        onQuote = onQuoteClick,
+                        onLike = viewModel::react,
+                        onShare = onShareNote,
+                        reactors = if (event.kind == EventKind.REPOST) {
+                            quotedEvent?.let { reactions[it.id] }
+                        } else {
+                            reactions[event.id]
+                        },
+                        replies = replies,
+                        repliedByMe = repliedByMe,
+                        pollVoteCounts = pollVoteCounts,
+                        pollMyVotes = pollMyVotes,
+                        pollVoteVersion = pollVoteVersion,
+                        onPollVote = viewModel::voteOnPoll,
+                        activePubkey = activePubkey,
+                    )
+                }
             }
         }
 
@@ -431,5 +516,15 @@ fun ProfileScreen(
             hostState = snackbarHostState,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
+
+        // Full-screen swipeable gallery, opened from a thumbnail.
+        galleryViewerIndex?.let { index ->
+            ProfileGalleryViewer(
+                images = mediaImages,
+                startIndex = index,
+                onClose = { galleryViewerIndex = null },
+                onOpenNote = onThreadClick,
+            )
+        }
     }
 }

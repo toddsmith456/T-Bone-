@@ -3,6 +3,8 @@ package social.tbone.ui.feed
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material3.Text
@@ -20,6 +22,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import social.tbone.nostr.Event
 import social.tbone.nostr.Nip19
 import social.tbone.nostr.ProfileContent
 import social.tbone.settings.ContentFilter
@@ -48,7 +51,47 @@ private data class SegRange(val start: Int, val end: Int, val kind: Int, val val
 private data class SegAction(val start: Int, val end: Int, val action: (() -> Unit)?)
 
 /** The styled note text plus the click regions that go with it. */
-private data class SegmentedBody(val text: androidx.compose.ui.text.AnnotatedString, val actions: List<SegAction>)
+private data class SegmentedBody(
+    val text: androidx.compose.ui.text.AnnotatedString,
+    val actions: List<SegAction>,
+    val segments: List<BodySeg>,
+)
+
+/**
+ * A body is rendered as a sequence of blocks rather than one flat text run:
+ * runs of ordinary text keep flowing together (no gaps around links), while a
+ * note reference gets a block of its own so it can be drawn as an actual note
+ * card instead of a bare `nostr:nevent1…` link.
+ */
+private sealed interface BodyBlock {
+    data class Text(val segs: List<BodySeg>) : BodyBlock
+    data class NoteLink(val eventId: String, val raw: String) : BodyBlock
+}
+
+/**
+ * Splits the segments into blocks. A note reference is hoisted out of the
+ * text flow; everything else stays in a text run.
+ */
+private fun toBlocks(segs: List<BodySeg>): List<BodyBlock> {
+    val blocks = mutableListOf<BodyBlock>()
+    val run = mutableListOf<BodySeg>()
+    fun flush() {
+        if (run.isNotEmpty()) {
+            blocks.add(BodyBlock.Text(run.toList()))
+            run.clear()
+        }
+    }
+    segs.forEach { seg ->
+        if (seg is BodySeg.NoteRef) {
+            flush()
+            blocks.add(BodyBlock.NoteLink(seg.eventId, seg.label))
+        } else {
+            run.add(seg)
+        }
+    }
+    flush()
+    return blocks
+}
 
 /**
  * Renders a note's text as ONE flowing text block (no segmented rows, so no
@@ -74,6 +117,12 @@ fun NoteBodyText(
     onHashtagClick: ((String) -> Unit)? = null,
     onOpenNote: (() -> Unit)? = null,
     profiles: Map<String, ProfileContent> = emptyMap(),
+    /**
+     * Notes already resolved by the caller (quote targets, reposts, NIP-27
+     * references). When a `nostr:note1…/nevent1…` in the body points at one of
+     * these it is rendered as an embedded note card, not as a link.
+     */
+    quotedEvents: Map<String, Event> = emptyMap(),
 ) {
     val context = LocalContext.current
     val filter = LocalContentFilter.current
@@ -85,34 +134,95 @@ fun NoteBodyText(
 
     val bleeped = remember(content, filter.bleepWords) { ContentFilter.bleep(content, filter.bleepWords) }
     val segmented = remember(bleeped, profiles) {
+        val segments = segment(bleeped, profiles)
         buildSegmentedAnnotated(
-            text = bleeped,
+            segs = segments,
             profiles = profiles,
             onThreadClick = onThreadClick,
             onProfileClick = onProfileClick,
             onHashtagClick = onHashtagClick,
             onOpenUrl = { openUrl(context, it) },
-        )
+        ).copy(segments = segments)
     }
 
+    val blocks = remember(segmented) { toBlocks(segmented.segments) }
+
     Column(modifier = modifier.fillMaxWidth()) {
-        if (segmented.text.text.isEmpty()) {
-            Text(text = bleeped, style = style, maxLines = effectiveMax, overflow = TextOverflow.Ellipsis)
-        } else {
-            ClickableText(
-                text = segmented.text,
-                style = style,
-                maxLines = effectiveMax,
-                overflow = TextOverflow.Ellipsis,
-                onTextLayout = { result: TextLayoutResult ->
-                    truncated = result.hasVisualOverflow || result.lineCount > effectiveMax
-                },
-                onClick = { offset ->
-                    val action = segmented.actions.firstOrNull { offset in it.start until it.end }
-                    if (action?.action != null) action.action()
-                    else onOpenNote?.invoke()
-                },
-            )
+        blocks.forEach { block ->
+            when (block) {
+                is BodyBlock.Text -> {
+                    val run = remember(block, profiles) {
+                        buildSegmentedAnnotated(
+                            segs = block.segs,
+                            profiles = profiles,
+                            onThreadClick = onThreadClick,
+                            onProfileClick = onProfileClick,
+                            onHashtagClick = onHashtagClick,
+                            onOpenUrl = { openUrl(context, it) },
+                        )
+                    }
+                    if (run.text.text.isEmpty()) {
+                        // Nothing linkable in this run — plain text only.
+                        val plain = block.segs.filterIsInstance<BodySeg.Plain>()
+                            .joinToString("") { it.text }
+                        if (plain.isNotEmpty()) {
+                            Text(
+                                text = plain,
+                                style = style,
+                                maxLines = effectiveMax,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    } else {
+                        ClickableText(
+                            text = run.text,
+                            style = style,
+                            maxLines = effectiveMax,
+                            overflow = TextOverflow.Ellipsis,
+                            onTextLayout = { result: TextLayoutResult ->
+                                if (result.hasVisualOverflow || result.lineCount > effectiveMax) {
+                                    truncated = true
+                                }
+                            },
+                            onClick = { offset ->
+                                val action = run.actions.firstOrNull { offset in it.start until it.end }
+                                if (action?.action != null) action.action()
+                                else onOpenNote?.invoke()
+                            },
+                        )
+                    }
+                }
+
+                is BodyBlock.NoteLink -> {
+                    val referenced = quotedEvents[block.eventId]
+                    if (referenced != null) {
+                        // Resolved: show the referenced note itself.
+                        Spacer(Modifier.height(6.dp))
+                        QuotedNoteCard(
+                            event = referenced,
+                            profile = profiles[referenced.pubkey],
+                            profiles = profiles,
+                            onThreadClick = onThreadClick,
+                            onProfileClick = onProfileClick,
+                            onHashtagClick = onHashtagClick,
+                            fullContent = false,
+                            quotedEvents = quotedEvents,
+                            nestingDepth = 1,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                    } else {
+                        // Not resolved yet — a compact chip that opens the note,
+                        // never a raw `nostr:nevent1…` URL.
+                        Text(
+                            text = "↗ open note",
+                            style = BonyType.tag.copy(color = BonyColors.Accent),
+                            modifier = Modifier
+                                .clickable { onThreadClick?.invoke(block.eventId) }
+                                .padding(vertical = 2.dp),
+                        )
+                    }
+                }
+            }
         }
         if (expandable && !expanded && truncated) {
             Text(
@@ -132,7 +242,7 @@ fun NoteBodyText(
  * maps character offsets back to the action to run on tap.
  */
 private fun buildSegmentedAnnotated(
-    text: String,
+    segs: List<BodySeg>,
     profiles: Map<String, ProfileContent>,
     onThreadClick: ((String) -> Unit)?,
     onProfileClick: ((String) -> Unit)?,
@@ -141,7 +251,7 @@ private fun buildSegmentedAnnotated(
 ): SegmentedBody {
     val actions = mutableListOf<SegAction>()
     val builder = buildAnnotatedString {
-        segment(text, profiles).forEach { seg ->
+        segs.forEach { seg ->
             when (seg) {
                 is BodySeg.Plain -> append(seg.text)
 
@@ -176,7 +286,7 @@ private fun buildSegmentedAnnotated(
             }
         }
     }
-    return SegmentedBody(builder, actions)
+    return SegmentedBody(builder, actions, segs)
 }
 
 private fun segment(text: String, profiles: Map<String, ProfileContent>): List<BodySeg> {
@@ -215,7 +325,7 @@ private fun segment(text: String, profiles: Map<String, ProfileContent>): List<B
                 val eventId = Nip19.nostrUriToEventId(seg.value)
                 out.add(
                     if (eventId != null) {
-                        BodySeg.NoteRef(eventId, seg.value.take(14) + "…")
+                        BodySeg.NoteRef(eventId, "↗ open note")
                     } else {
                         BodySeg.Plain(seg.value)
                     },

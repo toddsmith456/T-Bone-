@@ -2,7 +2,9 @@ package social.tbone.ui
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
@@ -17,6 +19,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -31,6 +35,8 @@ import kotlinx.coroutines.flow.stateIn
 import social.tbone.account.AccountRepository
 import social.tbone.notifications.DeepLinkHandler
 import social.tbone.security.AppLockManager
+import social.tbone.ui.components.BonyBottomBar
+import social.tbone.ui.components.BottomTab
 import social.tbone.ui.compose.ComposeScreen
 import social.tbone.ui.lock.PinLockScreen
 import social.tbone.ui.lock.PinSetupScreen
@@ -166,8 +172,8 @@ fun BonyNavHost() {
                             onHashtagClick = { tag -> navController.navigate("hashtag/" + Uri.encode(tag)) },
                             onRelayManagementClick = { navController.navigate(ROUTE_RELAY_MANAGEMENT) },
                             onSearchClick = { navController.navigate(ROUTE_SEARCH) },
-                            onNotificationsClick = { navController.navigate(ROUTE_NOTIFICATIONS) },
-                            onToolboxClick = { navController.navigate(ROUTE_TOOLBOX) },
+                            onNotificationsClick = { navController.switchToTab(BottomTab.NOTIF) },
+                            onToolboxClick = { navController.switchToTab(BottomTab.TOOLS) },
                             onOpenGeohash = { code ->
                                 navController.navigate("geohash_chat?code=" + Uri.encode(code))
                             },
@@ -176,14 +182,17 @@ fun BonyNavHost() {
                         )
                     }
                 composable(ROUTE_TOOLBOX) {
-                    ToolboxScreen(
-                        onBack = { navController.popBackStack() },
-                        onNotes = { navController.navigate(ROUTE_NOTES) },
-                        onVoiceRecorder = { navController.navigate(ROUTE_VOICE) },
-                        onGeohashChannels = { navController.navigate(ROUTE_GEOHASH) },
-                        onCalendar = { navController.navigate(ROUTE_CALENDAR) },
-                        onToolboxSettings = { navController.navigate(ROUTE_TOOLBOX_SETTINGS) },
-                    )
+                    // Bottom bar stays visible here, exactly as on the home tab.
+                    WithBottomBar(current = BottomTab.TOOLS, navController = navController) {
+                        ToolboxScreen(
+                            onBack = { navController.switchToTab(BottomTab.HOME) },
+                            onNotes = { navController.navigate(ROUTE_NOTES) },
+                            onVoiceRecorder = { navController.navigate(ROUTE_VOICE) },
+                            onGeohashChannels = { navController.navigate(ROUTE_GEOHASH) },
+                            onCalendar = { navController.navigate(ROUTE_CALENDAR) },
+                            onToolboxSettings = { navController.navigate(ROUTE_TOOLBOX_SETTINGS) },
+                        )
+                    }
                 }
                 composable(ROUTE_TOOLBOX_SETTINGS) {
                     ToolboxSettingsScreen(onBack = { navController.popBackStack() })
@@ -345,15 +354,18 @@ fun BonyNavHost() {
                     )
                 }
                 composable(ROUTE_NOTIFICATIONS) {
-                    NotificationsScreen(
-                        onBack = { navController.popBackStack() },
-                        onThreadClick = { eventId -> navController.navigate("thread/$eventId") },
-                        onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
-                        onReplyClick = { event -> navController.navigate("compose?replyToId=${event.id}") },
-                        onOpenCalendarEvent = { id ->
-                            navController.navigate("calendar_event?dateMillis=-1&id=" + Uri.encode(id))
-                        },
-                    )
+                    // Bottom bar stays visible here, exactly as on the home tab.
+                    WithBottomBar(current = BottomTab.NOTIF, navController = navController) {
+                        NotificationsScreen(
+                            onBack = { navController.switchToTab(BottomTab.HOME) },
+                            onThreadClick = { eventId -> navController.navigate("thread/$eventId") },
+                            onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
+                            onReplyClick = { event -> navController.navigate("compose?replyToId=${event.id}") },
+                            onOpenCalendarEvent = { id ->
+                                navController.navigate("calendar_event?dateMillis=-1&id=" + Uri.encode(id))
+                            },
+                        )
+                    }
                 }
                     composable(ROUTE_THREAD) {
                         ThreadScreen(
@@ -474,6 +486,52 @@ fun BonyNavHost() {
         }
     }
 
+}
+
+// ── Bottom-bar tab navigation ────────────────────────────────────────────────
+
+/** Route for each bottom-bar tab. */
+private fun routeFor(tab: BottomTab): String = when (tab) {
+    BottomTab.HOME -> ROUTE_FEED
+    BottomTab.COMPOSE -> "compose"
+    BottomTab.NOTIF -> ROUTE_NOTIFICATIONS
+    BottomTab.TOOLS -> ROUTE_TOOLBOX
+    BottomTab.CONF -> ROUTE_SETTINGS
+}
+
+/**
+ * Switches tabs the way a bottom bar should: one entry per tab (no stacking),
+ * with each tab's own scroll position preserved.
+ */
+private fun NavHostController.switchToTab(tab: BottomTab) {
+    navigate(routeFor(tab)) {
+        popUpTo(graph.findStartDestination().id) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
+    }
+}
+
+/**
+ * Wraps a top-level screen in the shared bottom bar so the toolbox and
+ * notifications screens keep it, exactly like the home tab does.
+ */
+@Composable
+private fun WithBottomBar(
+    current: BottomTab,
+    navController: NavHostController,
+    content: @Composable () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(BonyColors.Bg),
+    ) {
+        Box(modifier = Modifier.weight(1f)) { content() }
+        BonyBottomBar(
+            selected = current,
+            onSelect = { tab -> navController.switchToTab(tab) },
+        )
+    }
 }
 
 // ── Startup ViewModel ─────────────────────────────────────────────────────────

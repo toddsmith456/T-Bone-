@@ -5,6 +5,61 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.3.40] — 2026-10-02
+
+Threads, feeds and profiles.
+
+### Added
+- **Reply mini-threads.** The thread screen is no longer a flat chronological
+  list. Replies are rebuilt into a parent→children tree and flattened
+  depth-first, so every reply is followed by its own replies; siblings stay
+  chronological. Deep branches and very wide fan-outs fold behind
+  `＋ N replies` rows that expand and collapse in place, and each reply is
+  connected by an indent rail that is dashed where it starts in mid-air.
+- **Profile tabs now work.** `ALL` / `REPLIES` / `MEDIA` are real tabs. Replies
+  shows only the profile's replies (and NIP-22 comments); Media is a gallery of
+  every image in their notes, five pictures wide, with crossfaded thumbnails
+  and a swipeable full-screen viewer.
+- **Reposts appear in a profile's `all` feed** (kind 6), rendered as the note
+  that was boosted, with its own reactions.
+
+### Fixed
+- **The parent note now loads.** Thread loading resolves the whole ancestor
+  chain instead of the root plus one parent: each ancestor is fetched from
+  relays (cache first) until the chain ends, so a thread opened mid-conversation
+  shows the notes above it. Notes that are missing from one relay are no longer
+  lost — a REQ waits for **every** connected relay's `EOSE` (with a hard
+  timeout) instead of treating the first reply as "nothing else is coming",
+  which is what left a parent permanently blank when the fastest relay did not
+  carry it.
+- **"replies in between" is gone** — the in-between notes are fetched and
+  rendered automatically. If a relay never returns the root at all, the
+  top-most notes that *were* returned are rendered so the thread still opens.
+- **Images inside quoted notes are visible.** The quoted card parsed its media
+  list and then never drew it, so a quote of an image post showed text only.
+  Quoted/reposted notes now render their images and videos, and quotes nest one
+  level deep.
+- **`nostr:note1…` / `nevent1…` references render as notes**, not as underlined
+  links: a reference is lifted out of the text flow and the referenced note is
+  embedded as a card once resolved. Unresolved references show a compact
+  `↗ open note` affordance instead of a raw URI. Quote targets are now fetched
+  without a kind filter, so a quoted poll or repost resolves too (it never did).
+- **NIP-22 comments (kind 1111) are part of threads.** Replies are requested by
+  lowercase `#e` *and* uppercase `#E`, so comments from NIP-22 clients appear in
+  the thread and in a profile's replies tab.
+- **Notes that only *mention* another note are no longer treated as replies to
+  it.** Both the parent lookup and the thread builder now skip `mention`-marked
+  `e` tags; a mention-only note used to be glued to the wrong thread (and could
+  resolve the wrong parent).
+- **Bottom navigation stays on the Toolbox and Notifications screens**, exactly
+  as on the home tab. Tab switches keep one back-stack entry per tab and restore
+  each tab's state.
+
+### Changed
+- The bottom bar is now a single shared component (`BonyBottomBar`) used by the
+  feed, toolbox and notifications destinations, so the three cannot drift apart.
+
+
 ## [0.3.39] — 2026-10-02
 
 ### Fixed
