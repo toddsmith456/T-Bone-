@@ -125,6 +125,11 @@ android {
         buildConfig = true
     }
 
+    testOptions {
+        // Unit tests run on the plain JVM; let android.* stubs return defaults.
+        unitTests.isReturnDefaultValues = true
+    }
+
     packaging {
         resources {
             // BouncyCastle ships multi-release OSGi manifests under
@@ -200,4 +205,7 @@ dependencies {
     implementation(libs.media3.common)
     implementation(libs.media3.container)
 
+    // Unit tests (JVM only — build-time, never shipped in the APK)
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
 }

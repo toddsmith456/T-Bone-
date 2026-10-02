@@ -61,6 +61,7 @@ import social.tbone.ui.settings.AccountManagementScreen
 import social.tbone.ui.settings.RelayManagementScreen
 import social.tbone.ui.settings.ContentFiltersScreen
 import social.tbone.ui.settings.BlossomSettingsScreen
+import social.tbone.ui.settings.OfflineListScreen
 import social.tbone.ui.settings.ScreenTimeSettingsScreen
 import social.tbone.ui.settings.SettingsScreen
 import social.tbone.ui.profile.ProfileEditScreen
@@ -75,6 +76,7 @@ private const val ROUTE_COMPOSE           = "compose?replyToId={replyToId}&quote
 private const val ROUTE_SETTINGS          = "settings"
 private const val ROUTE_CONTENT_FILTERS   = "content_filters"
 private const val ROUTE_BLOSSOM           = "blossom_settings"
+private const val ROUTE_OFFLINE_LIST      = "offline_list/{type}"
 private const val ROUTE_SCREEN_TIME       = "screen_time_settings"
 private const val ROUTE_PROFILE_EDIT      = "profile_edit"
 private const val ROUTE_PROFILE           = "profile/{pubkey}"
@@ -379,6 +381,12 @@ fun BonyNavHost() {
                     composable(ROUTE_BLOSSOM) {
                         BlossomSettingsScreen(onBack = { navController.popBackStack() })
                     }
+                    composable(
+                        ROUTE_OFFLINE_LIST,
+                        arguments = listOf(navArgument("type") { type = NavType.StringType }),
+                    ) {
+                        OfflineListScreen(onBack = { navController.popBackStack() })
+                    }
                     composable(ROUTE_SCREEN_TIME) {
                         ScreenTimeSettingsScreen(onBack = { navController.popBackStack() })
                     }
@@ -392,6 +400,7 @@ fun BonyNavHost() {
                             onAccountManagement = { navController.navigate(ROUTE_ACCOUNT_MANAGEMENT) },
                             onRelayManagement = { navController.navigate(ROUTE_RELAY_MANAGEMENT) },
                             onBlossom = { navController.navigate(ROUTE_BLOSSOM) },
+                            onOfflineList = { type -> navController.navigate("offline_list/$type") },
                             onScreenTime = { navController.navigate(ROUTE_SCREEN_TIME) },
                             onProfileEdit = { navController.navigate(ROUTE_PROFILE_EDIT) },
                             onContentFilters = { navController.navigate(ROUTE_CONTENT_FILTERS) },

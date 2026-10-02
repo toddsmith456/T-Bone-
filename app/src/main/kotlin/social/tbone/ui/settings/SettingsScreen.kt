@@ -64,6 +64,7 @@ fun SettingsScreen(
     onPinSetup: () -> Unit = {},
     onDuressPinSetup: () -> Unit = {},
     onBlossom: () -> Unit = {},
+    onOfflineList: (String) -> Unit = {},
     onScreenTime: () -> Unit = {},
     onProfileEdit: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
@@ -81,6 +82,8 @@ fun SettingsScreen(
     val uiTheme by viewModel.uiTheme.collectAsStateWithLifecycle()
     val activeAccount by viewModel.activeAccount.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
+    val offlineFollowsOn by viewModel.offlineFollowsEnabled.collectAsStateWithLifecycle()
+    val offlineMutesOn by viewModel.offlineMutesEnabled.collectAsStateWithLifecycle()
     var showAccentSheet by remember { mutableStateOf(false) }
     val themeViewModel: ThemeViewModel = hiltViewModel()
     val youniversalState = themeViewModel.youniversalState
@@ -188,6 +191,32 @@ fun SettingsScreen(
             Text("→", style = BonyType.body.copy(color = BonyColors.TextMute))
         }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+
+        // ── Offline lists section ─────────────────────────────────────────────
+        SectionHeader("LISTS")
+
+        listOf(
+            Triple("offline follow list", offlineFollowsOn, "follows"),
+            Triple("offline block list", offlineMutesOn, "mutes"),
+        ).forEach { (label, on, slug) ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOfflineList(slug) }
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(label, style = BonyType.body.copy(color = BonyColors.TextDim))
+                    Text(
+                        text = if (on) "on · stored only on this device" else "off · using your relay list",
+                        style = BonyType.meta.copy(color = if (on) BonyColors.Accent else BonyColors.TextMute),
+                    )
+                }
+                Text("→", style = BonyType.body.copy(color = BonyColors.TextMute))
+            }
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+        }
 
         // ── Content filters section ───────────────────────────────────────────
         SectionHeader("CONTENT")

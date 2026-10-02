@@ -6,7 +6,12 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -21,6 +26,12 @@ import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import social.tbone.account.AccountRepository
 import social.tbone.db.EventRepository
+import social.tbone.lists.ListEntry
+import social.tbone.lists.ListType
+import social.tbone.lists.MuteListRepository
+import social.tbone.lists.MuteOutcome
+import social.tbone.lists.OfflineListRepository
+import social.tbone.lists.RelayListFetcher
 import social.tbone.account.FollowEntry
 import social.tbone.account.signer.NostrSignerFactory
 import social.tbone.reactions.ReactionsRepository
@@ -49,6 +60,9 @@ class ProfileViewModel @Inject constructor(
     private val pollsRepository: PollsRepository,
     private val eventRepository: EventRepository,
     private val appSettings: social.tbone.settings.AppSettings,
+    private val offlineLists: OfflineListRepository,
+    private val muteRepository: MuteListRepository,
+    private val listFetcher: RelayListFetcher,
 ) : ViewModel() {
 
     val pubkey: String = checkNotNull(savedStateHandle["pubkey"])
@@ -67,16 +81,62 @@ class ProfileViewModel @Inject constructor(
         .map { it?.pubkey == pubkey }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    /**
+     * Offline follow list ON  → true iff the profile is in the LOCAL list (relay list ignored).
+     * Offline follow list OFF → the account's relay-backed follow list, as before.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val isFollowing: StateFlow<Boolean> = accountRepository.activeAccount
-        .map { it?.isFollowing(pubkey) == true }
+        .flatMapLatest { account ->
+            if (account == null) flowOf(false)
+            else offlineLists.state(ListType.FOLLOWS, account.pubkey).map { local ->
+                if (local.enabled) local.contains(pubkey) else account.isFollowing(pubkey)
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
-    val isBlocked: StateFlow<Boolean> = appSettings.blockedPubkeys
-        .map { set -> pubkey in set }
+    /** True while the follow button edits the local list instead of the relay list. */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val followIsLocal: StateFlow<Boolean> = accountRepository.activeAccount
+        .flatMapLatest { account ->
+            if (account == null) flowOf(false)
+            else offlineLists.state(ListType.FOLLOWS, account.pubkey).map { it.enabled }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    /** True while the block button edits the local list instead of the relay mute list. */
+    val blockIsLocal: StateFlow<Boolean> = muteRepository.offlineEnabled
+
+    /** BLOCK state: local list when offline mode is on, otherwise the NIP-51 relay mute list. */
+    val isBlocked: StateFlow<Boolean> = muteRepository.effectiveMuted
+        .map { set -> pubkey in set }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), pubkey in muteRepository.effectiveMuted.value)
+
+    private val _isBlockLoading = MutableStateFlow(false)
+    val isBlockLoading: StateFlow<Boolean> = _isBlockLoading.asStateFlow()
+
+    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    /** One-shot user-facing messages (snackbar). */
+    val messages: SharedFlow<String> = _messages.asSharedFlow()
 
     fun toggleBlock() {
-        viewModelScope.launch { appSettings.toggleBlockPubkey(pubkey) }
+        if (_isBlockLoading.value) return
+        viewModelScope.launch {
+            _isBlockLoading.update { true }
+            val wantMuted = pubkey !in muteRepository.effectiveMuted.value
+            val outcome = runCatching { muteRepository.setMuted(pubkey, wantMuted) }
+                .getOrElse { Timber.w(it, "toggleBlock failed"); MuteOutcome.SIGN_FAILED }
+            when (outcome) {
+                MuteOutcome.NO_SIGNER -> _messages.tryEmit("No signer available — block list not changed")
+                MuteOutcome.RELAYS_UNREACHABLE ->
+                    _messages.tryEmit("Couldn't reach your relays to read your mute list — nothing changed")
+                MuteOutcome.SIGN_FAILED -> _messages.tryEmit("Signing failed — block list not changed")
+                MuteOutcome.NO_ACCOUNT -> Unit
+                MuteOutcome.REJECTED -> _messages.tryEmit("Can't block that account")
+                MuteOutcome.SAVED_LOCAL, MuteOutcome.PUBLISHED, MuteOutcome.UNCHANGED -> Unit
+            }
+            _isBlockLoading.update { false }
+        }
     }
 
     private val _isFollowLoading = MutableStateFlow(false)
@@ -127,7 +187,7 @@ class ProfileViewModel @Inject constructor(
                                 // Hide if the viewer blocked them / nsfw / hidden words.
                                 if (social.tbone.settings.ContentFilter.shouldHide(
                                         event,
-                                        appSettings.blockedPubkeys.value,
+                                        muteRepository.effectiveMuted.value,
                                         appSettings.hideNsfw.value,
                                         appSettings.hideWords.value,
                                     )
@@ -189,50 +249,71 @@ class ProfileViewModel @Inject constructor(
     private fun toggleFollow(add: Boolean) {
         viewModelScope.launch {
             _isFollowLoading.update { true }
-            val account = accountRepository.activeAccount.first()
-            val signer = signerFactory.forActiveAccount()
-            if (account == null || signer == null) {
-                _isFollowLoading.update { false }
-                return@launch
-            }
+            try {
+                val account = accountRepository.activeAccount.first() ?: return@launch
 
-            // Prefer the rich entry list (relay hints + petnames) when available.
-            // Fall back to the legacy pubkey-only list for accounts not yet updated.
-            val existingEntries = account.followEntries.ifEmpty {
-                account.follows.map { FollowEntry(pubkey = it) }
-            }
-            val newEntries = if (add)
-                (existingEntries + FollowEntry(pubkey = pubkey)).distinctBy { it.pubkey }
-            else
-                existingEntries.filter { it.pubkey != pubkey }
+                // ── Offline follow list ON: edit the LOCAL list only. ────────────
+                // No signer, no relay read, no publish — the relay follow list is never touched.
+                if (offlineLists.snapshot(ListType.FOLLOWS, account.pubkey).enabled) {
+                    if (add) offlineLists.add(ListType.FOLLOWS, account.pubkey, ListEntry(pubkey))
+                    else offlineLists.remove(ListType.FOLLOWS, account.pubkey, pubkey)
+                    return@launch
+                }
 
-            val unsigned = UnsignedEvent(
-                pubkey = signer.pubkey,
-                kind = EventKind.FOLLOW_LIST,
-                content = "",
-                tags = newEntries.map { entry ->
+                // ── Offline OFF: publish to the relays (original behaviour). ─────
+                val signer = signerFactory.forActiveAccount() ?: return@launch
+
+                // Base the new list on the NEWEST list on the relays rather than the cached
+                // mirror, which can be stale (e.g. after a long stretch in offline mode).
+                val latest = runCatching {
+                    listFetcher.fetchLatest(account.pubkey, EventKind.FOLLOW_LIST, account.relays)
+                }.getOrNull()?.event
+
+                val existingEntries: List<FollowEntry> = latest?.let { ev ->
+                    OfflineListRepository.entriesFromEvent(ev).map { FollowEntry(it.pubkey, it.relay, it.petname) }
+                } ?: account.followEntries.ifEmpty {
+                    // Fall back to the legacy pubkey-only list for accounts not yet updated.
+                    account.follows.map { FollowEntry(pubkey = it) }
+                }
+                val newEntries = if (add)
+                    (existingEntries + FollowEntry(pubkey = pubkey)).distinctBy { it.pubkey }
+                else
+                    existingEntries.filter { it.pubkey != pubkey }
+
+                // Keep whatever else the existing kind-3 carried (content, non-p tags).
+                val keptTags = latest?.tags?.filter { (it.firstOrNull() as? JsonPrimitive)?.content != "p" }.orEmpty()
+                val pTags = newEntries.map { entry ->
                     buildJsonArray {
                         add(JsonPrimitive("p"))
                         add(JsonPrimitive(entry.pubkey))
-                        if (entry.relay.isNotEmpty()) add(JsonPrimitive(entry.relay))
+                        // NIP-02 positional fields: a petname needs the relay slot filled.
+                        if (entry.relay.isNotEmpty() || entry.petname.isNotEmpty()) add(JsonPrimitive(entry.relay))
                         if (entry.petname.isNotEmpty()) add(JsonPrimitive(entry.petname))
                     }
-                },
-            )
-
-            signer.signEvent(unsigned)
-                .onSuccess { event ->
-                    pool.publish(event)
-                    accountRepository.updateAccount(
-                        account.copy(
-                            follows = newEntries.map { it.pubkey },
-                            followEntries = newEntries,
-                        )
-                    )
                 }
-                .onFailure { e -> Timber.w(e, "toggleFollow failed") }
+                val unsigned = UnsignedEvent(
+                    pubkey = signer.pubkey,
+                    // Replaceable event: must be strictly newer than the one it replaces.
+                    createdAt = maxOf(System.currentTimeMillis() / 1000, (latest?.createdAt ?: 0L) + 1),
+                    kind = EventKind.FOLLOW_LIST,
+                    content = latest?.content ?: "",
+                    tags = pTags + keptTags,
+                )
 
-            _isFollowLoading.update { false }
+                signer.signEvent(unsigned)
+                    .onSuccess { event ->
+                        pool.publish(event)
+                        accountRepository.updateAccount(account.pubkey) {
+                            it.copy(
+                                follows = newEntries.map { e -> e.pubkey },
+                                followEntries = newEntries,
+                            )
+                        }
+                    }
+                    .onFailure { e -> Timber.w(e, "toggleFollow failed") }
+            } finally {
+                _isFollowLoading.update { false }
+            }
         }
     }
 

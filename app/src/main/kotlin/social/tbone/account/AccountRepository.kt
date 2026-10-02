@@ -78,6 +78,9 @@ class AccountRepository @Inject constructor(
                 ?: emptyList()
             prefs[KEY_ACCOUNTS] = NostrJson.encodeToString(updated)
 
+            // Offline follow/block lists belong to exactly one account: they go with it.
+            social.tbone.lists.ListStorageKeys.allFor(pubkey).forEach { prefs.remove(it) }
+
             if (prefs[KEY_ACTIVE_PUBKEY] == pubkey) {
                 prefs[KEY_ACTIVE_PUBKEY] = updated.firstOrNull()?.pubkey ?: ""
             }

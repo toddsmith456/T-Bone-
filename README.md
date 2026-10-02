@@ -49,6 +49,7 @@ Do the minimum well. No analytics, no tracking, no Google Services. Authenticati
 - **Phrase fingerprint identity** — replaces truncated hex npubs throughout the UI with human-readable BIP-39 words derived from the pubkey: 3-word handle in feed rows, 6-word fingerprint on profiles, full npub + QR on the Verify Identity screen (see [Identity Convention](docs/identity-convention.md))
 - **Deterministic dot avatars** — 4×4 grid derived from the pubkey hash; square, never circular
 - **Home feed** — follow-graph events with live relay streaming, pull-to-refresh, and atomic load (feed appears all at once, not one note at a time)
+- **Offline follow & block lists** — optional fully local lists (Settings → OFFLINE LISTS). One-time import from your relays, never synced automatically, never writes to your relay follow/mute lists while on, collapsed browsable list with no avatars, add/remove by npub, one-way relay → offline SYNC with a warning, single-file export/import. Online BLOCK uses the NIP-51 mute list (kind 10000)
 - **Global feed** — all kind-1 notes from connected relays; switchable via the FOLLOWING / GLOBAL tab strip at the top of the home screen
 - **Reposts and quote-notes** — kind-6 reposts rendered as embedded cards; quote-notes (NIP-18 `q` tag and inline `nostr:note1…` refs) resolved and embedded
 - **Inline media** — images auto-load in the feed (off / on / low-quality setting, on by default) and open in a full-screen viewer with pinch-zoom and download; videos open in the system viewer

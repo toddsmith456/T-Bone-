@@ -33,6 +33,7 @@ class HashtagFeedViewModel @Inject constructor(
     private val pool: RelayPool,
     private val profileRepository: ProfileRepository,
     private val eventRepository: EventRepository,
+    private val muteRepository: social.tbone.lists.MuteListRepository,
 ) : ViewModel() {
 
     val hashtag: String = checkNotNull(savedStateHandle["tag"])
@@ -59,6 +60,8 @@ class HashtagFeedViewModel @Inject constructor(
                         if (msg.subscriptionId != subId) return@collect
                         val event = msg.event
                         if (!event.verify()) return@collect
+                        // Muted / blocked authors never show up (offline or relay mute list).
+                        if (event.pubkey in muteRepository.effectiveMuted.value) return@collect
                         viewModelScope.launch { eventRepository.save(event, "") }
                         if (!settled) {
                             synchronized(pendingEvents) { pendingEvents.add(event) }

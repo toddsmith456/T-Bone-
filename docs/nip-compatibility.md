@@ -20,7 +20,7 @@ Legend: ✅ Supported &nbsp;|&nbsp; 🚧 Partial &nbsp;|&nbsp; 🔌 Plugin &nbsp
 | NIP | Name | Status | Notes |
 |---|---|---|---|
 | [NIP-01](https://github.com/nostr-protocol/nips/blob/master/01.md) | Basic protocol & event model | ✅ | Event, Filter, relay WebSocket pool, kind-0 profile metadata |
-| [NIP-02](https://github.com/nostr-protocol/nips/blob/master/02.md) | Contact lists | ✅ | Follow list drives home feed; follow/unfollow publishes updated kind-3 |
+| [NIP-02](https://github.com/nostr-protocol/nips/blob/master/02.md) | Contact lists | ✅ | Follow list drives home feed; follow/unfollow publishes updated kind-3 (unless the offline follow list is ON — then local only) |
 | [NIP-10](https://github.com/nostr-protocol/nips/blob/master/10.md) | Text note references & replies | ✅ | Reply composing with root/reply markers; thread view; reply indicator in feed |
 | [NIP-18](https://github.com/nostr-protocol/nips/blob/master/18.md) | Reposts | ✅ | Render kind-6 reposts and `q`-tag quote-notes as embedded cards; boost and quote-note composing |
 | [NIP-19](https://github.com/nostr-protocol/nips/blob/master/19.md) | bech32-encoded entities | ✅ | npub, note, nevent, nprofile encode/decode; nostr: URI parsing in note content |
@@ -47,7 +47,7 @@ Legend: ✅ Supported &nbsp;|&nbsp; 🚧 Partial &nbsp;|&nbsp; 🔌 Plugin &nbsp
 | [NIP-21](https://github.com/nostr-protocol/nips/blob/master/21.md) | `nostr:` URI scheme | ✅ | Deep links from other apps; `nostr:npub1…` / `nostr:note1…` / `nostr:nevent1…` / `nostr:nprofile1…` handled |
 | [NIP-25](https://github.com/nostr-protocol/nips/blob/master/25.md) | Reactions | ✅ | `+` like reactions with count; optimistic update + rollback; emoji reactions are plugin territory |
 | [NIP-36](https://github.com/nostr-protocol/nips/blob/master/36.md) | Sensitive content | planned | Content warnings |
-| [NIP-51](https://github.com/nostr-protocol/nips/blob/master/51.md) | Lists | 🔌 | Mute lists, pin lists, bookmarks; hashtag/custom feed lists |
+| [NIP-51](https://github.com/nostr-protocol/nips/blob/master/51.md) | Lists | 🔌 | Mute list (kind 10000) used by BLOCK unless the offline block list is ON; pin lists, bookmarks; hashtag/custom feed lists |
 | [NIP-57](https://github.com/nostr-protocol/nips/blob/master/57.md) | Lightning zaps | 🔌 | |
 
 ## Uncommon NIPs

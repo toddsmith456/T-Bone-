@@ -60,6 +60,9 @@ offline library, assume it is banned until proven otherwise in the PR.
 
 - Nostr events (Room/SQLite), encrypted notes (AES-256-GCM, Keystore key),
   DataStore preferences, log file (`filesDir/logs/`).
+- Offline follow / block lists (Settings → OFFLINE LISTS) live only in DataStore,
+  never contain profile pictures, are never published, and are erased by the
+  duress wipe. Export files are written only where the user picks.
 - `allowBackup=false`. No cloud backup, no automatic upload anywhere.
 - Image fetches respect the Tor toggle; pasted/shared links are stripped of
   tracking parameters (`LinkCleaner`).

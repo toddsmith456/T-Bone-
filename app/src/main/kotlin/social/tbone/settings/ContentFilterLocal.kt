@@ -30,9 +30,10 @@ val LocalContentFilter = staticCompositionLocalOf { ContentFilterData() }
 @HiltViewModel
 class ContentFilterViewModel @Inject constructor(
     appSettings: AppSettings,
+    muteRepository: social.tbone.lists.MuteListRepository,
 ) : ViewModel() {
     val data: StateFlow<ContentFilterData> = combine(
-        appSettings.blockedPubkeys,
+        muteRepository.effectiveMuted,
         appSettings.hideNsfw,
         appSettings.bleepWords,
         appSettings.hideWords,

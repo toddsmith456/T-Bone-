@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import social.tbone.account.Account
@@ -29,8 +31,23 @@ class SettingsViewModel @Inject constructor(
     val logRepository: LogRepository,
     private val appSettings: AppSettings,
     private val lockManager: AppLockManager,
+    private val offlineLists: social.tbone.lists.OfflineListRepository,
     @ApplicationContext context: Context,
 ) : ViewModel() {
+
+    /** Whether the active account's offline follow list / block list is switched on. */
+    val offlineFollowsEnabled: StateFlow<Boolean> = offlineEnabledFlow(social.tbone.lists.ListType.FOLLOWS)
+    val offlineMutesEnabled: StateFlow<Boolean> = offlineEnabledFlow(social.tbone.lists.ListType.MUTES)
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun offlineEnabledFlow(type: social.tbone.lists.ListType): StateFlow<Boolean> =
+        accountRepository.activeAccount
+            .map { it?.pubkey }
+            .flatMapLatest { pk ->
+                if (pk == null) kotlinx.coroutines.flow.flowOf(false)
+                else offlineLists.state(type, pk).map { it.enabled }
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     val accounts: StateFlow<List<Account>> = accountRepository.accounts
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())

@@ -14,12 +14,18 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import social.tbone.account.Account
 import social.tbone.account.AccountRepository
 import social.tbone.db.EventRepository
+import social.tbone.lists.ListType
+import social.tbone.lists.MuteListRepository
+import social.tbone.lists.OfflineListRepository
 import social.tbone.notifications.NotificationsRepository
 import social.tbone.reactions.ReactionsRepository
 import social.tbone.reactions.PollsRepository
@@ -56,6 +62,7 @@ data class FeedUiState(
     val error: String? = null,
 )
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class FeedViewModel @Inject constructor(
     private val pool: RelayPool,
@@ -68,6 +75,8 @@ class FeedViewModel @Inject constructor(
     private val pollsRepository: PollsRepository,
     private val appSettings: AppSettings,
     private val notificationsRepository: NotificationsRepository,
+    private val offlineLists: OfflineListRepository,
+    private val muteRepository: MuteListRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(FeedUiState())
@@ -144,6 +153,16 @@ class FeedViewModel @Inject constructor(
     @Volatile private var followsForRelaySelection: List<String> = emptyList()
     private var lastLoadedPubkey: String? = null
 
+    /**
+     * Which follow source the HOME feed was last built from: the account's offline
+     * (local) follow list, or the relay list. Lets us rebuild the feed when the user
+     * flips the switch or edits the local list — and only then.
+     */
+    private data class FollowMode(val offline: Boolean, val follows: Set<String>)
+    @Volatile private var appliedFollowMode: FollowMode? = null
+    @Volatile private var appliedForPubkey: String? = null
+    private var loadJob: Job? = null
+
     // outbox model: relay URL → set of follow pubkeys that write there
     private val followRelayMap: ConcurrentHashMap<String, MutableSet<String>> = ConcurrentHashMap()
 
@@ -169,6 +188,34 @@ class FeedViewModel @Inject constructor(
                 .collect { account ->
                     if (account != null) loadFeed(account) else clearFeed()
                 }
+        }
+
+        // Offline follow list: rebuild the HOME feed when the switch flips or the local
+        // list changes. (Relay-side follow changes never trigger this — no background sync.)
+        viewModelScope.launch {
+            accountRepository.activeAccount
+                .map { it?.pubkey }
+                .distinctUntilChanged()
+                .flatMapLatest { pk ->
+                    if (pk == null) emptyFlow()
+                    else offlineLists.state(ListType.FOLLOWS, pk)
+                        .map { st -> pk to FollowMode(st.enabled, if (st.enabled) st.pubkeySet() else emptySet()) }
+                        .distinctUntilChanged()
+                }
+                .collect { (pk, mode) ->
+                    val applied = appliedFollowMode
+                    if (applied == null || appliedForPubkey != pk) return@collect // a load is/will be in charge
+                    if (mode == applied || _currentFeed.value != FeedTab.HOME) return@collect
+                    activeAccount.value?.takeIf { it.pubkey == pk }?.let { loadFeed(it, clearEvents = false) }
+                }
+        }
+
+        // Re-filter what is already on screen when the mute/block list changes.
+        viewModelScope.launch {
+            muteRepository.effectiveMuted.collect {
+                val snapshot = synchronized(feedEvents) { feedEvents.take(MAX_FEED_EVENTS) }
+                _uiState.update { state -> state.copy(events = applyContentFilter(snapshot)) }
+            }
         }
     }
 
@@ -219,7 +266,7 @@ class FeedViewModel @Inject constructor(
      * list of events before it reaches the UI.
      */
     private fun applyContentFilter(events: List<social.tbone.nostr.Event>): List<social.tbone.nostr.Event> {
-        val blocked = appSettings.blockedPubkeys.value
+        val blocked = muteRepository.effectiveMuted.value
         val hideNsfw = appSettings.hideNsfw.value
         val hideWords = appSettings.hideWords.value
         if (blocked.isEmpty() && !hideNsfw && hideWords.isEmpty()) return events
@@ -257,63 +304,115 @@ class FeedViewModel @Inject constructor(
             else it.copy(isLoading = true, error = null)
         }
 
+        loadJob?.cancel()
+        appliedFollowMode = null
+        appliedForPubkey = null
+
         // Preload cached events on restart (same account). Skip on account switch to
         // avoid showing stale events from a different account's follow graph.
         val isSameAccount = lastLoadedPubkey == account.pubkey
         lastLoadedPubkey = account.pubkey
-        if (isSameAccount) {
-            viewModelScope.launch {
-                val cached = eventRepository.getRecentFeedEvents(account.pubkey)
-                if (cached.isNotEmpty()) {
-                    val snapshot = synchronized(feedEvents) {
-                        feedEvents.addAll(cached)
-                        feedEvents.take(MAX_FEED_EVENTS)
+
+        loadJob = viewModelScope.launch {
+            // Which follow list drives the feed: the account's offline list (when its switch is
+            // on) or the relay list. In offline mode the relay follow list is never even requested.
+            val local = offlineLists.snapshot(ListType.FOLLOWS, account.pubkey)
+            val offlineMode = local.enabled
+            val localFollows = if (offlineMode) local.pubkeySet() else emptySet()
+            appliedFollowMode = FollowMode(offlineMode, localFollows)
+            appliedForPubkey = account.pubkey
+
+            if (offlineMode) {
+                // Drop anything on screen from people no longer in the local list.
+                val allowed = localFollows + account.pubkey
+                val snapshot = synchronized(feedEvents) {
+                    feedEvents.removeAll { it.pubkey !in allowed }
+                    feedEvents.take(MAX_FEED_EVENTS)
+                }
+                _uiState.update { state -> state.copy(events = applyContentFilter(snapshot)) }
+            }
+
+            if (isSameAccount) {
+                launch {
+                    var cached = eventRepository.getRecentFeedEvents(account.pubkey)
+                    if (offlineMode) {
+                        val allowed = localFollows + account.pubkey
+                        cached = cached.filter { it.pubkey in allowed }
                     }
-                    _uiState.update { state -> state.copy(events = applyContentFilter(snapshot)) }
-                    fetchProfilesForEvents(cached)
-                    repliesRepository.subscribeTo(cached.map { it.id })
+                    if (cached.isNotEmpty()) {
+                        val snapshot = synchronized(feedEvents) {
+                            feedEvents.addAll(cached)
+                            feedEvents.take(MAX_FEED_EVENTS)
+                        }
+                        _uiState.update { state -> state.copy(events = applyContentFilter(snapshot)) }
+                        fetchProfilesForEvents(cached)
+                        repliesRepository.subscribeTo(cached.map { it.id })
+                    }
                 }
             }
-        }
 
-        val relays = account.relays.ifEmpty { DEFAULT_RELAYS }
-        relays.forEach { pool.addRelay(it) }
+            val relays = account.relays.ifEmpty { DEFAULT_RELAYS }
+            relays.forEach { pool.addRelay(it) }
 
-        // Own notes first; events buffer until EOSE, then the follow list subscription
-        // replaces this and buffers again until its own EOSE — feed appears atomically.
-        feedSubId = sub(listOf(
-            Filter(
-                authors = listOf(account.pubkey),
-                kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL),
-                limit = 50,
-            )
-        ))
-
-        // Fetch follow list (kind-3), own profile (kind-0), and relay list (kind-10002) in parallel
-        followSubId = sub(listOf(
-            Filter(authors = listOf(account.pubkey), kinds = listOf(EventKind.FOLLOW_LIST), limit = 1)
-        ))
-        metadataSubId = sub(listOf(
-            Filter(authors = listOf(account.pubkey), kinds = listOf(EventKind.METADATA), limit = 1)
-        ))
-        relayListSubId = sub(listOf(
-            Filter(authors = listOf(account.pubkey), kinds = listOf(EventKind.RELAY_LIST), limit = 1)
-        ))
-
-        collectJob = viewModelScope.launch(Dispatchers.Default) { collectMessages() }
-
-        // Safety net: flush buffer and clear spinner after 15s regardless
-        viewModelScope.launch {
-            delay(15_000)
-            if (!feedSettled) {
-                feedSettled = true
-                flushBuffer()
+            if (offlineMode) {
+                // Offline follow list: no kind-3 request at all. The feed is built straight
+                // from the local list; "follow list received" is true from the start.
+                followsReceived = true
+                val followed = local.entries.map { it.pubkey }
+                if (followed.isEmpty()) {
+                    // Nobody followed locally: just show your own notes.
+                    feedSubId = sub(listOf(
+                        Filter(
+                            authors = listOf(account.pubkey),
+                            kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL),
+                            limit = 50,
+                        )
+                    ))
+                } else {
+                    applyFollowedSet(account.pubkey, followed)
+                }
+            } else {
+                // Own notes first; events buffer until EOSE, then the follow list subscription
+                // replaces this and buffers again until its own EOSE — feed appears atomically.
+                feedSubId = sub(listOf(
+                    Filter(
+                        authors = listOf(account.pubkey),
+                        kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL),
+                        limit = 50,
+                    )
+                ))
+                // Fetch follow list (kind-3) from the relays.
+                followSubId = sub(listOf(
+                    Filter(authors = listOf(account.pubkey), kinds = listOf(EventKind.FOLLOW_LIST), limit = 1)
+                ))
             }
-            _uiState.update { if (it.isLoading) it.copy(isLoading = false) else it }
+
+            // Own profile (kind-0) and relay list (kind-10002) in parallel
+            metadataSubId = sub(listOf(
+                Filter(authors = listOf(account.pubkey), kinds = listOf(EventKind.METADATA), limit = 1)
+            ))
+            relayListSubId = sub(listOf(
+                Filter(authors = listOf(account.pubkey), kinds = listOf(EventKind.RELAY_LIST), limit = 1)
+            ))
+
+            collectJob = viewModelScope.launch(Dispatchers.Default) { collectMessages() }
+
+            // Safety net: flush buffer and clear spinner after 15s regardless
+            launch {
+                delay(15_000)
+                if (!feedSettled) {
+                    feedSettled = true
+                    flushBuffer()
+                }
+                _uiState.update { if (it.isLoading) it.copy(isLoading = false) else it }
+            }
         }
     }
 
     private fun loadGlobalFeed(account: Account) {
+        loadJob?.cancel()
+        appliedFollowMode = null
+        appliedForPubkey = null
         collectJob?.cancel()
         activeSubIds.clear()
         unsub(feedSubId); feedSubId = null
@@ -474,24 +573,8 @@ class FeedViewModel @Inject constructor(
         unsub(followSubId); followSubId = null
 
         val selfPubkey = activeAccount.value?.pubkey ?: return
-        val allPubkeys = (followed + selfPubkey).distinct()
 
-        // Follow list received — expand to full feed and wait for its EOSE.
-        followsReceived = true
-        unsub(feedSubId)
-        feedSettled = false
-        feedSubId = sub(listOf(
-            Filter(
-                authors = allPubkeys,
-                kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL),
-                limit = 200,
-            )
-        ))
-
-        // Eagerly fetch profile metadata for everyone we follow in parallel with
-        // the feed events, so names render as soon as the feed appears instead of
-        // lagging behind each note. Cached profiles skip the network entirely.
-        fetchMetadataForAuthors(allPubkeys)
+        applyFollowedSet(selfPubkey, followed)
 
         // Persist follow list with full relay hints so toggleFollow can preserve them.
         // selfPubkey is captured from above — stable, never changes for the active account.
@@ -510,6 +593,35 @@ class FeedViewModel @Inject constructor(
                 it.copy(follows = followed, followEntries = entries)
             }
         }
+    }
+
+    /**
+     * Builds the full home feed for [followed] (+ yourself): replaces the narrow
+     * own-notes subscription, prefetches profiles, and runs outbox relay selection.
+     *
+     * Source-agnostic: the follow set comes either from the relay kind-3 event
+     * ([expandFeedToFollows]) or from the account's offline list (see [loadFeed]).
+     * This function never writes the follow list anywhere.
+     */
+    private fun applyFollowedSet(selfPubkey: String, followed: List<String>) {
+        val allPubkeys = (followed + selfPubkey).distinct()
+
+        // Follow list known — expand to full feed and wait for its EOSE.
+        followsReceived = true
+        unsub(feedSubId)
+        feedSettled = false
+        feedSubId = sub(listOf(
+            Filter(
+                authors = allPubkeys,
+                kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL),
+                limit = 200,
+            )
+        ))
+
+        // Eagerly fetch profile metadata for everyone we follow in parallel with
+        // the feed events, so names render as soon as the feed appears instead of
+        // lagging behind each note. Cached profiles skip the network entirely.
+        fetchMetadataForAuthors(allPubkeys)
 
         // Outbox model: fetch kind-10002 for all follows to discover their write relays,
         // then run greedy set cover to select the ~7 relays that cover the most follows.
@@ -673,6 +785,9 @@ class FeedViewModel @Inject constructor(
     }
 
     private fun clearFeed() {
+        loadJob?.cancel()
+        appliedFollowMode = null
+        appliedForPubkey = null
         collectJob?.cancel()
         activeSubIds.clear()
         unsub(feedSubId); feedSubId = null

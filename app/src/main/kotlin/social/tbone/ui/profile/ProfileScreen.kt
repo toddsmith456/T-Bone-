@@ -78,6 +78,9 @@ fun ProfileScreen(
     val isFollowing by viewModel.isFollowing.collectAsStateWithLifecycle()
     val isFollowLoading by viewModel.isFollowLoading.collectAsStateWithLifecycle()
     val isBlocked by viewModel.isBlocked.collectAsStateWithLifecycle()
+    val isBlockLoading by viewModel.isBlockLoading.collectAsStateWithLifecycle()
+    val followIsLocal by viewModel.followIsLocal.collectAsStateWithLifecycle()
+    val blockIsLocal by viewModel.blockIsLocal.collectAsStateWithLifecycle()
     val reactions by viewModel.reactions.collectAsStateWithLifecycle()
     val replies by viewModel.replies.collectAsStateWithLifecycle()
     val repliedByMe by viewModel.repliedByMe.collectAsStateWithLifecycle()
@@ -105,6 +108,9 @@ fun ProfileScreen(
     }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    androidx.compose.runtime.LaunchedEffect(viewModel) {
+        viewModel.messages.collect { snackbarHostState.showSnackbar(it) }
+    }
 
     val phrase6 = remember(pubkey) { Phrase.wordsFor(pubkey, 6) }
     val npub = remember(pubkey) { Nip19.hexToNpub(pubkey) }
@@ -319,6 +325,7 @@ fun ProfileScreen(
                             BonyButton(
                                 label = if (isBlocked) "UNBLOCK" else "BLOCK",
                                 primary = false,
+                                enabled = !isBlockLoading,
                                 onClick = viewModel::toggleBlock,
                                 modifier = Modifier.weight(0.7f),
                             )
@@ -349,6 +356,17 @@ fun ProfileScreen(
                                     }
                                 },
                                 modifier = Modifier.weight(1f),
+                            )
+                        }
+                        if (followIsLocal || blockIsLocal) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = when {
+                                    followIsLocal && blockIsLocal -> "offline lists on · follow and block stay on this device only"
+                                    followIsLocal -> "offline follow list on · follow stays on this device only"
+                                    else -> "offline block list on · block stays on this device only"
+                                },
+                                style = BonyType.caption.copy(color = BonyColors.TextMute),
                             )
                         }
                     }

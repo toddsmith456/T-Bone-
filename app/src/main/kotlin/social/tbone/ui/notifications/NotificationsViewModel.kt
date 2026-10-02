@@ -34,6 +34,7 @@ import javax.inject.Inject
 class NotificationsViewModel @Inject constructor(
     private val repository: NotificationsRepository,
     private val appSettings: AppSettings,
+    private val muteRepository: social.tbone.lists.MuteListRepository,
     profileRepository: ProfileRepository,
 ) : ViewModel() {
 
@@ -46,7 +47,7 @@ class NotificationsViewModel @Inject constructor(
 
     /** The visible list — flat rows filtered by [enabledFilters] and blocks. */
     val items: StateFlow<List<FlatNotifItem>> = combine(
-        repository.flat, _enabledFilters, appSettings.blockedPubkeys,
+        repository.flat, _enabledFilters, muteRepository.effectiveMuted,
     ) { items, enabled, blocked ->
         if (enabled.isEmpty()) items
         else items.filter { item ->

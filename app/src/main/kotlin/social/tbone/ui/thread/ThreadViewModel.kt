@@ -61,6 +61,7 @@ class ThreadViewModel @Inject constructor(
     private val reactionsRepository: ReactionsRepository,
     private val repliesRepository: RepliesRepository,
     private val appSettings: social.tbone.settings.AppSettings,
+    private val muteRepository: social.tbone.lists.MuteListRepository,
     private val pollsRepository: PollsRepository,
     private val accountRepository: AccountRepository,
 ) : ViewModel() {
@@ -231,7 +232,7 @@ class ThreadViewModel @Inject constructor(
                     viewModelScope.launch { eventRepository.save(msg.event, "") }
                     // Hide replies from blocked users / nsfw / hidden words.
                     val app = appSettings
-                    val blocked = app.blockedPubkeys.value
+                    val blocked = muteRepository.effectiveMuted.value
                     val hideNsfw = app.hideNsfw.value
                     val hideWords = app.hideWords.value
                     if (!social.tbone.settings.ContentFilter.shouldHide(msg.event, blocked, hideNsfw, hideWords)) {
