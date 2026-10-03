@@ -272,7 +272,6 @@ private fun ThreadRow(
     // The note you opened and the thread root are shown in full; replies stay
     // compact so the thread remains scannable.
     val isThreadRoot = event.id == uiState.root?.id
-    val hidden = item.descendantCount
 
     Column(
         modifier = Modifier
@@ -313,27 +312,7 @@ private fun ThreadRow(
             quotedEvents = quotedEvents,
         )
 
-        if (hidden > 0) {
-            // Toggle the subtree: "+N replies" opens it, the count closes it.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 52.dp + ThreadIndent.STEP * (depth + 1), end = 14.dp)
-                    .padding(bottom = 6.dp)
-                    .clickable {
-                        if (item.folded) onExpandBranch(event.id) else onCollapseBranch(event.id)
-                    },
-            ) {
-                Text(
-                    text = if (item.folded) {
-                        "＋ $hidden " + if (hidden == 1) "reply" else "replies"
-                    } else {
-                        "▾ $hidden " + if (hidden == 1) "reply" else "replies"
-                    },
-                    style = BonyType.meta.copy(color = BonyColors.TextMute),
-                )
-            }
-        }
+        // The whole thread is always shown expanded — no fold toggles.
     }
 }
 

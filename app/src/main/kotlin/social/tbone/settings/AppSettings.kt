@@ -71,6 +71,14 @@ class AppSettings @Inject constructor(
         // so a child can't change what the parent configured (e.g. NSFW hiding).
         private val PARENTAL_PIN_ENABLED = booleanPreferencesKey("parental_pin_enabled")
         private val PARENTAL_PIN_HASH = stringPreferencesKey("parental_pin_hash")
+
+        // Multi emoji reactions: on/off + up to 10 saved emojis (newline-joined,
+        // order preserved).
+        private val MULTI_REACTIONS_ENABLED = booleanPreferencesKey("multi_reactions_enabled")
+        private val REACTION_EMOJIS = stringPreferencesKey("reaction_emojis")
+
+        /** Maximum number of saved reaction emojis. */
+        const val MAX_REACTION_EMOJIS = 10
         // Blossom media uploads: enabled servers (defaults + custom), the
         // preferred default server, and whether uploads are compressed.
         private val BLOSSOM_SERVERS = stringSetPreferencesKey("blossom_servers")
@@ -160,6 +168,32 @@ class AppSettings @Inject constructor(
     private val _parentalPinEnabled = MutableStateFlow(false)
     val parentalPinEnabled = _parentalPinEnabled.asStateFlow()
 
+    /**
+     * In-memory (never persisted) unlock of the Content Filters folder. Shared
+     * by every screen inside the folder (filters + screen time) so one pin
+     * entry opens the whole folder; it relocks when the folder is left.
+     */
+    private val _multiReactionsEnabled = MutableStateFlow(false)
+    val multiReactionsEnabled = _multiReactionsEnabled.asStateFlow()
+
+    private val _reactionEmojis = MutableStateFlow<List<String>>(emptyList())
+    val reactionEmojis = _reactionEmojis.asStateFlow()
+
+    suspend fun setMultiReactionsEnabled(enabled: Boolean) {
+        _multiReactionsEnabled.value = enabled
+        dataStore.edit { it[MULTI_REACTIONS_ENABLED] = enabled }
+    }
+
+    suspend fun setReactionEmojis(emojis: List<String>) {
+        val clean = emojis.map { it.trim() }.filter { it.isNotEmpty() }.distinct().take(MAX_REACTION_EMOJIS)
+        _reactionEmojis.value = clean
+        dataStore.edit { it[REACTION_EMOJIS] = clean.joinToString("\n") }
+    }
+
+    private val _parentalUnlocked = MutableStateFlow(false)
+    val parentalUnlocked = _parentalUnlocked.asStateFlow()
+    fun setParentalUnlocked(unlocked: Boolean) { _parentalUnlocked.value = unlocked }
+
     /** Enabled Blossom servers (defaults + custom), for media uploads. */
     private val _blossomServers = MutableStateFlow<Set<String>>(BLOSSOM_DEFAULTS)
     val blossomServers = _blossomServers.asStateFlow()
@@ -219,6 +253,9 @@ class AppSettings @Inject constructor(
                 _bleepWords.value = prefs[BLEEP_WORDS] ?: emptySet()
                 _hideWords.value = prefs[HIDE_WORDS] ?: emptySet()
                 _parentalPinEnabled.value = prefs[PARENTAL_PIN_ENABLED] ?: false
+                _multiReactionsEnabled.value = prefs[MULTI_REACTIONS_ENABLED] ?: false
+                _reactionEmojis.value = prefs[REACTION_EMOJIS]
+                    ?.split("\n")?.filter { it.isNotBlank() }?.take(MAX_REACTION_EMOJIS) ?: emptyList()
                 // Normalise on load: earlier builds stored whatever the user typed,
                 // so a scheme-less entry ("blossom.example.com") would be handed to
                 // OkHttp verbatim and every upload failed before leaving the device.

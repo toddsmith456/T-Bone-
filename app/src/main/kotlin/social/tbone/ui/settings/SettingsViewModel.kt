@@ -120,19 +120,51 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { appSettings.setScreenTimeMinutes(minutes.coerceIn(5, 24 * 60)) }
     }
 
+    // ── multi emoji reactions ───────────────────────────────────────────────
+    val multiReactionsEnabled: StateFlow<Boolean> = appSettings.multiReactionsEnabled
+    val reactionEmojis: StateFlow<List<String>> = appSettings.reactionEmojis
+
+    fun setMultiReactionsEnabled(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setMultiReactionsEnabled(enabled) }
+    }
+
+    fun addReactionEmojis(emojis: List<String>) {
+        if (emojis.isEmpty()) return
+        viewModelScope.launch {
+            appSettings.setReactionEmojis(appSettings.reactionEmojis.value + emojis)
+        }
+    }
+
+    fun removeReactionEmoji(emoji: String) {
+        viewModelScope.launch {
+            appSettings.setReactionEmojis(appSettings.reactionEmojis.value - emoji)
+        }
+    }
+
     // ── parental pin (locks the filter settings) ────────────────────────────
     val parentalPinEnabled: StateFlow<Boolean> = appSettings.parentalPinEnabled
 
-    /** Whether the filters screen was unlocked this visit (session-only). */
-    private val _filtersUnlocked = MutableStateFlow(false)
-    val filtersUnlocked: StateFlow<Boolean> = _filtersUnlocked.asStateFlow()
+    /**
+     * Whether the Content Filters folder (filters + screen time) is unlocked.
+     * Shared across the folder's screens via [AppSettings]; session-only.
+     */
+    val filtersUnlocked: StateFlow<Boolean> = appSettings.parentalUnlocked
 
     fun unlockFilters() {
-        _filtersUnlocked.value = true
+        appSettings.setParentalUnlocked(true)
     }
 
     fun relockFilters() {
-        _filtersUnlocked.value = false
+        appSettings.setParentalUnlocked(false)
+    }
+
+    /** Set by the Content Filters folder screen: relock when it is popped. */
+    private var relockOnClear = false
+    fun markAsParentalGate() { relockOnClear = true }
+
+    override fun onCleared() {
+        if (relockOnClear) appSettings.setParentalUnlocked(false)
+        super.onCleared()
     }
 
     suspend fun verifyParentalPin(input: String): Boolean {
@@ -144,7 +176,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             appSettings.setParentalPinHash(sha256(pin))
             appSettings.setParentalPinEnabled(true)
-            _filtersUnlocked.value = true
+            appSettings.setParentalUnlocked(true)
         }
     }
 
@@ -152,7 +184,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             appSettings.setParentalPinEnabled(false)
             appSettings.setParentalPinHash("")
-            _filtersUnlocked.value = false
+            appSettings.setParentalUnlocked(false)
         }
     }
 

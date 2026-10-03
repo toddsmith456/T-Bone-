@@ -48,12 +48,35 @@ class ReactionsRepository @Inject constructor(
     private val _reactions = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
     val reactions: StateFlow<Map<String, Set<String>>> = _reactions.asStateFlow()
 
+    /**
+     * The reaction content each pubkey left on each note, keyed by
+     * [reactionKey] (`eventId|pubkey`). Used to show the emoji the active user
+     * reacted with in place of the heart.
+     */
+    private val contentCache = LruCache<String, String>(Tunables.REACTION_CACHE_SIZE)
+    private val _reactionContents = MutableStateFlow<Map<String, String>>(emptyMap())
+    val reactionContents: StateFlow<Map<String, String>> = _reactionContents.asStateFlow()
+
+    private fun recordContent(eventId: String, pubkey: String, content: String) {
+        val key = reactionKey(eventId, pubkey)
+        synchronized(contentCache) { contentCache.put(key, content) }
+        _reactionContents.update { current ->
+            // Keep the exposed map bounded like the LRU behind it.
+            val trimmed = if (current.size >= Tunables.REACTION_CACHE_SIZE) {
+                current.entries.drop(current.size / 4).associate { it.key to it.value }
+            } else current
+            trimmed + (key to content)
+        }
+    }
+
     init {
         scope.launch {
             pool.messages.collect { (_, msg) ->
+                // Any positive reaction counts: "+" (or empty) is a like, and
+                // an emoji is a like shown as that emoji. "-" is a dislike.
                 if (msg is RelayMessage.EventMessage
                     && msg.event.kind == EventKind.REACTION
-                    && msg.event.content == "+"
+                    && msg.event.content != "-"
                     && msg.event.verify()
                 ) {
                     val targetId = msg.event.parsedTags
@@ -66,6 +89,7 @@ class ReactionsRepository @Inject constructor(
                     // Targeted update: replace only the changed entry instead of
                     // snapshotting the entire 5000-entry cache on every reaction event.
                     _reactions.update { it + (targetId to updated) }
+                    recordContent(targetId, msg.event.pubkey, msg.event.content.ifEmpty { "+" })
                 }
             }
         }
@@ -92,7 +116,8 @@ class ReactionsRepository @Inject constructor(
     }
 
     /** Publish a "+" reaction. Updates state optimistically; rolls back on failure. */
-    fun react(event: Event) {
+    fun react(event: Event, content: String = "+") {
+        val reaction = content.trim().ifEmpty { "+" }
         scope.launch {
             val signer = signerFactory.forActiveAccount() ?: return@launch
             val activePubkey = signer.pubkey
@@ -103,14 +128,16 @@ class ReactionsRepository @Inject constructor(
                 next
             }
             _reactions.update { it + (event.id to optimistic) }
+            recordContent(event.id, activePubkey, reaction)
 
             val unsigned = UnsignedEvent(
                 pubkey = activePubkey,
                 kind = EventKind.REACTION,
-                content = "+",
+                content = reaction,
                 tags = listOf(
                     buildJsonArray { add("e"); add(event.id) },
                     buildJsonArray { add("p"); add(event.pubkey) },
+                    buildJsonArray { add("k"); add(event.kind.toString()) },
                 ),
             )
             signer.signEvent(unsigned)
@@ -122,8 +149,13 @@ class ReactionsRepository @Inject constructor(
                         next
                     }
                     _reactions.update { it + (event.id to rollback) }
+                    synchronized(contentCache) { contentCache.remove(reactionKey(event.id, activePubkey)) }
+                    _reactionContents.update { it - reactionKey(event.id, activePubkey) }
                     Timber.w(e, "React failed")
                 }
         }
     }
 }
+
+/** Key for [ReactionsRepository.reactionContents]. */
+fun reactionKey(eventId: String, pubkey: String): String = "$eventId|$pubkey"

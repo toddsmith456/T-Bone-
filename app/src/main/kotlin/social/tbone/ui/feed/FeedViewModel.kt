@@ -484,8 +484,13 @@ class FeedViewModel @Inject constructor(
                 is RelayMessage.EndOfStoredEvents -> {
                     when {
                         msg.subscriptionId in quoteSubIds -> {
-                            quoteSubIds.remove(msg.subscriptionId)
-                            pool.unsubscribe(msg.subscriptionId)
+                            // First EOSE = fastest relay only. Keep listening so a
+                            // slower relay holding the note can still deliver it.
+                            val sid = msg.subscriptionId
+                            viewModelScope.launch {
+                                kotlinx.coroutines.delay(QUOTE_GRACE_MS)
+                                if (quoteSubIds.remove(sid)) pool.unsubscribe(sid)
+                            }
                         }
                         msg.subscriptionId in metadataFetchSubIds -> {
                             metadataFetchSubIds.remove(msg.subscriptionId)
@@ -522,6 +527,8 @@ class FeedViewModel @Inject constructor(
         _quotedEvents.update { it + (event.id to event) }
         viewModelScope.launch { eventRepository.save(event, "") }
         fetchMetadataForAuthors(listOf(event.pubkey))
+        // A reposted/quoted note may itself quote another note.
+        if (event.kind != EventKind.REPOST) fetchQuotesForEvents(listOf(event))
     }
 
     private fun handleEvent(event: Event) {
@@ -731,13 +738,14 @@ class FeedViewModel @Inject constructor(
                         _quotedEvents.update { it + (embedded.id to embedded) }
                         viewModelScope.launch { eventRepository.save(embedded, "") }
                         fetchMetadataForAuthors(listOf(embedded.pubkey))
+                        if (embedded.kind != EventKind.REPOST) fetchQuotesForEvents(listOf(embedded))
                     } else {
                         // Fall back to fetching by e tag
                         val refId = event.parsedTags.firstOrNull { it.name == "e" }?.value()
                         if (refId != null && refId !in requestedQuoteIds) toResolve.add(refId)
                     }
                 }
-                EventKind.TEXT_NOTE -> {
+                EventKind.TEXT_NOTE, EventKind.COMMENT, EventKind.POLL -> {
                     val qId = event.parsedTags.quotedEventId
                         ?: extractInlineQuoteId(event.content)
                     if (qId != null && qId !in requestedQuoteIds) toResolve.add(qId)
@@ -886,3 +894,6 @@ class FeedViewModel @Inject constructor(
         val DEFAULT_RELAYS get() = Tunables.DEFAULT_RELAYS
     }
 }
+
+/** How long a quote lookup stays open after the first relay EOSE. */
+private const val QUOTE_GRACE_MS = 8_000L

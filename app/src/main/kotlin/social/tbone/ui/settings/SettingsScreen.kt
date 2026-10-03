@@ -228,23 +228,21 @@ fun SettingsScreen(
                 .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("content filters", style = BonyType.body.copy(color = BonyColors.TextDim), modifier = Modifier.weight(1f))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("content filters", style = BonyType.body.copy(color = BonyColors.TextDim))
+                Text(
+                    text = "filters · parental controls · screen time",
+                    style = BonyType.meta.copy(color = BonyColors.TextMute),
+                )
+            }
             Text("→", style = BonyType.body.copy(color = BonyColors.TextMute))
         }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
-        // Parental screen-time limit.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { onScreenTime() }
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("screen time", style = BonyType.body.copy(color = BonyColors.TextDim), modifier = Modifier.weight(1f))
-            Text("→", style = BonyType.body.copy(color = BonyColors.TextMute))
-        }
-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+        // Screen time now lives inside the pin-locked Content Filters folder.
+
+        // ── Reactions section ─────────────────────────────────────────────────
+        ReactionSettingsSection(viewModel)
 
         // ── Media section ─────────────────────────────────────────────────────
         SectionHeader("MEDIA")

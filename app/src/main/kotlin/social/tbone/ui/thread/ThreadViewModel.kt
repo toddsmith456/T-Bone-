@@ -133,6 +133,18 @@ class ThreadViewModel @Inject constructor(
 
     private var rootId: String? = null
 
+    /** Subscriptions opened by [fetchById]; their events bypass the thread filter. */
+    private val fetchSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val fetchedById = ConcurrentHashMap<String, Event>()
+
+    /** Hint / fallback relays connected for this screen; released in onCleared. */
+    private val acquiredRelays: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** Notes whose own replies have been requested (nested reply discovery). */
+    private val repliesRequested: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val pendingReplyLookups: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private var replyLookupJob: Job? = null
+
     // Branch disclosure state (see ThreadTree).
     private val expandedIds = ConcurrentHashMap.newKeySet<String>()
     private val collapsedIds = ConcurrentHashMap.newKeySet<String>()
@@ -200,26 +212,49 @@ class ThreadViewModel @Inject constructor(
     // ── Loading ───────────────────────────────────────────────────────────────
 
     private suspend fun load() {
-        val focused = eventRepository.getById(eventId) ?: fetchById(eventId)
+        var focused = eventRepository.getById(eventId) ?: fetchById(eventId)
         if (focused == null) {
             Timber.w("thread: focused note $eventId not found on any relay")
             _uiState.update { it.copy(isLoading = false, notFound = true) }
             return
         }
 
-        threadEvents[focused.id] = focused
-        _uiState.update { it.copy(focused = focused, isLoading = false, loadingContext = true) }
+        // A repost (kind 6 / 16) is only a wrapper: the thread that matters is
+        // the one of the note that was reposted. Without this a reposted reply
+        // opened as its wrapper had no parent tags at all, so nothing upstream
+        // ever loaded.
+        unwrapRepost(focused)?.let { focused = it }
+        val target = focused!!
+
+        threadEvents[target.id] = target
+        _uiState.update {
+            it.copy(
+                focused = target,
+                focusedEventId = target.id,
+                isLoading = false,
+                loadingContext = true,
+            )
+        }
         rebuild()
+
+        // Start listening for replies to the focused note immediately so they
+        // stream in while the ancestors are still being fetched.
+        val declaredRoot = target.parsedTags.threadRootEventId?.takeIf { it != target.id }
+        rootId = declaredRoot ?: target.id
+        startThreadSubscriptions(declaredRoot ?: target.id, listOf(target.id))
 
         // Walk all the way up so every note between the root and this one is
         // actually fetched (this is the old "replies in between" gap).
-        val ancestors = resolveAncestors(focused)
-        val root = ancestors.firstOrNull() ?: focused
-        rootId = root.id
+        val ancestors = resolveAncestors(target)
+        ancestors.forEach { threadEvents[it.id] = it }
+        val root = ancestors.firstOrNull() ?: target
+        // If the root itself could not be fetched, still anchor the thread to
+        // the declared root id so sibling replies are requested and grouped.
+        rootId = if (ancestors.isEmpty() && declaredRoot != null) declaredRoot else root.id
         _uiState.update { it.copy(root = root, loadingContext = false) }
 
-        val chain = (ancestors.map { it.id } + focused.id).distinct()
-        startThreadSubscriptions(root.id, chain)
+        val chain = (ancestors.map { it.id } + target.id).distinct()
+        startThreadSubscriptions(rootId ?: root.id, chain)
         rebuild()
 
         fetchProfiles(threadEvents.values.toList())
@@ -230,9 +265,31 @@ class ThreadViewModel @Inject constructor(
     }
 
     /**
-     * Walks `replyEventId` upwards from [focused] until the chain ends or a
-     * parent genuinely cannot be found, fetching missing ancestors from the
-     * relays. Returns them root-first.
+     * Returns the reposted note when [event] is a kind-6 / kind-16 repost
+     * (embedded JSON first, then the `e` tag fetched from relays).
+     */
+    private suspend fun unwrapRepost(event: Event): Event? {
+        if (event.kind != EventKind.REPOST && event.kind != GENERIC_REPOST) return null
+        val embedded = if (event.content.isBlank() || event.content.length > MAX_REPOST_CONTENT_BYTES) {
+            null
+        } else {
+            runCatching { Event.fromJson(event.content) }.getOrNull()?.takeIf { it.verify() }
+        }
+        if (embedded != null) {
+            viewModelScope.launch { eventRepository.save(embedded, "") }
+            return embedded
+        }
+        val tag = event.parsedTags.firstOrNull { it.name == "e" } ?: return null
+        val id = tag.value() ?: return null
+        return eventRepository.getById(id) ?: fetchById(id, listOfNotNull(tag.value(2)))
+    }
+
+    /**
+     * Walks `replyEventId` upwards from [focused] until the chain ends,
+     * fetching missing ancestors from the relays (cache first, then every
+     * connected relay, then the relay hints in the tags plus fallback relays).
+     * When a direct parent genuinely cannot be found, the declared thread root
+     * is tried so the top of the conversation still shows. Returns root-first.
      */
     private suspend fun resolveAncestors(focused: Event): List<Event> {
         val chain = mutableListOf<Event>()
@@ -246,25 +303,77 @@ class ThreadViewModel @Inject constructor(
                 ?: break
             if (!seen.add(parentId)) break // cycle guard
 
-            val parent = eventRepository.getById(parentId) ?: fetchById(parentId) ?: break
+            var parent = eventRepository.getById(parentId)
+                ?: fetchById(parentId, relayHintsFor(current, parentId))
+            if (parent == null) {
+                // Parent missing everywhere — jump to the thread root instead
+                // of giving up on everything above.
+                val rootRef = current.parsedTags.threadRootEventId
+                    ?.takeIf { it != parentId && it !in seen }
+                if (rootRef != null) {
+                    seen += rootRef
+                    parent = eventRepository.getById(rootRef)
+                        ?: fetchById(rootRef, relayHintsFor(current, rootRef))
+                }
+            }
+            if (parent == null) break
             chain += parent
-            // Cache the whole chain so opening it again is instant.
-            viewModelScope.launch { eventRepository.save(parent, "") }
+            threadEvents[parent.id] = parent
+            // Show each ancestor as soon as it arrives.
+            rebuild()
             current = parent
         }
 
         return chain.reversed() // root-first
     }
 
-    /** Fetches one event by id, giving up after [EOSE_TIMEOUT_MS]. */
-    private suspend fun fetchById(id: String): Event? {
-        // No kind restriction: the target may be a text note, poll or repost.
-        val subId = pool.subscribe(listOf(Filter(ids = listOf(id))))
+    /** Relay hints carried by [event]'s e/E/q tags for [targetId]. */
+    private fun relayHintsFor(event: Event, targetId: String): List<String> =
+        event.parsedTags
+            .filter { (it.name == "e" || it.name == "E" || it.name == "q") && it.value() == targetId }
+            .mapNotNull { it.value(2)?.trim()?.takeIf { url -> url.startsWith("wss://") || url.startsWith("ws://") } }
+            .distinct()
+
+    /**
+     * Fetches one event by id. Returns as soon as any relay delivers it; gives
+     * up after every relay answered EOSE (bounded by [EOSE_TIMEOUT_MS]). When
+     * the connected relays don't have it, retries once on the [hints] plus the
+     * fallback relays, which are connected temporarily for this screen.
+     *
+     * The previous build routed these results through the thread-membership
+     * filter, which rejected every ancestor (it is not "in the thread" until
+     * it has been fetched), so parents only ever loaded from the local cache.
+     */
+    private suspend fun fetchById(id: String, hints: List<String> = emptyList()): Event? {
+        fetchOnce(id, relays = null)?.let { return it }
+        val extra = (hints + Tunables.DEFAULT_RELAYS)
+            .map { RelayPool.normalize(it) }
+            .distinct()
+            .filter { it !in pool.relayUrls() || it in acquiredRelays }
+        if (extra.isEmpty()) return null
+        extra.forEach { url ->
+            if (acquiredRelays.add(url)) pool.acquireRelay(url)
+        }
+        // Give freshly opened sockets a moment to connect.
+        return fetchOnce(id, relays = extra.toSet(), timeoutMs = EOSE_TIMEOUT_MS + 2_000L)
+    }
+
+    private suspend fun fetchOnce(id: String, relays: Set<String>?, timeoutMs: Long = EOSE_TIMEOUT_MS): Event? {
+        fetchedById[id]?.let { return it }
+        val subId = pool.subscribeTo(listOf(Filter(ids = listOf(id))), label = "thread-fetch", relays = relays)
+        fetchSubIds += subId
         activeSubIds += subId
-        awaitEose(subId)
+        withTimeoutOrNull(timeoutMs) {
+            merge(flowOf(Unit), eoseSignals).first {
+                fetchedById.containsKey(id) ||
+                    (relays == null && eoseCount(subId) >= expectedEose()) ||
+                    (relays != null && eoseCount(subId) >= relays.size)
+            }
+        }
+        fetchSubIds -= subId
         activeSubIds -= subId
         pool.unsubscribe(subId)
-        return eventRepository.getById(id)
+        return fetchedById[id] ?: eventRepository.getById(id)
     }
 
     /**
@@ -273,6 +382,8 @@ class ThreadViewModel @Inject constructor(
      * arrive. One REQ carrying several #e filters covers the whole page.
      */
     private fun startThreadSubscriptions(rootId: String, chainIds: List<String>) {
+        repliesRequested += chainIds
+        repliesRequested += rootId
         val ids = (chainIds + rootId).distinct()
         val repliesSubId = pool.subscribe(
             listOf(
@@ -334,10 +445,14 @@ class ThreadViewModel @Inject constructor(
             rootId = rootId,
             events = snapshot,
             focusedId = focusedId,
-            collapsedIds = collapsedIds,
-            expandedIds = expandedIds,
-            expandedFanOut = expandedFanOut,
+            collapsedIds = emptySet(),
+            expandedIds = emptySet(),
+            expandedFanOut = emptySet(),
             scrollTargetId = focusedId,
+            // The entire thread is rendered at once: no depth folding and no
+            // "show more replies" fan-out cap.
+            maxSiblingsInline = Int.MAX_VALUE,
+            depthCap = Int.MAX_VALUE,
         )
         _uiState.update { it.copy(items = items) }
     }
@@ -354,6 +469,14 @@ class ThreadViewModel @Inject constructor(
                     event.kind == EventKind.METADATA -> profileRepository.processEvent(event)
 
                     msg.subscriptionId in quoteSubIds -> handleQuoteEvent(event)
+
+                    msg.subscriptionId in fetchSubIds -> {
+                        // Direct by-id lookups (focused note, ancestors,
+                        // repost targets): always accepted and cached.
+                        fetchedById[event.id] = event
+                        eventRepository.save(event, "")
+                        eoseSignals.tryEmit(msg.subscriptionId)
+                    }
 
                     else -> {
                         if (event.kind != EventKind.TEXT_NOTE &&
@@ -393,6 +516,7 @@ class ThreadViewModel @Inject constructor(
                             reactionsRepository.subscribeTo(listOf(event.id))
                             repliesRepository.subscribeTo(listOf(event.id))
                             fetchPollsFor(listOf(event))
+                            queueReplyLookup(event.id)
                         }
                     }
                 }
@@ -499,7 +623,30 @@ class ThreadViewModel @Inject constructor(
             .also { activeSubIds += it }
     }
 
+    /**
+     * Requests the replies of a reply. Clients that don't tag the thread root
+     * on every nested reply would otherwise leave deep branches missing.
+     * Batched so a burst of incoming replies becomes one REQ.
+     */
+    private fun queueReplyLookup(id: String) {
+        if (id in repliesRequested) return
+        pendingReplyLookups += id
+        if (replyLookupJob?.isActive == true) return
+        replyLookupJob = viewModelScope.launch(Dispatchers.Default) {
+            while (pendingReplyLookups.isNotEmpty()) {
+                kotlinx.coroutines.delay(REPLY_LOOKUP_DEBOUNCE_MS)
+                val drained = pendingReplyLookups.toList()
+                pendingReplyLookups.removeAll(drained.toSet())
+                val batch = drained.filter { it !in repliesRequested }
+                batch.chunked(MAX_FILTER_BATCH).forEach { ids ->
+                    startThreadSubscriptions(rootId ?: ids.first(), ids)
+                }
+            }
+        }
+    }
+
     override fun onCleared() {
+        acquiredRelays.forEach { pool.releaseRelay(it) }
         collectJob?.cancel()
         activeSubIds.forEach { pool.unsubscribe(it) }
         quoteSubIds.forEach { pool.unsubscribe(it) }
@@ -523,5 +670,10 @@ class ThreadViewModel @Inject constructor(
 
         /** Ids per `ids` filter — keeps requests inside relay limits. */
         private const val MAX_FILTER_BATCH = 50
+
+        /** NIP-18 generic repost. */
+        private const val GENERIC_REPOST = 16
+
+        private const val REPLY_LOOKUP_DEBOUNCE_MS = 400L
     }
 }

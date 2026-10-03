@@ -44,6 +44,7 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var lockManager: AppLockManager
     @Inject lateinit var screenTimeManager: ScreenTimeManager
     @Inject lateinit var appSettings: AppSettings
+    @Inject lateinit var reactionsRepository: social.tbone.reactions.ReactionsRepository
 
     private val amberLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -96,8 +97,24 @@ class MainActivity : FragmentActivity() {
                     .collectAsStateWithLifecycle()
                 val screenTimeLocked by screenTimeManager.locked.collectAsStateWithLifecycle()
                 Box(modifier = Modifier.fillMaxSize()) {
-                    ContentFilterProvider {
-                        BonyNavHost()
+                    // Multi emoji reactions: one app-wide config read by every
+                    // note's like button.
+                    val multiOn by appSettings.multiReactionsEnabled.collectAsStateWithLifecycle()
+                    val savedEmojis by appSettings.reactionEmojis.collectAsStateWithLifecycle()
+                    val reactionContents by reactionsRepository.reactionContents.collectAsStateWithLifecycle()
+                    val reactionConfig = androidx.compose.runtime.remember(multiOn, savedEmojis, reactionContents) {
+                        social.tbone.ui.reactions.ReactionConfig(
+                            emojis = if (multiOn) savedEmojis else emptyList(),
+                            contents = reactionContents,
+                            reactWith = { event, emoji -> reactionsRepository.react(event, emoji) },
+                        )
+                    }
+                    androidx.compose.runtime.CompositionLocalProvider(
+                        social.tbone.ui.reactions.LocalReactionConfig provides reactionConfig,
+                    ) {
+                        ContentFilterProvider {
+                            BonyNavHost()
+                        }
                     }
                     // Parental screen-time lock: drawn OVER everything (but under
                     // the brightness dim) once the daily allowance is used up.

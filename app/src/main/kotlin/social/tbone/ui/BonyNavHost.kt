@@ -388,7 +388,10 @@ fun BonyNavHost() {
                         ComposeScreen(onBack = { navController.popBackStack() })
                     }
                     composable(ROUTE_CONTENT_FILTERS) {
-                        ContentFiltersScreen(onBack = { navController.popBackStack() })
+                        ContentFiltersScreen(
+                            onBack = { navController.popBackStack() },
+                            onScreenTime = { navController.navigate(ROUTE_SCREEN_TIME) },
+                        )
                     }
                     composable(ROUTE_BLOSSOM) {
                         BlossomSettingsScreen(onBack = { navController.popBackStack() })

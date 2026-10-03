@@ -272,8 +272,14 @@ class ProfileViewModel @Inject constructor(
                     }
                     is RelayMessage.EndOfStoredEvents -> {
                         if (message.subscriptionId in quoteSubIds) {
-                            quoteSubIds -= message.subscriptionId
-                            pool.unsubscribe(message.subscriptionId)
+                            // The first EOSE is only the fastest relay; keep the
+                            // lookup open so slower relays can still deliver the
+                            // quoted/reposted note, then close it.
+                            val sid = message.subscriptionId
+                            viewModelScope.launch {
+                                kotlinx.coroutines.delay(QUOTE_GRACE_MS)
+                                if (quoteSubIds.remove(sid)) pool.unsubscribe(sid)
+                            }
                         }
                         _isLoading.update { false }
                     }
@@ -336,6 +342,7 @@ class ProfileViewModel @Inject constructor(
                         _quotedEvents.update { it + (embedded.id to embedded) }
                         viewModelScope.launch { eventRepository.save(embedded, "") }
                         fetchMetadataFor(listOf(embedded.pubkey))
+                        if (embedded.kind != EventKind.REPOST) fetchQuotesFor(listOf(embedded))
                     } else {
                         event.parsedTags.firstOrNull { it.name == "e" }?.value()
                             ?.takeIf { it !in requestedQuoteIds }
@@ -491,3 +498,6 @@ class ProfileViewModel @Inject constructor(
         private val MAX_REPOST_CONTENT_BYTES get() = social.tbone.Tunables.MAX_REPOST_CONTENT_BYTES
     }
 }
+
+/** How long a quote lookup stays open after the first relay EOSE. */
+private const val QUOTE_GRACE_MS = 8_000L

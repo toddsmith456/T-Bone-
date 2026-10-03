@@ -25,6 +25,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
@@ -549,7 +553,6 @@ private fun NoteEngagementRow(
     val likeCount = reactors?.size ?: 0
     val replyCount = replies[event.id] ?: 0
     val didReply = activePubkey != null && event.id in repliedByMe
-    val LIKE_RED = Color(0xFFE0245E)
 
     Row(
         modifier = modifier,
@@ -584,12 +587,12 @@ private fun NoteEngagementRow(
             )
         }
         if (onLike != null) {
-            EngagementButton(
-                icon = if (hasReacted) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-                contentDescription = "Like",
-                count = likeCount,
-                tint = if (hasReacted) LIKE_RED else BonyColors.TextMute,
-                onClick = { if (!hasReacted) onLike(event) },
+            LikeButton(
+                event = event,
+                hasReacted = hasReacted,
+                likeCount = likeCount,
+                activePubkey = activePubkey,
+                onLike = onLike,
             )
         }
         if (onShare != null) {
@@ -599,6 +602,84 @@ private fun NoteEngagementRow(
                 count = 0,
                 tint = BonyColors.TextMute,
                 onClick = { onShare(event) },
+            )
+        }
+    }
+}
+
+/**
+ * The like button. With multi emoji reactions off (or no emojis saved) it is
+ * the classic heart. With one saved emoji a tap reacts with it directly; with
+ * two or more a compact box pops up to choose which one. Once reacted, the
+ * emoji you used replaces the heart on that note.
+ */
+@Composable
+private fun LikeButton(
+    event: Event,
+    hasReacted: Boolean,
+    likeCount: Int,
+    activePubkey: String?,
+    onLike: (Event) -> Unit,
+) {
+    val config = social.tbone.ui.reactions.LocalReactionConfig.current
+    val myContent = activePubkey?.let {
+        config.contents[social.tbone.reactions.reactionKey(event.id, it)]
+    }
+    val myEmoji = myContent?.takeIf { hasReacted && social.tbone.ui.reactions.isEmojiReaction(it) }
+    var pickerOpen by remember { mutableStateOf(false) }
+    val LIKE_RED = Color(0xFFE0245E)
+
+    val onClick: () -> Unit = {
+        if (!hasReacted) {
+            val emojis = config.emojis
+            val reactWith = config.reactWith
+            when {
+                emojis.size > 1 && reactWith != null -> pickerOpen = true
+                emojis.size == 1 && reactWith != null -> reactWith(event, emojis.first())
+                else -> onLike(event)
+            }
+        }
+    }
+
+    Box {
+        if (myEmoji != null) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RectangleShape)
+                    .clickable(onClick = onClick)
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+            ) {
+                Box(modifier = Modifier.size(20.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = myEmoji,
+                        style = androidx.compose.ui.text.TextStyle(fontSize = 16.sp),
+                        maxLines = 1,
+                    )
+                }
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    text = likeCount.toString(),
+                    style = BonyType.metaDim.copy(color = BonyColors.Accent),
+                )
+            }
+        } else {
+            EngagementButton(
+                icon = if (hasReacted) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                contentDescription = "Like",
+                count = likeCount,
+                tint = if (hasReacted) LIKE_RED else BonyColors.TextMute,
+                onClick = onClick,
+            )
+        }
+        if (pickerOpen) {
+            social.tbone.ui.reactions.EmojiReactionPicker(
+                emojis = config.emojis,
+                onPick = { emoji ->
+                    pickerOpen = false
+                    config.reactWith?.invoke(event, emoji)
+                },
+                onDismiss = { pickerOpen = false },
             )
         }
     }

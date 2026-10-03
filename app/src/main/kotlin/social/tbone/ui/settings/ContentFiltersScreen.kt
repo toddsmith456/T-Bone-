@@ -50,8 +50,14 @@ import social.tbone.ui.theme.BonyType
 @Composable
 fun ContentFiltersScreen(
     onBack: () -> Unit,
+    onScreenTime: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
+    // This screen is the gate of the Content Filters folder: leaving it
+    // (popping it off the back stack) relocks the whole folder.
+    LaunchedEffect(Unit) { viewModel.markAsParentalGate() }
+    val screenTimeOn by viewModel.screenTimeEnabled.collectAsStateWithLifecycle()
+    val screenTimeMinutes by viewModel.screenTimeMinutes.collectAsStateWithLifecycle()
     val hideNsfw by viewModel.hideNsfw.collectAsStateWithLifecycle()
     val bleepWords by viewModel.bleepWords.collectAsStateWithLifecycle()
     val hideWords by viewModel.hideWords.collectAsStateWithLifecycle()
@@ -101,6 +107,35 @@ fun ContentFiltersScreen(
         }
 
         LazyColumn(modifier = Modifier.fillMaxSize()) {
+            // ── Parental: screen time (lives inside the pin-locked folder so a
+            // child can't turn the limit off without the parental pin) ──────
+            item {
+                FilterSection("parental controls") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onScreenTime() }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("screen time", style = BonyType.body.copy(color = BonyColors.TextDim))
+                            Text(
+                                text = if (screenTimeOn) {
+                                    "on · ${screenTimeMinutes / 60}h ${screenTimeMinutes % 60}m per day"
+                                } else {
+                                    "off"
+                                },
+                                style = BonyType.meta.copy(
+                                    color = if (screenTimeOn) BonyColors.Accent else BonyColors.TextMute,
+                                ),
+                            )
+                        }
+                        Text("→", style = BonyType.body.copy(color = BonyColors.TextMute))
+                    }
+                }
+            }
+
             // ── NSFW toggle ────────────────────────────────────────────────────
             item {
                 FilterSection("nsfw") {
@@ -278,7 +313,7 @@ fun ContentFiltersScreen(
 // ── Parental pin: lock entry ─────────────────────────────────────────────────
 
 @Composable
-private fun ParentalPinLock(
+internal fun ParentalPinLock(
     onBack: () -> Unit,
     viewModel: SettingsViewModel,
 ) {
@@ -338,7 +373,7 @@ private fun ParentalPinLock(
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = if (error) "wrong pin — try again" else "enter parental pin to change filters",
+                text = if (error) "wrong pin — try again" else "enter parental pin to open content filters",
                 style = BonyType.meta.copy(
                     color = if (error) BonyColors.Danger else BonyColors.TextMute,
                 ),

@@ -40,6 +40,13 @@ fun ScreenTimeSettingsScreen(
     onBack: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
+    val parentalEnabled by viewModel.parentalPinEnabled.collectAsStateWithLifecycle()
+    val unlocked by viewModel.filtersUnlocked.collectAsStateWithLifecycle()
+    // Part of the pin-locked Content Filters folder: never reachable unlocked.
+    if (parentalEnabled && !unlocked) {
+        ParentalPinLock(onBack = onBack, viewModel = viewModel)
+        return
+    }
     val enabled by viewModel.screenTimeEnabled.collectAsStateWithLifecycle()
     val totalMinutes by viewModel.screenTimeMinutes.collectAsStateWithLifecycle()
 

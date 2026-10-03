@@ -5,6 +5,48 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.3.41] — 2026-10-02
+
+Threads that fully load, multi emoji reactions, and a pin-locked Content
+Filters folder.
+
+### Added
+- **Multi emoji reactions.** Settings → REACTIONS → *multi emoji reactions*.
+  Save up to 10 emojis straight from your keyboard's emoji panel (tap a saved
+  emoji to remove it). With two or more saved, tapping like pops up a compact
+  box of your emojis right above the button; pick one to react with it. With
+  exactly one saved, like reacts with it directly. Once you've reacted, the
+  emoji you used replaces the heart on that note (feed, profiles, threads,
+  reposts). Emoji reactions from others now count toward the like total too.
+
+### Fixed
+- **Reposted replies now load their whole thread, upstream included.** Opening
+  a repost unwraps it to the reposted note, and the ancestor walk now actually
+  receives the notes it asks relays for — previously every by-id lookup was
+  dropped by the thread-membership filter, so parents only ever showed when
+  they happened to be cached. Missing parents are retried on the note's relay
+  hints plus fallback relays, and if a direct parent is truly gone the thread
+  root is still shown.
+- **Notes that weren't cached open again** (from notifications, links, etc.)
+  instead of reporting "not found" — same lookup bug.
+- **Deep reply branches load:** replies to replies are requested as they
+  arrive, so clients that don't tag the root on nested replies no longer leave
+  holes in the thread.
+- **Quoted / reposted notes no longer get stuck on "loading…"** in the feed and
+  on profiles: the lookup stayed open only until the *fastest* relay answered,
+  dropping the note when a slower relay had it. Quotes inside reposted notes,
+  comments and polls are resolved too.
+
+### Changed
+- **Threads show everything at once.** No more "＋ N replies" / "show more
+  replies" folds — the full tree renders expanded so it can be read at a glance.
+- **Content Filters is now a single pin-locked folder** containing the filters
+  *and* parental controls (screen time). Once a parental pin is set, the whole
+  folder — including the screen-time limit — needs the pin to open, so it
+  can't be switched off without it. It relocks when you leave the folder.
+- Notifications: removed the blank buffer at the bottom of the list — the
+  bottom navigation bar already provides the spacing.
+
 ## [0.3.40] — 2026-10-02
 
 Threads, feeds and profiles.

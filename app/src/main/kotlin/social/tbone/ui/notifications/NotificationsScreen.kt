@@ -172,10 +172,9 @@ fun NotificationsScreen(
                     }
                     else -> LazyColumn(
                         state = listState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .navigationBarsPadding(),
-                        contentPadding = PaddingValues(bottom = 8.dp),
+                        // No bottom buffer: the bottom navigation bar below
+                        // already handles the system inset.
+                        modifier = Modifier.fillMaxSize(),
                     ) {
                     items(items, key = { it.id }) { item ->
                         val isExpanded = expandedId == item.id
@@ -206,8 +205,6 @@ fun NotificationsScreen(
                             onLoadMore = viewModel::loadMore,
                         )
                     }
-                        // Buffer so the system action bar never covers the last row.
-                        item(key = "bottom_buffer") { Spacer(Modifier.height(32.dp)) }
                     }
                 }
             }
