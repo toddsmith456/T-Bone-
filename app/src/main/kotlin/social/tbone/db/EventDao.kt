@@ -22,4 +22,8 @@ interface EventDao {
 
     @Query("SELECT * FROM events WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<EventEntity>
+
+    /** Authored events are needed by notifications after a process restart. */
+    @Query("SELECT * FROM events WHERE pubkey = :pubkey ORDER BY createdAt DESC LIMIT :limit")
+    suspend fun getRecentByAuthor(pubkey: String, limit: Int): List<EventEntity>
 }

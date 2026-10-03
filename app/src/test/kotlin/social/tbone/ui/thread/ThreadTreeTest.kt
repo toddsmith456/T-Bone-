@@ -177,6 +177,15 @@ class ThreadTreeTest {
         assertEquals(listOf(0, 1), items.filterIsInstance<ThreadItem.Note>().map { it.depth })
     }
 
+    @Test fun missingRootStillRendersRepliesWhoseParentWasNotDelivered() {
+        val reply = event("reply", 20, parent = "gone")
+        val nested = event("nested", 21, parent = "reply")
+
+        val items = ThreadTree.build(rootId = id("gone"), events = listOf(reply, nested))
+        assertEquals(listOf(id("reply"), id("nested")), noteIds(items))
+        assertEquals(listOf(0, 1), items.filterIsInstance<ThreadItem.Note>().map { it.depth })
+    }
+
     @Test fun cyclesDoNotHang() {
         val a = Event(
             id = id("a"), pubkey = id("b"), createdAt = 1, kind = 1, sig = "00", content = "",

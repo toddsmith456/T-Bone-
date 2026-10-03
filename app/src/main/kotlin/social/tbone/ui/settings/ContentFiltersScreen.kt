@@ -24,14 +24,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.launch
 import social.tbone.ui.lock.PinKeypad
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
@@ -317,7 +315,6 @@ internal fun ParentalPinLock(
     onBack: () -> Unit,
     viewModel: SettingsViewModel,
 ) {
-    val scope = rememberCoroutineScope()
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
 

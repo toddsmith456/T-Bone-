@@ -52,9 +52,10 @@ import social.tbone.ui.theme.BonyType
  *
  * Renders the flattened conversation tree produced by [ThreadTree]: the root,
  * every note between it and the tapped note (fetched automatically — the old
- * "replies in between" placeholder is gone), then the replies as nested mini
- * threads with indent rails. Every branch is rendered fully expanded, so the
- * whole conversation can be read at a glance.
+ * "replies in between" placeholder is gone), then the complete reply tree as
+ * nested mini threads with indent rails. Every branch is rendered fully
+ * expanded, so the whole conversation can be read at a glance: there is no
+ * fold or "see more replies" affordance on this screen.
  */
 @Composable
 fun ThreadScreen(

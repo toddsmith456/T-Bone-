@@ -137,12 +137,21 @@ object ThreadTree {
                 insideExpanded = false,
             )
         } else {
-            // The root never arrived. Render the top-most notes we have (each is
-            // a root of its own mini thread) instead of showing nothing.
-            val roots = byId.keys
-                .filter { id -> id !in visited && tree.none { (parent, kids) -> parent != rootId && kids.any { it.id == id } } }
-                .mapNotNull { byId[it] }
-                .sortedBy { it.createdAt }
+            // The declared root never arrived. A reply whose parent is missing
+            // is still a top-most note that we can render; looking only at the
+            // children map used to hide these events because they were grouped
+            // under the missing parent key. Build roots from the events'
+            // declared parents instead, then fall back to every event for a
+            // malformed cycle so nothing silently disappears.
+            val roots = byId.values
+                .filter { event ->
+                    val parent = event.parsedTags.replyEventId
+                        ?: event.parsedTags.threadRootEventId
+                    parent == null || parent !in byId
+                }
+                .ifEmpty { byId.values.toList() }
+                .sortedWith(compareBy<Event> { it.createdAt }.thenBy { it.id })
+
             for (candidate in roots) {
                 if (candidate.id in visited) continue
                 visited += candidate.id

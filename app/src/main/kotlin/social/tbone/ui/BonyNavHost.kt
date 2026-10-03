@@ -416,7 +416,6 @@ fun BonyNavHost() {
                             onRelayManagement = { navController.navigate(ROUTE_RELAY_MANAGEMENT) },
                             onBlossom = { navController.navigate(ROUTE_BLOSSOM) },
                             onOfflineList = { type -> navController.navigate("offline_list/$type") },
-                            onScreenTime = { navController.navigate(ROUTE_SCREEN_TIME) },
                             onProfileEdit = { navController.navigate(ROUTE_PROFILE_EDIT) },
                             onContentFilters = { navController.navigate(ROUTE_CONTENT_FILTERS) },
                             onPinSetup = { navController.navigate("pin_setup?duress=false") },

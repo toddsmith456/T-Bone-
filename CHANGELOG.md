@@ -5,10 +5,10 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
-## [0.3.42] — 2026-10-03
+## [0.3.43] — 2026-10-03
 
-Follow-up pass over 0.3.41: every reference loads, and nothing says "loading…"
-forever.
+Follow-up to 0.3.42 so that every note that is supposed to load actually does,
+and so nothing can sit on "loading…" forever.
 
 ### Fixed
 - **Quoted and reposted notes now load in hashtag feeds.** That screen never
@@ -16,11 +16,8 @@ forever.
   "loading quoted note…" / "loading reposted note…" permanently. It now
   resolves them (cache first, then relays, kind-agnostic) and renders the
   embedded note, with profiles fetched for the authors it reveals.
-- **Notifications resolve every referenced note.** The lookup was filtered to
-  kind 1, so a notification that pointed at a repost, a poll or a NIP-22
-  comment never resolved. It is kind-agnostic now.
-- **Nested quotes render inside notification cards** (the resolved map is
-  handed to the quoted card, so a quote of a quote shows too).
+- **Nested quotes render inside notification cards** — the resolved map is
+  handed to the quoted card, so a quote of a quote shows there too.
 - **Emoji parsing handles real keyboard emojis.** Splitting input into
   grapheme clusters mangled multi-code-point emojis: flags, skin-toned
   thumbs-up, keycaps and ZWJ family emojis could be saved as broken pieces.
@@ -31,16 +28,40 @@ forever.
   parent notes, notification targets) that were asked for and never arrived
   now render a terminal "this note isn't available on any relay" row you can
   tap to open, instead of spinning — the feed, profiles, threads, hashtag
-  feeds and notifications all share this state.
-- **Thread fold code removed for good.** The tree still supports folding
-  (covered by tests) but the thread screen no longer has any fold UI at all, so
-  a "show more replies" row cannot appear: every thread renders fully expanded.
+  feeds and notifications all share this state, and it also clears when an
+  embedded repost resolves its inner note.
+- **Thread fold code removed for good.** The fold item types and the
+  expand/collapse plumbing are gone from the thread screen and view model, so
+  a "show more replies" row cannot appear: every thread renders fully
+  expanded, at a glance.
 
 ### Added
 - Unit tests for emoji parsing (ZWJ sequences, flags, skin tones, keycaps,
   rejecting text) and a regression test that a deep, wide thread renders
   completely expanded.
 
+## [0.3.42] — 2026-10-02
+
+Thread loading and notification references are now kind-complete, and the
+release hardens the settings and reaction flows from the previous feature drop.
+
+### Fixed
+- **Every thread item is retained.** Missing declared roots and missing direct
+  parents are promoted to visible top-level notes instead of disappearing with
+  their nested replies. NIP-22 comments are counted and loaded alongside
+  regular NIP-10 replies.
+- **Notification previews resolve every supported event kind.** Parent notes,
+  polls, reposts, and comments are fetched with ids-only lookups; authored
+  replies and polls are restored after restart so ownership checks still work.
+- **Latest reaction content wins.** When relays deliver several reactions from
+  one account out of order, the active user's newest emoji stays on the note.
+- **Notification history has no extra bottom buffer.** The shared bottom tab
+  bar supplies the inset; the list ends at its actual last row/load-more row.
+
+### Changed
+- Thread rendering suppresses legacy fold rows entirely: the screen requests
+  and presents the complete known tree in one view.
+- Release version bumped to 0.3.42 (version code 50).
 
 ## [0.3.41] — 2026-10-02
 
