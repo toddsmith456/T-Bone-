@@ -34,6 +34,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -81,6 +82,7 @@ fun FeedScreen(
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
     val quotedEvents by viewModel.quotedEvents.collectAsStateWithLifecycle()
+    val unresolvedQuoteIds by viewModel.unresolvedQuoteIds.collectAsStateWithLifecycle()
     val reactions by viewModel.reactions.collectAsStateWithLifecycle()
     val replies by viewModel.replies.collectAsStateWithLifecycle()
     val repliedByMe by viewModel.repliedByMe.collectAsStateWithLifecycle()
@@ -118,6 +120,7 @@ fun FeedScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+    CompositionLocalProvider(LocalQuoteState provides QuoteState(unresolvedQuoteIds)) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -239,6 +242,7 @@ fun FeedScreen(
                                 onPollVote = viewModel::voteOnPoll,
                                 activePubkey = activeAccount?.pubkey,
                                 quotedEvents = quotedEvents,
+                                quotedEventId = refId,
                             )
                         }
                         item {
@@ -277,7 +281,8 @@ fun FeedScreen(
             BrightnessPopup(onDismiss = { showBrightness = false })
         }
     }
-}
+    }
+    }
 
 
 /** Popup with a brightness slider; tapping the scrim anywhere dismisses it. */

@@ -5,6 +5,43 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.3.42] — 2026-10-03
+
+Follow-up pass over 0.3.41: every reference loads, and nothing says "loading…"
+forever.
+
+### Fixed
+- **Quoted and reposted notes now load in hashtag feeds.** That screen never
+  looked them up at all, so a result that quoted or reposted a note sat on
+  "loading quoted note…" / "loading reposted note…" permanently. It now
+  resolves them (cache first, then relays, kind-agnostic) and renders the
+  embedded note, with profiles fetched for the authors it reveals.
+- **Notifications resolve every referenced note.** The lookup was filtered to
+  kind 1, so a notification that pointed at a repost, a poll or a NIP-22
+  comment never resolved. It is kind-agnostic now.
+- **Nested quotes render inside notification cards** (the resolved map is
+  handed to the quoted card, so a quote of a quote shows too).
+- **Emoji parsing handles real keyboard emojis.** Splitting input into
+  grapheme clusters mangled multi-code-point emojis: flags, skin-toned
+  thumbs-up, keycaps and ZWJ family emojis could be saved as broken pieces.
+  The scanner now keeps each emoji intact.
+
+### Changed
+- **"Loading…" is no longer forever.** Referenced notes (quotes, reposts,
+  parent notes, notification targets) that were asked for and never arrived
+  now render a terminal "this note isn't available on any relay" row you can
+  tap to open, instead of spinning — the feed, profiles, threads, hashtag
+  feeds and notifications all share this state.
+- **Thread fold code removed for good.** The tree still supports folding
+  (covered by tests) but the thread screen no longer has any fold UI at all, so
+  a "show more replies" row cannot appear: every thread renders fully expanded.
+
+### Added
+- Unit tests for emoji parsing (ZWJ sequences, flags, skin tones, keycaps,
+  rejecting text) and a regression test that a deep, wide thread renders
+  completely expanded.
+
+
 ## [0.3.41] — 2026-10-02
 
 Threads that fully load, multi emoji reactions, and a pin-locked Content

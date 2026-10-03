@@ -115,6 +115,18 @@ class ProfileViewModel @Inject constructor(
     private val _quotedEvents = MutableStateFlow<Map<String, Event>>(emptyMap())
     val quotedEvents: StateFlow<Map<String, Event>> = _quotedEvents.asStateFlow()
 
+    /**
+     * Referenced notes that were asked for and never arrived, so cards show a
+     * terminal "not available" row instead of "loading…" forever.
+     */
+    private val _unresolvedQuoteIds = MutableStateFlow<Set<String>>(emptySet())
+    val unresolvedQuoteIds: StateFlow<Set<String>> = _unresolvedQuoteIds.asStateFlow()
+
+    private fun refreshUnresolvedQuotes() {
+        val resolved = _quotedEvents.value.keys
+        _unresolvedQuoteIds.value = requestedQuoteIds.filterTo(mutableSetOf()) { it !in resolved }
+    }
+
     private val requestedQuoteIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val quoteSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val allSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
@@ -279,6 +291,9 @@ class ProfileViewModel @Inject constructor(
                             viewModelScope.launch {
                                 kotlinx.coroutines.delay(QUOTE_GRACE_MS)
                                 if (quoteSubIds.remove(sid)) pool.unsubscribe(sid)
+                                // Lookup finished: everything still missing is
+                                // unavailable rather than still loading.
+                                refreshUnresolvedQuotes()
                             }
                         }
                         _isLoading.update { false }
@@ -322,6 +337,7 @@ class ProfileViewModel @Inject constructor(
 
     private fun handleQuotedEvent(event: Event) {
         _quotedEvents.update { it + (event.id to event) }
+        refreshUnresolvedQuotes()
         viewModelScope.launch { eventRepository.save(event, "") }
         fetchMetadataFor(listOf(event.pubkey))
     }
@@ -340,6 +356,7 @@ class ProfileViewModel @Inject constructor(
                     else runCatching { Event.fromJson(event.content) }.getOrNull()
                     if (embedded != null && embedded.verify()) {
                         _quotedEvents.update { it + (embedded.id to embedded) }
+                        refreshUnresolvedQuotes()
                         viewModelScope.launch { eventRepository.save(embedded, "") }
                         fetchMetadataFor(listOf(embedded.pubkey))
                         if (embedded.kind != EventKind.REPOST) fetchQuotesFor(listOf(embedded))
@@ -365,6 +382,7 @@ class ProfileViewModel @Inject constructor(
             val cached = eventRepository.getByIds(missing).associateBy { it.id }
             if (cached.isNotEmpty()) {
                 _quotedEvents.update { it + cached }
+                refreshUnresolvedQuotes()
                 fetchMetadataFor(cached.values.map { it.pubkey })
             }
             val stillMissing = missing.filter { it !in cached }

@@ -209,6 +209,35 @@ class ThreadTreeTest {
         assertTrue(notes[3].connectorStartsMidAir)  // b  (depth 1, arrives from depth 2)
     }
 
+    /**
+     * The thread screen must show the whole conversation at once — no
+     * "show more replies" rows, however deep or wide the thread is. This is how
+     * ThreadViewModel builds the tree.
+     */
+    @Test fun threadScreenRendersEverythingExpanded() {
+        val root = event("root", 10)
+        // Zero-padded names: ids must stay distinct, otherwise this test would
+        // be checking a malformed thread instead of a wide/deep one.
+        val wide = (1..25).map { index -> event("w%02d".format(index), 20L + index, parent = "root") }
+        var parent = "root"
+        val deep = (1..12).map { index ->
+            event("d%02d".format(index), 100L + index, parent = parent).also { parent = it.id }
+        }
+
+        val items = ThreadTree.build(
+            rootId = id("root"),
+            events = listOf(root) + wide + deep,
+            focusedId = id("root"),
+            scrollTargetId = id("root"),
+            maxSiblingsInline = Int.MAX_VALUE,
+            depthCap = Int.MAX_VALUE,
+        )
+
+        assertEquals(1 + wide.size + deep.size, items.filterIsInstance<ThreadItem.Note>().size)
+        assertTrue(items.none { it is ThreadItem.ShowMoreReplies })
+        assertTrue(items.none { it is ThreadItem.FoldedReplies })
+    }
+
     @Test fun quotedNoteIsNotTreatedAsAReply() {
         val root = event("root", 10)
         val quoted = event("quoted", 20, parent = "root", quote = "target")

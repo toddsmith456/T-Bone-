@@ -72,6 +72,12 @@ fun NoteCard(
     activePubkey: String? = null,
     /** Quoted/reposted notes already resolved by the caller, keyed by id. */
     quotedEvents: Map<String, Event> = emptyMap(),
+    /**
+     * Id of the note this card references (quote target / repost payload).
+     * Lets the card tell "still loading" apart from "gone from every relay"
+     * using [LocalQuoteState].
+     */
+    quotedEventId: String? = null,
     /** Reply counts per note id (from RepliesRepository). */
     replies: Map<String, Int> = emptyMap(),
     /** Notes the active account replied to (from RepliesRepository). */
@@ -160,11 +166,13 @@ fun NoteCard(
                     modifier = Modifier.padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
                 )
             } else {
-                Text(
-                    text = "loading reposted note…",
-                    style = BonyType.meta.copy(color = BonyColors.TextMute),
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                )
+                Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
+                    ReferencePlaceholder(
+                        loadingText = "loading reposted note…",
+                        referenceId = quotedEventId,
+                        onOpen = onThreadClick,
+                    )
+                }
             }
         }
         // Hairline bottom border
@@ -399,9 +407,11 @@ fun NoteCard(
                             quotedEvents = quotedEvents,
                         )
                     } else {
-                        Text(
-                            text = "loading quoted note…",
-                            style = BonyType.meta.copy(color = BonyColors.TextMute),
+                        // Still loading, or the note is gone from every relay.
+                        ReferencePlaceholder(
+                            loadingText = "loading quoted note…",
+                            referenceId = quotedEventId,
+                            onOpen = onThreadClick,
                         )
                     }
                 }
@@ -428,6 +438,53 @@ fun NoteCard(
 }
 
 // ── Quoted / nested card ─────────────────────────────────────────────────────
+
+/**
+ * Placeholder for a referenced note that is not available yet.
+ *
+ * While the lookup is still open it reads as loading. Once the lookup has
+ * finished without the note (see [LocalQuoteState]) it becomes a terminal,
+ * tappable "unavailable" row — a note no relay has must not sit on "loading…"
+ * forever.
+ */
+@Composable
+private fun ReferencePlaceholder(
+    loadingText: String,
+    referenceId: String?,
+    onOpen: ((String) -> Unit)?,
+) {
+    val quoteState = LocalQuoteState.current
+    val unavailable = referenceId != null && referenceId in quoteState.unresolved
+    if (unavailable) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(BonyColors.SurfaceAlt)
+                .then(
+                    if (onOpen != null) Modifier.clickable { onOpen(referenceId) } else Modifier,
+                )
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+        ) {
+            Text(
+                text = "this note isn't available on any relay",
+                style = BonyType.meta.copy(color = BonyColors.TextMute),
+                modifier = Modifier.weight(1f),
+            )
+            if (onOpen != null) {
+                Text(
+                    text = "open ↗",
+                    style = BonyType.tag.copy(color = BonyColors.Accent),
+                )
+            }
+        }
+    } else {
+        Text(
+            text = loadingText,
+            style = BonyType.meta.copy(color = BonyColors.TextMute),
+        )
+    }
+}
 
 /** Body lines shown inside a quoted note before "show more". */
 private const val QUOTED_MAX_LINES = 6
@@ -514,6 +571,17 @@ fun QuotedNoteCard(
         val nestedId = event.parsedTags.quotedEventId
             ?: event.parsedTags.firstOrNull { it.name == "q" }?.value()
         val nested = nestedId?.let { quotedEvents[it] }
+        if (nestedId != null &&
+            nested == null &&
+            nestedId in LocalQuoteState.current.unresolved
+        ) {
+            // The note this one quotes is gone; say so instead of showing nothing.
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = "quoted note isn't available",
+                style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+            )
+        }
         if (nested != null && nested.id != event.id && nestingDepth < 1) {
             Spacer(Modifier.height(8.dp))
             QuotedNoteCard(

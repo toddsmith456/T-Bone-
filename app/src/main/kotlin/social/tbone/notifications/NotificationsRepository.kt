@@ -146,6 +146,23 @@ class NotificationsRepository @Inject constructor(
     private val _referencedNotes = MutableStateFlow<Map<String, Event>>(emptyMap())
     val referencedNotes: StateFlow<Map<String, Event>> = _referencedNotes.asStateFlow()
 
+    /**
+     * Referenced notes that could not be fetched after every retry, so the
+     * notification cards can say "not available" instead of "loading…".
+     */
+    private val _unresolvedReferencedIds = MutableStateFlow<Set<String>>(emptySet())
+    val unresolvedReferencedIds: StateFlow<Set<String>> = _unresolvedReferencedIds.asStateFlow()
+
+    /** Ids we have given up on (attempts exhausted and still not delivered). */
+    private fun markUnresolved(ids: List<String>) {
+        if (ids.isEmpty()) return
+        _unresolvedReferencedIds.update { it + ids }
+    }
+
+    private fun clearUnresolved(id: String) {
+        _unresolvedReferencedIds.update { if (id in it) it - id else it }
+    }
+
     companion object {
         /** The on-disk cache window: 24 hours of notifications. */
         private const val CACHE_WINDOW_SECONDS = 86_400L
@@ -181,6 +198,7 @@ class NotificationsRepository @Inject constructor(
                         when {
                             msg.subscriptionId in refSubIds -> {
                                 _referencedNotes.update { it + (event.id to event) }
+                                clearUnresolved(event.id)
                                 scope.launch { eventRepository.save(event, "") }
                             }
                             event.kind == EventKind.METADATA -> profileRepository.processEvent(event)
@@ -210,6 +228,9 @@ class NotificationsRepository @Inject constructor(
                                 // Parent notes sometimes lag on relays; retry a
                                 // few times with a delay before giving up.
                                 val stillMissing = ids?.filter { it !in _referencedNotes.value }.orEmpty()
+                                val exhausted = stillMissing.filter { (refFetchAttempts[it] ?: 0) >= 3 }
+                                // Out of retries: these notes are gone, not loading.
+                                markUnresolved(exhausted)
                                 if (stillMissing.isNotEmpty() &&
                                     stillMissing.any { (refFetchAttempts[it] ?: 0) < 3 }
                                 ) {
@@ -859,8 +880,11 @@ class NotificationsRepository @Inject constructor(
             }
             val missing = ids.filter { it !in cached }
             if (missing.isEmpty()) return@launch
+            // No kind filter: a notification can reference a repost, a poll or
+            // a NIP-22 comment, and those never resolved when only kind 1 was
+            // requested.
             val subId = pool.subscribe(
-                listOf(Filter(ids = missing, kinds = listOf(EventKind.TEXT_NOTE))),
+                listOf(Filter(ids = missing)),
                 label = "notif-ref",
             )
             refSubIds.add(subId)

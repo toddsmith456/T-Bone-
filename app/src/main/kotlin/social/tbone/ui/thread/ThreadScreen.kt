@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -52,7 +53,8 @@ import social.tbone.ui.theme.BonyType
  * Renders the flattened conversation tree produced by [ThreadTree]: the root,
  * every note between it and the tapped note (fetched automatically — the old
  * "replies in between" placeholder is gone), then the replies as nested mini
- * threads with indent rails and "+N replies" folds.
+ * threads with indent rails. Every branch is rendered fully expanded, so the
+ * whole conversation can be read at a glance.
  */
 @Composable
 fun ThreadScreen(
@@ -67,6 +69,7 @@ fun ThreadScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
     val quotedEvents by viewModel.quotedEvents.collectAsStateWithLifecycle()
+    val unresolvedQuoteIds by viewModel.unresolvedQuoteIds.collectAsStateWithLifecycle()
     val reactions by viewModel.reactions.collectAsStateWithLifecycle()
     val replies by viewModel.replies.collectAsStateWithLifecycle()
     val repliedByMe by viewModel.repliedByMe.collectAsStateWithLifecycle()
@@ -106,6 +109,10 @@ fun ThreadScreen(
         if (index >= 0) listState.animateScrollToItem(index)
     }
 
+    CompositionLocalProvider(
+        social.tbone.ui.feed.LocalQuoteState provides
+            social.tbone.ui.feed.QuoteState(unresolvedQuoteIds),
+    ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -175,8 +182,10 @@ fun ThreadScreen(
                         key = { _, item -> item.key },
                         contentType = { _, item -> item::class.simpleName ?: "item" },
                     ) { index, item ->
-                        when (item) {
-                            is ThreadItem.Note -> ThreadRow(
+                        // Every branch is rendered expanded, so Note is the only
+                        // item kind the tree produces here.
+                        if (item is ThreadItem.Note) {
+                            ThreadRow(
                                 item = item,
                                 previousDepth = items.getOrNull(index - 1)?.depth ?: -1,
                                 uiState = uiState,
@@ -198,22 +207,6 @@ fun ThreadScreen(
                                 onBoost = viewModel::boost,
                                 onLike = viewModel::react,
                                 onPollVote = viewModel::voteOnPoll,
-                                onExpandBranch = viewModel::expandBranch,
-                                onCollapseBranch = viewModel::collapseBranch,
-                            )
-
-                            is ThreadItem.FoldedReplies -> FoldRow(
-                                label = "＋ ${item.hiddenCount} " +
-                                    if (item.hiddenCount == 1) "reply" else "replies",
-                                depth = item.depth,
-                                onClick = { viewModel.expandBranch(item.anchorId) },
-                            )
-
-                            is ThreadItem.ShowMoreReplies -> FoldRow(
-                                label = "＋ show ${item.hiddenCount} more " +
-                                    if (item.hiddenCount == 1) "reply" else "replies",
-                                depth = item.depth,
-                                onClick = { viewModel.expandFanOut(item.parentId) },
                             )
                         }
                     }
@@ -224,6 +217,7 @@ fun ThreadScreen(
                 }
             }
         }
+    }
     }
 }
 
@@ -257,18 +251,16 @@ private fun ThreadRow(
     onBoost: (Event) -> Unit,
     onLike: (Event) -> Unit,
     onPollVote: (Event, List<String>) -> Unit,
-    onExpandBranch: (String) -> Unit,
-    onCollapseBranch: (String) -> Unit,
 ) {
     val event = item.event
     val depth = item.depth.coerceAtMost(ThreadIndent.MAX_RAIL_DEPTH)
-    val quotedEvent = remember(event.id, quotedEvents) {
-        val refId = when (event.kind) {
+    val refId = remember(event.id) {
+        when (event.kind) {
             EventKind.REPOST -> event.parsedTags.firstOrNull { it.name == "e" }?.value()
             else -> event.parsedTags.quotedEventId ?: extractInlineQuoteId(event.content)
         }
-        refId?.let { quotedEvents[it] }
     }
+    val quotedEvent = remember(refId, quotedEvents) { refId?.let { quotedEvents[it] } }
     // The note you opened and the thread root are shown in full; replies stay
     // compact so the thread remains scannable.
     val isThreadRoot = event.id == uiState.root?.id
@@ -310,6 +302,7 @@ private fun ThreadRow(
             // Resolved quotes/references so inline note links in a thread note
             // render as embedded notes too.
             quotedEvents = quotedEvents,
+            quotedEventId = refId,
         )
 
         // The whole thread is always shown expanded — no fold toggles.
@@ -333,22 +326,6 @@ private fun ThreadDeadEnd(replyCount: Int) {
         Text(
             text = if (replyCount == 0) "no replies yet" else "end of thread",
             style = BonyType.meta.copy(color = BonyColors.TextMute),
-        )
-    }
-}
-
-@Composable
-private fun FoldRow(label: String, depth: Int, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 22.dp + ThreadIndent.STEP * depth, end = 14.dp, bottom = 10.dp)
-            .clickable(onClick = onClick),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            style = BonyType.tag.copy(color = BonyColors.Accent),
         )
     }
 }

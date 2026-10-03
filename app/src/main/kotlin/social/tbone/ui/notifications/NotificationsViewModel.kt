@@ -95,6 +95,9 @@ class NotificationsViewModel @Inject constructor(
 
     val referencedNotes: StateFlow<Map<String, Event>> = repository.referencedNotes
 
+    /** Referenced notes that never arrived, so cards can stop saying "loading…". */
+    val unresolvedReferencedIds: StateFlow<Set<String>> = repository.unresolvedReferencedIds
+
     init {
         // Persisted filter set → enabled filters (null = never set = all on).
         viewModelScope.launch {

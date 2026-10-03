@@ -30,6 +30,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -89,6 +90,7 @@ fun ProfileScreen(
     val replyNotes by viewModel.replyNotes.collectAsStateWithLifecycle()
     val mediaImages by viewModel.mediaImages.collectAsStateWithLifecycle()
     val quotedEvents by viewModel.quotedEvents.collectAsStateWithLifecycle()
+    val unresolvedQuoteIds by viewModel.unresolvedQuoteIds.collectAsStateWithLifecycle()
     val selectedTab by viewModel.tab.collectAsStateWithLifecycle()
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
@@ -149,6 +151,10 @@ fun ProfileScreen(
             .fillMaxSize()
             .background(BonyColors.Bg),
     ) {
+        CompositionLocalProvider(
+            social.tbone.ui.feed.LocalQuoteState provides
+                social.tbone.ui.feed.QuoteState(unresolvedQuoteIds),
+        ) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -487,6 +493,12 @@ fun ProfileScreen(
                         profiles = profiles,
                         quotedEvent = quotedEvent,
                         quotedEvents = quotedEvents,
+                        quotedEventId = if (event.kind == EventKind.REPOST) {
+                            event.parsedTags.firstOrNull { it.name == "e" }?.value()
+                        } else {
+                            event.parsedTags.quotedEventId
+                                ?: social.tbone.ui.feed.extractInlineQuoteId(event.content)
+                        },
                         onThreadClick = onThreadClick,
                         onProfileClick = onProfileClick,
                         onHashtagClick = onHashtagClick,
@@ -525,6 +537,7 @@ fun ProfileScreen(
                 onClose = { galleryViewerIndex = null },
                 onOpenNote = onThreadClick,
             )
+        }
         }
     }
 }

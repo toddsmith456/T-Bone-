@@ -100,6 +100,19 @@ class FeedViewModel @Inject constructor(
     private val _quotedEvents = MutableStateFlow<Map<String, Event>>(emptyMap())
     val quotedEvents: StateFlow<Map<String, Event>> = _quotedEvents.asStateFlow()
 
+    /**
+     * Referenced notes that were asked for and never arrived, so cards show a
+     * terminal "not available" row instead of "loading…" forever.
+     */
+    private val _unresolvedQuoteIds = MutableStateFlow<Set<String>>(emptySet())
+    val unresolvedQuoteIds: StateFlow<Set<String>> = _unresolvedQuoteIds.asStateFlow()
+
+    /** Recomputes [unresolvedQuoteIds] from what was requested vs. resolved. */
+    private fun refreshUnresolvedQuotes() {
+        val resolved = _quotedEvents.value.keys
+        _unresolvedQuoteIds.value = requestedQuoteIds.filterTo(mutableSetOf()) { it !in resolved }
+    }
+
     val reactions: StateFlow<Map<String, Set<String>>> = reactionsRepository.reactions
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
@@ -293,6 +306,7 @@ class FeedViewModel @Inject constructor(
         followsReceived = false
         pendingBuffer.clear()
         requestedQuoteIds.clear()
+        _unresolvedQuoteIds.value = emptySet()
         quoteSubIds.forEach { pool.unsubscribe(it) }
         quoteSubIds.clear()
         metadataFetchSubIds.forEach { pool.unsubscribe(it) }
@@ -426,6 +440,7 @@ class FeedViewModel @Inject constructor(
         feedSettled = false
         pendingBuffer.clear()
         requestedQuoteIds.clear()
+        _unresolvedQuoteIds.value = emptySet()
         quoteSubIds.forEach { pool.unsubscribe(it) }
         quoteSubIds.clear()
         metadataFetchSubIds.forEach { pool.unsubscribe(it) }
@@ -490,6 +505,9 @@ class FeedViewModel @Inject constructor(
                             viewModelScope.launch {
                                 kotlinx.coroutines.delay(QUOTE_GRACE_MS)
                                 if (quoteSubIds.remove(sid)) pool.unsubscribe(sid)
+                                // Lookup finished: whatever is still missing is
+                                // genuinely unavailable, not "loading".
+                                refreshUnresolvedQuotes()
                             }
                         }
                         msg.subscriptionId in metadataFetchSubIds -> {
@@ -525,6 +543,7 @@ class FeedViewModel @Inject constructor(
 
     private fun handleQuoteEvent(event: Event) {
         _quotedEvents.update { it + (event.id to event) }
+        refreshUnresolvedQuotes()
         viewModelScope.launch { eventRepository.save(event, "") }
         fetchMetadataForAuthors(listOf(event.pubkey))
         // A reposted/quoted note may itself quote another note.
@@ -736,6 +755,7 @@ class FeedViewModel @Inject constructor(
                     else runCatching { Event.fromJson(event.content) }.getOrNull()
                     if (embedded != null && embedded.verify()) {
                         _quotedEvents.update { it + (embedded.id to embedded) }
+                        refreshUnresolvedQuotes()
                         viewModelScope.launch { eventRepository.save(embedded, "") }
                         fetchMetadataForAuthors(listOf(embedded.pubkey))
                         if (embedded.kind != EventKind.REPOST) fetchQuotesForEvents(listOf(embedded))
@@ -761,6 +781,7 @@ class FeedViewModel @Inject constructor(
             val cached = eventRepository.getByIds(missing).associateBy { it.id }
             if (cached.isNotEmpty()) {
                 _quotedEvents.update { it + cached }
+                refreshUnresolvedQuotes()
                 fetchMetadataForAuthors(cached.values.map { it.pubkey })
             }
             val stillMissing = missing.filter { it !in cached }

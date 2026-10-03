@@ -9,13 +9,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -46,6 +44,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -92,6 +91,7 @@ fun NotificationsScreen(
     val enabledFilters by viewModel.enabledFilters.collectAsStateWithLifecycle()
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
     val referencedNotes by viewModel.referencedNotes.collectAsStateWithLifecycle()
+    val unresolvedReferencedIds by viewModel.unresolvedReferencedIds.collectAsStateWithLifecycle()
     val hasUnread by viewModel.hasUnread.collectAsStateWithLifecycle()
     val hasMore by viewModel.hasMore.collectAsStateWithLifecycle()
     val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
@@ -170,7 +170,11 @@ fun NotificationsScreen(
                             )
                         }
                     }
-                    else -> LazyColumn(
+                    else -> CompositionLocalProvider(
+                        social.tbone.ui.feed.LocalQuoteState provides
+                            social.tbone.ui.feed.QuoteState(unresolvedReferencedIds),
+                    ) {
+                    LazyColumn(
                         state = listState,
                         // No bottom buffer: the bottom navigation bar below
                         // already handles the system inset.
@@ -194,6 +198,7 @@ fun NotificationsScreen(
                             onOpenThread = onThreadClick,
                             onOpenProfile = onProfileClick,
                             onReply = onReplyClick,
+                            quotedEvents = referencedNotes,
                         )
                         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
                     }
@@ -204,6 +209,7 @@ fun NotificationsScreen(
                             loadingMore = loadingMore,
                             onLoadMore = viewModel::loadMore,
                         )
+                    }
                     }
                     }
                 }
@@ -429,6 +435,8 @@ private fun NotificationRow(
     profile: ProfileContent?,
     profiles: Map<String, ProfileContent>,
     referencedNote: Event?,
+    /** Resolved referenced notes — lets nested quotes render inside the card. */
+    quotedEvents: Map<String, Event> = emptyMap(),
     isExpanded: Boolean,
     onToggle: () -> Unit,
     onOpenThread: (String) -> Unit,
@@ -523,13 +531,22 @@ private fun NotificationRow(
                                 event = referencedNote,
                                 profile = profiles[referencedNote.pubkey],
                                 profiles = profiles,
+                                quotedEvents = quotedEvents,
                                 onThreadClick = onOpenThread,
                                 onProfileClick = onOpenProfile,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                             )
                         } else if (item.referencedEventId != null) {
+                            // The compiler sees this as non-null because of the
+                            // guard above; keep the explicit type for clarity.
+                            val refId: String = item.referencedEventId
+                            val gone = refId in social.tbone.ui.feed.LocalQuoteState.current.unresolved
                             Text(
-                                text = "↳ loading parent note…",
+                                text = if (gone) {
+                                    "↳ that note isn't available on any relay"
+                                } else {
+                                    "↳ loading parent note…"
+                                },
                                 style = BonyType.metaDim.copy(color = BonyColors.TextMute),
                                 modifier = Modifier
                                     .padding(start = 16.dp, top = 2.dp, bottom = 4.dp)
@@ -542,6 +559,7 @@ private fun NotificationRow(
                                 event = reply,
                                 profile = profiles[reply.pubkey],
                                 profiles = profiles,
+                                quotedEvents = quotedEvents,
                                 onThreadClick = onOpenThread,
                                 onProfileClick = onOpenProfile,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
@@ -577,14 +595,15 @@ private fun NotificationRow(
                                 event = target,
                                 profile = profiles[target.pubkey],
                                 profiles = profiles,
+                                quotedEvents = quotedEvents,
                                 onThreadClick = onOpenThread,
                                 onProfileClick = onOpenProfile,
                                 modifier = Modifier.padding(start = 56.dp, end = 14.dp, bottom = 10.dp),
                             )
                         } else {
-                            Text(
-                                text = "loading…",
-                                style = BonyType.meta.copy(color = BonyColors.TextMute),
+                            ReferenceUnavailable(
+                                referenceId = item.referencedEventId,
+                                onOpen = onOpenThread,
                                 modifier = Modifier.padding(start = 56.dp, end = 14.dp, bottom = 10.dp),
                             )
                         }
@@ -597,6 +616,7 @@ private fun NotificationRow(
                                 event = note,
                                 profile = profiles[note.pubkey],
                                 profiles = profiles,
+                                quotedEvents = quotedEvents,
                                 onThreadClick = onOpenThread,
                                 onProfileClick = onOpenProfile,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
@@ -613,14 +633,15 @@ private fun NotificationRow(
                             event = target,
                             profile = profiles[target.pubkey],
                             profiles = profiles,
+                            quotedEvents = quotedEvents,
                             onThreadClick = onOpenThread,
                             onProfileClick = onOpenProfile,
                             modifier = Modifier.padding(start = 56.dp, end = 14.dp, bottom = 10.dp),
                         )
                     } else {
-                        Text(
-                            text = "loading…",
-                            style = BonyType.meta.copy(color = BonyColors.TextMute),
+                        ReferenceUnavailable(
+                            referenceId = item.referencedEventId,
+                            onOpen = onOpenThread,
                             modifier = Modifier.padding(start = 56.dp, end = 14.dp, bottom = 10.dp),
                         )
                     }
@@ -685,6 +706,29 @@ private fun actionText(item: FlatNotifItem): String = when (item.type) {
 }
 
 /** A calendar event row — same look and feel as the other notification rows. */
+/**
+ * Placeholder for a referenced note that has not arrived. Reads as "loading"
+ * while the lookup is open and becomes a terminal "not available" row once
+ * every retry has failed, so a deleted note cannot spin forever.
+ */
+@Composable
+private fun ReferenceUnavailable(
+    referenceId: String?,
+    onOpen: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val unresolved = social.tbone.ui.feed.LocalQuoteState.current.unresolved
+    val gone = referenceId != null && referenceId in unresolved
+    Text(
+        text = if (gone) "this note isn't available on any relay" else "loading…",
+        style = BonyType.meta.copy(color = BonyColors.TextMute),
+        modifier = modifier.then(
+            if (gone) Modifier.clickable { onOpen(referenceId) } else Modifier,
+        ),
+    )
+}
+
+
 @Composable
 private fun CalendarNotifRow(
     item: FlatNotifItem,

@@ -102,6 +102,20 @@ class ThreadViewModel @Inject constructor(
     private val _quotedEvents = MutableStateFlow<Map<String, Event>>(emptyMap())
     val quotedEvents: StateFlow<Map<String, Event>> = _quotedEvents.asStateFlow()
 
+    /**
+     * Referenced notes that were asked for and never arrived, so cards show a
+     * terminal "not available" row instead of "loading…" forever.
+     */
+    private val _unresolvedQuoteIds = MutableStateFlow<Set<String>>(emptySet())
+    val unresolvedQuoteIds: StateFlow<Set<String>> = _unresolvedQuoteIds.asStateFlow()
+
+    private val requestedQuoteIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    private fun refreshUnresolvedQuotes() {
+        val resolved = _quotedEvents.value.keys
+        _unresolvedQuoteIds.value = requestedQuoteIds.filterTo(mutableSetOf()) { it !in resolved }
+    }
+
     val reactions: StateFlow<Map<String, Set<String>>> = reactionsRepository.reactions
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
@@ -145,10 +159,6 @@ class ThreadViewModel @Inject constructor(
     private val pendingReplyLookups: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private var replyLookupJob: Job? = null
 
-    // Branch disclosure state (see ThreadTree).
-    private val expandedIds = ConcurrentHashMap.newKeySet<String>()
-    private val collapsedIds = ConcurrentHashMap.newKeySet<String>()
-    private val expandedFanOut = ConcurrentHashMap.newKeySet<String>()
 
     /**
      * EOSE bookkeeping. Relays answer a REQ at different speeds, and the old
@@ -192,22 +202,6 @@ class ThreadViewModel @Inject constructor(
 
     fun voteOnPoll(poll: Event, optionIds: List<String>) =
         pollsRepository.vote(poll, optionIds)
-
-    /** Expands a branch that [ThreadTree] folded behind a "+N replies" row. */
-    fun expandBranch(anchorId: String) {
-        val changed = expandedIds.add(anchorId) or collapsedIds.remove(anchorId)
-        if (changed) rebuild()
-    }
-
-    /** Reveals the siblings hidden by the fan-out cap under [parentId]. */
-    fun expandFanOut(parentId: String) {
-        if (expandedFanOut.add(parentId)) rebuild()
-    }
-
-    /** Folds a branch back up behind "＋ N replies". */
-    fun collapseBranch(anchorId: String) {
-        if (expandedIds.remove(anchorId) or collapsedIds.add(anchorId)) rebuild()
-    }
 
     // ── Loading ───────────────────────────────────────────────────────────────
 
@@ -445,9 +439,6 @@ class ThreadViewModel @Inject constructor(
             rootId = rootId,
             events = snapshot,
             focusedId = focusedId,
-            collapsedIds = emptySet(),
-            expandedIds = emptySet(),
-            expandedFanOut = emptySet(),
             scrollTargetId = focusedId,
             // The entire thread is rendered at once: no depth folding and no
             // "show more replies" fan-out cap.
@@ -536,6 +527,9 @@ class ThreadViewModel @Inject constructor(
                 ) {
                     quoteSubIds -= msg.subscriptionId
                     pool.unsubscribe(msg.subscriptionId)
+                    // Every relay has answered: whatever is still missing is
+                    // unavailable rather than still loading.
+                    refreshUnresolvedQuotes()
                 }
             }
 
@@ -545,6 +539,7 @@ class ThreadViewModel @Inject constructor(
 
     private fun handleQuoteEvent(event: Event) {
         _quotedEvents.update { it + (event.id to event) }
+        refreshUnresolvedQuotes()
         viewModelScope.launch { eventRepository.save(event, "") }
         fetchMetadataForAuthors(listOf(event.pubkey))
     }
@@ -580,6 +575,7 @@ class ThreadViewModel @Inject constructor(
                     }
                     if (embedded != null && embedded.verify()) {
                         _quotedEvents.update { it + (embedded.id to embedded) }
+                        refreshUnresolvedQuotes()
                         viewModelScope.launch { eventRepository.save(embedded, "") }
                     } else {
                         event.parsedTags.firstOrNull { it.name == "e" }?.value()
@@ -598,11 +594,13 @@ class ThreadViewModel @Inject constructor(
 
         val missing = toResolve.distinct().filter { it !in _quotedEvents.value }
         if (missing.isEmpty()) return
+        requestedQuoteIds += missing
 
         viewModelScope.launch {
             val cached = eventRepository.getByIds(missing).associateBy { it.id }
             if (cached.isNotEmpty()) {
                 _quotedEvents.update { it + cached }
+                refreshUnresolvedQuotes()
                 fetchMetadataForAuthors(cached.values.map { it.pubkey })
             }
             val stillMissing = missing.filter { it !in cached }
