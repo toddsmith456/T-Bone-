@@ -5,6 +5,29 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.3.42] — 2026-10-02
+
+Thread loading and notification references are now kind-complete, and the
+release hardens the settings and reaction flows from the previous feature drop.
+
+### Fixed
+- **Every thread item is retained.** Missing declared roots and missing direct
+  parents are promoted to visible top-level notes instead of disappearing with
+  their nested replies. NIP-22 comments are counted and loaded alongside
+  regular NIP-10 replies.
+- **Notification previews resolve every supported event kind.** Parent notes,
+  polls, reposts, and comments are fetched with ids-only lookups; authored
+  replies and polls are restored after restart so ownership checks still work.
+- **Latest reaction content wins.** When relays deliver several reactions from
+  one account out of order, the active user's newest emoji stays on the note.
+- **Notification history has no extra bottom buffer.** The shared bottom tab
+  bar supplies the inset; the list ends at its actual last row/load-more row.
+
+### Changed
+- Thread rendering suppresses legacy fold rows entirely: the screen requests
+  and presents the complete known tree in one view.
+- Release version bumped to 0.3.42 (version code 50).
+
 ## [0.3.41] — 2026-10-02
 
 Threads that fully load, multi emoji reactions, and a pin-locked Content

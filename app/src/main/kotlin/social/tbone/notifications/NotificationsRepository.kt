@@ -239,6 +239,9 @@ class NotificationsRepository @Inject constructor(
         latestNotifTs = 0L
         settled = false
         _isLoading.value = true
+        synchronized(lock) { myOwnEventIds.clear() }
+        _referencedNotes.value = emptyMap()
+        refFetchAttempts.clear()
 
         // Restore the 24h cache instantly so the tab opens with real content.
         val cached = notificationDao.getRecent(pubkey, now() - CACHE_WINDOW_SECONDS, 1000)
@@ -265,7 +268,15 @@ class NotificationsRepository @Inject constructor(
         // Seed "events I wrote" from the local cache (feed cache includes other
         // people's notes — keep only this account's events).
         scope.launch {
-            val mine = eventRepository.getRecentFeedEvents(pubkey).filter { it.pubkey == pubkey }
+            // Load authored notes directly as well as feed-cached notes. A
+            // reply/comment may never belong to the home feed, and a poll is
+            // not present in older caches; both still need to be tracked so
+            // reactions, reposts and votes can be attributed after restart.
+            val mine = (
+                eventRepository.getRecentAuthoredEvents(pubkey) +
+                    eventRepository.getRecentFeedEvents(pubkey)
+                ).filter { it.pubkey == pubkey }
+                .distinctBy { it.id }
             synchronized(lock) {
                 mine.forEach { myOwnEventIds[it.id] = it.createdAt }
                 pruneOwnEventIdsLocked()
@@ -302,6 +313,7 @@ class NotificationsRepository @Inject constructor(
         eoseTimeoutJob = null
         refSubIds.forEach { pool.unsubscribe(it) }
         refSubIds.clear()
+        refSubToIds.clear()
         profileSubIds.forEach { pool.unsubscribe(it) }
         profileSubIds.clear()
     }
@@ -395,7 +407,9 @@ class NotificationsRepository @Inject constructor(
                     else mergeRepostLocked(event, refId)
                 }
             }
-            EventKind.TEXT_NOTE -> {
+            EventKind.TEXT_NOTE, EventKind.COMMENT -> {
+                // NIP-22 comments use the same q/e reply semantics as text
+                // notes, but were previously discarded before this point.
                 val quoteId = event.parsedTags.firstOrNull { it.name == "q" }?.value()
                 val replyId = event.parsedTags.replyEventId
                 val item = synchronized(lock) {
@@ -832,12 +846,26 @@ class NotificationsRepository @Inject constructor(
         val since = now() - CACHE_WINDOW_SECONDS
         ownRefSubId = pool.subscribe(
             listOf(
+                // Ordinary reactions, reposts and NIP-10 replies reference
+                // their target with lowercase #e.
                 Filter(
                     eTags = ids,
-                    kinds = listOf(EventKind.TEXT_NOTE, EventKind.REACTION, EventKind.REPOST),
+                    kinds = listOf(
+                        EventKind.TEXT_NOTE,
+                        EventKind.COMMENT,
+                        EventKind.REACTION,
+                        EventKind.REPOST,
+                    ),
                     since = since,
                     limit = 100,
-                )
+                ),
+                // NIP-22 comments also carry the thread root in uppercase #E.
+                Filter(
+                    bigETags = ids,
+                    kinds = listOf(EventKind.COMMENT),
+                    since = since,
+                    limit = 100,
+                ),
             ),
             label = "notif-own-refs",
         )
@@ -859,8 +887,12 @@ class NotificationsRepository @Inject constructor(
             }
             val missing = ids.filter { it !in cached }
             if (missing.isEmpty()) return@launch
+            // The target can be a text note, poll, repost or NIP-22
+            // comment. An ids-only lookup is intentional: narrowing this to
+            // kind 1 made expanded notifications stay on "loading…" for
+            // every other event kind.
             val subId = pool.subscribe(
-                listOf(Filter(ids = missing, kinds = listOf(EventKind.TEXT_NOTE))),
+                listOf(Filter(ids = missing)),
                 label = "notif-ref",
             )
             refSubIds.add(subId)

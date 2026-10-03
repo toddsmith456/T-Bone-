@@ -21,6 +21,7 @@ import social.tbone.nostr.Filter
 import social.tbone.nostr.UnsignedEvent
 import social.tbone.nostr.relay.RelayMessage
 import social.tbone.nostr.relay.RelayPool
+import social.tbone.nostr.relay.RelayStatus
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -54,12 +55,26 @@ class ReactionsRepository @Inject constructor(
      * reacted with in place of the heart.
      */
     private val contentCache = LruCache<String, String>(Tunables.REACTION_CACHE_SIZE)
+    // Relays do not guarantee ordering for multiple reactions by one pubkey.
+    // Keep the newest event's content so an older emoji arriving late cannot
+    // replace the emoji the user actually used most recently.
+    private val contentTimestampCache = LruCache<String, Long>(Tunables.REACTION_CACHE_SIZE)
     private val _reactionContents = MutableStateFlow<Map<String, String>>(emptyMap())
     val reactionContents: StateFlow<Map<String, String>> = _reactionContents.asStateFlow()
 
-    private fun recordContent(eventId: String, pubkey: String, content: String) {
+    private fun recordContent(eventId: String, pubkey: String, content: String, createdAt: Long) {
         val key = reactionKey(eventId, pubkey)
-        synchronized(contentCache) { contentCache.put(key, content) }
+        val shouldRecord = synchronized(contentTimestampCache) {
+            val previous = contentTimestampCache.get(key)
+            if (previous != null && previous > createdAt) {
+                false
+            } else {
+                contentTimestampCache.put(key, createdAt)
+                synchronized(contentCache) { contentCache.put(key, content) }
+                true
+            }
+        }
+        if (!shouldRecord) return
         _reactionContents.update { current ->
             // Keep the exposed map bounded like the LRU behind it.
             val trimmed = if (current.size >= Tunables.REACTION_CACHE_SIZE) {
@@ -89,7 +104,12 @@ class ReactionsRepository @Inject constructor(
                     // Targeted update: replace only the changed entry instead of
                     // snapshotting the entire 5000-entry cache on every reaction event.
                     _reactions.update { it + (targetId to updated) }
-                    recordContent(targetId, msg.event.pubkey, msg.event.content.ifEmpty { "+" })
+                    recordContent(
+                        targetId,
+                        msg.event.pubkey,
+                        msg.event.content.ifEmpty { "+" },
+                        msg.event.createdAt,
+                    )
                 }
             }
         }
@@ -106,9 +126,18 @@ class ReactionsRepository @Inject constructor(
         )
         // Unsubscribe after EOSE — historical data loaded; live reactions handled by the init collector
         scope.launch {
+            val answeredRelays = mutableSetOf<String>()
+            val expectedRelays = pool.relayStatuses.value
+                .count { it.value == RelayStatus.CONNECTED }
+                .coerceAtLeast(1)
             withTimeoutOrNull(30_000) {
-                pool.messages.first { (_, msg) ->
-                    msg is RelayMessage.EndOfStoredEvents && msg.subscriptionId == subId
+                pool.messages.first { (relayUrl, msg) ->
+                    if (msg !is RelayMessage.EndOfStoredEvents || msg.subscriptionId != subId) {
+                        false
+                    } else {
+                        answeredRelays += relayUrl
+                        answeredRelays.size >= expectedRelays
+                    }
                 }
             }
             pool.unsubscribe(subId)
@@ -128,7 +157,7 @@ class ReactionsRepository @Inject constructor(
                 next
             }
             _reactions.update { it + (event.id to optimistic) }
-            recordContent(event.id, activePubkey, reaction)
+            recordContent(event.id, activePubkey, reaction, System.currentTimeMillis() / 1000)
 
             val unsigned = UnsignedEvent(
                 pubkey = activePubkey,
@@ -149,8 +178,10 @@ class ReactionsRepository @Inject constructor(
                         next
                     }
                     _reactions.update { it + (event.id to rollback) }
-                    synchronized(contentCache) { contentCache.remove(reactionKey(event.id, activePubkey)) }
-                    _reactionContents.update { it - reactionKey(event.id, activePubkey) }
+                    val key = reactionKey(event.id, activePubkey)
+                    synchronized(contentCache) { contentCache.remove(key) }
+                    synchronized(contentTimestampCache) { contentTimestampCache.remove(key) }
+                    _reactionContents.update { it - key }
                     Timber.w(e, "React failed")
                 }
         }

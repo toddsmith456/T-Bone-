@@ -19,6 +19,7 @@ import social.tbone.nostr.Filter
 import social.tbone.nostr.replyEventId
 import social.tbone.nostr.relay.RelayMessage
 import social.tbone.nostr.relay.RelayPool
+import social.tbone.nostr.relay.RelayStatus
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -65,7 +66,8 @@ class RepliesRepository @Inject constructor(
         scope.launch {
             pool.messages.collect { (_, msg) ->
                 if (msg is RelayMessage.EventMessage
-                    && msg.event.kind == EventKind.TEXT_NOTE
+                    && (msg.event.kind == EventKind.TEXT_NOTE ||
+                        msg.event.kind == EventKind.COMMENT)
                     && msg.event.verify()
                 ) {
                     val parentId = msg.event.parsedTags.replyEventId ?: return@collect
@@ -81,14 +83,28 @@ class RepliesRepository @Inject constructor(
         if (newIds.isEmpty()) return
         newIds.forEach { subscribedCache.put(it, Unit) }
         val subId = pool.subscribe(
-            listOf(Filter(eTags = newIds, kinds = listOf(EventKind.TEXT_NOTE))),
+            listOf(
+                Filter(
+                    eTags = newIds,
+                    kinds = listOf(EventKind.TEXT_NOTE, EventKind.COMMENT),
+                ),
+            ),
             label = "replies",
         )
         // Unsubscribe after EOSE — historical replies loaded; live handled above.
         scope.launch {
+            val answeredRelays = mutableSetOf<String>()
+            val expectedRelays = pool.relayStatuses.value
+                .count { it.value == RelayStatus.CONNECTED }
+                .coerceAtLeast(1)
             withTimeoutOrNull(30_000) {
-                pool.messages.first { (_, m) ->
-                    m is RelayMessage.EndOfStoredEvents && m.subscriptionId == subId
+                pool.messages.first { (relayUrl, m) ->
+                    if (m !is RelayMessage.EndOfStoredEvents || m.subscriptionId != subId) {
+                        false
+                    } else {
+                        answeredRelays += relayUrl
+                        answeredRelays.size >= expectedRelays
+                    }
                 }
             }
             pool.unsubscribe(subId)

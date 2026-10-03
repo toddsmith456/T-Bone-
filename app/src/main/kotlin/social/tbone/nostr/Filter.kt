@@ -57,6 +57,7 @@ data class Filter(
         fun notifications(pubkey: String, limit: Int = 50) = Filter(
             kinds = listOf(
                 EventKind.TEXT_NOTE,
+                EventKind.COMMENT,
                 EventKind.REACTION,
                 EventKind.REPOST,
                 EventKind.POLL_RESPONSE,

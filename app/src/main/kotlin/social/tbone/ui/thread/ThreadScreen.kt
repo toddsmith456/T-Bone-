@@ -51,8 +51,9 @@ import social.tbone.ui.theme.BonyType
  *
  * Renders the flattened conversation tree produced by [ThreadTree]: the root,
  * every note between it and the tapped note (fetched automatically — the old
- * "replies in between" placeholder is gone), then the replies as nested mini
- * threads with indent rails and "+N replies" folds.
+ * "replies in between" placeholder is gone), then the complete reply tree as
+ * nested mini threads with indent rails. There is no fold or "see more replies"
+ * affordance on this screen.
  */
 @Composable
 fun ThreadScreen(
@@ -202,19 +203,12 @@ fun ThreadScreen(
                                 onCollapseBranch = viewModel::collapseBranch,
                             )
 
-                            is ThreadItem.FoldedReplies -> FoldRow(
-                                label = "＋ ${item.hiddenCount} " +
-                                    if (item.hiddenCount == 1) "reply" else "replies",
-                                depth = item.depth,
-                                onClick = { viewModel.expandBranch(item.anchorId) },
-                            )
-
-                            is ThreadItem.ShowMoreReplies -> FoldRow(
-                                label = "＋ show ${item.hiddenCount} more " +
-                                    if (item.hiddenCount == 1) "reply" else "replies",
-                                depth = item.depth,
-                                onClick = { viewModel.expandFanOut(item.parentId) },
-                            )
+                            // The thread screen always requests an unbounded
+                            // tree. These legacy item types remain in the pure
+                            // builder for callers/tests that need progressive
+                            // disclosure, but they are never rendered here —
+                            // there is no "see more replies" affordance.
+                            is ThreadItem.FoldedReplies, is ThreadItem.ShowMoreReplies -> Unit
                         }
                     }
 

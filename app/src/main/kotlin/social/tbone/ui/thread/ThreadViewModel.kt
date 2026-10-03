@@ -281,7 +281,9 @@ class ThreadViewModel @Inject constructor(
         }
         val tag = event.parsedTags.firstOrNull { it.name == "e" } ?: return null
         val id = tag.value() ?: return null
-        return eventRepository.getById(id) ?: fetchById(id, listOfNotNull(tag.value(2)))
+        val hint = tag.value(2)?.trim()
+            ?.takeIf { it.startsWith("wss://") || it.startsWith("ws://") }
+        return eventRepository.getById(id) ?: fetchById(id, listOfNotNull(hint))
     }
 
     /**

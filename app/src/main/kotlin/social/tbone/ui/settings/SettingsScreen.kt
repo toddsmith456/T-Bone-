@@ -65,7 +65,6 @@ fun SettingsScreen(
     onDuressPinSetup: () -> Unit = {},
     onBlossom: () -> Unit = {},
     onOfflineList: (String) -> Unit = {},
-    onScreenTime: () -> Unit = {},
     onProfileEdit: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {

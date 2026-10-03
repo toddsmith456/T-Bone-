@@ -18,7 +18,7 @@ A bare-bones, Google-free, vibe-coded Nostr client for Android. Fast, lean, and 
 > - **Real avatars** — settings → AVATARS: *avatar style* `INITIAL` (letter squares) / `LOW` (real avatars, lower resolution) / `REGULAR` (real avatars at full quality), plus *animated avatars* on/off (off shows GIF avatars as a still picture).
 > - **Themes + accent color** — Settings → APPEARANCE: **light / dark (pure black) / cream (warm old-book-page)** modes, plus an **accent color chooser** (a round hue/saturation wheel paired with a brightness bar) that replaces the default green everywhere the accent is used. Live preview while dragging, persisted on close.
 > - **Faster names** — profiles for everyone you follow are prefetched as soon as your follow list arrives, so names appear with the feed instead of lagging behind.
-> - **Thread fix** — opening a note in a thread now shows the full, untruncated note (the root and the note you tapped), instead of the shortened feed version.
+> - **Complete threads** — opening a note (including a reposted reply) resolves the full upstream chain, nested replies, NIP-22 comments, and relay-hinted parents. The thread view renders the entire known tree at once with no “see more replies” fold.
 > - **Encrypted Notes tab** — the bottom **NOTES** tab is a simple on-device scratchpad. Every note is **AES-256-GCM encrypted with a key in the Android Keystore**; only ciphertext is stored in the database, and the screen shows a lock badge only after an encrypt→decrypt round-trip passes.
 > - **Signing indicator** — tapping like/reply/etc. with an external or remote signer now shows a deliberate "signing…" overlay the moment the request starts (Amber and nsecBunker both set it), so the handoff to the signer app no longer reads as an unexplained flash.
 > - **New engagement buttons** — reply / like / quote / repost / share are now larger, recognizable icon buttons with counts; the like is an outline that fills **red** when you like, the reply button fills solid with its count when you've replied.
@@ -50,15 +50,16 @@ Do the minimum well. No analytics, no tracking, no Google Services. Authenticati
 - **Deterministic dot avatars** — 4×4 grid derived from the pubkey hash; square, never circular
 - **Home feed** — follow-graph events with live relay streaming, pull-to-refresh, and atomic load (feed appears all at once, not one note at a time)
 - **Offline follow & block lists** — optional fully local lists (Settings → OFFLINE LISTS). One-time import from your relays, never synced automatically, never writes to your relay follow/mute lists while on, collapsed browsable list with no avatars, add/remove by npub, one-way relay → offline SYNC with a warning, single-file export/import. Online BLOCK uses the NIP-51 mute list (kind 10000)
+- **Content Filters folder** — NSFW, bleep-word and hide-word controls plus screen-time limits live together behind one optional parental PIN. Once set, opening the folder and changing the limit both require the PIN; leaving the folder relocks it.
 - **Global feed** — all kind-1 notes from connected relays; switchable via the FOLLOWING / GLOBAL tab strip at the top of the home screen
 - **Reposts and quote-notes** — kind-6 reposts rendered as embedded cards; quote-notes (NIP-18 `q` tag and inline `nostr:note1…` refs) resolved and embedded
 - **Inline media** — images auto-load in the feed (off / on / low-quality setting, on by default) and open in a full-screen viewer with pinch-zoom and download; videos open in the system viewer
-- **Notifications tab** — full Wisp-style in-app bell tab: 24h summary with tap-to-filter, filter sheet with persisted type switches, grouped compact rows, expandable note previews with inline reply, an unread dot, and follows
+- **Notifications tab** — full Wisp-style in-app bell tab: 24h summary with tap-to-filter, filter sheet with persisted type switches, grouped compact rows, expandable note previews with inline reply, an unread dot, complete note/poll/repost/comment reference loading, and no extra bottom buffer because the shared tab bar provides the inset
 - **Avatars** — real profile pictures in the feed, threads, notifications and profiles with INITIAL / LOW / REGULAR modes and a still-vs-animated GIF toggle (Settings → AVATARS)
-- **Thread view** — root note → gap indicator → direct parent → focused note → live replies header with count; the note you opened and the thread root render in full
+- **Thread view** — root-to-focused ancestor loading, reposted-reply unwrapping, nested NIP-10/NIP-22 replies, and a complete depth-first tree shown at once; the note you opened and the thread root render in full
 - **Compose** — new notes, replies (NIP-10 `e`/`p` tags with root/reply markers), and quote-notes (`q` tag + inline ref)
 - **Boost notes** — one-tap repost (kind-6) via your active signer
-- **Reactions** — NIP-25 like button with count; optimistic update with rollback on failure; heart fills and locks once reacted
+- **Reactions** — NIP-25 like button with count; optimistic update with rollback on failure; optional Settings → REACTIONS multi-emoji mode saves up to 10 keyboard emojis, opens a compact picker when needed, and shows the selected emoji on the note
 - **Follow / unfollow** — follow or unfollow any profile; publishes updated kind-3 contact list and persists locally
 - **Share notes** — Android share sheet with note text + `nostr:note1…` URI
 - **Share profiles** — share `nostr:npub1…` URI + display name via Android share sheet
