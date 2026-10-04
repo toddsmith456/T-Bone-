@@ -129,7 +129,7 @@ fun VideoViewer(
         AndroidView(
             factory = { viewContext ->
                 PlayerView(viewContext).apply {
-                    player = player
+                    this.player = player
                     useController = true
                     controllerShowTimeoutMs = 3_000
                     setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)

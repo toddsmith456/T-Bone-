@@ -30,6 +30,7 @@ import social.tbone.nostr.Nip19
 import social.tbone.nostr.UnsignedEvent
 import social.tbone.nostr.relay.RelayMessage
 import social.tbone.nostr.relay.RelayPool
+import social.tbone.nostr.quotedEventId
 import social.tbone.nostr.replyToPubkeys
 import social.tbone.nostr.rootEventId
 import social.tbone.profile.ProfileRepository
