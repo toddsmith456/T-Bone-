@@ -10,6 +10,8 @@ import kotlinx.coroutines.launch
 import social.tbone.settings.AppSettings
 import social.tbone.settings.AvatarMode
 import social.tbone.settings.ImageLoadMode
+import social.tbone.settings.VideoPlaybackMode
+import social.tbone.settings.VideoQuality
 import javax.inject.Inject
 
 /**
@@ -26,6 +28,15 @@ class MediaSettingsViewModel @Inject constructor(
     val imageLoadMode: StateFlow<ImageLoadMode> = appSettings.imageLoadMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ImageLoadMode.ON)
 
+    val videoQuality: StateFlow<VideoQuality> = appSettings.videoQuality
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), VideoQuality.REGULAR)
+
+    val videoPlaybackMode: StateFlow<VideoPlaybackMode> = appSettings.videoPlaybackMode
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), VideoPlaybackMode.PLAY_ON_TAP)
+
+    val videoThumbnails: StateFlow<Boolean> = appSettings.videoThumbnails
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
     val avatarMode: StateFlow<AvatarMode> = appSettings.avatarMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AvatarMode.REGULAR)
 
@@ -34,6 +45,18 @@ class MediaSettingsViewModel @Inject constructor(
 
     fun setImageLoadMode(mode: ImageLoadMode) {
         viewModelScope.launch { appSettings.setImageLoadMode(mode) }
+    }
+
+    fun setVideoQuality(quality: VideoQuality) {
+        viewModelScope.launch { appSettings.setVideoQuality(quality) }
+    }
+
+    fun setVideoPlaybackMode(mode: VideoPlaybackMode) {
+        viewModelScope.launch { appSettings.setVideoPlaybackMode(mode) }
+    }
+
+    fun setVideoThumbnails(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setVideoThumbnails(enabled) }
     }
 
     fun setAvatarMode(mode: AvatarMode) {

@@ -279,11 +279,15 @@ class FeedViewModel @Inject constructor(
      * list of events before it reaches the UI.
      */
     private fun applyContentFilter(events: List<social.tbone.nostr.Event>): List<social.tbone.nostr.Event> {
+        // Defense in depth: relay filters and event dispatch both restrict the
+        // feed, but cached/side-loaded data must also never surface NIP-17 or
+        // its NIP-59 wrappers in the public timeline.
+        val publicEvents = events.filterNot { EventKind.isPrivateMessaging(it.kind) }
         val blocked = muteRepository.effectiveMuted.value
         val hideNsfw = appSettings.hideNsfw.value
         val hideWords = appSettings.hideWords.value
-        if (blocked.isEmpty() && !hideNsfw && hideWords.isEmpty()) return events
-        return events.filter { !ContentFilter.shouldHide(it, blocked, hideNsfw, hideWords) }
+        if (blocked.isEmpty() && !hideNsfw && hideWords.isEmpty()) return publicEvents
+        return publicEvents.filter { !ContentFilter.shouldHide(it, blocked, hideNsfw, hideWords) }
     }
 
     fun refresh() {
@@ -542,6 +546,7 @@ class FeedViewModel @Inject constructor(
     }
 
     private fun handleQuoteEvent(event: Event) {
+        if (EventKind.isPrivateMessaging(event.kind)) return
         _quotedEvents.update { it + (event.id to event) }
         refreshUnresolvedQuotes()
         viewModelScope.launch { eventRepository.save(event, "") }
@@ -551,6 +556,7 @@ class FeedViewModel @Inject constructor(
     }
 
     private fun handleEvent(event: Event) {
+        if (EventKind.isPrivateMessaging(event.kind)) return
         when (event.kind) {
             EventKind.FOLLOW_LIST -> expandFeedToFollows(event)
             EventKind.METADATA    -> {
@@ -705,6 +711,7 @@ class FeedViewModel @Inject constructor(
     }
 
     private fun addToFeed(event: Event) {
+        if (EventKind.isPrivateMessaging(event.kind)) return
         // Only persist home feed events — global feed is a live view and must not
         // pollute the cache that getRecentFeedEvents returns on next home load.
         if (_currentFeed.value == FeedTab.HOME) {

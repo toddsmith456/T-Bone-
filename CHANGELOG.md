@@ -5,6 +5,26 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.3.44] — 2026-10-04
+
+### Added
+- **In-app video playback.** Settings → MEDIA now offers Off, Low, and Regular
+  video quality, three plain-language load/play choices, and optional video
+  thumbnails for tap-to-load videos. Low quality asks adaptive sources for a
+  smaller track where available; Regular keeps the posted source quality.
+- Videos play in a themed, full-screen T-Bone player with close and download
+  controls, Tor-aware networking, and repeat mode permanently disabled.
+
+### Fixed
+- NIP-17 private messages and their wrapper events are rejected at feed
+  dispatch, cache, and render boundaries.
+- Quote references are rendered once, including nested quoted notes.
+- Quote-replies keep a separate NIP-18 `q` reference and correct NIP-10 root/
+  reply target tags when both relationships are present.
+
+### Changed
+- Release version bumped to 0.3.44 (version code 52).
+
 ## [0.3.43] — 2026-10-03
 
 Follow-up to 0.3.42 so that every note that is supposed to load actually does,

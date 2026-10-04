@@ -56,8 +56,8 @@ android {
         applicationId = "social.tbone.fork"
         minSdk = 26
         targetSdk = 34
-        versionCode = 51
-        versionName = "0.3.43"
+        versionCode = 52
+        versionName = "0.3.44"
     }
 
     signingConfigs {
@@ -200,6 +200,7 @@ dependencies {
     // Images
     implementation(libs.coil.compose)
     implementation(libs.coil.gif)
+    implementation(libs.coil.video)
 
     // Logging
     implementation(libs.timber)
@@ -212,6 +213,9 @@ dependencies {
     implementation(libs.media3.effect)
     implementation(libs.media3.common)
     implementation(libs.media3.container)
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.ui)
+    implementation(libs.media3.datasource.okhttp)
 
     // Unit tests (JVM only — build-time, never shipped in the APK)
     testImplementation("junit:junit:4.13.2")

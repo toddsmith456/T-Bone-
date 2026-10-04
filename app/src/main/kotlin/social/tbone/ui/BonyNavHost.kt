@@ -43,6 +43,9 @@ import social.tbone.ui.lock.PinSetupScreen
 import social.tbone.ui.media.LocalAnimatedAvatars
 import social.tbone.ui.media.LocalAvatarMode
 import social.tbone.ui.media.LocalImageLoadMode
+import social.tbone.ui.media.LocalVideoPlaybackMode
+import social.tbone.ui.media.LocalVideoQuality
+import social.tbone.ui.media.LocalVideoThumbnails
 import social.tbone.ui.media.MediaSettingsViewModel
 import social.tbone.ui.notifications.NotificationsScreen
 import social.tbone.ui.notes.ChecklistEditorScreen
@@ -116,6 +119,9 @@ fun BonyNavHost() {
     val startupState by viewModel.startupState.collectAsStateWithLifecycle()
     val isLocked by lockViewModel.isLocked.collectAsStateWithLifecycle()
     val imageLoadMode by mediaSettings.imageLoadMode.collectAsStateWithLifecycle()
+    val videoQuality by mediaSettings.videoQuality.collectAsStateWithLifecycle()
+    val videoPlaybackMode by mediaSettings.videoPlaybackMode.collectAsStateWithLifecycle()
+    val videoThumbnails by mediaSettings.videoThumbnails.collectAsStateWithLifecycle()
     val avatarMode by mediaSettings.avatarMode.collectAsStateWithLifecycle()
     val avatarAnimated by mediaSettings.avatarAnimated.collectAsStateWithLifecycle()
     val navController = rememberNavController()
@@ -150,6 +156,9 @@ fun BonyNavHost() {
 
             CompositionLocalProvider(
                 LocalImageLoadMode provides imageLoadMode,
+                LocalVideoQuality provides videoQuality,
+                LocalVideoPlaybackMode provides videoPlaybackMode,
+                LocalVideoThumbnails provides videoThumbnails,
                 LocalAvatarMode provides avatarMode,
                 LocalAnimatedAvatars provides avatarAnimated,
             ) {

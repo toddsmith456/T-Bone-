@@ -21,4 +21,8 @@ object EventKind {
     const val RELAY_LIST = 10002     // NIP-65: relay list metadata
     const val AUTH = 22242           // NIP-42: relay authentication
     const val NOSTR_CONNECT = 24133  // NIP-46: nsecBunker request/response
+
+    /** NIP-17/59 kinds that must never be treated as public feed content. */
+    fun isPrivateMessaging(kind: Int): Boolean = kind == PRIVATE_DM ||
+        kind == ENCRYPTED_DM || kind == SEAL || kind == GIFT_WRAP
 }

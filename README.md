@@ -53,11 +53,11 @@ Do the minimum well. No analytics, no tracking, no Google Services. Authenticati
 - **Content Filters folder** — NSFW, bleep-word and hide-word controls plus screen-time limits live together behind one optional parental PIN. Once set, opening the folder and changing the limit both require the PIN; leaving the folder relocks it.
 - **Global feed** — all kind-1 notes from connected relays; switchable via the FOLLOWING / GLOBAL tab strip at the top of the home screen
 - **Reposts and quote-notes** — kind-6 reposts rendered as embedded cards; quote-notes (NIP-18 `q` tag and inline `nostr:note1…` refs) resolved and embedded
-- **Inline media** — images auto-load in the feed (off / on / low-quality setting, on by default) and open in a full-screen viewer with pinch-zoom and download; videos open in the system viewer
+- **Inline media** — images auto-load in the feed (off / on / low-quality setting, on by default) and open in a full-screen viewer with pinch-zoom and download; videos have Off / Low / Regular quality, configurable load/play behavior, optional tap-to-load thumbnails, and a themed in-app full-screen player with download and close controls (never an external viewer, never looping)
 - **Notifications tab** — full Wisp-style in-app bell tab: 24h summary with tap-to-filter, filter sheet with persisted type switches, grouped compact rows, expandable note previews with inline reply, an unread dot, complete note/poll/repost/comment reference loading, and no extra bottom buffer because the shared tab bar provides the inset
 - **Avatars** — real profile pictures in the feed, threads, notifications and profiles with INITIAL / LOW / REGULAR modes and a still-vs-animated GIF toggle (Settings → AVATARS)
 - **Thread view** — root-to-focused ancestor loading, reposted-reply unwrapping, nested NIP-10/NIP-22 replies, and a complete depth-first tree shown at once; the note you opened and the thread root render in full
-- **Compose** — new notes, replies (NIP-10 `e`/`p` tags with root/reply markers), and quote-notes (`q` tag + inline ref)
+- **Compose** — new notes, replies (NIP-10 `e`/`p` tags with root/reply markers), and quote-notes (`q` tag + inline ref); quote-replies preserve both the quoted event and actual reply target
 - **Boost notes** — one-tap repost (kind-6) via your active signer
 - **Reactions** — NIP-25 like button with count; optimistic update with rollback on failure; optional Settings → REACTIONS multi-emoji mode saves up to 10 keyboard emojis, opens a compact picker when needed, and shows the selected emoji on the note
 - **Follow / unfollow** — follow or unfollow any profile; publishes updated kind-3 contact list and persists locally

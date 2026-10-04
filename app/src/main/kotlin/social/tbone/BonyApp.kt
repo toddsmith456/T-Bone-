@@ -3,6 +3,7 @@ package social.tbone
 import android.app.Application
 import coil.Coil
 import coil.ImageLoader
+import coil.decode.VideoFrameDecoder
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.combine
@@ -84,6 +85,7 @@ class BonyApp : Application() {
                 Coil.setImageLoader(
                     ImageLoader.Builder(this@BonyApp)
                         .okHttpClient(client)
+                        .components { add(VideoFrameDecoder.Factory()) }
                         .build()
                 )
             }

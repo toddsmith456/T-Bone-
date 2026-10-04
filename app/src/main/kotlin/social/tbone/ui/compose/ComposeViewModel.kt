@@ -311,36 +311,50 @@ class ComposeViewModel @Inject constructor(
             }
 
             val replyTo = _uiState.value.replyToEvent
-            val quoteTo = _uiState.value.quoteToEvent
+            val explicitQuote = _uiState.value.quoteToEvent
+            // A reply opened from a quote-note still carries the quote's
+            // relationship. This prevents the composer from silently dropping
+            // the q reference while it correctly adds the new reply target.
+            val inheritedQuoteId = replyTo?.parsedTags.quotedEventId
+            val inheritedQuote = if (explicitQuote == null && inheritedQuoteId != null) {
+                eventRepository.getById(inheritedQuoteId)
+            } else null
+            val quoteTo = explicitQuote ?: inheritedQuote
+            val quoteId = quoteTo?.id ?: inheritedQuoteId
 
             val tags = buildList {
                 if (replyTo != null) {
-                    // NIP-10: root + reply e-tags with markers
+                    // NIP-10: retain the root and mark the actual parent as
+                    // reply. Do not let a q-tag or a mention become the reply
+                    // target, and do not emit the same event twice when replying
+                    // directly to a root note.
                     val rootId = replyTo.parsedTags.rootEventId
-                    if (rootId != null) {
+                    if (rootId != null && rootId != replyTo.id) {
                         add(buildJsonArray {
                             add(JsonPrimitive("e")); add(JsonPrimitive(rootId))
                             add(JsonPrimitive("")); add(JsonPrimitive("root"))
                         })
-                        add(buildJsonArray {
-                            add(JsonPrimitive("e")); add(JsonPrimitive(replyTo.id))
-                            add(JsonPrimitive("")); add(JsonPrimitive("reply"))
-                        })
-                    } else {
-                        add(buildJsonArray {
-                            add(JsonPrimitive("e")); add(JsonPrimitive(replyTo.id))
-                            add(JsonPrimitive("")); add(JsonPrimitive("reply"))
-                        })
                     }
-                    // p tags: author of the note + existing p-tagged participants
+                    add(buildJsonArray {
+                        add(JsonPrimitive("e")); add(JsonPrimitive(replyTo.id))
+                        add(JsonPrimitive("")); add(JsonPrimitive("reply"))
+                    })
+
+                    // p tags: author of the actual reply target + existing
+                    // NIP-10 participants. The quote's author is added below
+                    // separately, so both relationships survive publishing.
                     val mentions = (listOf(replyTo.pubkey) + replyTo.parsedTags.replyToPubkeys).distinct()
                     mentions.forEach { pubkey ->
                         add(buildJsonArray { add(JsonPrimitive("p")); add(JsonPrimitive(pubkey)) })
                     }
                 }
-                if (quoteTo != null) {
-                    add(buildJsonArray { add(JsonPrimitive("q")); add(JsonPrimitive(quoteTo.id)) })
-                    add(buildJsonArray { add(JsonPrimitive("p")); add(JsonPrimitive(quoteTo.pubkey)) })
+                if (quoteId != null) {
+                    // NIP-18 quote reference is intentionally separate from
+                    // NIP-10 reply e-tags: a quote-reply carries both.
+                    add(buildJsonArray { add(JsonPrimitive("q")); add(JsonPrimitive(quoteId)) })
+                    quoteTo?.let { quoted ->
+                        add(buildJsonArray { add(JsonPrimitive("p")); add(JsonPrimitive(quoted.pubkey)) })
+                    }
                 }
                 // User-added @mentions (npubs → p-tags) and #hashtags (t-tags).
                 tagNpubs.distinct().forEach { npub ->
@@ -358,8 +372,9 @@ class ComposeViewModel @Inject constructor(
                 }
             }
 
-            // For quote-reply, ensure nostr:note1… ref is in the content
-            val noteRef = quoteTo?.let { "\n\nnostr:${Nip19.hexToNote(it.id)}" }
+            // For quote-reply, ensure the quoted reference is also visible in
+            // the content (the q tag alone is not enough for NIP-27 clients).
+            val noteRef = quoteId?.let { "\n\nnostr:${Nip19.hexToNote(it)}" }
             val finalContent = if (noteRef != null && !trimmed.contains(noteRef.trim()))
                 "$trimmed$noteRef"
             else

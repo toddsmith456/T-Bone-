@@ -382,7 +382,9 @@ fun NoteCard(
                         onHashtagClick = onHashtagClick,
                         onOpenNote = { onThreadClick?.invoke(event.id) },
                         profiles = profiles,
-                        quotedEvents = quotedEvents,
+                        // The explicit quote card below owns this reference;
+                        // never let NoteBodyText render the same event a second time.
+                        quotedEvents = quotedEvents.filterKeys { it != quotedRefId },
                     )
                 }
 
@@ -506,6 +508,13 @@ fun QuotedNoteCard(
     modifier: Modifier = Modifier,
 ) {
     val parsed = remember(event.id) { parseNoteContent(event.content, profiles) }
+    val nestedId = event.parsedTags.quotedEventId
+        ?: event.parsedTags.firstOrNull { it.name == "q" }?.value()
+    // The nested quote is drawn by the dedicated card below, not as a second
+    // embedded note block inside the quoted body.
+    val bodyText = remember(event.id, nestedId) {
+        if (nestedId != null) stripQuoteRefs(parsed.text, nestedId) else parsed.text
+    }
 
     Column(
         modifier = modifier
@@ -544,10 +553,10 @@ fun QuotedNoteCard(
             )
         }
 
-        if (parsed.text.isNotEmpty()) {
+        if (bodyText.isNotEmpty()) {
             Spacer(Modifier.height(6.dp))
             NoteBodyText(
-                content = parsed.text,
+                content = bodyText,
                 style = BonyType.bodyDim.copy(color = BonyColors.TextDim),
                 maxLines = QUOTED_MAX_LINES,
                 expandable = !fullContent,
@@ -568,8 +577,6 @@ fun QuotedNoteCard(
         }
 
         // Quote of a quote still renders (one level, so a cycle cannot recurse).
-        val nestedId = event.parsedTags.quotedEventId
-            ?: event.parsedTags.firstOrNull { it.name == "q" }?.value()
         val nested = nestedId?.let { quotedEvents[it] }
         if (nestedId != null &&
             nested == null &&

@@ -36,6 +36,8 @@ import social.tbone.account.Account
 import social.tbone.nostr.identity.Phrase
 import social.tbone.settings.AvatarMode
 import social.tbone.settings.ImageLoadMode
+import social.tbone.settings.VideoPlaybackMode
+import social.tbone.settings.VideoQuality
 import social.tbone.settings.ORBOT_ZAPSTORE_URL
 import social.tbone.settings.ThemeMode
 import social.tbone.settings.UiTheme
@@ -74,6 +76,9 @@ fun SettingsScreen(
     val duressPinEnabled by viewModel.duressPinEnabled.collectAsStateWithLifecycle()
     val screenshotBlockEnabled by viewModel.screenshotBlockEnabled.collectAsStateWithLifecycle()
     val imageLoadMode by viewModel.imageLoadMode.collectAsStateWithLifecycle()
+    val videoQuality by viewModel.videoQuality.collectAsStateWithLifecycle()
+    val videoPlaybackMode by viewModel.videoPlaybackMode.collectAsStateWithLifecycle()
+    val videoThumbnails by viewModel.videoThumbnails.collectAsStateWithLifecycle()
     val avatarMode by viewModel.avatarMode.collectAsStateWithLifecycle()
     val avatarAnimated by viewModel.avatarAnimated.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
@@ -307,6 +312,96 @@ fun SettingsScreen(
                         )
                     }
                 }
+            }
+        }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+
+        // Video playback is kept separate from image loading because videos can
+        // consume substantially more bandwidth and battery than a still image.
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+        ) {
+            Text("video quality", style = BonyType.body.copy(color = BonyColors.Text))
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = when (videoQuality) {
+                    VideoQuality.OFF -> "off · videos wait for a tap"
+                    VideoQuality.LOW -> "low · requests smaller tracks where available"
+                    VideoQuality.REGULAR -> "regular · posted/original quality"
+                },
+                style = BonyType.meta.copy(color = BonyColors.TextMute),
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                VideoQuality.entries.forEach { quality ->
+                    val active = quality == videoQuality
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .border(1.dp, if (active) BonyColors.Accent else BonyColors.Rule)
+                            .clickable { viewModel.setVideoQuality(quality) }
+                            .padding(vertical = 8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            text = quality.label,
+                            style = BonyType.tag.copy(
+                                color = if (active) BonyColors.Accent else BonyColors.TextMute,
+                            ),
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+            Text("video playback", style = BonyType.body.copy(color = BonyColors.Text))
+            Spacer(Modifier.height(2.dp))
+            Text(
+                "These choices never loop videos. Tapping any video opens T-Bone's player.",
+                style = BonyType.meta.copy(color = BonyColors.TextMute),
+            )
+            Spacer(Modifier.height(8.dp))
+            VideoPlaybackMode.entries.forEach { mode ->
+                val active = mode == videoPlaybackMode
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, if (active) BonyColors.Accent else BonyColors.Rule)
+                        .clickable { viewModel.setVideoPlaybackMode(mode) }
+                        .padding(horizontal = 10.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (active) "●" else "○",
+                        style = BonyType.body.copy(color = if (active) BonyColors.Accent else BonyColors.TextMute),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = mode.label,
+                        style = BonyType.meta.copy(color = if (active) BonyColors.Accent else BonyColors.TextDim),
+                    )
+                }
+                Spacer(Modifier.height(5.dp))
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("video thumbnails", style = BonyType.body.copy(color = BonyColors.TextDim))
+                    Text(
+                        "show a preview for videos that wait for a tap to load",
+                        style = BonyType.meta.copy(color = BonyColors.TextMute),
+                    )
+                }
+                BonyToggle(
+                    checked = videoThumbnails,
+                    enabled = videoQuality != VideoQuality.OFF && videoPlaybackMode == VideoPlaybackMode.LOAD_ON_TAP,
+                    onCheckedChange = { viewModel.setVideoThumbnails(it) },
+                )
             }
         }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))

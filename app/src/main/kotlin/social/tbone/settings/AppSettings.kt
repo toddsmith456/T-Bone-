@@ -38,6 +38,9 @@ class AppSettings @Inject constructor(
         private val DURESS_PIN_ENABLED = booleanPreferencesKey("duress_pin_enabled")
         private val DURESS_PIN_HASH = stringPreferencesKey("duress_pin_hash")
         private val IMAGE_LOAD_MODE = stringPreferencesKey("image_load_mode")
+        private val VIDEO_QUALITY = stringPreferencesKey("video_quality")
+        private val VIDEO_PLAYBACK_MODE = stringPreferencesKey("video_playback_mode")
+        private val VIDEO_THUMBNAILS = booleanPreferencesKey("video_thumbnails")
         private val AVATAR_MODE = stringPreferencesKey("avatar_mode")
         private val AVATAR_ANIMATED = booleanPreferencesKey("avatar_animated")
         // Enabled notification-type filters (names of NotifFilter). Empty set = all on.
@@ -115,6 +118,15 @@ class AppSettings @Inject constructor(
 
     private val _imageLoadMode = MutableStateFlow(ImageLoadMode.ON)
     val imageLoadMode = _imageLoadMode.asStateFlow()
+
+    private val _videoQuality = MutableStateFlow(VideoQuality.REGULAR)
+    val videoQuality = _videoQuality.asStateFlow()
+
+    private val _videoPlaybackMode = MutableStateFlow(VideoPlaybackMode.PLAY_ON_TAP)
+    val videoPlaybackMode = _videoPlaybackMode.asStateFlow()
+
+    private val _videoThumbnails = MutableStateFlow(true)
+    val videoThumbnails = _videoThumbnails.asStateFlow()
 
     private val _avatarMode = MutableStateFlow(AvatarMode.REGULAR)
     val avatarMode = _avatarMode.asStateFlow()
@@ -233,6 +245,9 @@ class AppSettings @Inject constructor(
                 _pinEnabled.value = prefs[PIN_ENABLED] ?: false
                 _duressPinEnabled.value = prefs[DURESS_PIN_ENABLED] ?: false
                 _imageLoadMode.value = ImageLoadMode.fromPref(prefs[IMAGE_LOAD_MODE])
+                _videoQuality.value = VideoQuality.fromPref(prefs[VIDEO_QUALITY])
+                _videoPlaybackMode.value = VideoPlaybackMode.fromPref(prefs[VIDEO_PLAYBACK_MODE])
+                _videoThumbnails.value = prefs[VIDEO_THUMBNAILS] ?: true
                 _avatarMode.value = AvatarMode.fromPref(prefs[AVATAR_MODE])
                 _avatarAnimated.value = prefs[AVATAR_ANIMATED] ?: true
                 _notificationEnabledTypes.value = prefs[NOTIFICATION_ENABLED_TYPES] ?: emptySet()
@@ -314,6 +329,18 @@ class AppSettings @Inject constructor(
 
     suspend fun setImageLoadMode(mode: ImageLoadMode) {
         dataStore.edit { it[IMAGE_LOAD_MODE] = mode.prefValue }
+    }
+
+    suspend fun setVideoQuality(quality: VideoQuality) {
+        dataStore.edit { it[VIDEO_QUALITY] = quality.prefValue }
+    }
+
+    suspend fun setVideoPlaybackMode(mode: VideoPlaybackMode) {
+        dataStore.edit { it[VIDEO_PLAYBACK_MODE] = mode.prefValue }
+    }
+
+    suspend fun setVideoThumbnails(enabled: Boolean) {
+        dataStore.edit { it[VIDEO_THUMBNAILS] = enabled }
     }
 
     suspend fun setAvatarMode(mode: AvatarMode) {
