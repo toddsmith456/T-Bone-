@@ -927,4 +927,3 @@ class FeedViewModel @Inject constructor(
 
 /** How long a quote lookup stays open after the first relay EOSE. */
 private const val QUOTE_GRACE_MS = 8_000L
-8_000L
