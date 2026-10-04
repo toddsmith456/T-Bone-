@@ -785,7 +785,9 @@ class FeedViewModel @Inject constructor(
         missing.forEach { requestedQuoteIds.add(it) }
 
         viewModelScope.launch {
-            val cached = eventRepository.getByIds(missing).associateBy { it.id }
+            val cached = eventRepository.getByIds(missing)
+                .filterNot { EventKind.isPrivateMessaging(it.kind) }
+                .associateBy { it.id }
             if (cached.isNotEmpty()) {
                 _quotedEvents.update { it + cached }
                 refreshUnresolvedQuotes()
@@ -925,3 +927,4 @@ class FeedViewModel @Inject constructor(
 
 /** How long a quote lookup stays open after the first relay EOSE. */
 private const val QUOTE_GRACE_MS = 8_000L
+8_000L
