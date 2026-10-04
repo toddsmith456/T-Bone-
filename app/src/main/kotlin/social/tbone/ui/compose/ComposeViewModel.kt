@@ -316,7 +316,7 @@ class ComposeViewModel @Inject constructor(
             // A reply opened from a quote-note still carries the quote's
             // relationship. This prevents the composer from silently dropping
             // the q reference while it correctly adds the new reply target.
-            val inheritedQuoteId = replyTo?.parsedTags.quotedEventId
+            val inheritedQuoteId = replyTo?.parsedTags?.quotedEventId
             val inheritedQuote = if (explicitQuote == null && inheritedQuoteId != null) {
                 eventRepository.getById(inheritedQuoteId)
             } else null
