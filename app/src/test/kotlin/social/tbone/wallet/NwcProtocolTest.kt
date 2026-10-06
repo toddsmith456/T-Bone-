@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertFalse
 import org.junit.Test
+import social.tbone.settings.ZapAmounts
 
 class NwcProtocolTest {
     private val wallet = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

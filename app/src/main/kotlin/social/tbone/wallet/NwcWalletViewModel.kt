@@ -13,6 +13,7 @@ import kotlinx.coroutines.CancellationException
 import social.tbone.nostr.Event
 import social.tbone.nostr.ProfileContent
 import social.tbone.settings.AppSettings
+import social.tbone.settings.ZapAmounts
 import javax.inject.Inject
 
 @HiltViewModel
