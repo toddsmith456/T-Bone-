@@ -14,9 +14,15 @@ class NwcProtocolTest {
         val unencoded = "nostr+walletconnect://$wallet?relay=wss://wallet.example/nwc&secret=$secret"
         val normalized = "nwc://$wallet?relay=wss%3A%2F%2Fwallet.example%2Fnwc&secret=$secret"
 
-        val first = NwcProtocol.parse(encoded).getOrThrow()
-        val second = NwcProtocol.parse(unencoded).getOrThrow()
-        val third = NwcProtocol.parse(normalized).getOrThrow()
+        val firstResult = NwcProtocol.parse(encoded)
+        val secondResult = NwcProtocol.parse(unencoded)
+        val thirdResult = NwcProtocol.parse(normalized)
+        assertTrue("encoded parse failed: ${firstResult.exceptionOrNull()}", firstResult.isSuccess)
+        assertTrue("unencoded parse failed: ${secondResult.exceptionOrNull()}", secondResult.isSuccess)
+        assertTrue("normalized parse failed: ${thirdResult.exceptionOrNull()}", thirdResult.isSuccess)
+        val first = firstResult.getOrThrow()
+        val second = secondResult.getOrThrow()
+        val third = thirdResult.getOrThrow()
 
         assertEquals(listOf("wss://wallet.example/nwc"), first.relayUrls)
         assertEquals(first.relayUrls, second.relayUrls)
