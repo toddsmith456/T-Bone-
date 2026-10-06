@@ -542,11 +542,11 @@ class AppSettings @Inject constructor(
     suspend fun nwcUncertainZapIds(): Set<String> = dataStore.data.first()[NWC_UNCERTAIN_ZAP_IDS].orEmpty()
 
     suspend fun markNwcZapPaid(eventId: String) {
-        dataStore.edit { it[NWC_PAID_ZAP_IDS] = (it[NWC_PAID_ZAP_IDS].orEmpty() + eventId).takeLast(500).toSet() }
+        dataStore.edit { it[NWC_PAID_ZAP_IDS] = (it[NWC_PAID_ZAP_IDS].orEmpty() + eventId).toList().takeLast(500).toSet() }
     }
 
     suspend fun markNwcZapUncertain(eventId: String) {
-        dataStore.edit { it[NWC_UNCERTAIN_ZAP_IDS] = (it[NWC_UNCERTAIN_ZAP_IDS].orEmpty() + eventId).takeLast(500).toSet() }
+        dataStore.edit { it[NWC_UNCERTAIN_ZAP_IDS] = (it[NWC_UNCERTAIN_ZAP_IDS].orEmpty() + eventId).toList().takeLast(500).toSet() }
     }
 
     // ── Screen time (parental) ───────────────────────────────────────────────

@@ -14,7 +14,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
-import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import social.tbone.Tunables
 import social.tbone.account.signer.NostrSignerFactory
@@ -167,7 +167,7 @@ class ZapService @Inject constructor(
         zapRequest: Event,
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
-            val base = HttpUrl.parse(callback) ?: error("invalid Lightning callback")
+            val base = callback.toHttpUrlOrNull() ?: error("invalid Lightning callback")
             require(base.scheme == "https" || base.scheme == "http") { "invalid Lightning callback scheme" }
             val url = base.newBuilder()
                 .addQueryParameter("amount", amountMsats.toString())

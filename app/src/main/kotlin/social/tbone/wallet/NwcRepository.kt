@@ -228,7 +228,7 @@ class NwcRepository @Inject constructor(
         if (wallet == null || "pay_invoice" !in wallet.methods) {
             return connectionFailure("wallet does not advertise pay_invoice capability")
         }
-        Result.success(Unit)
+        return Result.success(Unit)
     }
 
     private suspend fun connectionFailure(message: String, error: Throwable? = null): Result<Unit> {
