@@ -57,11 +57,9 @@ object NwcProtocol {
             .distinct()
             .take(5)
         require(relays.isNotEmpty()) { "NWC address needs at least one ws(s) relay" }
+        val validRelay = Regex("^wss?://[^/?#]+(?:/[^?#]*)?$", RegexOption.IGNORE_CASE)
         relays.forEach { relay ->
-            val relayUri = URI(relay)
-            require(relayUri.host != null && relayUri.query == null && relayUri.fragment == null) {
-                "invalid NWC relay URL"
-            }
+            require(validRelay.matches(relay)) { "invalid NWC relay URL" }
         }
 
         val secretHex = params.firstOrNull { it.first == "secret" }?.second
