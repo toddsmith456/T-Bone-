@@ -16,8 +16,6 @@ data class ParsedNwcConnection(
  */
 object NwcProtocol {
     private val HEX_64 = Regex("^[0-9a-fA-F]{64}$")
-    private val VALID_RELAY = Regex("^wss?://[^/?#]+(?:/[^?#]*)?$", RegexOption.IGNORE_CASE)
-
     fun parse(raw: String): Result<ParsedNwcConnection> = runCatching {
         val value = raw.trim()
         require(value.length <= 8_192) { "NWC address is too long" }
@@ -58,7 +56,6 @@ object NwcProtocol {
             .distinct()
             .take(5)
         require(relays.isNotEmpty()) { "NWC address needs at least one ws(s) relay" }
-        relays.forEach { require(VALID_RELAY.matches(it)) { "invalid NWC relay URL" } }
 
         val secretHex = params.firstOrNull { it.first == "secret" }?.second
             ?.lowercase()
