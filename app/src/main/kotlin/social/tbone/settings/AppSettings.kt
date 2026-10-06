@@ -98,6 +98,10 @@ class AppSettings @Inject constructor(
         // Nostr Wallet Connect — the connection secret is stored only as an
         // Android-Keystore-encrypted blob. The raw NWC URI is never persisted.
         private val NWC_ZAPS_ENABLED = booleanPreferencesKey("nwc_zaps_enabled")
+        private val NWC_ZAP_AMOUNT_SATS = longPreferencesKey("nwc_zap_amount_sats")
+        private val NWC_ZAP_AMOUNTS = stringPreferencesKey("nwc_zap_amounts")
+        // A deliberate Disconnect survives screen navigation and process restarts.
+        private val NWC_USER_DISCONNECTED = booleanPreferencesKey("nwc_user_disconnected")
         private val NWC_WALLET_PUBKEY = stringPreferencesKey("nwc_wallet_pubkey")
         private val NWC_RELAY_URLS = stringPreferencesKey("nwc_relay_urls")
         private val NWC_CLIENT_PUBKEY = stringPreferencesKey("nwc_client_pubkey")
@@ -239,6 +243,12 @@ class AppSettings @Inject constructor(
     private val _nwcZapsEnabled = MutableStateFlow(false)
     val nwcZapsEnabled = _nwcZapsEnabled.asStateFlow()
 
+    private val _nwcZapAmountSats = MutableStateFlow(21L)
+    val nwcZapAmountSats = _nwcZapAmountSats.asStateFlow()
+
+    private val _nwcZapAmounts = MutableStateFlow(ZapAmounts.DEFAULT)
+    val nwcZapAmounts = _nwcZapAmounts.asStateFlow()
+
     /** Parental screen time: enabled / daily minutes / rollover tracking. */
     private val _screenTimeEnabled = MutableStateFlow(false)
     val screenTimeEnabled = _screenTimeEnabled.asStateFlow()
@@ -305,6 +315,8 @@ class AppSettings @Inject constructor(
                         ?.takeIf { it in storedServers }
                 _blossomCompress.value = prefs[BLOSSOM_COMPRESS] ?: true
                 _nwcZapsEnabled.value = prefs[NWC_ZAPS_ENABLED] ?: false
+                _nwcZapAmountSats.value = ZapAmounts.validOrDefault(prefs[NWC_ZAP_AMOUNT_SATS])
+                _nwcZapAmounts.value = ZapAmounts.parse(prefs[NWC_ZAP_AMOUNTS])
                 _screenTimeEnabled.value = prefs[SCREEN_TIME_ENABLED] ?: false
                 _screenTimeMinutes.value = prefs[SCREEN_TIME_MINUTES] ?: 120
             }
@@ -502,6 +514,44 @@ class AppSettings @Inject constructor(
         dataStore.edit { it[NWC_ZAPS_ENABLED] = enabled }
     }
 
+    /**
+     * The amount used when a zap control is activated directly. It is deliberately
+     * separate from the editable preset list: users can send an arbitrary amount
+     * without having to keep that amount as a quick-choice preset.
+     */
+    suspend fun setNwcZapAmountSats(amount: Long) {
+        val valid = ZapAmounts.requireValid(amount)
+        _nwcZapAmountSats.value = valid
+        dataStore.edit { it[NWC_ZAP_AMOUNT_SATS] = valid }
+    }
+
+    suspend fun setNwcZapAmounts(amounts: List<Long>) {
+        val clean = ZapAmounts.normalize(amounts)
+        _nwcZapAmounts.value = clean
+        dataStore.edit { it[NWC_ZAP_AMOUNTS] = clean.joinToString(",") }
+    }
+
+    suspend fun addNwcZapAmount(amount: Long) {
+        setNwcZapAmounts(_nwcZapAmounts.value + ZapAmounts.requireValid(amount))
+    }
+
+    suspend fun removeNwcZapAmount(amount: Long) {
+        val next = _nwcZapAmounts.value.filterNot { it == amount }
+        setNwcZapAmounts(next)
+    }
+
+    suspend fun moveNwcZapAmount(from: Int, to: Int) {
+        val next = ZapAmounts.move(_nwcZapAmounts.value, from, to)
+        if (next == _nwcZapAmounts.value) return
+        setNwcZapAmounts(next)
+    }
+
+    suspend fun setNwcUserDisconnected(disconnected: Boolean) {
+        dataStore.edit { it[NWC_USER_DISCONNECTED] = disconnected }
+    }
+
+    suspend fun isNwcUserDisconnected(): Boolean = dataStore.data.first()[NWC_USER_DISCONNECTED] ?: false
+
     suspend fun getNwcConnection(): StoredNwcConnection? {
         val prefs = dataStore.data.first()
         val wallet = prefs[NWC_WALLET_PUBKEY] ?: return null
@@ -668,5 +718,36 @@ class AppSettings @Inject constructor(
         val encoded = java.util.Base64.getEncoder().encodeToString(seed)
         dataStore.edit { it[GEOHASH_IDENTITY_SEED] = encoded }
         return seed
+    }
+}
+
+
+/** Validation and persistence helpers for user-editable zap quick choices. */
+object ZapAmounts {
+    const val MIN_SATS = 1L
+    const val MAX_SATS = 1_000_000L
+    const val MAX_PRESETS = 12
+    val DEFAULT = listOf(21L, 100L, 500L)
+
+    fun requireValid(amount: Long): Long = amount.also {
+        require(it in MIN_SATS..MAX_SATS) { "zap amount must be between $MIN_SATS and $MAX_SATS sats" }
+    }
+
+    fun validOrDefault(amount: Long?): Long = amount?.takeIf { it in MIN_SATS..MAX_SATS } ?: DEFAULT.first()
+
+    fun normalize(amounts: List<Long>): List<Long> {
+        val clean = amounts.filter { it in MIN_SATS..MAX_SATS }.distinct().take(MAX_PRESETS)
+        return clean.ifEmpty { DEFAULT }
+    }
+
+    fun parse(raw: String?): List<Long> = normalize(
+        raw.orEmpty().split(',').mapNotNull { it.trim().toLongOrNull() },
+    )
+
+    fun move(amounts: List<Long>, from: Int, to: Int): List<Long> {
+        if (from !in amounts.indices || to !in amounts.indices) return amounts
+        val next = amounts.toMutableList()
+        next.add(to, next.removeAt(from))
+        return next
     }
 }

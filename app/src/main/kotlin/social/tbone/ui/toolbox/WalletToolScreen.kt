@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
@@ -26,6 +27,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -45,6 +49,8 @@ fun WalletToolScreen(
     viewModel: NwcWalletViewModel = hiltViewModel(),
 ) {
     val enabled by viewModel.zapsEnabled.collectAsStateWithLifecycle()
+    val zapAmount by viewModel.zapAmountSats.collectAsStateWithLifecycle()
+    val zapAmounts by viewModel.zapAmounts.collectAsStateWithLifecycle()
     val state by viewModel.connectionState.collectAsStateWithLifecycle()
     val status by viewModel.status.collectAsStateWithLifecycle()
     val text by viewModel.connectionText.collectAsStateWithLifecycle()
@@ -53,6 +59,8 @@ fun WalletToolScreen(
     val balance by viewModel.balanceMsats.collectAsStateWithLifecycle()
     val info by viewModel.walletInfo.collectAsStateWithLifecycle()
     val notifications by viewModel.zapNotifications.collectAsStateWithLifecycle()
+    var zapAmountText by remember(zapAmount) { mutableStateOf(zapAmount.toString()) }
+    var newPresetText by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier.fillMaxSize().background(BonyColors.Bg).statusBarsPadding(),
@@ -92,11 +100,95 @@ fun WalletToolScreen(
                     Column(Modifier.weight(1f)) {
                         Text("Zaps", style = BonyType.body.copy(color = BonyColors.Text))
                         Text(
-                            if (enabled) "Zap buttons are available · 21 sats per tap" else "Zap buttons are hidden",
+                            if (enabled) "Zap buttons are available · $zapAmount sats default" else "Zap buttons are hidden",
                             style = BonyType.caption.copy(color = BonyColors.TextMute),
                         )
                     }
                     Switch(checked = enabled, onCheckedChange = viewModel::setZapsEnabled)
+                }
+            }
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth().border(1.dp, BonyColors.Rule).padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("zap amounts", style = BonyType.body.copy(color = BonyColors.Text))
+                    Text(
+                        "Set any amount from 1 to 1,000,000 sats. Presets are shown after tapping the lightning button and can be edited, reordered, or removed.",
+                        style = BonyType.caption.copy(color = BonyColors.TextMute),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = zapAmountText,
+                            onValueChange = { zapAmountText = it.filter(Char::isDigit) },
+                            modifier = Modifier.weight(1f),
+                            label = { Text("default sats") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BonyColors.Accent,
+                                unfocusedBorderColor = BonyColors.Rule,
+                                focusedLabelColor = BonyColors.Accent,
+                                unfocusedLabelColor = BonyColors.TextMute,
+                                focusedTextColor = BonyColors.Text,
+                                unfocusedTextColor = BonyColors.Text,
+                                cursorColor = BonyColors.Accent,
+                            ),
+                        )
+                        Button(
+                            onClick = { viewModel.saveZapAmount(zapAmountText) },
+                            colors = ButtonDefaults.buttonColors(containerColor = BonyColors.Accent, contentColor = Color.Black),
+                        ) { Text("save") }
+                    }
+                    zapAmounts.forEachIndexed { index, preset ->
+                        var presetText by remember(preset) { mutableStateOf(preset.toString()) }
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            OutlinedTextField(
+                                value = presetText,
+                                onValueChange = { presetText = it.filter(Char::isDigit) },
+                                modifier = Modifier.weight(1f),
+                                label = { Text("preset ${index + 1} · sats") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = BonyColors.Accent,
+                                    unfocusedBorderColor = BonyColors.Rule,
+                                    focusedLabelColor = BonyColors.Accent,
+                                    unfocusedLabelColor = BonyColors.TextMute,
+                                    focusedTextColor = BonyColors.Text,
+                                    unfocusedTextColor = BonyColors.Text,
+                                    cursorColor = BonyColors.Accent,
+                                ),
+                            )
+                            Text("save", style = BonyType.caption.copy(color = BonyColors.Accent), modifier = Modifier.clickable { viewModel.savePreset(index, presetText) }.padding(6.dp))
+                            Text("↑", style = BonyType.body.copy(color = if (index > 0) BonyColors.Accent else BonyColors.TextMute), modifier = Modifier.clickable(enabled = index > 0) { viewModel.movePreset(index, index - 1) }.padding(6.dp))
+                            Text("↓", style = BonyType.body.copy(color = if (index < zapAmounts.lastIndex) BonyColors.Accent else BonyColors.TextMute), modifier = Modifier.clickable(enabled = index < zapAmounts.lastIndex) { viewModel.movePreset(index, index + 1) }.padding(6.dp))
+                            Text("×", style = BonyType.body.copy(color = BonyColors.Danger), modifier = Modifier.clickable { viewModel.removePreset(preset) }.padding(6.dp))
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = newPresetText,
+                            onValueChange = { newPresetText = it.filter(Char::isDigit) },
+                            modifier = Modifier.weight(1f),
+                            label = { Text("new preset · sats") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BonyColors.Accent,
+                                unfocusedBorderColor = BonyColors.Rule,
+                                focusedLabelColor = BonyColors.Accent,
+                                unfocusedLabelColor = BonyColors.TextMute,
+                                focusedTextColor = BonyColors.Text,
+                                unfocusedTextColor = BonyColors.Text,
+                                cursorColor = BonyColors.Accent,
+                            ),
+                        )
+                        Button(
+                            onClick = { viewModel.addPreset(newPresetText); newPresetText = "" },
+                            colors = ButtonDefaults.buttonColors(containerColor = BonyColors.Surface, contentColor = BonyColors.Accent),
+                        ) { Text("add") }
+                    }
                 }
             }
             item {
@@ -132,8 +224,22 @@ fun WalletToolScreen(
                             contentColor = Color.Black,
                         ),
                     ) {
-                        if (busy) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.height(18.dp))
+                        if (busy) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
                         else Text("validate & connect")
+                    }
+                    if (state == NwcConnectionState.DISCONNECTED) {
+                        Button(
+                            onClick = viewModel::reconnect,
+                            enabled = !busy,
+                            colors = ButtonDefaults.buttonColors(containerColor = BonyColors.Accent, contentColor = Color.Black),
+                        ) { Text("reconnect") }
+                    }
+                    if (state == NwcConnectionState.READY || state == NwcConnectionState.CONNECTING) {
+                        Button(
+                            onClick = viewModel::disconnect,
+                            enabled = !busy,
+                            colors = ButtonDefaults.buttonColors(containerColor = BonyColors.Surface, contentColor = BonyColors.Warn),
+                        ) { Text("disconnect") }
                     }
                     if (state != NwcConnectionState.NOT_CONFIGURED) {
                         Button(

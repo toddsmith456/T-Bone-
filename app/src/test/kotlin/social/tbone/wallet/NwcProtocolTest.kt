@@ -2,6 +2,7 @@ package social.tbone.wallet
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class NwcProtocolTest {
@@ -41,8 +42,59 @@ class NwcProtocolTest {
     }
 
     @Test
+    fun parserFailuresDoNotEchoConnectionSecrets() {
+        val result = NwcProtocol.parse("nostr+walletconnect://$wallet?relay=https%3A%2F%2Fwallet.example&secret=$secret")
+        assertTrue(result.isFailure)
+        assertFalse(result.exceptionOrNull()?.message.orEmpty().contains(secret))
+    }
+
+    @Test
     fun rejectsMalformedWalletKey() {
         val value = "nostr+walletconnect://not-a-key?relay=wss%3A%2F%2Fwallet.example&secret=$secret"
         assertTrue(NwcProtocol.parse(value).isFailure)
+    }
+
+    @Test
+    fun negotiatesCapabilitiesAndSupportsCurrentEncryptionNames() {
+        val methods = NwcCapabilities.methodsFromInfoContent("get_info   pay_invoice\nget_balance notifications")
+        assertTrue(NwcCapabilities.supportsMethod(methods, "PAY_INVOICE"))
+        assertTrue(NwcCapabilities.supportsNip44(listOf("nip04", "NIP44_V2")))
+        assertFalse(NwcCapabilities.supportsNip44(listOf("nip04")))
+    }
+
+    @Test
+    fun reconnectPolicySurvivesTransientFailuresButHonorsDisconnect() {
+        assertTrue(NwcReconnectPolicy.shouldAutoReconnect(true, false, NwcConnectionState.ERROR))
+        assertTrue(NwcReconnectPolicy.shouldAutoReconnect(true, false, NwcConnectionState.CONNECTING))
+        assertFalse(NwcReconnectPolicy.shouldAutoReconnect(true, false, NwcConnectionState.READY))
+        assertFalse(NwcReconnectPolicy.shouldAutoReconnect(true, true, NwcConnectionState.ERROR))
+        assertFalse(NwcReconnectPolicy.shouldAutoReconnect(true, false, NwcConnectionState.DISCONNECTED))
+    }
+
+    @Test
+    fun zapControlsNeedEnabledAndValidatedReadyWallet() {
+        assertFalse(canShowZapControls(false, NwcConnectionState.READY))
+        assertFalse(canShowZapControls(true, NwcConnectionState.CONNECTING))
+        assertFalse(canShowZapControls(true, NwcConnectionState.ERROR))
+        assertTrue(canShowZapControls(true, NwcConnectionState.READY))
+    }
+
+    @Test
+    fun unknownPaymentResultIsNeverAutomaticallyRetryable() {
+        val unknown = NwcPaymentPolicy.classify(Result.failure<Unit>(NwcPaymentTimeoutException()))
+        val failed = NwcPaymentPolicy.classify(Result.failure<Unit>(IllegalStateException("rejected")))
+        assertEquals(NwcPaymentState.UNKNOWN, unknown)
+        assertFalse(NwcPaymentPolicy.mayRetry(unknown))
+        assertTrue(NwcPaymentPolicy.mayRetry(failed))
+    }
+
+    @Test
+    fun normalizesEditableZapPresetsWithoutAcceptingUnsafeValues() {
+        assertEquals(listOf(21L, 100L, 500L), ZapAmounts.parse(null))
+        assertEquals(listOf(1L, 21L, 1_000_000L), ZapAmounts.normalize(listOf(1L, 21L, 21L, 0L, -5L, 1_000_000L)))
+        assertFalse(ZapAmounts.normalize(listOf(0L, -1L)).contains(0L))
+        assertTrue(runCatching { ZapAmounts.requireValid(1_000_001L) }.isFailure)
+        assertEquals(listOf(100L, 500L, 21L), ZapAmounts.move(listOf(21L, 100L, 500L), 0, 2))
+        assertEquals(listOf(21L, 100L, 500L), ZapAmounts.move(listOf(21L, 100L, 500L), -1, 2))
     }
 }

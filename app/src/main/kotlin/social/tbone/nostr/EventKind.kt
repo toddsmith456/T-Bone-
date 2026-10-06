@@ -26,7 +26,8 @@ object EventKind {
     const val NWC_INFO = 13194
     const val NWC_REQUEST = 23194
     const val NWC_RESPONSE = 23195
-    const val NWC_NOTIFICATION = 23196
+    const val NWC_NOTIFICATION = 23196   // legacy NIP-47 notification kind
+    const val NWC_NOTIFICATION_V2 = 23197 // current NIP-47 notification kind
 
     /** NIP-17/59 kinds that must never be treated as public feed content. */
     fun isPrivateMessaging(kind: Int): Boolean = kind == PRIVATE_DM ||

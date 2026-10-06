@@ -37,6 +37,7 @@ import social.tbone.settings.AppSettings
 import social.tbone.settings.StoredNwcConnection
 import timber.log.Timber
 import java.util.UUID
+import kotlin.coroutines.coroutineContext
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -106,19 +107,50 @@ class NwcRepository @Inject constructor(
     private var responseSubId: String? = null
     private var notificationSubId: String? = null
     private var messageJob: Job? = null
+    /** Retries initial/recovery handshakes; cancelled only by an explicit Disconnect. */
+    private var reconnectJob: Job? = null
+    /** The current handshake job, so Disconnect can cancel a slow relay wait immediately. */
+    private var handshakeJob: Job? = null
     private var infoWaiter: CompletableDeferred<Event>? = null
     private var encryption = NwcEncryption.NIP04
 
     private enum class NwcEncryption { NIP04, NIP44 }
 
-    suspend fun connectSaved(): Result<Unit> = lifecycleMutex.withLock {
-        val connection = appSettings.getNwcConnection()
-        if (connection == null) {
-            _connectionState.value = NwcConnectionState.NOT_CONFIGURED
-            _status.value = "paste an NWC address to connect"
-            return@withLock Result.failure(IllegalStateException("No NWC connection configured"))
+    suspend fun connectSaved(): Result<Unit> {
+        val result = lifecycleMutex.withLock {
+            val connection = appSettings.getNwcConnection()
+            if (connection == null) {
+                _connectionState.value = NwcConnectionState.NOT_CONFIGURED
+                _status.value = "paste an NWC address to connect"
+                return@withLock Result.failure(IllegalStateException("No NWC connection configured"))
+            }
+            if (appSettings.isNwcUserDisconnected()) {
+                // Keep the saved secret available for an explicit Reconnect, but
+                // never turn a user's Disconnect into an automatic reconnect.
+                stored = connection
+                _connectionState.value = NwcConnectionState.DISCONNECTED
+                _status.value = "wallet disconnected · tap reconnect to resume"
+                return@withLock Result.failure(IllegalStateException("Wallet was disconnected by the user"))
+            }
+            if (storedMatches(connection) &&
+                (_connectionState.value == NwcConnectionState.READY || _connectionState.value == NwcConnectionState.CONNECTING)
+            ) {
+                return@withLock Result.success(Unit)
+            }
+            connectLocked(connection)
         }
-        connectLocked(connection)
+        val savedConnection = appSettings.getNwcConnection()
+        val explicitlyDisconnected = appSettings.isNwcUserDisconnected()
+        if (result.isFailure && NwcReconnectPolicy.shouldAutoReconnect(savedConnection != null, explicitlyDisconnected, _connectionState.value)) {
+            scheduleReconnect()
+        }
+        return result
+    }
+
+    /** Reconnect is an explicit user action after Disconnect. */
+    suspend fun reconnectSaved(): Result<Unit> {
+        appSettings.setNwcUserDisconnected(false)
+        return connectSaved()
     }
 
     /** Parses and encrypts the URI secret immediately; the raw URI is discarded. */
@@ -142,27 +174,93 @@ class NwcRepository @Inject constructor(
             encryptedSecretBase64 = Base64.encodeToString(encrypted, Base64.NO_WRAP),
             lud16 = parsed.lud16,
         )
+        reconnectJob?.cancel()
+        reconnectJob = null
+        appSettings.setNwcUserDisconnected(false)
         appSettings.setNwcConnection(connection)
-        connectLocked(connection)
+        val result = connectLocked(connection)
+        if (result.isFailure) scheduleReconnect()
+        result
     }
 
-    suspend fun clearSavedConnection() = lifecycleMutex.withLock {
-        disconnectLocked(clearState = true)
-        appSettings.clearNwcConnection()
-        _connectionState.value = NwcConnectionState.NOT_CONFIGURED
-        _status.value = "NWC connection removed"
+    suspend fun clearSavedConnection() {
+        reconnectJob?.cancel()
+        handshakeJob?.cancel()
+        lifecycleMutex.withLock {
+            reconnectJob = null
+            handshakeJob = null
+            disconnectLocked(clearState = true)
+            appSettings.clearNwcConnection()
+            appSettings.setNwcUserDisconnected(false)
+            _connectionState.value = NwcConnectionState.NOT_CONFIGURED
+            _status.value = "NWC connection removed"
+        }
     }
 
-    suspend fun disconnect() = lifecycleMutex.withLock {
-        disconnectLocked(clearState = false)
-        _connectionState.value = if (stored == null) NwcConnectionState.NOT_CONFIGURED else NwcConnectionState.DISCONNECTED
-        _status.value = "wallet disconnected"
+    suspend fun disconnect() {
+        // Do this before taking the lifecycle mutex. A handshake can be waiting
+        // on an 8-second info query or a 15-second get_info response; explicit
+        // Disconnect must not wait for either timeout.
+        reconnectJob?.cancel()
+        handshakeJob?.cancel()
+        lifecycleMutex.withLock {
+            reconnectJob = null
+            handshakeJob = null
+            disconnectLocked(clearState = false)
+            appSettings.setNwcUserDisconnected(true)
+            appSettings.setNwcZapsEnabled(false)
+            _connectionState.value = if (stored == null) NwcConnectionState.NOT_CONFIGURED else NwcConnectionState.DISCONNECTED
+            _status.value = "wallet disconnected"
+        }
     }
 
     fun configured(): Boolean = stored != null
     fun nwcRelayUrls(): Set<String> = relayUrls
 
+    private fun storedMatches(connection: StoredNwcConnection): Boolean =
+        stored?.walletPubkey == connection.walletPubkey &&
+            stored?.clientPubkey == connection.clientPubkey &&
+            stored?.relayUrls?.toSet() == connection.relayUrls.toSet()
+
+    /**
+     * An info event can be missed while a relay is reconnecting. Keep trying the
+     * handshake in the application scope; RelayPool itself replays subscriptions
+     * after every WebSocket reconnect. This job stops only when the user chooses
+     * Disconnect or removes the saved wallet.
+     */
+    private fun scheduleReconnect() {
+        if (reconnectJob?.isActive == true) return
+        reconnectJob = appScope.launch {
+            var delayMs = 2_000L
+            while (true) {
+                kotlinx.coroutines.delay(delayMs)
+                val shouldStop = lifecycleMutex.withLock {
+                    val connection = appSettings.getNwcConnection()
+                    if (connection == null || appSettings.isNwcUserDisconnected()) {
+                        true
+                    } else if (_connectionState.value == NwcConnectionState.READY && storedMatches(connection)) {
+                        true
+                    } else {
+                        connectLocked(connection).isSuccess
+                    }
+                }
+                if (shouldStop) break
+                delayMs = (delayMs * 2).coerceAtMost(60_000L)
+            }
+        }
+    }
+
     private suspend fun connectLocked(connection: StoredNwcConnection): Result<Unit> {
+        val job = coroutineContext[Job]
+        handshakeJob = job
+        return try {
+            connectLockedBody(connection)
+        } finally {
+            if (handshakeJob === job) handshakeJob = null
+        }
+    }
+
+    private suspend fun connectLockedBody(connection: StoredNwcConnection): Result<Unit> {
         disconnectLocked(clearState = false)
         stored = connection
         _connectionState.value = NwcConnectionState.CONNECTING
@@ -192,14 +290,17 @@ class NwcRepository @Inject constructor(
             relays = relayUrls,
         )
         pool.subscribeTo(
-            filters = listOf(Filter(kinds = listOf(EventKind.NWC_NOTIFICATION), pTags = listOf(connection.clientPubkey))),
+            filters = listOf(Filter(kinds = listOf(EventKind.NWC_NOTIFICATION, EventKind.NWC_NOTIFICATION_V2), pTags = listOf(connection.clientPubkey))),
             id = notificationSubId!!,
             label = "nwc-zap-notifications",
             relays = relayUrls,
         )
 
-        // NIP-47 says that an absent encryption tag means NIP-04. We only
-        // choose NIP-44 after verifying the wallet's signed info event.
+        // NIP-47 recommends an info event, but a number of otherwise proper
+        // services (including mobile wallets) answer requests without publishing
+        // one. Use it when present, then fall back to NIP-04 and negotiate again
+        // with the safe get_info call if necessary. Never guess NIP-44 for a
+        // payment request without an advertisement.
         val infoId = "nwc-info-${UUID.randomUUID().toString().take(8)}"
         val waiter = CompletableDeferred<Event>()
         infoWaiter = waiter
@@ -212,21 +313,48 @@ class NwcRepository @Inject constructor(
         val info = withTimeoutOrNull(8_000) { waiter.await() }
         infoWaiter = null
         pool.unsubscribe(infoId)
-        if (info == null) {
-            return connectionFailure("wallet info event was not received")
+
+        encryption = if (info?.supportsNip44() == true) NwcEncryption.NIP44 else NwcEncryption.NIP04
+        val advertisedMethods = info?.let { NwcCapabilities.methodsFromInfoContent(it.content) }.orEmpty()
+        if (advertisedMethods.isNotEmpty() && !NwcCapabilities.supportsMethod(advertisedMethods, NwcCapabilities.PAY_INVOICE)) {
+            return connectionFailure("wallet does not advertise pay_invoice capability")
+        }
+        if (advertisedMethods.isNotEmpty()) {
+            _walletInfo.value = NwcWalletInfo(methods = advertisedMethods)
         }
 
-        encryption = if (info.supportsNip44()) NwcEncryption.NIP44 else NwcEncryption.NIP04
-        _connectionState.value = NwcConnectionState.READY
+        // Keep the public state CONNECTING until pay_invoice has been verified;
+        // otherwise the UI could enable a zap button during a slow get_info call.
         _status.value = if (encryption == NwcEncryption.NIP44) {
-            "connected · NIP-44 encrypted"
+            "negotiating wallet capabilities · NIP-44"
+        } else if (info == null) {
+            "negotiating wallet capabilities · NIP-04"
         } else {
-            "connected · legacy NIP-04 encryption"
+            "negotiating wallet capabilities"
         }
-        val capability = refreshWalletInfo()
+
+        // get_info is the authoritative capability check when available. If a
+        // wallet omitted its replaceable info event, retry this read once with
+        // NIP-44; that retry cannot pay or change wallet state.
+        var capability = refreshWalletInfo()
+        if (capability.isFailure && info == null) {
+            encryption = NwcEncryption.NIP44
+            val nip44Capability = refreshWalletInfo()
+            if (nip44Capability.isSuccess) capability = nip44Capability
+            else encryption = NwcEncryption.NIP04
+        }
         val wallet = capability.getOrNull()
-        if (wallet == null || "pay_invoice" !in wallet.methods) {
+        if (wallet == null && !NwcCapabilities.supportsMethod(advertisedMethods, NwcCapabilities.PAY_INVOICE)) {
+            return connectionFailure("wallet capabilities could not be verified")
+        }
+        if (wallet != null && !NwcCapabilities.supportsMethod(wallet.methods, NwcCapabilities.PAY_INVOICE)) {
             return connectionFailure("wallet does not advertise pay_invoice capability")
+        }
+        _connectionState.value = NwcConnectionState.READY
+        _status.value = when {
+            encryption == NwcEncryption.NIP44 -> "connected · NIP-44 encrypted"
+            info == null -> "connected · NIP-04 fallback"
+            else -> "connected · legacy NIP-04 encryption"
         }
         return Result.success(Unit)
     }
@@ -274,7 +402,7 @@ class NwcRepository @Inject constructor(
                 if (eventMessage.subscriptionId.startsWith("nwc-info-")) infoWaiter?.complete(event)
             }
             EventKind.NWC_RESPONSE -> handleResponse(event)
-            EventKind.NWC_NOTIFICATION -> handleNotification(event)
+            EventKind.NWC_NOTIFICATION, EventKind.NWC_NOTIFICATION_V2 -> handleNotification(event)
         }
     }
 
@@ -363,7 +491,9 @@ class NwcRepository @Inject constructor(
     ): Result<JsonObject> {
         val current = stored ?: return Result.failure(IllegalStateException("NWC is not configured"))
         val local = signer ?: return Result.failure(IllegalStateException("NWC signer unavailable"))
-        if (_connectionState.value != NwcConnectionState.READY) {
+        if (_connectionState.value != NwcConnectionState.READY &&
+            !(method == "get_info" && _connectionState.value == NwcConnectionState.CONNECTING)
+        ) {
             return Result.failure(IllegalStateException("NWC wallet is not ready"))
         }
         val plaintext = buildJsonObject {
@@ -405,6 +535,10 @@ class NwcRepository @Inject constructor(
                 ?: throw if (method == "pay_invoice") NwcPaymentTimeoutException()
                 else java.util.concurrent.TimeoutException("wallet response timed out")
         } catch (e: TimeoutCancellationException) {
+            pending.remove(event.id)
+            throw e
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            pending.remove(event.id)
             throw e
         } catch (e: Exception) {
             pending.remove(event.id)
@@ -487,8 +621,10 @@ class NwcRepository @Inject constructor(
     private fun Event.supportsNip44(): Boolean =
         tags.any { tag ->
             tag.size >= 2 &&
-                tag[0].jsonPrimitive.contentOrNull == "encryption" &&
-                tag[1].jsonPrimitive.contentOrNull.orEmpty().split(' ').any { it == "nip44_v2" }
+                tag[0].jsonPrimitive.contentOrNull.equals("encryption", ignoreCase = true) &&
+                NwcCapabilities.supportsNip44(
+                    tag[1].jsonPrimitive.contentOrNull.orEmpty().split(Regex("\\s+")),
+                )
         }
 
     private fun Event.walletInfo(): NwcWalletInfo {

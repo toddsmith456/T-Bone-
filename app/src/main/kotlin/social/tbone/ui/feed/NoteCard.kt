@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -53,6 +55,7 @@ import social.tbone.ui.components.UserAvatar
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.wallet.NwcWalletViewModel
+import social.tbone.wallet.canShowZapControls
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -636,7 +639,13 @@ private fun NoteEngagementRow(
     val pendingZaps by walletViewModel.pendingZapIds.collectAsStateWithLifecycle()
     val sentZaps by walletViewModel.sentZapIds.collectAsStateWithLifecycle()
     val uncertainZaps by walletViewModel.uncertainZapIds.collectAsStateWithLifecycle()
-    val canZap = zapsEnabled && walletState == social.tbone.wallet.NwcConnectionState.READY
+    val zapAmountSats by walletViewModel.zapAmountSats.collectAsStateWithLifecycle()
+    val zapAmounts by walletViewModel.zapAmounts.collectAsStateWithLifecycle()
+    var zapPickerOpen by remember(event.id) { mutableStateOf(false) }
+    val zapChoices = remember(zapAmountSats, zapAmounts) {
+        listOf(zapAmountSats) + zapAmounts.filterNot { it == zapAmountSats }
+    }
+    val canZap = canShowZapControls(zapsEnabled, walletState)
     if (onReply == null && onBoost == null && onQuote == null && onLike == null && onShare == null && !canZap) return
 
     val hasReacted = activePubkey != null && reactors?.contains(activePubkey) == true
@@ -697,26 +706,42 @@ private fun NoteEngagementRow(
             val pending = event.id in pendingZaps
             val sent = event.id in sentZaps
             val uncertain = event.id in uncertainZaps
-            EngagementButton(
-                icon = Icons.Outlined.Bolt,
-                contentDescription = when {
-                    sent -> "Zap sent"
-                    uncertain -> "Zap status unknown; check wallet"
-                    else -> "Send zap"
-                },
-                count = 0,
-                tint = when {
-                    sent -> BonyColors.Accent
-                    pending || uncertain -> BonyColors.Warn
-                    else -> BonyColors.TextMute
-                },
-                onClick = {
-                    if (!pending && !sent && !uncertain) {
-                        if (profile != null) walletViewModel.sendZap(event, profile, amountSats = 21)
-                        else walletViewModel.report("profile Lightning address is still loading")
+            Box {
+                EngagementButton(
+                    icon = Icons.Outlined.Bolt,
+                    contentDescription = when {
+                        sent -> "Zap sent"
+                        uncertain -> "Zap status unknown; check wallet"
+                        else -> "Choose zap amount"
+                    },
+                    count = 0,
+                    tint = when {
+                        sent -> BonyColors.Accent
+                        pending || uncertain -> BonyColors.Warn
+                        else -> BonyColors.TextMute
+                    },
+                    onClick = {
+                        if (!pending && !sent && !uncertain) {
+                            if (profile != null) zapPickerOpen = true
+                            else walletViewModel.report("profile Lightning address is still loading")
+                        }
+                    },
+                )
+                DropdownMenu(
+                    expanded = zapPickerOpen,
+                    onDismissRequest = { zapPickerOpen = false },
+                ) {
+                    zapChoices.forEachIndexed { index, amount ->
+                        DropdownMenuItem(
+                            text = { Text(if (index == 0) "$amount sats · default" else "$amount sats") },
+                            onClick = {
+                                zapPickerOpen = false
+                                if (profile != null) walletViewModel.sendZap(event, profile, amountSats = amount)
+                            },
+                        )
                     }
-                },
-            )
+                }
+            }
         }
         if (onShare != null) {
             EngagementButton(

@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import social.tbone.nostr.Event
 import social.tbone.nostr.ProfileContent
 import social.tbone.settings.AppSettings
@@ -22,6 +23,10 @@ class NwcWalletViewModel @Inject constructor(
 ) : ViewModel() {
     val zapsEnabled: StateFlow<Boolean> = appSettings.nwcZapsEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    val zapAmountSats: StateFlow<Long> = appSettings.nwcZapAmountSats
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ZapAmounts.DEFAULT.first())
+    val zapAmounts: StateFlow<List<Long>> = appSettings.nwcZapAmounts
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ZapAmounts.DEFAULT)
     val connectionState: StateFlow<NwcConnectionState> = nwcRepository.connectionState
     val status: StateFlow<String> = nwcRepository.status
     val balanceMsats = nwcRepository.balanceMsats
@@ -47,6 +52,8 @@ class NwcWalletViewModel @Inject constructor(
             _uncertainZapIds.value = appSettings.nwcUncertainZapIds()
             try {
                 nwcRepository.connectSaved()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 // The repository exposes the actionable error state; startup
                 // must not crash the feed if a saved wallet is unreachable.
@@ -70,6 +77,70 @@ class NwcWalletViewModel @Inject constructor(
         }
     }
 
+    fun saveZapAmount(raw: String) {
+        val amount = raw.trim().toLongOrNull()
+        if (amount == null || amount !in ZapAmounts.MIN_SATS..ZapAmounts.MAX_SATS) {
+            _message.value = "zap amount must be between ${ZapAmounts.MIN_SATS} and ${ZapAmounts.MAX_SATS} sats"
+            return
+        }
+        viewModelScope.launch {
+            runCatching {
+                appSettings.setNwcZapAmountSats(amount)
+                appSettings.addNwcZapAmount(amount)
+            }.onSuccess {
+                _message.value = "default zap amount saved · $amount sats"
+            }.onFailure { _message.value = it.message ?: "could not save zap amount" }
+        }
+    }
+
+    fun savePreset(index: Int, raw: String) {
+        val amount = raw.trim().toLongOrNull()
+        val current = zapAmounts.value.toMutableList()
+        if (index !in current.indices || amount == null || amount !in ZapAmounts.MIN_SATS..ZapAmounts.MAX_SATS) {
+            _message.value = "preset must be between ${ZapAmounts.MIN_SATS} and ${ZapAmounts.MAX_SATS} sats"
+            return
+        }
+        current[index] = amount
+        viewModelScope.launch {
+            appSettings.setNwcZapAmounts(current)
+            _message.value = "zap preset saved"
+        }
+    }
+
+    fun addPreset(raw: String) {
+        val amount = raw.trim().toLongOrNull()
+        if (amount == null || amount !in ZapAmounts.MIN_SATS..ZapAmounts.MAX_SATS) {
+            _message.value = "preset must be between ${ZapAmounts.MIN_SATS} and ${ZapAmounts.MAX_SATS} sats"
+            return
+        }
+        viewModelScope.launch {
+            appSettings.addNwcZapAmount(amount)
+            _message.value = "zap preset added"
+        }
+    }
+
+    fun removePreset(amount: Long) {
+        viewModelScope.launch {
+            appSettings.removeNwcZapAmount(amount)
+            _message.value = "zap preset removed"
+        }
+    }
+
+    fun movePreset(from: Int, to: Int) {
+        viewModelScope.launch { appSettings.moveNwcZapAmount(from, to) }
+    }
+
+    fun reconnect() {
+        viewModelScope.launch {
+            _busy.value = true
+            try {
+                nwcRepository.reconnectSaved().onFailure { _message.value = it.message ?: "could not reconnect wallet" }
+            } finally {
+                _busy.value = false
+            }
+        }
+    }
+
     fun connect() {
         val raw = _connectionText.value.trim()
         if (raw.isBlank()) {
@@ -82,6 +153,8 @@ class NwcWalletViewModel @Inject constructor(
             try {
                 val result = try {
                     nwcRepository.saveAndConnect(raw)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
                 } catch (error: Exception) {
                     Result.failure(error)
                 }
@@ -140,21 +213,22 @@ class NwcWalletViewModel @Inject constructor(
         viewModelScope.launch {
             val result = zapService.zap(event, profile, amountSats)
             _pendingZapIds.value = _pendingZapIds.value - event.id
-            if (result.isSuccess) {
-                _sentZapIds.value = _sentZapIds.value + event.id
-                appSettings.markNwcZapPaid(event.id)
-                _message.value = "zap sent · $amountSats sats"
-            } else {
-                val error = result.exceptionOrNull()
-                if (error is NwcPaymentTimeoutException) {
+            when (NwcPaymentPolicy.classify(result)) {
+                NwcPaymentState.SUCCEEDED -> {
+                    _sentZapIds.value = _sentZapIds.value + event.id
+                    appSettings.markNwcZapPaid(event.id)
+                    _message.value = "zap sent · $amountSats sats"
+                }
+                NwcPaymentState.UNKNOWN -> {
                     // The wallet may have settled while the response was lost.
                     // Keep this note blocked until the user reconnects/checks the
                     // wallet; generating a fresh invoice here could double-pay.
                     _uncertainZapIds.value = _uncertainZapIds.value + event.id
                     appSettings.markNwcZapUncertain(event.id)
                     _message.value = "zap status is unknown — check the wallet before retrying"
-                } else {
-                    _message.value = error?.message ?: "zap failed"
+                }
+                NwcPaymentState.FAILED -> {
+                    _message.value = result.exceptionOrNull()?.message ?: "zap failed"
                 }
             }
         }
