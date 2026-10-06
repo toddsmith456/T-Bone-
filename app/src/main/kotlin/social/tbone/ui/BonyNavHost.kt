@@ -56,6 +56,7 @@ import social.tbone.ui.notes.NotesScreen
 import social.tbone.ui.toolbox.ToolboxScreen
 import social.tbone.ui.toolbox.ToolboxSettingsScreen
 import social.tbone.ui.toolbox.VoiceRecorderScreen
+import social.tbone.ui.toolbox.WalletToolScreen
 import social.tbone.ui.toolbox.calendar.CalendarEventEditorScreen
 import social.tbone.ui.toolbox.calendar.CalendarScreen
 import social.tbone.ui.toolbox.geohash.GeohashChannelScreen
@@ -101,6 +102,7 @@ private const val ROUTE_FOLDER             = "folder/{id}?name={name}"
 private const val ROUTE_NOTES_INFO         = "notes_info"
 private const val ROUTE_TOOLBOX            = "toolbox"
 private const val ROUTE_VOICE              = "voice"
+private const val ROUTE_WALLET             = "wallet"
 private const val ROUTE_TOOLBOX_SETTINGS = "toolbox_settings"
 private const val ROUTE_GEOHASH          = "geohash"
 private const val ROUTE_GEOHASH_CHAT     = "geohash_chat?code={code}"
@@ -199,12 +201,16 @@ fun BonyNavHost() {
                             onVoiceRecorder = { navController.navigate(ROUTE_VOICE) },
                             onGeohashChannels = { navController.navigate(ROUTE_GEOHASH) },
                             onCalendar = { navController.navigate(ROUTE_CALENDAR) },
+                            onWallet = { navController.navigate(ROUTE_WALLET) },
                             onToolboxSettings = { navController.navigate(ROUTE_TOOLBOX_SETTINGS) },
                         )
                     }
                 }
                 composable(ROUTE_TOOLBOX_SETTINGS) {
                     ToolboxSettingsScreen(onBack = { navController.popBackStack() })
+                }
+                composable(ROUTE_WALLET) {
+                    WalletToolScreen(onBack = { navController.popBackStack() })
                 }
                 composable(ROUTE_GEOHASH) {
                     GeohashChannelScreen(

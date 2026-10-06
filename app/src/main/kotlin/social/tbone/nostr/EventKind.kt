@@ -22,6 +22,12 @@ object EventKind {
     const val AUTH = 22242           // NIP-42: relay authentication
     const val NOSTR_CONNECT = 24133  // NIP-46: nsecBunker request/response
 
+    // NIP-47 Nostr Wallet Connect.
+    const val NWC_INFO = 13194
+    const val NWC_REQUEST = 23194
+    const val NWC_RESPONSE = 23195
+    const val NWC_NOTIFICATION = 23196
+
     /** NIP-17/59 kinds that must never be treated as public feed content. */
     fun isPrivateMessaging(kind: Int): Boolean = kind == PRIVATE_DM ||
         kind == ENCRYPTED_DM || kind == SEAL || kind == GIFT_WRAP

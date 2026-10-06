@@ -1,6 +1,7 @@
 package social.tbone.ui.feed
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Repeat
 import androidx.compose.material.icons.outlined.FormatQuote
@@ -32,10 +33,11 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
 import social.tbone.nostr.Nip19
@@ -49,6 +51,7 @@ import social.tbone.nostr.replyToPubkeys
 import social.tbone.ui.components.UserAvatar
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
+import social.tbone.wallet.NwcWalletViewModel
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -154,6 +157,7 @@ fun NoteCard(
                 )
                 NoteEngagementRow(
                     event = target,
+                    profile = profiles[target.pubkey],
                     onReply = onReply,
                     onBoost = onBoost,
                     onQuote = onQuote,
@@ -256,6 +260,7 @@ fun NoteCard(
             Spacer(Modifier.height(8.dp))
             NoteEngagementRow(
                 event = event,
+                profile = profile,
                 onReply = onReply,
                 onBoost = onBoost,
                 onQuote = onQuote,
@@ -422,6 +427,7 @@ fun NoteCard(
 
                 NoteEngagementRow(
                     event = event,
+                    profile = profile,
                     onReply = onReply,
                     onBoost = onBoost,
                     onQuote = onQuote,
@@ -611,6 +617,7 @@ fun QuotedNoteCard(
 @Composable
 private fun NoteEngagementRow(
     event: Event,
+    profile: ProfileContent?,
     onReply: ((Event) -> Unit)?,
     onBoost: ((Event) -> Unit)?,
     onQuote: ((Event) -> Unit)?,
@@ -622,12 +629,21 @@ private fun NoteEngagementRow(
     repliedByMe: Set<String> = emptySet(),
     modifier: Modifier = Modifier,
 ) {
-    if (onReply == null && onBoost == null && onQuote == null && onLike == null && onShare == null) return
+    val walletViewModel: NwcWalletViewModel = hiltViewModel()
+    val zapsEnabled by walletViewModel.zapsEnabled.collectAsStateWithLifecycle()
+    val walletState by walletViewModel.connectionState.collectAsStateWithLifecycle()
+    val pendingZaps by walletViewModel.pendingZapIds.collectAsStateWithLifecycle()
+    val sentZaps by walletViewModel.sentZapIds.collectAsStateWithLifecycle()
+    val uncertainZaps by walletViewModel.uncertainZapIds.collectAsStateWithLifecycle()
+    val canZap = zapsEnabled && walletState == social.tbone.wallet.NwcConnectionState.READY
+    if (onReply == null && onBoost == null && onQuote == null && onLike == null && onShare == null && !canZap) return
 
     val hasReacted = activePubkey != null && reactors?.contains(activePubkey) == true
     val likeCount = reactors?.size ?: 0
     val replyCount = replies[event.id] ?: 0
     val didReply = activePubkey != null && event.id in repliedByMe
+    var repostPressed by remember(event.id) { mutableStateOf(false) }
+    var quotePressed by remember(event.id) { mutableStateOf(false) }
 
     Row(
         modifier = modifier,
@@ -648,8 +664,11 @@ private fun NoteEngagementRow(
                 icon = Icons.Outlined.Repeat,
                 contentDescription = "Repost",
                 count = 0,
-                tint = BonyColors.TextMute,
-                onClick = { onBoost(event) },
+                tint = if (repostPressed) BonyColors.Accent else BonyColors.TextMute,
+                onClick = {
+                    repostPressed = true
+                    onBoost(event)
+                },
             )
         }
         if (onQuote != null) {
@@ -657,8 +676,11 @@ private fun NoteEngagementRow(
                 icon = Icons.Outlined.FormatQuote,
                 contentDescription = "Quote",
                 count = 0,
-                tint = BonyColors.TextMute,
-                onClick = { onQuote(event) },
+                tint = if (quotePressed) BonyColors.Accent else BonyColors.TextMute,
+                onClick = {
+                    quotePressed = true
+                    onQuote(event)
+                },
             )
         }
         if (onLike != null) {
@@ -668,6 +690,31 @@ private fun NoteEngagementRow(
                 likeCount = likeCount,
                 activePubkey = activePubkey,
                 onLike = onLike,
+            )
+        }
+        if (canZap) {
+            val pending = event.id in pendingZaps
+            val sent = event.id in sentZaps
+            val uncertain = event.id in uncertainZaps
+            EngagementButton(
+                icon = Icons.Outlined.Bolt,
+                contentDescription = when {
+                    sent -> "Zap sent"
+                    uncertain -> "Zap status unknown; check wallet"
+                    else -> "Send zap"
+                },
+                count = 0,
+                tint = when {
+                    sent -> BonyColors.Accent
+                    pending || uncertain -> BonyColors.Warn
+                    else -> BonyColors.TextMute
+                },
+                onClick = {
+                    if (!pending && !sent && !uncertain) {
+                        if (profile != null) walletViewModel.sendZap(event, profile, amountSats = 21)
+                        else walletViewModel.report("profile Lightning address is still loading")
+                    }
+                },
             )
         }
         if (onShare != null) {
@@ -702,8 +749,6 @@ private fun LikeButton(
     }
     val myEmoji = myContent?.takeIf { hasReacted && social.tbone.ui.reactions.isEmojiReaction(it) }
     var pickerOpen by remember { mutableStateOf(false) }
-    val LIKE_RED = Color(0xFFE0245E)
-
     val onClick: () -> Unit = {
         if (!hasReacted) {
             val emojis = config.emojis
@@ -743,7 +788,7 @@ private fun LikeButton(
                 icon = if (hasReacted) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
                 contentDescription = "Like",
                 count = likeCount,
-                tint = if (hasReacted) LIKE_RED else BonyColors.TextMute,
+                tint = if (hasReacted) BonyColors.Accent else BonyColors.TextMute,
                 onClick = onClick,
             )
         }

@@ -9,6 +9,7 @@ import org.bouncycastle.crypto.params.ECPrivateKeyParameters
 import org.bouncycastle.crypto.signers.ECDSASigner
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import social.tbone.nostr.Event
+import social.tbone.nostr.Nip04
 import social.tbone.nostr.Nip44
 import social.tbone.nostr.UnsignedEvent
 import social.tbone.nostr.hexToBytes
@@ -79,6 +80,13 @@ class LocalKeySigner(
         val privkey = decryptPrivkey()
         Nip44.decrypt(ciphertext, privkey, senderPubkey.hexToBytes())
     }.getOrNull()
+
+    /** NIP-04 compatibility methods used only by the NWC legacy fallback. */
+    fun nip04EncryptSync(plaintext: String, recipientPubkey: String): String =
+        Nip04.encrypt(plaintext, decryptPrivkey(), recipientPubkey.hexToBytes())
+
+    fun nip04DecryptSync(ciphertext: String, senderPubkey: String): String =
+        Nip04.decrypt(ciphertext, decryptPrivkey(), senderPubkey.hexToBytes())
 
     // ── Key management ────────────────────────────────────────────────────────
 
@@ -156,6 +164,23 @@ class LocalKeySigner(
     // ── Factory ───────────────────────────────────────────────────────────────
 
     companion object {
+        /**
+         * Encrypts an externally supplied private key (such as the secret from
+         * an NWC URI) with the same Android Keystore protection used for local
+         * accounts. The raw secret is never written to preferences or disk.
+         */
+        fun fromPrivateKey(privkey: ByteArray): Pair<LocalKeySigner, ByteArray> {
+            require(privkey.size == 32) { "secp256k1 private keys must be 32 bytes" }
+            if (Security.getProvider("BC") == null) Security.addProvider(BouncyCastleProvider())
+            val params = SECNamedCurves.getByName("secp256k1")
+            val d = BigInteger(1, privkey)
+            require(d > BigInteger.ZERO && d < params.n) { "invalid secp256k1 private key" }
+            val pubkey = params.g.multiply(d).normalize().affineXCoord.toBigInteger()
+                .toString(16).padStart(64, '0')
+            val encrypted = encryptPrivkey(privkey)
+            return LocalKeySigner(pubkey, encrypted) to encrypted
+        }
+
         /**
          * Generates a new secp256k1 keypair, encrypts the private key with the
          * Android Keystore, and returns a [LocalKeySigner] + the encrypted blob

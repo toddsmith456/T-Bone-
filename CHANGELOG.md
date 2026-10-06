@@ -5,6 +5,20 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.3.45] — 2026-10-05
+
+### Added
+- Nostr Wallet Connect toolbox with Android Keystore-protected connection
+  material, NIP-47 NIP-04/NIP-44 negotiation, capability validation, and
+  explicit wallet-confirmed payment states.
+- NIP-57 Lightning zaps on every shared reaction bar, including repost and poll
+  targets, with accent-colored pressed states and duplicate/unknown-payment
+  protection.
+- Wallet-tool activity filtered to Nostr zap/payment notifications only.
+
+### Changed
+- Release version bumped to 0.3.45 (version code 53).
+
 ## [0.3.44] — 2026-10-04
 
 ### Added

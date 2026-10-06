@@ -20,6 +20,15 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** Encrypted-at-rest NWC connection material. Never contains the raw URI secret. */
+data class StoredNwcConnection(
+    val walletPubkey: String,
+    val relayUrls: List<String>,
+    val clientPubkey: String,
+    val encryptedSecretBase64: String,
+    val lud16: String?,
+)
+
 @Singleton
 class AppSettings @Inject constructor(
     private val dataStore: DataStore<Preferences>,
@@ -86,6 +95,16 @@ class AppSettings @Inject constructor(
         private val BLOSSOM_SERVERS = stringSetPreferencesKey("blossom_servers")
         private val BLOSSOM_DEFAULT_SERVER = stringPreferencesKey("blossom_default_server")
         private val BLOSSOM_COMPRESS = booleanPreferencesKey("blossom_compress")
+        // Nostr Wallet Connect — the connection secret is stored only as an
+        // Android-Keystore-encrypted blob. The raw NWC URI is never persisted.
+        private val NWC_ZAPS_ENABLED = booleanPreferencesKey("nwc_zaps_enabled")
+        private val NWC_WALLET_PUBKEY = stringPreferencesKey("nwc_wallet_pubkey")
+        private val NWC_RELAY_URLS = stringPreferencesKey("nwc_relay_urls")
+        private val NWC_CLIENT_PUBKEY = stringPreferencesKey("nwc_client_pubkey")
+        private val NWC_ENCRYPTED_SECRET = stringPreferencesKey("nwc_encrypted_secret")
+        private val NWC_LUD16 = stringPreferencesKey("nwc_lud16")
+        private val NWC_PAID_ZAP_IDS = stringSetPreferencesKey("nwc_paid_zap_ids")
+        private val NWC_UNCERTAIN_ZAP_IDS = stringSetPreferencesKey("nwc_uncertain_zap_ids")
         // Screen time (parental): daily allowance + rollover tracking.
         private val SCREEN_TIME_ENABLED = booleanPreferencesKey("screen_time_enabled")
         private val SCREEN_TIME_MINUTES = intPreferencesKey("screen_time_minutes")
@@ -159,7 +178,7 @@ class AppSettings @Inject constructor(
     private val _toolboxDuressPinEnabled = MutableStateFlow(false)
     val toolboxDuressPinEnabled = _toolboxDuressPinEnabled.asStateFlow()
 
-    /** Ordered list of tool ids in the toolbox ("notes","voice","geohash","calendar"). */
+    /** Ordered list of tool ids in the toolbox (including the NWC wallet tool). */
     private val _toolboxToolOrder = MutableStateFlow<List<String>>(emptyList())
     val toolboxToolOrder = _toolboxToolOrder.asStateFlow()
 
@@ -216,6 +235,9 @@ class AppSettings @Inject constructor(
     /** Whether image/video uploads are compressed before sending. */
     private val _blossomCompress = MutableStateFlow(true)
     val blossomCompress = _blossomCompress.asStateFlow()
+
+    private val _nwcZapsEnabled = MutableStateFlow(false)
+    val nwcZapsEnabled = _nwcZapsEnabled.asStateFlow()
 
     /** Parental screen time: enabled / daily minutes / rollover tracking. */
     private val _screenTimeEnabled = MutableStateFlow(false)
@@ -282,6 +304,7 @@ class AppSettings @Inject constructor(
                     prefs[BLOSSOM_DEFAULT_SERVER]?.let { BlossomServerUrl.normalize(it) }
                         ?.takeIf { it in storedServers }
                 _blossomCompress.value = prefs[BLOSSOM_COMPRESS] ?: true
+                _nwcZapsEnabled.value = prefs[NWC_ZAPS_ENABLED] ?: false
                 _screenTimeEnabled.value = prefs[SCREEN_TIME_ENABLED] ?: false
                 _screenTimeMinutes.value = prefs[SCREEN_TIME_MINUTES] ?: 120
             }
@@ -470,6 +493,60 @@ class AppSettings @Inject constructor(
     suspend fun setBlossomCompress(enabled: Boolean) {
         _blossomCompress.value = enabled
         dataStore.edit { it[BLOSSOM_COMPRESS] = enabled }
+    }
+
+    // ── Nostr Wallet Connect ─────────────────────────────────────────────────
+
+    suspend fun setNwcZapsEnabled(enabled: Boolean) {
+        _nwcZapsEnabled.value = enabled
+        dataStore.edit { it[NWC_ZAPS_ENABLED] = enabled }
+    }
+
+    suspend fun getNwcConnection(): StoredNwcConnection? {
+        val prefs = dataStore.data.first()
+        val wallet = prefs[NWC_WALLET_PUBKEY] ?: return null
+        val relays = prefs[NWC_RELAY_URLS]
+            ?.split("\n")
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            .orEmpty()
+        val client = prefs[NWC_CLIENT_PUBKEY] ?: return null
+        val encrypted = prefs[NWC_ENCRYPTED_SECRET] ?: return null
+        if (relays.isEmpty()) return null
+        return StoredNwcConnection(wallet, relays, client, encrypted, prefs[NWC_LUD16])
+    }
+
+    suspend fun setNwcConnection(connection: StoredNwcConnection) {
+        dataStore.edit {
+            it[NWC_WALLET_PUBKEY] = connection.walletPubkey
+            it[NWC_RELAY_URLS] = connection.relayUrls.joinToString("\n")
+            it[NWC_CLIENT_PUBKEY] = connection.clientPubkey
+            it[NWC_ENCRYPTED_SECRET] = connection.encryptedSecretBase64
+            if (connection.lud16.isNullOrBlank()) it.remove(NWC_LUD16)
+            else it[NWC_LUD16] = connection.lud16
+        }
+    }
+
+    suspend fun clearNwcConnection() {
+        dataStore.edit {
+            it.remove(NWC_WALLET_PUBKEY)
+            it.remove(NWC_RELAY_URLS)
+            it.remove(NWC_CLIENT_PUBKEY)
+            it.remove(NWC_ENCRYPTED_SECRET)
+            it.remove(NWC_LUD16)
+        }
+    }
+
+    /** Event ids only; never persist invoices, preimages, or NWC secrets. */
+    suspend fun nwcPaidZapIds(): Set<String> = dataStore.data.first()[NWC_PAID_ZAP_IDS].orEmpty()
+    suspend fun nwcUncertainZapIds(): Set<String> = dataStore.data.first()[NWC_UNCERTAIN_ZAP_IDS].orEmpty()
+
+    suspend fun markNwcZapPaid(eventId: String) {
+        dataStore.edit { it[NWC_PAID_ZAP_IDS] = (it[NWC_PAID_ZAP_IDS].orEmpty() + eventId).takeLast(500).toSet() }
+    }
+
+    suspend fun markNwcZapUncertain(eventId: String) {
+        dataStore.edit { it[NWC_UNCERTAIN_ZAP_IDS] = (it[NWC_UNCERTAIN_ZAP_IDS].orEmpty() + eventId).takeLast(500).toSet() }
     }
 
     // ── Screen time (parental) ───────────────────────────────────────────────

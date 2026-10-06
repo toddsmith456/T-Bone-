@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.Mic
@@ -65,6 +66,7 @@ fun ToolboxScreen(
     onVoiceRecorder: () -> Unit,
     onGeohashChannels: () -> Unit,
     onCalendar: () -> Unit,
+    onWallet: () -> Unit,
     onToolboxSettings: () -> Unit,
     viewModel: ToolboxViewModel = hiltViewModel(),
 ) {
@@ -105,6 +107,8 @@ fun ToolboxScreen(
             "location channels with an anonymous per-area npub", onGeohashChannels),
         "calendar" to ToolEntry(Icons.Outlined.CalendarMonth, "calendar",
             "fully local encrypted calendar", onCalendar),
+        "wallet" to ToolEntry(Icons.Outlined.Bolt, "wallet tool",
+            "NWC connection, zaps & zap-only activity", onWallet),
     )
     val tools = currentOrder.mapNotNull { id -> toolsById[id]?.let { id to it } }
 
@@ -239,7 +243,7 @@ private data class ToolEntry(
     val onClick: () -> Unit,
 )
 
-private val ToolIds = setOf("notes", "voice", "geohash", "calendar")
+private val ToolIds = setOf("notes", "voice", "geohash", "calendar", "wallet")
 
 @Composable
 internal fun ToolRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {

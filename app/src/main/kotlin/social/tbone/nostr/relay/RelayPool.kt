@@ -175,14 +175,16 @@ class RelayPool(
         Timber.d("Published event ${event.id.take(8)}… to ${connections.size} relay(s)")
     }
 
-    /** Publishes an event to a specific set of relays (location channels). */
-    fun publishTo(event: social.tbone.nostr.Event, urls: Set<String>) {
+    /** Publishes an event to a specific set of relays (location channels).
+     * Returns the number of currently connected relays that accepted it. */
+    fun publishTo(event: social.tbone.nostr.Event, urls: Set<String>): Int {
         val msg = ClientMessage.Publish(event)
         var sent = 0
         urls.forEach { url ->
             if (connections[normalize(url)]?.connection?.send(msg) == true) sent++
         }
         Timber.d("Published event ${event.id.take(8)}… to $sent/${urls.size} relay(s)")
+        return sent
     }
 
     /** Sends a message to a specific relay by URL. Returns false if not connected. */
