@@ -6,7 +6,7 @@ import org.junit.Test
 
 class NwcProtocolTest {
     private val wallet = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-    private val secret = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    private val secret = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
 
     @Test
     fun parsesEncodedAndUnencodedRelayForms() {
