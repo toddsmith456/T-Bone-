@@ -731,26 +731,36 @@ private fun NoteEngagementRow(
                         }
                     },
                 )
-                DropdownMenu(
-                    expanded = zapPickerOpen,
-                    onDismissRequest = { zapPickerOpen = false },
-                    modifier = Modifier.background(BonyColors.Surface),
-                ) {
-                    zapChoices.forEachIndexed { index, amount ->
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    if (index == 0) "$amount sats · default" else "$amount sats",
-                                    color = BonyColors.Text,
-                                )
-                            },
-                            onClick = {
-                                zapPickerOpen = false
-                                if (profile != null && lightningAddress != null) {
-                                    walletViewModel.sendZap(event, profile, amountSats = amount)
-                                }
-                            },
-                        )
+                // Material3 menus use surfaceContainer, which otherwise
+                // falls back to a bright paper color in the light/cream modes.
+                // Override it locally so the zap picker follows every Bony
+                // palette, including Cream.
+                val menuScheme = androidx.compose.material3.MaterialTheme.colorScheme.copy(
+                    surfaceContainer = BonyColors.Surface,
+                    surfaceContainerHigh = BonyColors.Surface,
+                    surfaceContainerLow = BonyColors.Surface,
+                )
+                androidx.compose.material3.MaterialTheme(colorScheme = menuScheme) {
+                    DropdownMenu(
+                        expanded = zapPickerOpen,
+                        onDismissRequest = { zapPickerOpen = false },
+                    ) {
+                        zapChoices.forEachIndexed { index, amount ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (index == 0) "$amount sats · default" else "$amount sats",
+                                        color = BonyColors.Text,
+                                    )
+                                },
+                                onClick = {
+                                    zapPickerOpen = false
+                                    if (profile != null && lightningAddress != null) {
+                                        walletViewModel.sendZap(event, profile, amountSats = amount)
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
             }

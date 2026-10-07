@@ -56,8 +56,8 @@ android {
         applicationId = "social.tbone.fork"
         minSdk = 26
         targetSdk = 34
-        versionCode = 55
-        versionName = "0.3.47"
+        versionCode = 56
+        versionName = "0.3.48"
     }
 
     signingConfigs {
