@@ -5,6 +5,34 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.3.49] — 2026-10-06
+
+### Fixed
+- Reworked the NIP-57/NWC zap path against Amethyst's current implementation:
+  LNURL endpoints are canonicalized into the required bech32 `lnurl` tag,
+  callback and invoice responses are validated, and the invoice amount must
+  exactly match the requested sats before a wallet can be asked to pay.
+- Corrected NIP-44 v2 message-key derivation to the Amethyst/spec HKDF-expand
+  sequence and added a cross-implementation vector test; this was preventing
+  NIP-44-capable wallets from decrypting T-Bone's payment requests.
+- NWC requests now negotiate NIP-06 metadata when a wallet advertises it,
+  preserving structured zap metadata for wallet notifications without sending
+  unsupported fields to other NWC wallets.
+- Relay-backed wallet notifications are live and session-only, de-duplicated,
+  and limited to payments carrying structured Nostr zap metadata.
+- Successful payments provide one-shot haptic feedback and leave the lightning
+  zap control in the configured accent color. Completed notes may be zapped
+  again with another amount; uncertain payments remain blocked to prevent
+  duplicate settlement.
+- LNURL and NWC cancellation/error paths now fail safely without swallowing
+  coroutine cancellation; malformed or unauthenticated post-dispatch payment
+  responses are treated as financially unknown, never as retryable failures.
+
+### Changed
+- Added strict BOLT11 amount/checksum parsing and HTTPS-only LNURL callbacks.
+- Documented Minibits as the test wallet while retaining support for proper
+  NWC-compatible Lightning wallets.
+
 ## [0.3.45] — 2026-10-05
 
 ### Added

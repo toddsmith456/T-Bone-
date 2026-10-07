@@ -93,7 +93,7 @@ fun WalletToolScreen(
             item {
                 Text("⚡ zaps", style = BonyType.title.copy(color = BonyColors.Accent))
                 Text(
-                    "Connect a wallet with Nostr Wallet Connect. The connection secret is protected by Android Keystore and is never shown after saving.",
+                    "Connect any NWC-compatible Lightning wallet. Minibits is the test wallet for this implementation. The connection secret is protected by Android Keystore and is never shown after saving.",
                     style = BonyType.caption.copy(color = BonyColors.TextDim),
                     modifier = Modifier.padding(top = 4.dp),
                 )

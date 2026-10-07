@@ -89,15 +89,18 @@ class ZapService @Inject constructor(
             .filterNot { it in nwcRepository.nwcRelayUrls() }
             .take(5)
             .ifEmpty { Tunables.DEFAULT_RELAYS.take(3) }
+        val lnurlTag = Nip19.lnurlToBech32(payInfo.endpointUrl)
+            ?: return Result.failure(IllegalArgumentException("recipient Lightning address did not resolve to a valid HTTPS LNURL"))
         val zapTags = buildList {
             add(buildJsonArray {
                 add("relays")
                 relayHints.forEach { add(it) }
             })
             add(buildJsonArray { add("amount"); add(amountMsats.toString()) })
-            // NIP-57 carries the exact profile payment address. This is
-            // lud16 for Lightning Addresses and lud06 for LNURL profiles.
-            add(buildJsonArray { add("lnurl"); add(lightningAddress) })
+            // NIP-57 requires the LNURL-pay endpoint in bech32 form here. A
+            // lud16 such as alice@example.com is not a valid replacement: the
+            // provider and receipt validator use this tag to bind the payment.
+            add(buildJsonArray { add("lnurl"); add(lnurlTag) })
             add(buildJsonArray { add("p"); add(event.pubkey) })
             add(buildJsonArray { add("e"); add(event.id) })
         }
@@ -113,7 +116,11 @@ class ZapService @Inject constructor(
 
         // Important: call pay exactly once. If this returns a timeout, the UI
         // tells the user to check the wallet rather than creating a duplicate.
-        val payment = nwcRepository.payInvoice(invoice)
+        val payment = nwcRepository.payInvoice(
+            invoice = invoice,
+            zapRequest = zapRequest,
+            recipientIdentifier = lightningAddress,
+        )
         if (payment.isSuccess) {
             nwcRepository.recordOutgoingZap(
                 eventId = event.id,
@@ -125,6 +132,7 @@ class ZapService @Inject constructor(
     }
 
     private data class PayInfo(
+        val endpointUrl: String,
         val callback: String,
         val minSendable: Long,
         val maxSendable: Long,
@@ -139,7 +147,7 @@ class ZapService @Inject constructor(
      * the payment boundary.
      */
     private suspend fun resolveLightningAddress(address: String): Result<PayInfo> = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val value = address.trim()
             require(value.isNotEmpty()) { "profile Lightning address is empty" }
             val url = if (value.contains('@')) {
@@ -155,8 +163,8 @@ class ZapService @Inject constructor(
                 Nip19.lnurlToUrl(value) ?: error("invalid LNURL payment address")
             }
             val callbackUrl = url.toHttpUrlOrNull() ?: error("invalid Lightning callback")
-            require(callbackUrl.scheme == "https" || callbackUrl.scheme == "http") {
-                "invalid Lightning callback scheme"
+            require(callbackUrl.scheme == "https") {
+                "Lightning callback must use HTTPS"
             }
             val response = ImageClientProvider.client.newCall(Request.Builder().url(callbackUrl).get().build())
                 .execute().use { r ->
@@ -164,21 +172,30 @@ class ZapService @Inject constructor(
                     r.body?.string() ?: error("Lightning address returned no metadata")
                 }
             val obj = json.parseToJsonElement(response).jsonObject
-            require(obj["status"]?.jsonPrimitive?.contentOrNull != "ERROR") {
-                obj["reason"]?.jsonPrimitive?.contentOrNull ?: "Lightning address lookup failed"
+            require(obj["status"]?.jsonPrimitive?.contentOrNull?.equals("ERROR", ignoreCase = true) != true) {
+                obj["reason"]?.jsonPrimitive?.contentOrNull
+                    ?: obj["message"]?.jsonPrimitive?.contentOrNull
+                    ?: "Lightning address lookup failed"
             }
-            PayInfo(
-                callback = obj["callback"]?.jsonPrimitive?.contentOrNull
-                    ?: error("Lightning address has no callback"),
-                minSendable = obj["minSendable"]?.jsonPrimitive?.longOrNull
-                    ?: error("Lightning address has no minimum"),
-                maxSendable = obj["maxSendable"]?.jsonPrimitive?.longOrNull
-                    ?: error("Lightning address has no maximum"),
-                allowsNostr = obj["allowsNostr"]?.jsonPrimitive?.contentOrNull?.toBoolean() == true ||
-                    obj["allowsNostr"]?.jsonPrimitive?.booleanOrNull == true,
-                nostrPubkey = obj["nostrPubkey"]?.jsonPrimitive?.contentOrNull
-                    ?: error("Lightning address has no Nostr pubkey"),
+            Result.success(
+                PayInfo(
+                    endpointUrl = url,
+                    callback = obj["callback"]?.jsonPrimitive?.contentOrNull
+                        ?: error("Lightning address has no callback"),
+                    minSendable = obj["minSendable"]?.jsonPrimitive?.longOrNull
+                        ?: error("Lightning address has no minimum"),
+                    maxSendable = obj["maxSendable"]?.jsonPrimitive?.longOrNull
+                        ?: error("Lightning address has no maximum"),
+                    allowsNostr = obj["allowsNostr"]?.jsonPrimitive?.contentOrNull?.toBoolean() == true ||
+                        obj["allowsNostr"]?.jsonPrimitive?.booleanOrNull == true,
+                    nostrPubkey = obj["nostrPubkey"]?.jsonPrimitive?.contentOrNull
+                        ?: error("Lightning address has no Nostr pubkey"),
+                ),
             )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Result.failure(error)
         }
     }
 
@@ -187,11 +204,14 @@ class ZapService @Inject constructor(
         amountMsats: Long,
         zapRequest: Event,
     ): Result<String> = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val base = callback.toHttpUrlOrNull() ?: error("invalid Lightning callback")
-            require(base.scheme == "https" || base.scheme == "http") { "invalid Lightning callback scheme" }
+            require(base.scheme == "https") { "Lightning callback must use HTTPS" }
             val url = base.newBuilder()
                 .addQueryParameter("amount", amountMsats.toString())
+                // Amethyst sends comment= even for an empty message; some
+                // LNURL servers require the parameter to be present.
+                .addQueryParameter("comment", "")
                 .addQueryParameter("nostr", Json.encodeToString(Event.serializer(), zapRequest))
                 .build()
             val body = ImageClientProvider.client.newCall(Request.Builder().url(url).get().build())
@@ -200,13 +220,23 @@ class ZapService @Inject constructor(
                     response.body?.string() ?: error("invoice response was empty")
                 }
             val obj = json.parseToJsonElement(body).jsonObject
-            require(obj["status"]?.jsonPrimitive?.contentOrNull != "ERROR") {
-                obj["reason"]?.jsonPrimitive?.contentOrNull ?: "recipient rejected the zap"
+            require(obj["status"]?.jsonPrimitive?.contentOrNull?.equals("ERROR", ignoreCase = true) != true) {
+                obj["reason"]?.jsonPrimitive?.contentOrNull
+                    ?: obj["message"]?.jsonPrimitive?.contentOrNull
+                    ?: "recipient rejected the zap"
             }
             val invoice = obj["pr"]?.jsonPrimitive?.contentOrNull?.trim()
                 ?: error("recipient returned no invoice")
-            require(invoice.lowercase().startsWith("ln")) { "recipient returned an invalid invoice" }
-            invoice
+            val invoiceAmount = LightningInvoice.amountMsats(invoice)
+                ?: error("recipient returned an invalid or amountless invoice")
+            require(invoiceAmount == amountMsats) {
+                "invoice amount mismatch: got $invoiceAmount msats, expected $amountMsats msats"
+            }
+            Result.success(invoice)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            Result.failure(error)
         }
     }
 }

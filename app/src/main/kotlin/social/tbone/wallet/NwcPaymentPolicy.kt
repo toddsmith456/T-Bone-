@@ -6,7 +6,8 @@ enum class NwcPaymentState { SUCCEEDED, FAILED, UNKNOWN }
 object NwcPaymentPolicy {
     fun classify(result: Result<Unit>): NwcPaymentState = when {
         result.isSuccess -> NwcPaymentState.SUCCEEDED
-        result.exceptionOrNull() is NwcPaymentTimeoutException -> NwcPaymentState.UNKNOWN
+        result.exceptionOrNull() is NwcPaymentTimeoutException ||
+            result.exceptionOrNull() is NwcPaymentAmbiguousException -> NwcPaymentState.UNKNOWN
         else -> NwcPaymentState.FAILED
     }
 

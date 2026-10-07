@@ -3,6 +3,7 @@ package social.tbone.wallet
 import android.util.Base64
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -49,6 +50,7 @@ data class NwcWalletInfo(
     val alias: String? = null,
     val network: String? = null,
     val methods: List<String> = emptyList(),
+    val extensions: Set<String> = emptySet(),
 )
 
 data class NwcZapNotification(
@@ -63,6 +65,9 @@ data class NwcZapNotification(
 class NwcPaymentTimeoutException : Exception(
     "The wallet did not confirm this payment. Do not retry immediately; check the wallet first."
 )
+
+/** The wallet response was malformed or could not be authenticated after dispatch. */
+class NwcPaymentAmbiguousException(message: String) : Exception(message)
 
 private data class NwcRpcResponse(
     val resultType: String?,
@@ -116,6 +121,8 @@ class NwcRepository @Inject constructor(
     private var handshakeJob: Job? = null
     private var infoWaiter: CompletableDeferred<Event>? = null
     private var encryption = NwcEncryption.NIP04
+    /** NWC-06 metadata is sent only after the wallet advertises extension 06. */
+    private var supportsNwcMetadata = false
 
     private enum class NwcEncryption { NIP04, NIP44 }
 
@@ -270,6 +277,7 @@ class NwcRepository @Inject constructor(
         _status.value = "connecting to wallet relay…"
         _balanceMsats.value = null
         _walletInfo.value = null
+        supportsNwcMetadata = false
 
         val encrypted = try {
             Base64.decode(connection.encryptedSecretBase64, Base64.DEFAULT)
@@ -285,7 +293,11 @@ class NwcRepository @Inject constructor(
         notificationSince = System.currentTimeMillis() / 1000
         seenNotificationIds.clear()
 
-        messageJob = appScope.launch {
+        // Start the multiplexer before sending any REQ/EVENT frames. An
+        // undispatched launch reaches collect immediately, avoiding the small
+        // startup window where a fast wallet response could be emitted before
+        // this repository is listening.
+        messageJob = appScope.launch(start = CoroutineStart.UNDISPATCHED) {
             pool.messages.collect { message -> route(message) }
         }
 
@@ -331,11 +343,16 @@ class NwcRepository @Inject constructor(
 
         encryption = if (info?.supportsNip44() == true) NwcEncryption.NIP44 else NwcEncryption.NIP04
         val advertisedMethods = info?.let { NwcCapabilities.methodsFromInfoContent(it.content) }.orEmpty()
+        val advertisedExtensions = info?.advertisedExtensions().orEmpty()
+        supportsNwcMetadata = NwcCapabilities.METADATA_EXTENSION in advertisedExtensions
         if (advertisedMethods.isNotEmpty() && !NwcCapabilities.supportsMethod(advertisedMethods, NwcCapabilities.PAY_INVOICE)) {
             return connectionFailure("wallet does not advertise pay_invoice capability")
         }
-        if (advertisedMethods.isNotEmpty()) {
-            _walletInfo.value = NwcWalletInfo(methods = advertisedMethods)
+        if (advertisedMethods.isNotEmpty() || advertisedExtensions.isNotEmpty()) {
+            _walletInfo.value = NwcWalletInfo(
+                methods = advertisedMethods,
+                extensions = advertisedExtensions,
+            )
         }
 
         // Keep the public state CONNECTING until pay_invoice has been verified;
@@ -475,20 +492,32 @@ class NwcRepository @Inject constructor(
 
     private suspend fun decrypt(content: String): Result<String> {
         val local = signer ?: return Result.failure(IllegalStateException("NWC signer unavailable"))
-        return runCatching {
-            if (encryption == NwcEncryption.NIP44) {
-                local.nip44DecryptSync(content, stored!!.walletPubkey)
-                    ?: throw IllegalArgumentException("NIP-44 decryption failed")
-            } else {
-                local.nip04DecryptSync(content, stored!!.walletPubkey)
+        return try {
+            Result.success(
+                if (encryption == NwcEncryption.NIP44) {
+                    local.nip44DecryptSync(content, stored!!.walletPubkey)
+                        ?: throw IllegalArgumentException("NIP-44 decryption failed")
+                } else {
+                    local.nip04DecryptSync(content, stored!!.walletPubkey)
+                },
+            )
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            try {
+                // Some older services omit the info event or mislabel the response.
+                // A format fallback is safe because both decryptors authenticate the
+                // payload; a random decode never becomes an accepted payment result.
+                Result.success(
+                    if (encryption == NwcEncryption.NIP44) local.nip04DecryptSync(content, stored!!.walletPubkey)
+                    else local.nip44DecryptSync(content, stored!!.walletPubkey)
+                        ?: throw IllegalArgumentException("NIP-44 decryption failed"),
+                )
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Result.failure(error)
             }
-        }.recoverCatching {
-            // Some older services omit the info event or mislabel the response.
-            // A format fallback is safe because both decryptors authenticate the
-            // payload; a random decode never becomes an accepted payment result.
-            if (encryption == NwcEncryption.NIP44) local.nip04DecryptSync(content, stored!!.walletPubkey)
-            else local.nip44DecryptSync(content, stored!!.walletPubkey)
-                ?: throw IllegalArgumentException("NIP-44 decryption failed")
         }
     }
 
@@ -573,22 +602,44 @@ class NwcRepository @Inject constructor(
             return Result.failure(e)
         }
         if (response.errorCode != null) {
+            if (method == "pay_invoice" && response.errorCode in setOf("DECRYPT_FAILED", "PARSE_ERROR")) {
+                return Result.failure(
+                    NwcPaymentAmbiguousException(
+                        "The wallet response could not be verified. Check the wallet before retrying.",
+                    ),
+                )
+            }
             return Result.failure(IllegalStateException("${response.errorCode}: ${response.errorMessage}"))
         }
         if (response.resultType != null && response.resultType != method) {
-            return Result.failure(IllegalStateException("wallet response type did not match $method"))
+            return if (method == "pay_invoice") {
+                Result.failure(NwcPaymentAmbiguousException("The wallet returned an unexpected payment response. Check the wallet before retrying."))
+            } else {
+                Result.failure(IllegalStateException("wallet response type did not match $method"))
+            }
         }
         return response.result?.let { Result.success(it) }
-            ?: Result.failure(IllegalStateException("wallet returned an empty result"))
+            ?: if (method == "pay_invoice") {
+                Result.failure(NwcPaymentAmbiguousException("The wallet returned no payment result. Check the wallet before retrying."))
+            } else {
+                Result.failure(IllegalStateException("wallet returned an empty result"))
+            }
     }
 
     suspend fun refreshWalletInfo(): Result<NwcWalletInfo> {
         val result = call("get_info", buildJsonObject {})
         return result.map { body ->
+            val extensions = body["extensions"]?.jsonArray
+                ?.flatMap { it.jsonPrimitive.contentOrNull?.split(Regex("\\s+")) ?: emptyList() }
+                ?.filter { it.isNotBlank() }
+                ?.toSet()
+                .orEmpty()
+            supportsNwcMetadata = supportsNwcMetadata || NwcCapabilities.METADATA_EXTENSION in extensions
             val info = NwcWalletInfo(
                 alias = body["alias"]?.jsonPrimitive?.contentOrNull,
                 network = body["network"]?.jsonPrimitive?.contentOrNull,
                 methods = body["methods"]?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull }.orEmpty(),
+                extensions = extensions,
             )
             _walletInfo.value = info
             info
@@ -606,13 +657,32 @@ class NwcRepository @Inject constructor(
     }
 
     /** Pays exactly one invoice. There is intentionally no automatic retry. */
-    suspend fun payInvoice(invoice: String): Result<Unit> {
-        if (!invoice.trim().lowercase().startsWith("ln")) {
-            return Result.failure(IllegalArgumentException("wallet returned an invalid Lightning invoice"))
+    suspend fun payInvoice(
+        invoice: String,
+        zapRequest: Event? = null,
+        recipientIdentifier: String? = null,
+        comment: String? = null,
+    ): Result<Unit> {
+        if (LightningInvoice.amountMsats(invoice) == null) {
+            return Result.failure(IllegalArgumentException("wallet returned an invalid or amountless Lightning invoice"))
+        }
+        val metadata = if (supportsNwcMetadata && zapRequest != null) {
+            buildJsonObject {
+                recipientIdentifier?.trim()?.takeIf { it.isNotEmpty() }?.let { identifier ->
+                    put("recipient_data", buildJsonObject { put("identifier", identifier) })
+                }
+                comment?.takeIf { it.isNotBlank() }?.let { put("comment", it) }
+                put("nostr", json.parseToJsonElement(json.encodeToString(Event.serializer(), zapRequest)))
+            }.takeIf { it.toString().length <= 4_096 }
+        } else {
+            null
         }
         val body = call(
             method = "pay_invoice",
-            params = buildJsonObject { put("invoice", invoice.trim()) },
+            params = buildJsonObject {
+                put("invoice", invoice.trim())
+                metadata?.let { put("metadata", it) }
+            },
             timeoutMs = 120_000,
         ).getOrElse { return Result.failure(it) }
         return try {
@@ -630,7 +700,7 @@ class NwcRepository @Inject constructor(
     fun recordOutgoingZap(eventId: String, amountMsats: Long, description: String, paymentHash: String? = null) {
         addZapNotification(
             NwcZapNotification(
-                id = "outgoing-$eventId",
+                id = "outgoing-$eventId-${UUID.randomUUID().toString().take(8)}",
                 direction = "sent",
                 amountMsats = amountMsats,
                 description = description.ifBlank { "zap" },
@@ -654,6 +724,15 @@ class NwcRepository @Inject constructor(
                     tag[1].jsonPrimitive.contentOrNull.orEmpty().split(Regex("\\s+")),
                 )
         }
+
+    private fun Event.advertisedExtensions(): Set<String> =
+        tags
+            .filter { tag ->
+                tag.size >= 2 && tag[0].jsonPrimitive.contentOrNull.equals("extensions", ignoreCase = true)
+            }
+            .flatMap { tag -> tag[1].jsonPrimitive.contentOrNull.orEmpty().split(Regex("\\s+")) }
+            .filter { it.isNotBlank() }
+            .toSet()
 
     private fun Event.walletInfo(): NwcWalletInfo {
         val body = runCatching { json.parseToJsonElement(content).jsonObject }.getOrNull()

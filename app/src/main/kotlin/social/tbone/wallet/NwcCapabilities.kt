@@ -4,6 +4,8 @@ package social.tbone.wallet
 object NwcCapabilities {
     const val PAY_INVOICE = "pay_invoice"
     const val NIP44_V2 = "nip44_v2"
+    /** NWC-06 per-payment metadata extension. */
+    const val METADATA_EXTENSION = "06"
 
     /** NIP-47 info content is a space-separated list of methods. */
     fun methodsFromInfoContent(content: String): List<String> =

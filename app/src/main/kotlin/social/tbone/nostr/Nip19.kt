@@ -54,6 +54,17 @@ object Nip19 {
     }.getOrNull()
 
     /**
+     * Converts an LNURL-pay HTTPS endpoint to the bech32 form required by the
+     * NIP-57 `lnurl` tag. The tag is not a lud16 address: providers and receipt
+     * validators expect the exact LNURL endpoint encoded with the `lnurl` HRP.
+     */
+    fun lnurlToBech32(input: String): String? = runCatching {
+        val url = lnurlToUrl(input)?.trim() ?: return null
+        require(url.startsWith("https://", ignoreCase = true)) { "LNURL endpoint must use HTTPS" }
+        encode("lnurl", url.toByteArray(Charsets.UTF_8))
+    }.getOrNull()
+
+    /**
      * Decodes a note1… or nostr:note1… string to a 64-char hex event ID.
      * note1 is simple bech32 with hrp="note" and 32-byte payload.
      */

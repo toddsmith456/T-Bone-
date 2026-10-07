@@ -5,7 +5,9 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -46,6 +48,9 @@ class NwcWalletViewModel @Inject constructor(
     val sentZapIds: StateFlow<Set<String>> = _sentZapIds.asStateFlow()
     private val _uncertainZapIds = MutableStateFlow<Set<String>>(emptySet())
     val uncertainZapIds: StateFlow<Set<String>> = _uncertainZapIds.asStateFlow()
+    /** One-shot completion events for haptic feedback; never persisted or replayed. */
+    private val _zapSuccessEvents = MutableSharedFlow<String>(extraBufferCapacity = 64)
+    val zapSuccessEvents = _zapSuccessEvents.asSharedFlow()
 
     init {
         viewModelScope.launch {
@@ -213,7 +218,10 @@ class NwcWalletViewModel @Inject constructor(
 
     /** Sends one zap and never retries a timed-out payment. */
     fun sendZap(event: Event, profile: ProfileContent, amountSats: Long) {
-        if (event.id in _pendingZapIds.value || event.id in _sentZapIds.value || event.id in _uncertainZapIds.value) return
+        // A completed zap must not lock the note to one amount: users may send
+        // another zap with a different preset or custom amount. Only an in-flight
+        // or financially uncertain payment is blocked.
+        if (event.id in _pendingZapIds.value || event.id in _uncertainZapIds.value) return
         _pendingZapIds.value = _pendingZapIds.value + event.id
         viewModelScope.launch {
             val result = zapService.zap(event, profile, amountSats)
@@ -222,6 +230,7 @@ class NwcWalletViewModel @Inject constructor(
                 NwcPaymentState.SUCCEEDED -> {
                     _sentZapIds.value = _sentZapIds.value + event.id
                     appSettings.markNwcZapPaid(event.id)
+                    _zapSuccessEvents.tryEmit(event.id)
                     _message.value = "zap sent · $amountSats sats"
                 }
                 NwcPaymentState.UNKNOWN -> {

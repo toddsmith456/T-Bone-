@@ -27,12 +27,15 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -41,6 +44,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.collect
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
 import social.tbone.nostr.Nip19
@@ -634,6 +638,14 @@ private fun NoteEngagementRow(
     modifier: Modifier = Modifier,
 ) {
     val walletViewModel: NwcWalletViewModel = hiltViewModel()
+    val hapticFeedback = LocalHapticFeedback.current
+    LaunchedEffect(event.id) {
+        walletViewModel.zapSuccessEvents.collect { completedEventId ->
+            if (completedEventId == event.id) {
+                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+            }
+        }
+    }
     val zapsEnabled by walletViewModel.zapsEnabled.collectAsStateWithLifecycle()
     val walletState by walletViewModel.connectionState.collectAsStateWithLifecycle()
     val pendingZaps by walletViewModel.pendingZapIds.collectAsStateWithLifecycle()
@@ -711,7 +723,7 @@ private fun NoteEngagementRow(
                 EngagementButton(
                     icon = Icons.Outlined.Bolt,
                     contentDescription = when {
-                        sent -> "Zap sent"
+                        sent -> "Send another zap"
                         uncertain -> "Zap status unknown; check wallet"
                         else -> "Choose zap amount"
                     },
@@ -722,7 +734,7 @@ private fun NoteEngagementRow(
                         else -> BonyColors.TextMute
                     },
                     onClick = {
-                        if (!pending && !sent && !uncertain) {
+                        if (!pending && !uncertain) {
                             when {
                                 profile == null -> walletViewModel.report("profile Lightning address is still loading")
                                 lightningAddress == null -> walletViewModel.report("this profile has no Lightning address for zaps")

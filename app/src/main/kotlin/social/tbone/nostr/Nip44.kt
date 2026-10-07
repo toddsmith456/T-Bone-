@@ -56,7 +56,7 @@ object Nip44 {
 
     // ── Core crypto ───────────────────────────────────────────────────────────
 
-    private fun conversationKey(privkey: ByteArray, xOnlyPubkey: ByteArray): ByteArray {
+    internal fun conversationKey(privkey: ByteArray, xOnlyPubkey: ByteArray): ByteArray {
         val P = liftX(BigInteger(1, xOnlyPubkey))
             ?: throw IllegalArgumentException("Invalid x-only pubkey")
         val sharedPoint = P.multiply(BigInteger(1, privkey)).normalize()
@@ -76,6 +76,9 @@ object Nip44 {
         return android.util.Base64.encodeToString(output, android.util.Base64.NO_WRAP)
     }
 
+    internal fun decryptWithConversationKey(payload: String, conversationKey: ByteArray): String =
+        decrypt(android.util.Base64.decode(payload, android.util.Base64.DEFAULT), conversationKey)
+
     private fun decrypt(payload: ByteArray, conversationKey: ByteArray): String {
         // version(1) + nonce(32) + ciphertext(≥34: 2-byte length + 32-byte min chunk) + mac(32) = 99
         require(payload.size >= 99) { "NIP-44 payload too short: ${payload.size} bytes" }
@@ -92,20 +95,27 @@ object Nip44 {
         return unpad(chaCha20(chachaKey, chachaNonce, ciphertext)).toString(Charsets.UTF_8)
     }
 
-    private data class MessageKeys(
+    /** NIP-44 v2 message keys: HKDF-Expand with nonce as input, not a salt/info pair. */
+    internal data class MessageKeys(
         val chachaKey: ByteArray,
         val chachaNonce: ByteArray,
         val hmacKey: ByteArray,
     )
 
-    private fun messageKeys(conversationKey: ByteArray, nonce: ByteArray): MessageKeys {
-        val hkdf = HKDFBytesGenerator(org.bouncycastle.crypto.digests.SHA256Digest())
-        hkdf.init(HKDFParameters(conversationKey, nonce, "nip44-v2".toByteArray()))
-        val output = ByteArray(76).also { hkdf.generateBytes(it, 0, 76) }
+    internal fun messageKeys(conversationKey: ByteArray, nonce: ByteArray): MessageKeys {
+        require(conversationKey.size == 32 && nonce.size == 32) { "NIP-44 keys and nonce must be 32 bytes" }
+        // RFC 5869 expand as specified by NIP-44:
+        // T1 = HMAC(key, nonce || 1), T2 = HMAC(key, T1 || nonce || 2),
+        // T3 = HMAC(key, T2 || nonce || 3). Do not use nonce as HKDF salt or
+        // add an info string; that produces ciphertexts other NIP-44 clients
+        // cannot decrypt.
+        val round1 = hmacSha256(conversationKey, nonce + byteArrayOf(1))
+        val round2 = hmacSha256(conversationKey, round1 + nonce + byteArrayOf(2))
+        val round3 = hmacSha256(conversationKey, round2 + nonce + byteArrayOf(3))
         return MessageKeys(
-            chachaKey = output.sliceArray(0..31),
-            chachaNonce = output.sliceArray(32..43),
-            hmacKey = output.sliceArray(44..75),
+            chachaKey = round1,
+            chachaNonce = round2.copyOfRange(0, 12),
+            hmacKey = round2.copyOfRange(12, 32) + round3.copyOfRange(0, 12),
         )
     }
 
