@@ -1,9 +1,7 @@
 package social.tbone.nostr
 
 import org.bouncycastle.asn1.sec.SECNamedCurves
-import org.bouncycastle.crypto.generators.HKDFBytesGenerator
 import org.bouncycastle.crypto.params.ECDomainParameters
-import org.bouncycastle.crypto.params.HKDFParameters
 import org.bouncycastle.crypto.engines.ChaCha7539Engine
 import org.bouncycastle.crypto.params.KeyParameter
 import org.bouncycastle.crypto.params.ParametersWithIV
@@ -51,7 +49,7 @@ object Nip44 {
      */
     fun decrypt(payload: String, recipientPrivkey: ByteArray, senderPubkey: ByteArray): String {
         val conversationKey = conversationKey(recipientPrivkey, senderPubkey)
-        return decrypt(android.util.Base64.decode(payload, android.util.Base64.DEFAULT), conversationKey)
+        return decrypt(java.util.Base64.getDecoder().decode(payload), conversationKey)
     }
 
     // ── Core crypto ───────────────────────────────────────────────────────────
@@ -61,10 +59,10 @@ object Nip44 {
             ?: throw IllegalArgumentException("Invalid x-only pubkey")
         val sharedPoint = P.multiply(BigInteger(1, privkey)).normalize()
         val sharedX = sharedPoint.affineXCoord.encoded // 32 bytes
-        // conversation_key = HKDF-SHA256(ikm=sharedX, salt="nip44-v2", info="")
-        val hkdf = HKDFBytesGenerator(org.bouncycastle.crypto.digests.SHA256Digest())
-        hkdf.init(HKDFParameters(sharedX, "nip44-v2".toByteArray(), ByteArray(0)))
-        return ByteArray(32).also { hkdf.generateBytes(it, 0, 32) }
+        // conversation_key = HKDF-Extract(salt="nip44-v2", IKM=sharedX).
+        // NIP-44 uses the extract result directly; it does not perform an
+        // additional HKDF-Expand step for the conversation key.
+        return hmacSha256("nip44-v2".toByteArray(), sharedX)
     }
 
     private fun encrypt(plaintext: ByteArray, conversationKey: ByteArray, nonce: ByteArray): String {
@@ -77,7 +75,7 @@ object Nip44 {
     }
 
     internal fun decryptWithConversationKey(payload: String, conversationKey: ByteArray): String =
-        decrypt(android.util.Base64.decode(payload, android.util.Base64.DEFAULT), conversationKey)
+        decrypt(java.util.Base64.getDecoder().decode(payload), conversationKey)
 
     private fun decrypt(payload: ByteArray, conversationKey: ByteArray): String {
         // version(1) + nonce(32) + ciphertext(≥34: 2-byte length + 32-byte min chunk) + mac(32) = 99
