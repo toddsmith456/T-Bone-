@@ -85,6 +85,9 @@ class NwcRepository @Inject constructor(
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
     private val lifecycleMutex = Mutex()
     private val pending = ConcurrentHashMap<String, CompletableDeferred<NwcRpcResponse>>()
+    /** NWC notifications are relay-backed but intentionally session-only. */
+    private val seenNotificationIds = ConcurrentHashMap.newKeySet<String>()
+    private var notificationSince = 0L
 
     private val _connectionState = MutableStateFlow(NwcConnectionState.NOT_CONFIGURED)
     val connectionState: StateFlow<NwcConnectionState> = _connectionState.asStateFlow()
@@ -276,6 +279,11 @@ class NwcRepository @Inject constructor(
         signer = LocalKeySigner(connection.clientPubkey, encrypted)
         relayUrls = connection.relayUrls.toSet()
         relayUrls.forEach { pool.acquireRelay(it) }
+        // Match Amethyst's account-scoped NWC watcher: ask the wallet relay
+        // for live notifications from the moment this connection is mounted,
+        // not for a historical backlog. The list remains memory-only.
+        notificationSince = System.currentTimeMillis() / 1000
+        seenNotificationIds.clear()
 
         messageJob = appScope.launch {
             pool.messages.collect { message -> route(message) }
@@ -290,7 +298,14 @@ class NwcRepository @Inject constructor(
             relays = relayUrls,
         )
         pool.subscribeTo(
-            filters = listOf(Filter(kinds = listOf(EventKind.NWC_NOTIFICATION, EventKind.NWC_NOTIFICATION_V2), pTags = listOf(connection.clientPubkey))),
+            filters = listOf(
+                Filter(
+                    kinds = listOf(EventKind.NWC_NOTIFICATION, EventKind.NWC_NOTIFICATION_V2),
+                    authors = listOf(connection.walletPubkey),
+                    pTags = listOf(connection.clientPubkey),
+                    since = notificationSince,
+                ),
+            ),
             id = notificationSubId!!,
             label = "nwc-zap-notifications",
             relays = relayUrls,
@@ -384,6 +399,9 @@ class NwcRepository @Inject constructor(
         notificationSubId = null
         pending.values.forEach { it.cancel() }
         pending.clear()
+        seenNotificationIds.clear()
+        notificationSince = 0L
+        _zapNotifications.value = emptyList()
         signer = null
         if (clearState) stored = null
     }
@@ -402,7 +420,12 @@ class NwcRepository @Inject constructor(
                 if (eventMessage.subscriptionId.startsWith("nwc-info-")) infoWaiter?.complete(event)
             }
             EventKind.NWC_RESPONSE -> handleResponse(event)
-            EventKind.NWC_NOTIFICATION, EventKind.NWC_NOTIFICATION_V2 -> handleNotification(event)
+            EventKind.NWC_NOTIFICATION, EventKind.NWC_NOTIFICATION_V2 -> {
+                // A wallet relay can return the same event through multiple
+                // connections; Amethyst de-duplicates by event id before
+                // decrypting and fan-out.
+                if (seenNotificationIds.add(event.id)) handleNotification(event)
+            }
         }
     }
 
@@ -426,13 +449,18 @@ class NwcRepository @Inject constructor(
         val type = root["notification_type"]?.jsonPrimitive?.contentOrNull ?: return
         if (type != "payment_received" && type != "payment_sent") return
         val payload = root["notification"]?.jsonObject ?: root
-        // Wallet notifications can cover non-Nostr payments. Only retain a
-        // notification as a zap when its metadata carries a Nostr zap request
-        // (or the wallet explicitly labels its description as a zap).
-        val metadata = payload["metadata"]?.toString().orEmpty()
+        // Follow Amethyst's NwcSignerState: a payment is a zap only when the
+        // NIP-47 transaction metadata contains the structured `nostr` object.
+        // Do not guess from a memo such as "zap"; that would leak unrelated
+        // wallet payments into this zap-only view.
+        val metadata = payload["metadata"]?.let { element ->
+            runCatching { element.jsonObject }.getOrNull()
+        }
+        if (metadata?.containsKey("nostr") != true) return
         val description = payload["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
-        if (!metadata.contains("nostr", true) && !description.contains("zap", true)) return
-        val amount = payload["amount"]?.jsonPrimitive?.longOrNull ?: return
+        val amount = payload["amount"]?.jsonPrimitive?.longOrNull
+            ?.takeIf { it > 0 }
+            ?: return
         addZapNotification(
             NwcZapNotification(
                 id = event.id,

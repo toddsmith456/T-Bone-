@@ -646,6 +646,7 @@ private fun NoteEngagementRow(
         listOf(zapAmountSats) + zapAmounts.filterNot { it == zapAmountSats }
     }
     val canZap = canShowZapControls(zapsEnabled, walletState)
+    val lightningAddress = profile?.lightningAddress
     if (onReply == null && onBoost == null && onQuote == null && onLike == null && onShare == null && !canZap) return
 
     val hasReacted = activePubkey != null && reactors?.contains(activePubkey) == true
@@ -722,21 +723,32 @@ private fun NoteEngagementRow(
                     },
                     onClick = {
                         if (!pending && !sent && !uncertain) {
-                            if (profile != null) zapPickerOpen = true
-                            else walletViewModel.report("profile Lightning address is still loading")
+                            when {
+                                profile == null -> walletViewModel.report("profile Lightning address is still loading")
+                                lightningAddress == null -> walletViewModel.report("this profile has no Lightning address for zaps")
+                                else -> zapPickerOpen = true
+                            }
                         }
                     },
                 )
                 DropdownMenu(
                     expanded = zapPickerOpen,
                     onDismissRequest = { zapPickerOpen = false },
+                    modifier = Modifier.background(BonyColors.Surface),
                 ) {
                     zapChoices.forEachIndexed { index, amount ->
                         DropdownMenuItem(
-                            text = { Text(if (index == 0) "$amount sats · default" else "$amount sats") },
+                            text = {
+                                Text(
+                                    if (index == 0) "$amount sats · default" else "$amount sats",
+                                    color = BonyColors.Text,
+                                )
+                            },
                             onClick = {
                                 zapPickerOpen = false
-                                if (profile != null) walletViewModel.sendZap(event, profile, amountSats = amount)
+                                if (profile != null && lightningAddress != null) {
+                                    walletViewModel.sendZap(event, profile, amountSats = amount)
+                                }
                             },
                         )
                     }

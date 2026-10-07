@@ -121,6 +121,10 @@ class NwcWalletViewModel @Inject constructor(
     }
 
     fun removePreset(amount: Long) {
+        if (zapAmounts.value.size <= 1) {
+            _message.value = "keep at least one zap preset"
+            return
+        }
         viewModelScope.launch {
             appSettings.removeNwcZapAmount(amount)
             _message.value = "zap preset removed"

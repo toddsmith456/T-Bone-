@@ -210,7 +210,11 @@ fun BonyNavHost() {
                     ToolboxSettingsScreen(onBack = { navController.popBackStack() })
                 }
                 composable(ROUTE_WALLET) {
-                    WalletToolScreen(onBack = { navController.popBackStack() })
+                    // Keep the shared navigation bar below the wallet relay
+                    // notifications and above Android's navigation buttons.
+                    WithBottomBar(current = BottomTab.TOOLS, navController = navController) {
+                        WalletToolScreen(onBack = { navController.popBackStack() })
+                    }
                 }
                 composable(ROUTE_GEOHASH) {
                     GeohashChannelScreen(

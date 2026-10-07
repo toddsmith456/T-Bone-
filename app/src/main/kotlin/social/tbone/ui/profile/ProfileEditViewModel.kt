@@ -106,5 +106,52 @@ class ProfileEditViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Publishes the NIP-57 payment fields in the profile's kind-0 metadata.
+     * `lud16` is preferred, while `lud06` is kept for LNURL-only wallets just
+     * like Amethyst's profile editor.
+     */
+    fun saveLightningAddresses(lud16Raw: String, lud06Raw: String) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(uploading = true, error = null, done = false) }
+            try {
+                val lud16 = lud16Raw.trim().takeIf { it.isNotEmpty() }
+                val lud06 = lud06Raw.trim().takeIf { it.isNotEmpty() }
+                if (lud16 != null) {
+                    val at = lud16.lastIndexOf('@')
+                    require(at in 1 until lud16.lastIndex && !lud16.any(Char::isWhitespace)) {
+                        "Lightning address must look like user@domain"
+                    }
+                }
+                if (lud06 != null) {
+                    require(
+                        lud06.startsWith("lnurl", ignoreCase = true) ||
+                            lud06.startsWith("https://", ignoreCase = true) ||
+                            lud06.startsWith("http://", ignoreCase = true),
+                    ) { "LNURL must start with LNURL or https://" }
+                }
+                val signer = signerFactory.forActiveAccount() ?: error("no active account")
+                val existing = profileRepository.getProfile(signer.pubkey) ?: ProfileContent()
+                val updated = existing.copy(lud16 = lud16, lud06 = lud06)
+                val unsigned = UnsignedEvent(
+                    pubkey = signer.pubkey,
+                    kind = EventKind.METADATA,
+                    content = NostrJson.encodeToString(ProfileContent.serializer(), updated),
+                )
+                signer.signEvent(unsigned)
+                    .onSuccess { event ->
+                        pool.publish(event)
+                        profileRepository.processEvent(event)
+                        _uiState.update { it.copy(uploading = false, done = true, error = null) }
+                    }
+                    .onFailure { e ->
+                        _uiState.update { it.copy(uploading = false, error = e.message ?: "sign failed") }
+                    }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(uploading = false, error = e.message ?: "could not save wallet address") }
+            }
+        }
+    }
+
     fun clearError() = _uiState.update { it.copy(error = null, done = false) }
 }

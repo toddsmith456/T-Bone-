@@ -33,6 +33,27 @@ object Nip19 {
         s.startsWith("nprofile1") || s.startsWith("nevent1")
 
     /**
+     * Decodes a NIP-57 lud06 LNURL into its HTTPS pay endpoint.
+     * LNURL uses ordinary bech32 with the `lnurl` human-readable prefix and
+     * stores the endpoint URL as UTF-8 bytes. A raw HTTPS URL is accepted too,
+     * which is useful for tolerant profile editors and older clients.
+     */
+    fun lnurlToUrl(input: String): String? = runCatching {
+        val value = input.trim()
+        if (value.startsWith("https://", ignoreCase = true) ||
+            value.startsWith("http://", ignoreCase = true)
+        ) {
+            return value
+        }
+        val (hrp, bytes) = decode(value.lowercase()) ?: return null
+        if (hrp != "lnurl") return null
+        bytes.toString(Charsets.UTF_8).trim().takeIf {
+            it.startsWith("https://", ignoreCase = true) ||
+                it.startsWith("http://", ignoreCase = true)
+        }
+    }.getOrNull()
+
+    /**
      * Decodes a note1… or nostr:note1… string to a 64-char hex event ID.
      * note1 is simple bech32 with hrp="note" and 32-byte payload.
      */

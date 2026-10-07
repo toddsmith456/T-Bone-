@@ -20,6 +20,7 @@ import social.tbone.Tunables
 import social.tbone.account.signer.NostrSignerFactory
 import social.tbone.di.ImageClientProvider
 import social.tbone.nostr.Event
+import social.tbone.nostr.Nip19
 import social.tbone.nostr.ProfileContent
 import social.tbone.nostr.UnsignedEvent
 import social.tbone.nostr.relay.RelayPool
@@ -68,12 +69,12 @@ class ZapService @Inject constructor(
         profile: ProfileContent,
         amountSats: Long,
     ): Result<Unit> {
-        val lud16 = profile.lud16?.trim()
+        val lightningAddress = profile.lightningAddress
             ?: return Result.failure(IllegalArgumentException("This profile has no Lightning address"))
         require(amountSats in 1..1_000_000) { "zap amount must be between 1 and 1,000,000 sats" }
-        val amountMsats = amountSats * 1_000L
+        val amountMsats = Math.multiplyExact(amountSats, 1_000L)
 
-        val payInfo = resolveLightningAddress(lud16).getOrElse { return Result.failure(it) }
+        val payInfo = resolveLightningAddress(lightningAddress).getOrElse { return Result.failure(it) }
         require(payInfo.allowsNostr) { "This Lightning address does not support Nostr zaps" }
         require(payInfo.nostrPubkey.equals(event.pubkey, ignoreCase = true)) {
             "Lightning address belongs to a different Nostr pubkey"
@@ -94,7 +95,9 @@ class ZapService @Inject constructor(
                 relayHints.forEach { add(it) }
             })
             add(buildJsonArray { add("amount"); add(amountMsats.toString()) })
-            add(buildJsonArray { add("lnurl"); add(lud16) })
+            // NIP-57 carries the exact profile payment address. This is
+            // lud16 for Lightning Addresses and lud06 for LNURL profiles.
+            add(buildJsonArray { add("lnurl"); add(lightningAddress) })
             add(buildJsonArray { add("p"); add(event.pubkey) })
             add(buildJsonArray { add("e"); add(event.id) })
         }
@@ -129,15 +132,33 @@ class ZapService @Inject constructor(
         val nostrPubkey: String,
     )
 
-    private suspend fun resolveLightningAddress(lud16: String): Result<PayInfo> = withContext(Dispatchers.IO) {
+    /**
+     * Resolves either NIP-57 profile field: lud16 is a Lightning Address and
+     * lud06 is a bech32 LNURL-pay endpoint. This mirrors Amethyst's
+     * `lnAddress()` preference while keeping the endpoint validation here at
+     * the payment boundary.
+     */
+    private suspend fun resolveLightningAddress(address: String): Result<PayInfo> = withContext(Dispatchers.IO) {
         runCatching {
-            val at = lud16.lastIndexOf('@')
-            require(at in 1 until lud16.lastIndex) { "invalid Lightning address" }
-            val user = lud16.substring(0, at)
-            val domain = lud16.substring(at + 1)
-            require(Uri.parse("https://$domain").host == domain) { "invalid Lightning address domain" }
-            val url = "https://$domain/.well-known/lnurlp/${Uri.encode(user)}"
-            val response = ImageClientProvider.client.newCall(Request.Builder().url(url).get().build())
+            val value = address.trim()
+            require(value.isNotEmpty()) { "profile Lightning address is empty" }
+            val url = if (value.contains('@')) {
+                val at = value.lastIndexOf('@')
+                require(at in 1 until value.lastIndex) { "invalid Lightning address" }
+                val user = value.substring(0, at)
+                val domain = value.substring(at + 1)
+                require(!domain.any(Char::isWhitespace)) { "invalid Lightning address domain" }
+                val host = Uri.parse("https://$domain").host
+                require(host.equals(domain, ignoreCase = true)) { "invalid Lightning address domain" }
+                "https://$domain/.well-known/lnurlp/${Uri.encode(user)}"
+            } else {
+                Nip19.lnurlToUrl(value) ?: error("invalid LNURL payment address")
+            }
+            val callbackUrl = url.toHttpUrlOrNull() ?: error("invalid Lightning callback")
+            require(callbackUrl.scheme == "https" || callbackUrl.scheme == "http") {
+                "invalid Lightning callback scheme"
+            }
+            val response = ImageClientProvider.client.newCall(Request.Builder().url(callbackUrl).get().build())
                 .execute().use { r ->
                     require(r.isSuccessful) { "Lightning address lookup failed (${r.code})" }
                     r.body?.string() ?: error("Lightning address returned no metadata")

@@ -536,7 +536,8 @@ class AppSettings @Inject constructor(
     }
 
     suspend fun removeNwcZapAmount(amount: Long) {
-        val next = _nwcZapAmounts.value.filterNot { it == amount }
+        val next = ZapAmounts.remove(_nwcZapAmounts.value, amount)
+        if (next == _nwcZapAmounts.value) return
         setNwcZapAmounts(next)
     }
 
@@ -743,6 +744,14 @@ object ZapAmounts {
     fun parse(raw: String?): List<Long> = normalize(
         raw.orEmpty().split(',').mapNotNull { it.trim().toLongOrNull() },
     )
+
+    /**
+     * Removes one preset without ever leaving the user with zero choices.
+     * An empty preset list is normalized to defaults when loading older data,
+     * but an explicit delete of the final visible preset must be a no-op.
+     */
+    fun remove(amounts: List<Long>, amount: Long): List<Long> =
+        if (amounts.size <= 1) amounts else amounts.filterNot { it == amount }
 
     fun move(amounts: List<Long>, from: Int, to: Int): List<Long> {
         if (from !in amounts.indices || to !in amounts.indices) return amounts

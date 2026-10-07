@@ -1,5 +1,6 @@
 package social.tbone.ui.toolbox
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,6 +31,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -61,6 +63,10 @@ fun WalletToolScreen(
     val notifications by viewModel.zapNotifications.collectAsStateWithLifecycle()
     var zapAmountText by remember(zapAmount) { mutableStateOf(zapAmount.toString()) }
     var newPresetText by remember { mutableStateOf("") }
+    // Keep the space-heavy editors closed so live wallet activity has room on
+    // smaller phones; both sections remain one tap away.
+    var presetsExpanded by rememberSaveable { mutableStateOf(false) }
+    var connectionExpanded by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = Modifier.fillMaxSize().background(BonyColors.Bg).statusBarsPadding(),
@@ -112,44 +118,145 @@ fun WalletToolScreen(
                     modifier = Modifier.fillMaxWidth().border(1.dp, BonyColors.Rule).padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text("zap amounts", style = BonyType.body.copy(color = BonyColors.Text))
-                    Text(
-                        "Set any amount from 1 to 1,000,000 sats. Presets are shown after tapping the lightning button and can be edited, reordered, or removed.",
-                        style = BonyType.caption.copy(color = BonyColors.TextMute),
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = zapAmountText,
-                            onValueChange = { zapAmountText = it.filter(Char::isDigit) },
-                            modifier = Modifier.weight(1f),
-                            label = { Text("default sats") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = BonyColors.Accent,
-                                unfocusedBorderColor = BonyColors.Rule,
-                                focusedLabelColor = BonyColors.Accent,
-                                unfocusedLabelColor = BonyColors.TextMute,
-                                focusedTextColor = BonyColors.Text,
-                                unfocusedTextColor = BonyColors.Text,
-                                cursorColor = BonyColors.Accent,
-                            ),
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { presetsExpanded = !presetsExpanded },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("zap amounts", style = BonyType.body.copy(color = BonyColors.Text))
+                            Text(
+                                "$zapAmount sats default · ${zapAmounts.size} preset${if (zapAmounts.size == 1) "" else "s"}",
+                                style = BonyType.caption.copy(color = BonyColors.TextMute),
+                            )
+                        }
+                        Text(
+                            if (presetsExpanded) "⌃" else "⌄",
+                            style = BonyType.body.copy(color = BonyColors.Accent),
                         )
-                        Button(
-                            onClick = { viewModel.saveZapAmount(zapAmountText) },
-                            colors = ButtonDefaults.buttonColors(containerColor = BonyColors.Accent, contentColor = Color.Black),
-                        ) { Text("save") }
                     }
-                    zapAmounts.forEachIndexed { index, preset ->
-                        var presetText by remember(preset) { mutableStateOf(preset.toString()) }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    AnimatedVisibility(visible = presetsExpanded) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                "Set any amount from 1 to 1,000,000 sats. Presets are shown after tapping the lightning button and can be edited, reordered, or removed.",
+                                style = BonyType.caption.copy(color = BonyColors.TextMute),
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(
+                                    value = zapAmountText,
+                                    onValueChange = { zapAmountText = it.filter(Char::isDigit) },
+                                    modifier = Modifier.weight(1f),
+                                    label = { Text("default sats") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = BonyColors.Accent,
+                                        unfocusedBorderColor = BonyColors.Rule,
+                                        focusedLabelColor = BonyColors.Accent,
+                                        unfocusedLabelColor = BonyColors.TextMute,
+                                        focusedTextColor = BonyColors.Text,
+                                        unfocusedTextColor = BonyColors.Text,
+                                        cursorColor = BonyColors.Accent,
+                                    ),
+                                )
+                                Button(
+                                    onClick = { viewModel.saveZapAmount(zapAmountText) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = BonyColors.Accent, contentColor = Color.Black),
+                                ) { Text("save") }
+                            }
+                            zapAmounts.forEachIndexed { index, preset ->
+                                var presetText by remember(preset) { mutableStateOf(preset.toString()) }
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    OutlinedTextField(
+                                        value = presetText,
+                                        onValueChange = { presetText = it.filter(Char::isDigit) },
+                                        modifier = Modifier.weight(1f),
+                                        label = { Text("preset ${index + 1} · sats") },
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = BonyColors.Accent,
+                                            unfocusedBorderColor = BonyColors.Rule,
+                                            focusedLabelColor = BonyColors.Accent,
+                                            unfocusedLabelColor = BonyColors.TextMute,
+                                            focusedTextColor = BonyColors.Text,
+                                            unfocusedTextColor = BonyColors.Text,
+                                            cursorColor = BonyColors.Accent,
+                                        ),
+                                    )
+                                    Text("save", style = BonyType.caption.copy(color = BonyColors.Accent), modifier = Modifier.clickable { viewModel.savePreset(index, presetText) }.padding(6.dp))
+                                    Text("↑", style = BonyType.body.copy(color = if (index > 0) BonyColors.Accent else BonyColors.TextMute), modifier = Modifier.clickable(enabled = index > 0) { viewModel.movePreset(index, index - 1) }.padding(6.dp))
+                                    Text("↓", style = BonyType.body.copy(color = if (index < zapAmounts.lastIndex) BonyColors.Accent else BonyColors.TextMute), modifier = Modifier.clickable(enabled = index < zapAmounts.lastIndex) { viewModel.movePreset(index, index + 1) }.padding(6.dp))
+                                    Text("×", style = BonyType.body.copy(color = if (zapAmounts.size > 1) BonyColors.Danger else BonyColors.TextMute), modifier = Modifier.clickable { viewModel.removePreset(preset) }.padding(6.dp))
+                                }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(
+                                    value = newPresetText,
+                                    onValueChange = { newPresetText = it.filter(Char::isDigit) },
+                                    modifier = Modifier.weight(1f),
+                                    label = { Text("new preset · sats") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = BonyColors.Accent,
+                                        unfocusedBorderColor = BonyColors.Rule,
+                                        focusedLabelColor = BonyColors.Accent,
+                                        unfocusedLabelColor = BonyColors.TextMute,
+                                        focusedTextColor = BonyColors.Text,
+                                        unfocusedTextColor = BonyColors.Text,
+                                        cursorColor = BonyColors.Accent,
+                                    ),
+                                )
+                                Button(
+                                    onClick = { viewModel.addPreset(newPresetText); newPresetText = "" },
+                                    colors = ButtonDefaults.buttonColors(containerColor = BonyColors.Surface, contentColor = BonyColors.Accent),
+                                ) { Text("add") }
+                            }
+                        }
+                    }
+                }
+            }
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth().border(1.dp, BonyColors.Rule).padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { connectionExpanded = !connectionExpanded },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("NWC connection", style = BonyType.body.copy(color = BonyColors.Text))
+                            Text(
+                                when (state) {
+                                    NwcConnectionState.READY -> "connected · wallet relay notifications are live"
+                                    NwcConnectionState.CONNECTING -> "connecting…"
+                                    NwcConnectionState.DISCONNECTED -> "disconnected · tap to reconnect"
+                                    NwcConnectionState.NOT_CONFIGURED -> "not configured"
+                                    NwcConnectionState.ERROR -> "needs attention"
+                                },
+                                style = BonyType.caption.copy(color = BonyColors.TextMute),
+                            )
+                        }
+                        Text(
+                            if (connectionExpanded) "⌃" else "⌄",
+                            style = BonyType.body.copy(color = BonyColors.Accent),
+                        )
+                    }
+                    AnimatedVisibility(visible = connectionExpanded) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedTextField(
-                                value = presetText,
-                                onValueChange = { presetText = it.filter(Char::isDigit) },
-                                modifier = Modifier.weight(1f),
-                                label = { Text("preset ${index + 1} · sats") },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                value = text,
+                                onValueChange = viewModel::setConnectionText,
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("NWC connection address") },
+                                placeholder = { Text("nostr+walletconnect://…") },
+                                singleLine = false,
+                                minLines = 2,
+                                maxLines = 4,
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                                enabled = !busy,
                                 colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = BonyColors.Accent,
                                     unfocusedBorderColor = BonyColors.Rule,
@@ -160,96 +267,44 @@ fun WalletToolScreen(
                                     cursorColor = BonyColors.Accent,
                                 ),
                             )
-                            Text("save", style = BonyType.caption.copy(color = BonyColors.Accent), modifier = Modifier.clickable { viewModel.savePreset(index, presetText) }.padding(6.dp))
-                            Text("↑", style = BonyType.body.copy(color = if (index > 0) BonyColors.Accent else BonyColors.TextMute), modifier = Modifier.clickable(enabled = index > 0) { viewModel.movePreset(index, index - 1) }.padding(6.dp))
-                            Text("↓", style = BonyType.body.copy(color = if (index < zapAmounts.lastIndex) BonyColors.Accent else BonyColors.TextMute), modifier = Modifier.clickable(enabled = index < zapAmounts.lastIndex) { viewModel.movePreset(index, index + 1) }.padding(6.dp))
-                            Text("×", style = BonyType.body.copy(color = BonyColors.Danger), modifier = Modifier.clickable { viewModel.removePreset(preset) }.padding(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = viewModel::connect,
+                                    enabled = !busy && text.isNotBlank(),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = BonyColors.Accent,
+                                        contentColor = Color.Black,
+                                    ),
+                                ) {
+                                    if (busy) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                                    else Text("validate & connect")
+                                }
+                                if (state == NwcConnectionState.DISCONNECTED) {
+                                    Button(
+                                        onClick = viewModel::reconnect,
+                                        enabled = !busy,
+                                        colors = ButtonDefaults.buttonColors(containerColor = BonyColors.Accent, contentColor = Color.Black),
+                                    ) { Text("reconnect") }
+                                }
+                                if (state == NwcConnectionState.READY || state == NwcConnectionState.CONNECTING) {
+                                    Button(
+                                        onClick = viewModel::disconnect,
+                                        enabled = !busy,
+                                        colors = ButtonDefaults.buttonColors(containerColor = BonyColors.Surface, contentColor = BonyColors.Warn),
+                                    ) { Text("disconnect") }
+                                }
+                                if (state != NwcConnectionState.NOT_CONFIGURED) {
+                                    Button(
+                                        onClick = viewModel::removeConnection,
+                                        enabled = !busy,
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = BonyColors.Surface,
+                                            contentColor = BonyColors.Danger,
+                                        ),
+                                    ) { Text("remove") }
+                                }
+                            }
                         }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(
-                            value = newPresetText,
-                            onValueChange = { newPresetText = it.filter(Char::isDigit) },
-                            modifier = Modifier.weight(1f),
-                            label = { Text("new preset · sats") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = BonyColors.Accent,
-                                unfocusedBorderColor = BonyColors.Rule,
-                                focusedLabelColor = BonyColors.Accent,
-                                unfocusedLabelColor = BonyColors.TextMute,
-                                focusedTextColor = BonyColors.Text,
-                                unfocusedTextColor = BonyColors.Text,
-                                cursorColor = BonyColors.Accent,
-                            ),
-                        )
-                        Button(
-                            onClick = { viewModel.addPreset(newPresetText); newPresetText = "" },
-                            colors = ButtonDefaults.buttonColors(containerColor = BonyColors.Surface, contentColor = BonyColors.Accent),
-                        ) { Text("add") }
-                    }
-                }
-            }
-            item {
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = viewModel::setConnectionText,
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("NWC connection address") },
-                    placeholder = { Text("nostr+walletconnect://…") },
-                    singleLine = false,
-                    minLines = 2,
-                    maxLines = 4,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                    enabled = !busy,
-                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = BonyColors.Accent,
-                        unfocusedBorderColor = BonyColors.Rule,
-                        focusedLabelColor = BonyColors.Accent,
-                        unfocusedLabelColor = BonyColors.TextMute,
-                        focusedTextColor = BonyColors.Text,
-                        unfocusedTextColor = BonyColors.Text,
-                        cursorColor = BonyColors.Accent,
-                    ),
-                )
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        onClick = viewModel::connect,
-                        enabled = !busy && text.isNotBlank(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = BonyColors.Accent,
-                            contentColor = Color.Black,
-                        ),
-                    ) {
-                        if (busy) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
-                        else Text("validate & connect")
-                    }
-                    if (state == NwcConnectionState.DISCONNECTED) {
-                        Button(
-                            onClick = viewModel::reconnect,
-                            enabled = !busy,
-                            colors = ButtonDefaults.buttonColors(containerColor = BonyColors.Accent, contentColor = Color.Black),
-                        ) { Text("reconnect") }
-                    }
-                    if (state == NwcConnectionState.READY || state == NwcConnectionState.CONNECTING) {
-                        Button(
-                            onClick = viewModel::disconnect,
-                            enabled = !busy,
-                            colors = ButtonDefaults.buttonColors(containerColor = BonyColors.Surface, contentColor = BonyColors.Warn),
-                        ) { Text("disconnect") }
-                    }
-                    if (state != NwcConnectionState.NOT_CONFIGURED) {
-                        Button(
-                            onClick = viewModel::removeConnection,
-                            enabled = !busy,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = BonyColors.Surface,
-                                contentColor = BonyColors.Danger,
-                            ),
-                        ) { Text("remove") }
                     }
                 }
             }
@@ -288,7 +343,7 @@ fun WalletToolScreen(
             item {
                 Text("zap notifications", style = BonyType.body.copy(color = BonyColors.Text))
                 Text(
-                    "Only Nostr zap and payment activity is shown here. Other wallet transactions stay out of this view.",
+                    "Nostr zap payments arrive from the connected wallet relay. This session-only list is never cached; other wallet transactions stay out.",
                     style = BonyType.caption.copy(color = BonyColors.TextMute),
                     modifier = Modifier.padding(top = 3.dp),
                 )

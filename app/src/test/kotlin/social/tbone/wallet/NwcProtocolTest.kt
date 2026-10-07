@@ -4,6 +4,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertFalse
 import org.junit.Test
+import social.tbone.nostr.Nip19
+import social.tbone.nostr.ProfileContent
 import social.tbone.settings.ZapAmounts
 
 class NwcProtocolTest {
@@ -97,5 +99,18 @@ class NwcProtocolTest {
         assertTrue(runCatching { ZapAmounts.requireValid(1_000_001L) }.isFailure)
         assertEquals(listOf(100L, 500L, 21L), ZapAmounts.move(listOf(21L, 100L, 500L), 0, 2))
         assertEquals(listOf(21L, 100L, 500L), ZapAmounts.move(listOf(21L, 100L, 500L), -1, 2))
+        assertEquals(listOf(21L), ZapAmounts.remove(listOf(21L), 21L))
+        assertEquals(listOf(100L), ZapAmounts.remove(listOf(21L, 100L), 21L))
+    }
+
+    @Test
+    fun profileLightningAddressPrefersLightningAddressAndSupportsLnurlFallback() {
+        assertEquals(
+            "alice@example.com",
+            ProfileContent(lud16 = " alice@example.com ", lud06 = "LNURL1fallback").lightningAddress,
+        )
+        assertEquals("LNURL1fallback", ProfileContent(lud06 = " LNURL1fallback ").lightningAddress)
+        assertEquals("https://pay.example/.well-known/lnurlp/alice", Nip19.lnurlToUrl("https://pay.example/.well-known/lnurlp/alice"))
+        assertEquals(null, Nip19.lnurlToUrl("not-a-lightning-address"))
     }
 }

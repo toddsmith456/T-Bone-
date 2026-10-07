@@ -273,6 +273,15 @@ fun ProfileScreen(
                             text = "✓ ${profile?.nip05}",
                             style = BonyType.meta.copy(color = BonyColors.Accent),
                         )
+                        Spacer(Modifier.height(6.dp))
+                    }
+                    profile?.lightningAddress?.let { address ->
+                        SelectionContainer {
+                            Text(
+                                text = "⚡ $address",
+                                style = BonyType.meta.copy(color = BonyColors.Accent),
+                            )
+                        }
                         Spacer(Modifier.height(10.dp))
                     }
 
@@ -331,7 +340,7 @@ fun ProfileScreen(
                     // Own profile: edit picture / banner.
                     if (isActiveUserProfile) {
                         BonyButton(
-                            label = "✎ EDIT PICTURE & BANNER",
+                            label = "✎ EDIT PROFILE & WALLET",
                             primary = false,
                             onClick = onEditProfile,
                             modifier = Modifier.fillMaxWidth(),
