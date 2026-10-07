@@ -184,6 +184,6 @@ class NwcProtocolTest {
         val expanded = hrp.map { it.code ushr 5 } + listOf(0) + hrp.map { it.code and 31 }
         val checksum = polymod(expanded + data + List(6) { 0 }) xor 1
         val check = (0 until 6).map { (checksum ushr (5 * (5 - it))) and 31 }
-        return hrp + "1" + (data + check).joinToString("") { charset[it] }
+        return hrp + "1" + (data + check).joinToString("") { charset[it].toString() }
     }
 }
