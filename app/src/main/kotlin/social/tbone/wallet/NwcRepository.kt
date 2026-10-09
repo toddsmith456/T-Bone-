@@ -5,9 +5,11 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -69,6 +71,9 @@ class NwcPaymentTimeoutException : Exception(
 /** The wallet response was malformed or could not be authenticated after dispatch. */
 class NwcPaymentAmbiguousException(message: String) : Exception(message)
 
+/** A payment that timed out in the UI and was later settled or rejected by the wallet. */
+data class NwcLatePayment(val targetEventId: String, val state: NwcPaymentState)
+
 private data class NwcRpcResponse(
     val resultType: String?,
     val result: JsonObject?,
@@ -105,6 +110,10 @@ class NwcRepository @Inject constructor(
 
     private val _walletInfo = MutableStateFlow<NwcWalletInfo?>(null)
     val walletInfo: StateFlow<NwcWalletInfo?> = _walletInfo.asStateFlow()
+
+    /** Late answers to payments whose UI wait already ended as "unknown". */
+    private val _latePayments = MutableSharedFlow<NwcLatePayment>(extraBufferCapacity = 16)
+    val latePayments: SharedFlow<NwcLatePayment> = _latePayments.asSharedFlow()
 
     private val _zapNotifications = MutableStateFlow<List<NwcZapNotification>>(emptyList())
     val zapNotifications: StateFlow<List<NwcZapNotification>> = _zapNotifications.asStateFlow()
@@ -545,6 +554,7 @@ class NwcRepository @Inject constructor(
         method: String,
         params: JsonObject,
         timeoutMs: Long = 15_000,
+        lateTargetEventId: String? = null,
     ): Result<JsonObject> {
         val current = stored ?: return Result.failure(IllegalStateException("NWC is not configured"))
         val local = signer ?: return Result.failure(IllegalStateException("NWC signer unavailable"))
@@ -567,10 +577,15 @@ class NwcRepository @Inject constructor(
             if (encryption == NwcEncryption.NIP44) {
                 add(buildJsonArray { add("encryption"); add("nip44_v2") })
             }
-            add(buildJsonArray {
-                add("expiration")
-                add((System.currentTimeMillis() / 1000 + 180).toString())
-            })
+            // Payments carry no expiration. A slow or briefly offline wallet must
+            // still be able to answer; an expired request would leave the payment
+            // permanently unresolved.
+            if (method != "pay_invoice") {
+                add(buildJsonArray {
+                    add("expiration")
+                    add((System.currentTimeMillis() / 1000 + 180).toString())
+                })
+            }
         }
         val unsigned = UnsignedEvent(
             pubkey = local.pubkey,
@@ -587,13 +602,8 @@ class NwcRepository @Inject constructor(
             return Result.failure(IllegalStateException("wallet relay is not connected"))
         }
 
-        val response = try {
+        val awaited = try {
             withTimeoutOrNull(timeoutMs) { waiter.await() }
-                ?: throw if (method == "pay_invoice") NwcPaymentTimeoutException()
-                else java.util.concurrent.TimeoutException("wallet response timed out")
-        } catch (e: TimeoutCancellationException) {
-            pending.remove(event.id)
-            throw e
         } catch (e: kotlinx.coroutines.CancellationException) {
             pending.remove(event.id)
             throw e
@@ -601,6 +611,20 @@ class NwcRepository @Inject constructor(
             pending.remove(event.id)
             return Result.failure(e)
         }
+        val response = awaited ?: run {
+            if (method == "pay_invoice") {
+                // Keep the waiter registered: the wallet may still answer. The
+                // late answer is reconciled instead of the note staying blocked.
+                trackLatePayment(waiter, lateTargetEventId)
+                return Result.failure(NwcPaymentTimeoutException())
+            }
+            pending.remove(event.id)
+            return Result.failure(java.util.concurrent.TimeoutException("wallet response timed out"))
+        }
+        return interpretResponse(method, response)
+    }
+
+    private fun interpretResponse(method: String, response: NwcRpcResponse): Result<JsonObject> {
         if (response.errorCode != null) {
             if (method == "pay_invoice" && response.errorCode in setOf("DECRYPT_FAILED", "PARSE_ERROR")) {
                 return Result.failure(
@@ -624,6 +648,43 @@ class NwcRepository @Inject constructor(
             } else {
                 Result.failure(IllegalStateException("wallet returned an empty result"))
             }
+    }
+
+    /**
+     * A pay_invoice whose wait ran out may still be settled by the wallet. Keep
+     * observing the same request; a late answer is published on [latePayments]
+     * so the UI can clear the "unknown" block and show the real outcome.
+     */
+    private fun trackLatePayment(
+        waiter: CompletableDeferred<NwcRpcResponse>,
+        targetEventId: String?,
+    ) {
+        if (targetEventId == null) return
+        appScope.launch {
+            val late = try {
+                waiter.await()
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                return@launch
+            }
+            val outcome = paymentOutcome(late)
+            val state = NwcPaymentPolicy.classify(outcome)
+            if (state == NwcPaymentState.SUCCEEDED) {
+                runCatching { refreshBalance() }
+            }
+            if (state != NwcPaymentState.UNKNOWN) {
+                _latePayments.emit(NwcLatePayment(targetEventId, state))
+            }
+        }
+    }
+
+    private fun paymentOutcome(response: NwcRpcResponse): Result<Unit> {
+        val body = interpretResponse("pay_invoice", response).getOrElse { return Result.failure(it) }
+        val preimage = body["preimage"]?.jsonPrimitive?.contentOrNull
+        return if (preimage.isNullOrBlank()) {
+            Result.failure(NwcPaymentTimeoutException())
+        } else {
+            Result.success(Unit)
+        }
     }
 
     suspend fun refreshWalletInfo(): Result<NwcWalletInfo> {
@@ -662,6 +723,7 @@ class NwcRepository @Inject constructor(
         zapRequest: Event? = null,
         recipientIdentifier: String? = null,
         comment: String? = null,
+        targetEventId: String? = null,
     ): Result<Unit> {
         if (LightningInvoice.amountMsats(invoice) == null) {
             return Result.failure(IllegalArgumentException("wallet returned an invalid or amountless Lightning invoice"))
@@ -684,6 +746,7 @@ class NwcRepository @Inject constructor(
                 metadata?.let { put("metadata", it) }
             },
             timeoutMs = 120_000,
+            lateTargetEventId = targetEventId,
         ).getOrElse { return Result.failure(it) }
         return try {
             val preimage = body["preimage"]?.jsonPrimitive?.contentOrNull

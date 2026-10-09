@@ -5,6 +5,23 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.3.50] — 2026-10-09
+
+### Fixed
+- NWC zaps no longer get stuck as "status unknown" when the wallet is slow.
+  A payment whose wait ran out keeps its request open, and when the wallet
+  answers later the note is unblocked with the real outcome (confirmed or
+  not paid) instead of staying locked until the app is reinstalled.
+- Lightning payments are no longer sent with a 3-minute NIP-40 expiration, so
+  a slow or briefly offline wallet can still answer them.
+
+### Changed
+- Home tab: the brightness (◐) and search (⌕) icons are larger with a bigger tap target.
+- Home tab: tapping the "t-bone" wordmark opens Settings.
+- Home tab: tapping the avatar and name opens your profile. The account
+  switch symbol (↕) is now a small button on the right.
+
+
 ## [0.3.49] — 2026-10-06
 
 ### Fixed

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -55,28 +56,45 @@ fun AccountSwitcherSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(BonyColors.Surface)
-                    .clickable { if (accounts.size > 1) expanded = true else onProfileClick?.invoke() }
                     .padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                UserAvatar(
-                    pubkeyHex = activeAccount.pubkey,
-                    profile = profile,
-                    size = 28.dp,
-                )
-                Spacer(Modifier.width(10.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    val name = profile?.bestName ?: activeAccount.displayName
-                    if (name != null) {
-                        Text(name, style = BonyType.bodyDim.copy(color = BonyColors.Text), maxLines = 1)
-                    }
-                    Text(phrase, style = BonyType.metaDim.copy(color = BonyColors.TextMute), maxLines = 1)
-                }
-                if (accounts.size > 1) {
-                    Text(
-                        text = "↕",
-                        style = BonyType.meta.copy(color = BonyColors.TextMute),
+                // Avatar + name block: tapping it opens the active account's profile.
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onProfileClick?.invoke() },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    UserAvatar(
+                        pubkeyHex = activeAccount.pubkey,
+                        profile = profile,
+                        size = 28.dp,
                     )
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        val name = profile?.bestName ?: activeAccount.displayName
+                        if (name != null) {
+                            Text(name, style = BonyType.bodyDim.copy(color = BonyColors.Text), maxLines = 1)
+                        }
+                        Text(phrase, style = BonyType.metaDim.copy(color = BonyColors.TextMute), maxLines = 1)
+                    }
+                }
+                // Small switch button on the right; opens the account switcher.
+                if (accounts.size > 1) {
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(width = 36.dp, height = 28.dp)
+                            .border(1.dp, BonyColors.Rule)
+                            .clickable { expanded = true },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "↕",
+                            style = BonyType.meta.copy(color = BonyColors.TextMute),
+                        )
+                    }
                 }
             }
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))

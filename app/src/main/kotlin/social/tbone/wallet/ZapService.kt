@@ -120,6 +120,7 @@ class ZapService @Inject constructor(
             invoice = invoice,
             zapRequest = zapRequest,
             recipientIdentifier = lightningAddress,
+            targetEventId = event.id,
         )
         if (payment.isSuccess) {
             nwcRepository.recordOutgoingZap(

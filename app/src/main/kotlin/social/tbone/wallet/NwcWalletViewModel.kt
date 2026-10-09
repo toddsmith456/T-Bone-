@@ -54,6 +54,9 @@ class NwcWalletViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
+            nwcRepository.latePayments.collect { late -> handleLatePayment(late) }
+        }
+        viewModelScope.launch {
             _sentZapIds.value = appSettings.nwcPaidZapIds()
             _uncertainZapIds.value = appSettings.nwcUncertainZapIds()
             try {
@@ -215,6 +218,31 @@ class NwcWalletViewModel @Inject constructor(
 
     fun clearMessage() { _message.value = null }
     fun report(message: String) { _message.value = message }
+
+    /**
+     * A payment that timed out earlier was settled or rejected by the wallet.
+     * Replace the "unknown" block with the real outcome; an unresolved answer
+     * is never published, so the note stays blocked until one arrives.
+     */
+    private suspend fun handleLatePayment(late: NwcLatePayment) {
+        val eventId = late.targetEventId
+        when (late.state) {
+            NwcPaymentState.UNKNOWN -> return
+            NwcPaymentState.SUCCEEDED -> {
+                _uncertainZapIds.value = _uncertainZapIds.value - eventId
+                appSettings.clearNwcZapUncertain(eventId)
+                _sentZapIds.value = _sentZapIds.value + eventId
+                appSettings.markNwcZapPaid(eventId)
+                _zapSuccessEvents.tryEmit(eventId)
+                _message.value = "delayed zap confirmed by wallet"
+            }
+            NwcPaymentState.FAILED -> {
+                _uncertainZapIds.value = _uncertainZapIds.value - eventId
+                appSettings.clearNwcZapUncertain(eventId)
+                _message.value = "delayed zap was not paid by the wallet"
+            }
+        }
+    }
 
     /** Sends one zap and never retries a timed-out payment. */
     fun sendZap(event: Event, profile: ProfileContent, amountSats: Long) {

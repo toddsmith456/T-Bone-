@@ -600,6 +600,11 @@ class AppSettings @Inject constructor(
         dataStore.edit { it[NWC_UNCERTAIN_ZAP_IDS] = (it[NWC_UNCERTAIN_ZAP_IDS].orEmpty() + eventId).toList().takeLast(500).toSet() }
     }
 
+    /** Called once the wallet's late answer resolves a payment that had timed out. */
+    suspend fun clearNwcZapUncertain(eventId: String) {
+        dataStore.edit { it[NWC_UNCERTAIN_ZAP_IDS] = it[NWC_UNCERTAIN_ZAP_IDS].orEmpty() - eventId }
+    }
+
     // ── Screen time (parental) ───────────────────────────────────────────────
 
     suspend fun setScreenTimeEnabled(enabled: Boolean) {

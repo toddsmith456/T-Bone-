@@ -134,9 +134,10 @@ fun FeedScreen(
             onRelayManagementClick = onRelayManagementClick,
             onSearchClick = onSearchClick,
             onBrightnessClick = { showBrightness = true },
+            onSettingsClick = onSettingsClick,
         )
 
-        // ── Account switcher row ──────────────────────────────────────────────
+        // ── Account row: avatar + name open the profile; ↕ switches accounts ──
         AccountSwitcherSheet(
             activeAccount = activeAccount,
             accounts = accounts,
@@ -341,6 +342,7 @@ private fun FeedTopBar(
     onRelayManagementClick: () -> Unit,
     onSearchClick: () -> Unit,
     onBrightnessClick: () -> Unit,
+    onSettingsClick: () -> Unit,
 ) {
     val relayStatuses by viewModel.relayStatuses.collectAsStateWithLifecycle()
     val torEnabled by viewModel.torEnabled.collectAsStateWithLifecycle()
@@ -355,19 +357,28 @@ private fun FeedTopBar(
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // The wordmark opens Settings.
         Text(
             text = "t-bone",
             style = BonyType.wordmark.copy(color = BonyColors.Text),
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .clickable(onClick = onSettingsClick),
         )
 
-        // Brightness control (between the profile row above and the relays display).
-        Text(
-            text = "◐",
-            style = BonyType.meta.copy(color = BonyColors.TextMute),
-            modifier = Modifier.clickable(onClick = onBrightnessClick),
-        )
-        Spacer(Modifier.width(12.dp))
+        // Brightness control (between the wordmark and the relays display).
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clickable(onClick = onBrightnessClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "◐",
+                style = BonyType.title.copy(color = BonyColors.TextMute),
+            )
+        }
+        Spacer(Modifier.width(4.dp))
 
         if (totalCount > 0) {
             Text(
@@ -378,13 +389,19 @@ private fun FeedTopBar(
             Spacer(Modifier.width(10.dp))
         }
 
-        Text(
-            text = "⌕",
-            style = BonyType.meta.copy(color = BonyColors.TextMute),
-            modifier = Modifier.clickable { onSearchClick() },
-        )
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .clickable { onSearchClick() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "⌕",
+                style = BonyType.title.copy(color = BonyColors.TextMute),
+            )
+        }
 
-        Spacer(Modifier.width(12.dp))
+        Spacer(Modifier.width(8.dp))
 
         TorPill(
             torEnabled = torEnabled,
