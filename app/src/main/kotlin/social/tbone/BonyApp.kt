@@ -21,6 +21,7 @@ import social.tbone.settings.AppSettings
 import social.tbone.settings.OrbotHelper
 import social.tbone.settings.OrbotStatus
 import social.tbone.settings.UiTheme
+import social.tbone.updates.UpdateManager
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.parseHexColor
 import timber.log.Timber
@@ -34,6 +35,7 @@ class BonyApp : Application() {
     @Inject lateinit var applicationScope: CoroutineScope
     @Inject lateinit var calendarRepository: CalendarRepository
     @Inject lateinit var calendarScheduler: CalendarAlarmScheduler
+    @Inject lateinit var updateManager: UpdateManager
 
     override fun onCreate() {
         super.onCreate()

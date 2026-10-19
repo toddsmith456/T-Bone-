@@ -82,11 +82,12 @@ class RelayManagementViewModel @Inject constructor(
         }
     }
 
-    fun addRelay(url: String) {
-        val normalized = RelayPool.normalize(url.trim())
-        if (normalized.isBlank()) return
+    fun addRelay(url: String): Boolean {
+        val normalized = RelayPool.normalize(url)
+        if (!RelayPool.isValidRelayUrl(normalized)) return false
         pool.addRelay(normalized)
         persistRelays { relays -> (relays + normalized).distinct() }
+        return true
     }
 
     fun removeRelay(url: String) {

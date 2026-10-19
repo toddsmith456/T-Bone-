@@ -87,7 +87,12 @@ private val PrettyEventJson: Json = Json {
     prettyPrintIndent = "  "
 }
 
-private data class ShareCardFile(val file: java.io.File, val mimeType: String, val label: String)
+private data class ShareCardFile(
+    val file: java.io.File,
+    val mimeType: String,
+    val label: String,
+    val fallbackMessage: String? = null,
+)
 
 /** Compact, anchored note/reply action menu, following Amethyst's 3-dot action pattern. */
 @Composable
@@ -190,10 +195,24 @@ fun NoteActionsMenu(
                                         animatedVideoUrl = video?.url,
                                     )
                                     if (video != null && card.videoSlot != null) {
-                                        ShareCardFile(
-                                            ShareCardVideoGenerator.render(context, card, video),
-                                            "video/mp4",
-                                            "Share playable video card",
+                                        runCatching {
+                                            ShareCardVideoGenerator.render(context, card, video)
+                                        }.fold(
+                                            onSuccess = { output ->
+                                                ShareCardFile(output, "video/mp4", "Share playable video card")
+                                            },
+                                            onFailure = { error ->
+                                                if (card.file.isFile && card.file.length() > 0L) {
+                                                    ShareCardFile(
+                                                        card.file,
+                                                        "image/png",
+                                                        "Share note card",
+                                                        fallbackMessage = "Video card failed; sharing the still card instead.",
+                                                    )
+                                                } else {
+                                                    throw error
+                                                }
+                                            },
                                         )
                                     } else {
                                         ShareCardFile(card.file, "image/png", "Share note card")
@@ -201,6 +220,9 @@ fun NoteActionsMenu(
                                 }
                             }
                             result.onSuccess { output ->
+                                output.fallbackMessage?.let { message ->
+                                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                }
                                 runCatching {
                                     val uri = FileProvider.getUriForFile(
                                         context,

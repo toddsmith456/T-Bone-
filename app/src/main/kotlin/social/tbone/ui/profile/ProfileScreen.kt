@@ -54,6 +54,8 @@ import social.tbone.nostr.quotedEventId
 import social.tbone.nostr.identity.Phrase
 import social.tbone.ui.components.UserAvatar
 import social.tbone.ui.feed.NoteCard
+import social.tbone.ui.media.LocalVideoQuality
+import social.tbone.ui.media.VideoViewerDialog
 import social.tbone.ui.onboarding.BonyButton
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
@@ -86,7 +88,7 @@ fun ProfileScreen(
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val notes by viewModel.notes.collectAsStateWithLifecycle()
     val replyNotes by viewModel.replyNotes.collectAsStateWithLifecycle()
-    val mediaImages by viewModel.mediaImages.collectAsStateWithLifecycle()
+    val mediaItems by viewModel.mediaItems.collectAsStateWithLifecycle()
     val quotedEvents by viewModel.quotedEvents.collectAsStateWithLifecycle()
     val unresolvedQuoteIds by viewModel.unresolvedQuoteIds.collectAsStateWithLifecycle()
     val selectedTab by viewModel.tab.collectAsStateWithLifecycle()
@@ -120,6 +122,7 @@ fun ProfileScreen(
 
     // Index of the tapped gallery image (null = viewer closed).
     var galleryViewerIndex by remember { mutableStateOf<Int?>(null) }
+    var videoViewerUrl by remember { mutableStateOf<String?>(null) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -428,7 +431,7 @@ fun ProfileScreen(
                 Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
             }
 
-            if (isLoading && visibleNotes.isEmpty() && mediaImages.isEmpty()) {
+            if (isLoading && visibleNotes.isEmpty() && mediaItems.isEmpty()) {
                 item {
                     Box(
                         modifier = Modifier.fillMaxWidth().padding(32.dp),
@@ -441,7 +444,7 @@ fun ProfileScreen(
 
             // ── Media tab: five-wide gallery ──────────────────────────────────
             if (selectedTab == ProfileTab.MEDIA) {
-                if (mediaImages.isEmpty()) {
+                if (mediaItems.isEmpty()) {
                     if (!isLoading) {
                         item {
                             EmptyTabLabel("no media yet")
@@ -450,12 +453,16 @@ fun ProfileScreen(
                 } else {
                     // One lazy item per gallery row (5 pictures wide) so only the
                     // rows on screen are composed while flinging.
-                    val rows = mediaImages.chunked(GALLERY_COLUMNS)
+                    val rows = mediaItems.chunked(GALLERY_COLUMNS)
                     itemsIndexed(rows, key = { index, _ -> "media_row_$index" }) { rowIndex, row ->
                         ProfileGalleryRow(
-                            images = row,
+                            items = row,
                             baseIndex = rowIndex * GALLERY_COLUMNS,
-                            onImageClick = { index -> galleryViewerIndex = index },
+                            onMediaClick = { index ->
+                                val item = mediaItems.getOrNull(index)
+                                if (item?.isVideo == true) videoViewerUrl = item.url
+                                else galleryViewerIndex = index
+                            },
                         )
                     }
                 }
@@ -525,10 +532,17 @@ fun ProfileScreen(
         // Full-screen swipeable gallery, opened from a thumbnail.
         galleryViewerIndex?.let { index ->
             ProfileGalleryViewer(
-                images = mediaImages,
+                items = mediaItems,
                 startIndex = index,
                 onClose = { galleryViewerIndex = null },
                 onOpenNote = onThreadClick,
+            )
+        }
+        videoViewerUrl?.let { url ->
+            VideoViewerDialog(
+                url = url,
+                quality = LocalVideoQuality.current,
+                onClose = { videoViewerUrl = null },
             )
         }
         }

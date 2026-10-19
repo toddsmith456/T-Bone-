@@ -11,9 +11,10 @@ import androidx.room.Query
 /**
  * Persisted notification row for offline caching.
  *
- * The app caches the last 24 hours of notifications here so the tab opens
- * instantly; older history is fetched from relays on demand ("load more").
- * [json] holds the serialized FlatNotifItem (including any embedded note).
+ * The app retains the latest 200 notification rows per account so the tab
+ * opens instantly even when some are older than 24 hours. Older history is
+ * fetched from relays on demand ("load more"). [json] holds the serialized
+ * FlatNotifItem, including any embedded note and its media URLs.
  */
 @Entity(
     tableName = "notifications",
@@ -31,22 +32,26 @@ data class NotificationEntity(
 interface NotificationDao {
 
     @Query(
-        "SELECT * FROM notifications WHERE pubkey = :pubkey AND createdAt >= :since " +
-            "ORDER BY createdAt DESC LIMIT :limit"
+        "SELECT * FROM notifications WHERE pubkey = :pubkey " +
+            "ORDER BY createdAt DESC, id DESC LIMIT :limit"
     )
-    suspend fun getRecent(pubkey: String, since: Long, limit: Int): List<NotificationEntity>
+    suspend fun getLatest(pubkey: String, limit: Int): List<NotificationEntity>
 
     @Query(
         "SELECT * FROM notifications WHERE pubkey = :pubkey AND createdAt < :before " +
-            "ORDER BY createdAt DESC LIMIT :limit"
+            "ORDER BY createdAt DESC, id DESC LIMIT :limit"
     )
     suspend fun getOlder(pubkey: String, before: Long, limit: Int): List<NotificationEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: NotificationEntity)
 
-    @Query("DELETE FROM notifications WHERE pubkey = :pubkey AND createdAt < :cutoff")
-    suspend fun deleteOlderThan(pubkey: String, cutoff: Long)
+    @Query(
+        "DELETE FROM notifications WHERE pubkey = :pubkey AND id NOT IN (" +
+            "SELECT id FROM notifications WHERE pubkey = :pubkey " +
+            "ORDER BY createdAt DESC, id DESC LIMIT :keep)"
+    )
+    suspend fun keepLatest(pubkey: String, keep: Int)
 
     @Query("DELETE FROM notifications WHERE pubkey = :pubkey")
     suspend fun clear(pubkey: String)

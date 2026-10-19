@@ -62,6 +62,12 @@ import social.tbone.ui.theme.colorToHex
 import social.tbone.ui.theme.parseHexColor
 import androidx.compose.runtime.remember
 import social.tbone.account.SignerType
+import social.tbone.BuildConfig
+import social.tbone.updates.UpdateInstallResult
+import social.tbone.updates.UpdateState
+import android.provider.Settings as AndroidSettings
+import java.util.Date
+import androidx.compose.ui.text.style.TextOverflow
 
 @Composable
 fun SettingsScreen(
@@ -95,6 +101,7 @@ fun SettingsScreen(
     val uiTheme by viewModel.uiTheme.collectAsStateWithLifecycle()
     val activeAccount by viewModel.activeAccount.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
+    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val offlineFollowsOn by viewModel.offlineFollowsEnabled.collectAsStateWithLifecycle()
     val offlineMutesOn by viewModel.offlineMutesEnabled.collectAsStateWithLifecycle()
     var showAccentSheet by remember { mutableStateOf(false) }
@@ -113,6 +120,7 @@ fun SettingsScreen(
         TorActiveStrip(torEnabled)
         SettingsAccountSection(activeAccount, onAddAccount, onAccountManagement)
         SettingsRelaySection(onRelayManagement)
+        SettingsUpdateSection(updateState, viewModel, context)
         SettingsOfflineListsSection(offlineFollowsOn, offlineMutesOn, onOfflineList)
         SettingsContentFiltersSection(onContentFilters)
         SettingsNoteActionsSection(noteMenuModerationEnabled, clientTagEnabled, viewModel)
@@ -272,6 +280,129 @@ private fun SettingsRelaySection(onRelayManagement: () -> Unit) {
     ) {
         Text("manage relays", style = BonyType.body.copy(color = BonyColors.TextDim), modifier = Modifier.weight(1f))
         Text("→", style = BonyType.body.copy(color = BonyColors.TextMute))
+    }
+    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+}
+
+@Composable
+private fun SettingsUpdateSection(
+    state: UpdateState,
+    viewModel: SettingsViewModel,
+    context: Context,
+) {
+    SectionHeader("UPDATES")
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = "installed v${BuildConfig.VERSION_NAME} · checks GitHub daily",
+            style = BonyType.meta.copy(color = BonyColors.TextMute),
+        )
+        Spacer(Modifier.height(5.dp))
+        val status = when {
+            state.isChecking && state.latestVersion == null -> "checking for releases…"
+            state.updateAvailable -> "update available · v${state.latestVersion}"
+            state.latestVersion != null -> "up to date · latest is v${state.latestVersion}"
+            state.isChecking -> "checking GitHub…"
+            else -> "release status not checked yet"
+        }
+        Text(
+            text = status,
+            style = BonyType.body.copy(
+                color = if (state.updateAvailable) BonyColors.Accent else BonyColors.Text,
+            ),
+        )
+        if (state.lastCheckedAt > 0L) {
+            Text(
+                text = "last check · ${android.text.format.DateFormat.getDateFormat(context).format(Date(state.lastCheckedAt))}",
+                style = BonyType.caption.copy(color = BonyColors.TextMute),
+            )
+        }
+        state.error?.let { error ->
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = error,
+                style = BonyType.meta.copy(color = BonyColors.Warn),
+            )
+        }
+        if (state.updateAvailable && !state.releaseNotes.isNullOrBlank()) {
+            Spacer(Modifier.height(5.dp))
+            Text(
+                text = state.releaseNotes.take(1_500),
+                style = BonyType.meta.copy(color = BonyColors.TextDim),
+                maxLines = 4,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (state.isDownloading) {
+            Spacer(Modifier.height(5.dp))
+            Text(
+                text = state.downloadProgress?.let { "downloading · $it%" } ?: "downloading update…",
+                style = BonyType.meta.copy(color = BonyColors.Accent),
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (state.updateAvailable) {
+                val signingMismatch = state.error?.contains("signing certificate", ignoreCase = true) == true
+                if (state.apkReady) {
+                    BonyButton(
+                        label = "install update",
+                        primary = true,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            when (viewModel.installDownloadedUpdate(context)) {
+                                UpdateInstallResult.NEEDS_PERMISSION -> runCatching {
+                                    context.startActivity(
+                                        Intent(
+                                            AndroidSettings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                            Uri.parse("package:${context.packageName}"),
+                                        ),
+                                    )
+                                }
+                                UpdateInstallResult.FAILED,
+                                UpdateInstallResult.NOT_READY,
+                                UpdateInstallResult.STARTED -> Unit
+                            }
+                        },
+                    )
+                } else if (!state.apkUrl.isNullOrBlank() && !signingMismatch) {
+                    BonyButton(
+                        label = if (state.isDownloading) "downloading…" else "download update",
+                        primary = true,
+                        enabled = !state.isDownloading,
+                        modifier = Modifier.weight(1f),
+                        onClick = viewModel::downloadUpdate,
+                    )
+                }
+                BonyButton(
+                    label = "GitHub release",
+                    primary = false,
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(state.releaseUrl))) }
+                    },
+                )
+            }
+            BonyButton(
+                label = if (state.isChecking) "checking…" else "check now",
+                primary = false,
+                enabled = !state.isChecking,
+                modifier = if (state.updateAvailable) Modifier.weight(1f) else Modifier,
+                onClick = viewModel::checkForUpdates,
+            )
+        }
+        if (state.updateAvailable && state.apkReady) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "APK package and signing certificate verified for this installation.",
+                style = BonyType.caption.copy(color = BonyColors.TextMute),
+            )
+        }
     }
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 }

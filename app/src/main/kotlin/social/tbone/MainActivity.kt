@@ -23,6 +23,8 @@ import social.tbone.security.AppLockManager
 import social.tbone.security.ScreenTimeManager
 import social.tbone.settings.AppSettings
 import social.tbone.settings.ContentFilterProvider
+import social.tbone.updates.LocalUpdateAvailable
+import social.tbone.updates.UpdateManager
 import social.tbone.notifications.EXTRA_EVENT_ID
 import social.tbone.nostr.Nip19
 import social.tbone.ui.BonyNavHost
@@ -44,6 +46,7 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var lockManager: AppLockManager
     @Inject lateinit var screenTimeManager: ScreenTimeManager
     @Inject lateinit var appSettings: AppSettings
+    @Inject lateinit var updateManager: UpdateManager
     @Inject lateinit var reactionsRepository: social.tbone.reactions.ReactionsRepository
 
     private val amberLauncher = registerForActivityResult(
@@ -102,6 +105,7 @@ class MainActivity : FragmentActivity() {
                     val multiOn by appSettings.multiReactionsEnabled.collectAsStateWithLifecycle()
                     val savedEmojis by appSettings.reactionEmojis.collectAsStateWithLifecycle()
                     val reactionContents by reactionsRepository.reactionContents.collectAsStateWithLifecycle()
+                    val updateState by updateManager.state.collectAsStateWithLifecycle()
                     val reactionConfig = androidx.compose.runtime.remember(multiOn, savedEmojis, reactionContents) {
                         social.tbone.ui.reactions.ReactionConfig(
                             emojis = if (multiOn) savedEmojis else emptyList(),
@@ -111,6 +115,7 @@ class MainActivity : FragmentActivity() {
                     }
                     androidx.compose.runtime.CompositionLocalProvider(
                         social.tbone.ui.reactions.LocalReactionConfig provides reactionConfig,
+                        LocalUpdateAvailable provides updateState.updateAvailable,
                     ) {
                         ContentFilterProvider {
                             BonyNavHost()

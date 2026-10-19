@@ -6,4 +6,6 @@
     <files-path name="recordings" path="recordings/" />
     <!-- Short-lived PNG/MP4 share cards exported through a read-only URI. -->
     <cache-path name="share_cards" path="share_cards/" />
+    <!-- Verified release APK passed to Android's system package installer. -->
+    <cache-path name="updates" path="updates/" />
 </paths>

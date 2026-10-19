@@ -56,6 +56,8 @@ import social.tbone.nostr.quotedEventId
 import social.tbone.nostr.replyEventId
 import social.tbone.nostr.replyToPubkeys
 import social.tbone.ui.components.UserAvatar
+import social.tbone.settings.ContentFilter
+import social.tbone.settings.LocalContentFilter
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.ui.theme.appCornerShape
@@ -113,6 +115,20 @@ fun NoteCard(
     showReplyContext: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
+    val contentFilter = LocalContentFilter.current
+    val referencedNotes = buildMap {
+        putAll(quotedEvents)
+        quotedEvent?.let { put(it.id, it) }
+    }
+    if (ContentFilter.shouldHide(
+            event,
+            contentFilter.blockedPubkeys,
+            contentFilter.hideNsfw,
+            contentFilter.hideWords,
+            referencedNotes,
+        )
+    ) return
+
     val youniversal = YouniversalTheme.enabled
     val cardBg = when {
         highlighted -> BonyColors.AccentBg
@@ -540,6 +556,23 @@ fun QuotedNoteCard(
     nestingDepth: Int = 0,
     modifier: Modifier = Modifier,
 ) {
+    val contentFilter = LocalContentFilter.current
+    if (ContentFilter.shouldHide(
+            event,
+            contentFilter.blockedPubkeys,
+            contentFilter.hideNsfw,
+            contentFilter.hideWords,
+            quotedEvents,
+        )
+    ) {
+        Text(
+            text = "quoted note hidden by your content filters",
+            style = BonyType.meta.copy(color = BonyColors.TextMute),
+            modifier = modifier.fillMaxWidth().padding(8.dp),
+        )
+        return
+    }
+
     val parsed = remember(event.id) { parseNoteContent(event.content, profiles) }
     val nestedId = event.parsedTags.quotedEventId
         ?: event.parsedTags.firstOrNull { it.name == "q" }?.value()
@@ -585,6 +618,22 @@ fun QuotedNoteCard(
             Text(
                 text = remember(event.createdAt) { event.createdAt.formatRelative() },
                 style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+            )
+        }
+
+        if (event.parsedTags.isReply) {
+            val replyPubkeys = event.parsedTags.replyToPubkeys
+            val replyLabel = replyPubkeys.take(1).joinToString { pubkey ->
+                profiles[pubkey]?.bestName?.take(20) ?: pubkey.phraseHandle()
+            } + if (replyPubkeys.size > 1) " +${replyPubkeys.size - 1}" else ""
+            val parentId = event.parsedTags.replyEventId
+            Text(
+                text = "↳ replying to $replyLabel",
+                style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+                maxLines = 1,
+                modifier = if (onThreadClick != null && parentId != null)
+                    Modifier.clickable { onThreadClick(parentId) }
+                else Modifier,
             )
         }
 

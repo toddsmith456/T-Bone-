@@ -240,7 +240,27 @@ private fun InlineVideo(
     playWhenReady: Boolean,
     onOpen: () -> Unit,
 ) {
-    val player = rememberVideoPlayer(url, quality, playWhenReady)
+    val playerState = rememberVideoPlayer(url, quality, playWhenReady)
+    val player = playerState.player
+    if (player == null) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(INLINE_IMAGE_HEIGHT)
+                .clip(appCornerShape(MaterialTheme.shapes.medium))
+                .background(BonyColors.SurfaceAlt)
+                .border(1.dp, BonyColors.Rule)
+                .clickable(onClick = onOpen),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = playerState.errorMessage ?: "video preview unavailable · tap to open",
+                style = BonyType.meta.copy(color = BonyColors.TextMute),
+            )
+        }
+        return
+    }
+    val playbackFailed = remember(player) { mutableStateOf(false) }
     val videoAspectRatio = remember(player) { mutableStateOf<Float?>(null) }
 
     // PlayerView reports the actual display dimensions after track selection.
@@ -259,10 +279,32 @@ private fun InlineVideo(
 
         val listener = object : androidx.media3.common.Player.Listener {
             override fun onVideoSizeChanged(videoSize: VideoSize) = updateRatio(videoSize)
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                playbackFailed.value = true
+            }
         }
         player.addListener(listener)
         updateRatio(player.videoSize)
         onDispose { player.removeListener(listener) }
+    }
+
+    if (playbackFailed.value) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(INLINE_IMAGE_HEIGHT)
+                .clip(appCornerShape(MaterialTheme.shapes.medium))
+                .background(BonyColors.SurfaceAlt)
+                .border(1.dp, BonyColors.Rule)
+                .clickable(onClick = onOpen),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "video preview unavailable · tap to open",
+                style = BonyType.meta.copy(color = BonyColors.TextMute),
+            )
+        }
+        return
     }
 
     val youniversal = YouniversalTheme.enabled

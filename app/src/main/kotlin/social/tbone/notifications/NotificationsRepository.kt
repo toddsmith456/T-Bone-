@@ -41,8 +41,8 @@ import javax.inject.Singleton
  * - Holds long-lived relay subscriptions for the active account (p-tags, plus
  *   an e-tag subscription over your own recent notes), re-sent by RelayPool on
  *   every reconnect.
- * - Caches the last 24 hours in Room so the tab opens instantly with real
- *   content (no endless spinner); older history loads on demand via [loadMore].
+ * - Caches the latest 200 notifications per account in Room so the tab opens
+ *   instantly; older history loads on demand via [loadMore].
  * - Groups reactions/reposts per referenced note (emoji → actor lists),
  *   replies/quotes/mentions per event, follows per actor; keeps a flat list,
  *   a 24h summary and an unread flag.
@@ -81,13 +81,14 @@ class NotificationsRepository @Inject constructor(
     private val refSubIds = ConcurrentHashMap.newKeySet<String>()
     private val profileSubIds = ConcurrentHashMap.newKeySet<String>()
 
-    // "Load more" pagination state
+    // "Load more" pagination state. Each query asks for the next page before
+    // the oldest loaded event, so sparse activity across long gaps is not lost.
     private var pagedSubId: String? = null
+    private var pagedTimeoutJob: Job? = null
+    @Volatile private var pagedExpectedRelays: Set<String> = emptySet()
+    private val pagedEoseRelays = ConcurrentHashMap.newKeySet<String>()
     private val pagedBuffer = mutableListOf<Event>()
-    // Day-window pagination: we fetch one 24h window at a time going back.
     @Volatile private var pagedUntil: Long = 0L
-    @Volatile private var pagedWindowStart: Long = 0L
-    @Volatile private var emptyDaySkips = 0
     private val refSubToIds = ConcurrentHashMap<String, List<String>>()
     private val refFetchAttempts = ConcurrentHashMap<String, Int>()
     private val _loadingMore = MutableStateFlow(false)
@@ -102,6 +103,10 @@ class NotificationsRepository @Inject constructor(
     val groups: StateFlow<List<NotifGroup>> = _groups.asStateFlow()
 
     private val _flat = MutableStateFlow<List<FlatNotifItem>>(emptyList())
+
+    /** Uncapped in-memory rows from the past 24 hours, used for accurate totals. */
+    private val _recentItems = MutableStateFlow<List<FlatNotifItem>>(emptyList())
+    val recentItems: StateFlow<List<FlatNotifItem>> = _recentItems.asStateFlow()
 
     /**
      * Calendar events surface in the notification tab exactly like any other
@@ -164,9 +169,12 @@ class NotificationsRepository @Inject constructor(
     }
 
     companion object {
-        /** The on-disk cache window: 24 hours of notifications. */
-        private const val CACHE_WINDOW_SECONDS = 86_400L
-        private const val PAGE_SIZE = 50
+        /** Nostr subscriptions and the summary remain scoped to 24 hours. */
+        private const val RECENT_WINDOW_SECONDS = 86_400L
+        private const val CACHE_LIMIT = 200
+        private const val SUMMARY_QUERY_LIMIT = 10_000
+        private const val PAGE_SIZE = 200
+        private const val PAGE_TIMEOUT_MS = 15_000L
     }
 
     init {
@@ -218,9 +226,17 @@ class NotificationsRepository @Inject constructor(
                             msg.subscriptionId == notifSubId && !settled -> {
                                 settled = true
                                 _isLoading.value = false
+                                _hasMore.value = true
                                 rebuildSignals.trySend(Unit)
                             }
-                            msg.subscriptionId == pagedSubId -> finishPaged(msg.subscriptionId)
+                            msg.subscriptionId == pagedSubId -> {
+                                pagedEoseRelays.add(RelayPool.normalize(poolMessage.relayUrl))
+                                if (pagedExpectedRelays.isEmpty() ||
+                                    pagedEoseRelays.containsAll(pagedExpectedRelays)
+                                ) {
+                                    finishPaged(msg.subscriptionId)
+                                }
+                            }
                             msg.subscriptionId in refSubIds -> {
                                 val ids = refSubToIds.remove(msg.subscriptionId)
                                 refSubIds.remove(msg.subscriptionId)
@@ -258,14 +274,17 @@ class NotificationsRepository @Inject constructor(
         stop()
         currentPubkey = pubkey
         latestNotifTs = 0L
+        pagedUntil = 0L
+        _hasMore.value = false
         settled = false
         _isLoading.value = true
         synchronized(lock) { myOwnEventIds.clear() }
         _referencedNotes.value = emptyMap()
         refFetchAttempts.clear()
 
-        // Restore the 24h cache instantly so the tab opens with real content.
-        val cached = notificationDao.getRecent(pubkey, now() - CACHE_WINDOW_SECONDS, 1000)
+        // Restore the latest 200 notifications (not merely the last 24 hours)
+        // so the tab opens instantly with a useful, bounded history.
+        val cached = notificationDao.getLatest(pubkey, CACHE_LIMIT)
         synchronized(lock) {
             groupMap.clear()
             flatItems.clear()
@@ -278,13 +297,15 @@ class NotificationsRepository @Inject constructor(
                     }
             }
             flatItems.sortByDescending { it.timestamp }
+            latestNotifTs = flatItems.maxOfOrNull { it.timestamp } ?: 0L
             rebuildGroupsFromFlatLocked()
         }
         _hasMore.value = synchronized(lock) { flatItems.isNotEmpty() }
         rebuild()
 
-        // Drop anything older than the cache window, keep history tidy.
-        scope.launch { notificationDao.deleteOlderThan(pubkey, now() - CACHE_WINDOW_SECONDS) }
+        // Enforce the per-account cache bound even if this database was upgraded
+        // from a build that retained an unbounded/24-hour time window.
+        scope.launch { notificationDao.keepLatest(pubkey, CACHE_LIMIT) }
 
         // Seed "events I wrote" from the local cache (feed cache includes other
         // people's notes — keep only this account's events).
@@ -315,6 +336,7 @@ class NotificationsRepository @Inject constructor(
             if (!settled) {
                 settled = true
                 _isLoading.value = false
+                _hasMore.value = true
                 rebuildSignals.trySend(Unit)
             }
         }
@@ -330,6 +352,12 @@ class NotificationsRepository @Inject constructor(
         ownRefResubJob = null
         pagedSubId?.let { pool.unsubscribe(it) }
         pagedSubId = null
+        pagedExpectedRelays = emptySet()
+        pagedEoseRelays.clear()
+        pagedTimeoutJob?.cancel()
+        pagedTimeoutJob = null
+        pagedBuffer.clear()
+        _loadingMore.value = false
         eoseTimeoutJob?.cancel()
         eoseTimeoutJob = null
         refSubIds.forEach { pool.unsubscribe(it) }
@@ -340,9 +368,9 @@ class NotificationsRepository @Inject constructor(
     }
 
     private fun subscribeNotifications(pubkey: String) {
-        val since = now() - CACHE_WINDOW_SECONDS
+        val since = now() - RECENT_WINDOW_SECONDS
         notifSubId = pool.subscribe(
-            listOf(Filter.notifications(pubkey, limit = 50).copy(since = since)),
+            listOf(Filter.notifications(pubkey, limit = SUMMARY_QUERY_LIMIT).copy(since = since)),
             label = "notifications",
         )
     }
@@ -351,14 +379,12 @@ class NotificationsRepository @Inject constructor(
     fun refresh() {
         val me = currentPubkey ?: return
         synchronized(lock) {
+            // Keep the visible cache in place while refreshing the relay query;
+            // clearing it here made pull-to-refresh flash an empty screen.
             seenEvents.evictAll()
-            groupMap.clear()
-            flatItems.clear()
-            flatItemIds.clear()
         }
-        _groups.value = emptyList()
-        _flat.value = emptyList()
         _isLoading.value = true
+        _hasMore.value = true
         settled = false
         notifSubId?.let { pool.unsubscribe(it) }
         subscribeNotifications(me)
@@ -368,6 +394,7 @@ class NotificationsRepository @Inject constructor(
             if (!settled) {
                 settled = true
                 _isLoading.value = false
+                _hasMore.value = true
                 rebuildSignals.trySend(Unit)
             }
         }
@@ -460,11 +487,12 @@ class NotificationsRepository @Inject constructor(
         if (event.createdAt > latestNotifTs) {
             latestNotifTs = event.createdAt
         }
+        _hasMore.value = true
         rebuildSignals.trySend(Unit)
         updateUnread()
     }
 
-    /** Persist a merged notification to the 24h cache. */
+    /** Persist a merged notification and keep only the latest 200 rows/account. */
     private fun persist(item: FlatNotifItem) {
         val me = currentPubkey ?: return
         scope.launch {
@@ -478,88 +506,83 @@ class NotificationsRepository @Inject constructor(
                         createdAt = item.timestamp,
                     )
                 )
+                notificationDao.keepLatest(me, CACHE_LIMIT)
             }
         }
     }
 
     // ── "Load more" pagination ────────────────────────────────────────────────
 
-    /**
-     * Fetches an older page of notifications from the relays, before the
-     * oldest one currently loaded. Cached items older than the 24h window are
-     * loaded on demand this way; the button disappears when relays return
-     * nothing new.
-     */
-    /**
-     * Loads ONE full day (24h window) of older notifications, ending just
-     * before the oldest thing we have. If that day has nothing, it skips
-     * ahead to the previous day automatically. The "load older" button stays
-     * visible after every non-empty day, and hides once relays return nothing
-     * for several consecutive days (or we're more than 90 days back).
-     */
+    /** Fetch one older page, ending just before the oldest loaded notification. */
     fun loadMore() {
         val me = currentPubkey ?: return
-        if (_loadingMore.value) return
-        if (pagedUntil <= 0L) {
-            pagedUntil = synchronized(lock) { flatItems.minOfOrNull { it.timestamp } } ?: return
-            if (pagedUntil <= 0L) return
+        if (_loadingMore.value || pagedSubId != null) return
+
+        val before = pagedUntil.takeIf { it > 0L }
+            ?: synchronized(lock) { flatItems.minOfOrNull { it.timestamp } }
+            ?: (now() - RECENT_WINDOW_SECONDS)
+        if (before <= 1L) {
+            _hasMore.value = false
+            return
         }
-        val windowStart = pagedUntil - 86_400L
-        pagedWindowStart = windowStart
+
+        pagedUntil = before
         _loadingMore.value = true
-        pagedBuffer.clear()
-        val subId = pool.subscribe(
-            listOf(
-                Filter.notifications(me, limit = 200)
-                    .copy(until = pagedUntil - 1, since = windowStart)
-            ),
+        synchronized(lock) { pagedBuffer.clear() }
+        val subId = java.util.UUID.randomUUID().toString().take(8)
+        pagedExpectedRelays = pool.relayUrls().map(RelayPool::normalize).toSet()
+        pagedEoseRelays.clear()
+        // Register the ID before sending REQ so a fast relay cannot beat setup.
+        pagedSubId = subId
+        pool.subscribe(
+            listOf(Filter.notifications(me, limit = PAGE_SIZE).copy(until = before - 1)),
+            id = subId,
             label = "notif-older",
         )
-        pagedSubId = subId
+        pagedTimeoutJob?.cancel()
+        pagedTimeoutJob = scope.launch {
+            delay(PAGE_TIMEOUT_MS)
+            finishPaged(subId)
+        }
     }
 
+    /** Completes an older page on EOSE or timeout, then advances its cursor. */
     private fun finishPaged(subId: String) {
-        pool.unsubscribe(subId)
+        if (pagedSubId != subId) return
         pagedSubId = null
+        pagedExpectedRelays = emptySet()
+        pagedEoseRelays.clear()
+        pagedTimeoutJob?.cancel()
+        pagedTimeoutJob = null
+        pool.unsubscribe(subId)
         val events = synchronized(lock) {
             val batch = pagedBuffer.toList()
             pagedBuffer.clear()
             batch
         }
-        val windowStart = pagedWindowStart
-        if (events.isNotEmpty()) {
-            scope.launch {
-                var merged = 0
-                for (event in events) {
-                    val item = mergeEvent(event)
-                    if (item != null) {
-                        merged++
-                        persist(item)
-                    }
-                }
-                synchronized(lock) {
-                    flatItems.sortByDescending { it.timestamp }
-                    rebuildGroupsFromFlatLocked()
-                }
-                rebuild()
-                emptyDaySkips = 0
-                // Next page continues before this day's window.
-                pagedUntil = windowStart
-                _hasMore.value = merged > 0
-                _loadingMore.value = false
+
+        if (events.isEmpty()) {
+            _hasMore.value = false
+            _loadingMore.value = false
+            return
+        }
+
+        // Advance by the oldest relay event, even if it does not map to a
+        // visible notification (for example a reaction to someone else's note).
+        val nextCursor = events.minOf { it.createdAt }
+        scope.launch {
+            for (event in events) {
+                val item = mergeEvent(event)
+                if (item != null) persist(item)
             }
-        } else {
-            // Empty day — skip it and try the previous day automatically.
-            emptyDaySkips++
-            pagedUntil = windowStart
-            val tooFarBack = (System.currentTimeMillis() / 1000 - windowStart) > 90L * 86_400L
-            if (emptyDaySkips >= 3 || tooFarBack) {
-                _hasMore.value = false
-                _loadingMore.value = false
-            } else {
-                _loadingMore.value = false
-                loadMore()
+            synchronized(lock) {
+                flatItems.sortByDescending { it.timestamp }
+                rebuildGroupsFromFlatLocked()
             }
+            pagedUntil = nextCursor
+            _hasMore.value = true
+            _loadingMore.value = false
+            rebuild()
         }
     }
 
@@ -727,7 +750,8 @@ class NotificationsRepository @Inject constructor(
 
     private fun rebuild() {
         synchronized(lock) {
-            val cutoff = now() - 86_400L
+            val currentTime = now()
+            val cutoff = currentTime - RECENT_WINDOW_SECONDS
 
             _groups.value = groupMap.values
                 .sortedByDescending { it.latestTimestamp }
@@ -736,6 +760,9 @@ class NotificationsRepository @Inject constructor(
             _flat.value = flatItems
                 .sortedByDescending { it.timestamp }
                 .take(500)
+            _recentItems.value = flatItems
+                .filter { it.timestamp in cutoff..currentTime }
+                .sortedByDescending { it.timestamp }
 
             var replies = 0
             var reactions = 0
@@ -864,7 +891,7 @@ class NotificationsRepository @Inject constructor(
         ownRefSubId?.let { pool.unsubscribe(it) }
         ownRefSubId = null
         if (ids.isEmpty()) return
-        val since = now() - CACHE_WINDOW_SECONDS
+        val since = now() - RECENT_WINDOW_SECONDS
         ownRefSubId = pool.subscribe(
             listOf(
                 // Ordinary reactions, reposts and NIP-10 replies reference

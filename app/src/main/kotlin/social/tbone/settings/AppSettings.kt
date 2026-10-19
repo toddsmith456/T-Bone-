@@ -40,6 +40,8 @@ class AppSettings @Inject constructor(
         // Lets first-run logic distinguish "never set" from "user chose off".
         private val TOR_EXPLICITLY_SET = booleanPreferencesKey("tor_explicitly_set")
         private val LAST_VIEWED_NOTIFICATIONS_AT = longPreferencesKey("last_viewed_notifications_at")
+        private val GLOBAL_AUTO_LOAD_ENABLED = booleanPreferencesKey("global_auto_load_enabled")
+        private val GLOBAL_AUTO_LOAD_INTERVAL_MINUTES = intPreferencesKey("global_auto_load_interval_minutes")
         private val PIN_ENABLED = booleanPreferencesKey("pin_enabled")
         private val PIN_HASH = stringPreferencesKey("pin_hash")
         // Duress pin: entering it on the lock screen wipes all app data instead
@@ -130,11 +132,20 @@ class AppSettings @Inject constructor(
     private val _torEnabled = MutableStateFlow(false)
     val torEnabled = _torEnabled.asStateFlow()
 
+    private val _initialized = MutableStateFlow(false)
+    val initialized = _initialized.asStateFlow()
+
     private val _torExplicitlySet = MutableStateFlow(false)
     val torExplicitlySet = _torExplicitlySet.asStateFlow()
 
     private val _lastViewedNotificationsAt = MutableStateFlow(0L)
     val lastViewedNotificationsAt = _lastViewedNotificationsAt.asStateFlow()
+
+    private val _globalAutoLoadEnabled = MutableStateFlow(true)
+    val globalAutoLoadEnabled = _globalAutoLoadEnabled.asStateFlow()
+
+    private val _globalAutoLoadIntervalMinutes = MutableStateFlow(5)
+    val globalAutoLoadIntervalMinutes = _globalAutoLoadIntervalMinutes.asStateFlow()
 
     private val _pinEnabled = MutableStateFlow(false)
     val pinEnabled = _pinEnabled.asStateFlow()
@@ -289,6 +300,8 @@ class AppSettings @Inject constructor(
                 _torExplicitlySet.value = prefs[TOR_EXPLICITLY_SET] == true
                 _torEnabled.value = prefs[TOR_ENABLED] ?: false
                 _lastViewedNotificationsAt.value = prefs[LAST_VIEWED_NOTIFICATIONS_AT] ?: 0L
+                _globalAutoLoadEnabled.value = prefs[GLOBAL_AUTO_LOAD_ENABLED] ?: true
+                _globalAutoLoadIntervalMinutes.value = (prefs[GLOBAL_AUTO_LOAD_INTERVAL_MINUTES] ?: 5).coerceIn(1, 20)
                 _pinEnabled.value = prefs[PIN_ENABLED] ?: false
                 _duressPinEnabled.value = prefs[DURESS_PIN_ENABLED] ?: false
                 _imageLoadMode.value = ImageLoadMode.fromPref(prefs[IMAGE_LOAD_MODE])
@@ -337,6 +350,7 @@ class AppSettings @Inject constructor(
                 _nwcZapAmounts.value = ZapAmounts.parse(prefs[NWC_ZAP_AMOUNTS])
                 _screenTimeEnabled.value = prefs[SCREEN_TIME_ENABLED] ?: false
                 _screenTimeMinutes.value = prefs[SCREEN_TIME_MINUTES] ?: 120
+                _initialized.value = true
             }
         }
     }
@@ -350,6 +364,17 @@ class AppSettings @Inject constructor(
 
     suspend fun setLastViewedNotificationsAt(epochSeconds: Long) {
         dataStore.edit { it[LAST_VIEWED_NOTIFICATIONS_AT] = epochSeconds }
+    }
+
+    suspend fun setGlobalAutoLoadEnabled(enabled: Boolean) {
+        _globalAutoLoadEnabled.value = enabled
+        dataStore.edit { it[GLOBAL_AUTO_LOAD_ENABLED] = enabled }
+    }
+
+    suspend fun setGlobalAutoLoadIntervalMinutes(minutes: Int) {
+        val safeMinutes = minutes.coerceIn(1, 20)
+        _globalAutoLoadIntervalMinutes.value = safeMinutes
+        dataStore.edit { it[GLOBAL_AUTO_LOAD_INTERVAL_MINUTES] = safeMinutes }
     }
 
     suspend fun setPinEnabled(enabled: Boolean) {

@@ -5,6 +5,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +43,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.shape.RoundedCornerShape
+import coil.compose.AsyncImage
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -65,7 +69,9 @@ import social.tbone.notifications.NotifFilter
 import social.tbone.notifications.NotifSummary
 import social.tbone.notifications.NotifType
 import social.tbone.ui.components.UserAvatar
+import social.tbone.ui.feed.MediaItem
 import social.tbone.ui.feed.QuotedNoteCard
+import social.tbone.ui.feed.parseNoteContent
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.ui.theme.appBorder
@@ -162,10 +168,20 @@ fun NotificationsScreen(
                         }
                     }
                     items.isEmpty() && !isRefreshing -> {
-                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text(
-                                text = "no notifications yet",
-                                style = BonyType.meta.copy(color = BonyColors.TextMute),
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            Box(
+                                modifier = Modifier.weight(1f).fillMaxWidth(),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = if (enabledFilters.isEmpty()) "all notification filters are off" else "no notifications yet",
+                                    style = BonyType.meta.copy(color = BonyColors.TextMute),
+                                )
+                            }
+                            LoadMoreBar(
+                                hasMore = hasMore,
+                                loadingMore = loadingMore,
+                                onLoadMore = viewModel::loadMore,
                             )
                         }
                     }
@@ -451,6 +467,13 @@ private fun NotificationRow(
     }
 
     val actorName = profile?.bestName ?: item.actorPubkey.phraseHandle()
+    val imagePreview = remember(item.id, referencedNote?.id) {
+        sequenceOf(item.note, referencedNote)
+            .filterNotNull()
+            .flatMap { note -> parseNoteContent(note.content).mediaItems.asSequence() }
+            .filterIsInstance<MediaItem.Image>()
+            .firstOrNull()
+    }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         // Compact row — always visible.
@@ -496,6 +519,17 @@ private fun NotificationRow(
                         maxLines = 1,
                     )
                 }
+            }
+            if (imagePreview != null) {
+                AsyncImage(
+                    model = imagePreview.url,
+                    contentDescription = "notification image",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(8.dp)),
+                )
+                Spacer(Modifier.width(8.dp))
             }
             Spacer(Modifier.width(8.dp))
             Text(

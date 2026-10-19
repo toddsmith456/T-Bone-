@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
@@ -50,6 +51,7 @@ import social.tbone.nostr.relay.RelayPool
 import social.tbone.nostr.relay.RelayStatus
 import timber.log.Timber
 import social.tbone.profile.ProfileRepository
+import social.tbone.updates.UpdateManager
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.UUID
@@ -63,13 +65,14 @@ data class FeedUiState(
     val error: String? = null,
     val globalOlderLoading: Boolean = false,
     val globalNewerLoading: Boolean = false,
+    val globalNewerAvailable: Int = 0,
     val globalCanLoadOlder: Boolean = false,
 )
 
 private enum class GlobalPageKind { OLDER, NEWER }
 
 private class GlobalPageRequest(
-    val subId: String,
+    @Volatile var subId: String,
     val kind: GlobalPageKind,
     val expectedRelays: Set<String>,
     val startOldest: Long? = null,
@@ -78,6 +81,8 @@ private class GlobalPageRequest(
     val startKnownIds: Set<String> = emptySet(),
 ) {
     val events = ConcurrentHashMap<String, Event>()
+    /** Events received by the current relay page; used to continue a full 10k page. */
+    val pageEvents = ConcurrentHashMap<String, Event>()
     val eoseRelays: MutableSet<String> = ConcurrentHashMap.newKeySet()
 }
 
@@ -97,6 +102,7 @@ class FeedViewModel @Inject constructor(
     private val offlineLists: OfflineListRepository,
     private val muteRepository: MuteListRepository,
     private val eventOpenCoordinator: EventOpenCoordinator,
+    private val updateManager: UpdateManager,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(FeedUiState())
@@ -107,6 +113,8 @@ class FeedViewModel @Inject constructor(
     private val feedEvents = java.util.TreeSet<Event>(
         compareByDescending<Event> { it.createdAt }.thenBy { it.id }
     )
+    /** Live Global events are buffered until the user or interval loads them. */
+    private val pendingGlobalEvents = ConcurrentHashMap<String, Event>()
 
     private val _scrollToTop = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val scrollToTop: SharedFlow<Unit> = _scrollToTop.asSharedFlow()
@@ -161,9 +169,23 @@ class FeedViewModel @Inject constructor(
     val notifUnread: StateFlow<Boolean> = notificationsRepository.hasUnread
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    val updateAvailable: StateFlow<Boolean> = updateManager.state
+        .map { it.updateAvailable }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, updateManager.state.value.updateAvailable)
+
     val torEnabled: StateFlow<Boolean> = appSettings.torEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    val globalAutoLoadEnabled: StateFlow<Boolean> = appSettings.globalAutoLoadEnabled
+    val globalAutoLoadIntervalMinutes: StateFlow<Int> = appSettings.globalAutoLoadIntervalMinutes
+
+    fun setGlobalAutoLoadEnabled(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setGlobalAutoLoadEnabled(enabled) }
+    }
+
+    fun setGlobalAutoLoadIntervalMinutes(minutes: Int) {
+        viewModelScope.launch { appSettings.setGlobalAutoLoadIntervalMinutes(minutes) }
+    }
 
     val activeAccount: StateFlow<Account?> = accountRepository.activeAccount
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -262,9 +284,15 @@ class FeedViewModel @Inject constructor(
                 }
         }
 
-        // Re-filter what is already on screen when the mute/block list changes.
+        // Re-filter the retained raw feed whenever any content rule changes.
+        // This ensures hide-word/NSFW edits take effect without a reload and
+        // allows notes to reappear if a rule is later removed.
         viewModelScope.launch {
-            muteRepository.effectiveMuted.collect {
+            combine(
+                muteRepository.effectiveMuted,
+                appSettings.hideNsfw,
+                appSettings.hideWords,
+            ) { _, _, _ -> Unit }.collect {
                 val snapshot = synchronized(feedEvents) { feedEvents.take(feedEventLimit()) }
                 _uiState.update { state -> state.copy(events = applyContentFilter(snapshot)) }
             }
@@ -379,9 +407,10 @@ class FeedViewModel @Inject constructor(
     }
 
     private fun scheduleGlobalPageTimeout(request: GlobalPageRequest) {
+        val subId = request.subId
         viewModelScope.launch {
             delay(GLOBAL_PAGE_TIMEOUT_MS)
-            finishGlobalPage(request)
+            if (request.subId == subId) finishGlobalPage(request, allowNewerPaging = false)
         }
     }
 
@@ -393,9 +422,14 @@ class FeedViewModel @Inject constructor(
         }
         if (!current || EventKind.isPrivateMessaging(event.kind)) return
         if (request.events.size >= MAX_GLOBAL_EVENTS && !request.events.containsKey(event.id)) return
-        when (event.kind) {
-            EventKind.TEXT_NOTE -> if (!isReplyEvent(event)) request.events.putIfAbsent(event.id, event)
-            EventKind.REPOST, EventKind.POLL -> request.events.putIfAbsent(event.id, event)
+        val isFeedEvent = when (event.kind) {
+            EventKind.TEXT_NOTE -> !isReplyEvent(event)
+            EventKind.REPOST, EventKind.POLL -> true
+            else -> false
+        }
+        if (!isFeedEvent) return
+        if (request.events.putIfAbsent(event.id, event) == null && request.kind == GlobalPageKind.NEWER) {
+            request.pageEvents.putIfAbsent(event.id, event)
         }
     }
 
@@ -408,16 +442,47 @@ class FeedViewModel @Inject constructor(
         if (!current) return
         request.eoseRelays.add(RelayPool.normalize(relayUrl))
         if (request.expectedRelays.isEmpty() || request.eoseRelays.containsAll(request.expectedRelays)) {
-            finishGlobalPage(request)
+            finishGlobalPage(request, allowNewerPaging = true)
         }
     }
 
-    private fun finishGlobalPage(request: GlobalPageRequest) {
+    private fun finishGlobalPage(request: GlobalPageRequest, allowNewerPaging: Boolean) {
         val current = when (request.kind) {
             GlobalPageKind.OLDER -> globalOlderRequest === request
             GlobalPageKind.NEWER -> globalNewerRequest === request
         }
         if (!current) return
+
+        if (allowNewerPaging && request.kind == GlobalPageKind.NEWER &&
+            request.pageEvents.size >= GLOBAL_NEWER_LIMIT &&
+            request.events.size < MAX_GLOBAL_EVENTS
+        ) {
+            val startNewest = request.startNewest
+            val pageOldest = request.pageEvents.values.minOfOrNull { it.createdAt }
+            if (startNewest != null && pageOldest != null && pageOldest > startNewest + 1) {
+                unsub(request.subId)
+                val nextSubId = UUID.randomUUID().toString().take(8)
+                request.subId = nextSubId
+                request.pageEvents.clear()
+                request.eoseRelays.clear()
+                globalNewerSubId = nextSubId
+                activeSubIds.add(nextSubId)
+                pool.subscribe(
+                    listOf(
+                        Filter(
+                            kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL),
+                            since = startNewest,
+                            until = pageOldest - 1,
+                            limit = GLOBAL_NEWER_LIMIT,
+                        ),
+                    ),
+                    id = nextSubId,
+                    label = "global-newer",
+                )
+                scheduleGlobalPageTimeout(request)
+                return
+            }
+        }
 
         unsub(request.subId)
         when (request.kind) {
@@ -431,6 +496,14 @@ class FeedViewModel @Inject constructor(
             }
         }
 
+        if (request.kind == GlobalPageKind.NEWER) {
+            // Include the live events buffered since the user last loaded; the
+            // one-shot relay query remains authoritative for anything not seen
+            // by the long-lived subscription.
+            val pending = pendingGlobalEvents.values.toList()
+            pending.forEach { request.events.putIfAbsent(it.id, it) }
+            pending.forEach { pendingGlobalEvents.remove(it.id, it) }
+        }
         val incoming = request.events.values.toList()
         if (incoming.isNotEmpty()) synchronized(feedEvents) { feedEvents.addAll(incoming) }
 
@@ -474,7 +547,12 @@ class FeedViewModel @Inject constructor(
                 )
             }
         } else {
-            _uiState.update { it.copy(globalNewerLoading = false) }
+            _uiState.update {
+                it.copy(
+                    globalNewerLoading = false,
+                    globalNewerAvailable = pendingGlobalEvents.size,
+                )
+            }
         }
     }
 
@@ -534,16 +612,22 @@ class FeedViewModel @Inject constructor(
         val blocked = muteRepository.effectiveMuted.value
         val hideNsfw = appSettings.hideNsfw.value
         val hideWords = appSettings.hideWords.value
+        val contextEvents = synchronized(feedEvents) { feedEvents.associateBy { it.id } } + _quotedEvents.value
         val filtered = if (blocked.isEmpty() && !hideNsfw && hideWords.isEmpty()) {
             publicEvents
         } else {
-            publicEvents.filter { !ContentFilter.shouldHide(it, blocked, hideNsfw, hideWords) }
+            publicEvents.filter {
+                !ContentFilter.shouldHide(it, blocked, hideNsfw, hideWords, contextEvents)
+            }
         }
         val focused = focusedEventId?.let { id ->
             publicEvents.firstOrNull { it.id == id }
                 ?: synchronized(feedEvents) { feedEvents.firstOrNull { it.id == id } }
         }
-        return if (focused != null && filtered.none { it.id == focused.id }) {
+        val focusedIsAllowed = focused?.let {
+            !ContentFilter.shouldHide(it, blocked, hideNsfw, hideWords, contextEvents)
+        } == true
+        return if (focused != null && focusedIsAllowed && filtered.none { it.id == focused.id }) {
             listOf(focused) + filtered
         } else {
             filtered
@@ -590,17 +674,18 @@ class FeedViewModel @Inject constructor(
         metadataFetchSubIds.forEach { pool.unsubscribe(it) }
         metadataFetchSubIds.clear()
         if (clearEvents) synchronized(feedEvents) { feedEvents.clear() }
+        pendingGlobalEvents.clear()
 
         _uiState.update {
             if (clearEvents) {
                 it.copy(
                     events = emptyList(), isLoading = true, error = null,
-                    globalOlderLoading = false, globalNewerLoading = false, globalCanLoadOlder = false,
+                    globalOlderLoading = false, globalNewerLoading = false, globalNewerAvailable = 0, globalCanLoadOlder = false,
                 )
             } else {
                 it.copy(
                     isLoading = true, error = null,
-                    globalOlderLoading = false, globalNewerLoading = false, globalCanLoadOlder = false,
+                    globalOlderLoading = false, globalNewerLoading = false, globalNewerAvailable = 0, globalCanLoadOlder = false,
                 )
             }
         }
@@ -741,6 +826,7 @@ class FeedViewModel @Inject constructor(
         metadataFetchSubIds.forEach { pool.unsubscribe(it) }
         metadataFetchSubIds.clear()
         synchronized(feedEvents) { feedEvents.clear() }
+        pendingGlobalEvents.clear()
         focusedEventId = null
         _pendingEventScroll.value = null
 
@@ -755,6 +841,7 @@ class FeedViewModel @Inject constructor(
                 error = null,
                 globalOlderLoading = false,
                 globalNewerLoading = false,
+                globalNewerAvailable = 0,
                 globalCanLoadOlder = false,
             )
         }
@@ -1064,6 +1151,22 @@ class FeedViewModel @Inject constructor(
             pendingBuffer.add(event)
             return
         }
+        if (_currentFeed.value == FeedTab.GLOBAL) {
+            val alreadyLoaded = synchronized(feedEvents) { feedEvents.contains(event) }
+            if (!alreadyLoaded) {
+                pendingGlobalEvents.putIfAbsent(event.id, event)
+                if (pendingGlobalEvents.size > MAX_GLOBAL_EVENTS) {
+                    pendingGlobalEvents.values.minByOrNull { it.createdAt }?.let { oldest ->
+                        pendingGlobalEvents.remove(oldest.id, oldest)
+                    }
+                }
+                _uiState.update { it.copy(globalNewerAvailable = pendingGlobalEvents.size) }
+            }
+            // Don't mutate the visible list for each live event. Loading them in
+            // a batch prevents the bottom item from being repeatedly evicted and
+            // keeps the Global tab anchored while someone is reading older notes.
+            return
+        }
         val snapshot = synchronized(feedEvents) {
             feedEvents.add(event)
             feedEvents.take(feedEventLimit())
@@ -1202,6 +1305,7 @@ class FeedViewModel @Inject constructor(
         metadataFetchSubIds.forEach { pool.unsubscribe(it) }
         metadataFetchSubIds.clear()
         synchronized(feedEvents) { feedEvents.clear() }
+        pendingGlobalEvents.clear()
         focusedEventId = null
         _pendingEventScroll.value = null
         _uiState.update { FeedUiState(isLoading = false) }
@@ -1282,7 +1386,7 @@ class FeedViewModel @Inject constructor(
     companion object {
         private const val GLOBAL_PAGE_SIZE = 100
         private const val GLOBAL_NEWER_LIMIT = 10_000
-        private const val MAX_GLOBAL_EVENTS = 10_000
+        private const val MAX_GLOBAL_EVENTS = 50_000
         private const val GLOBAL_PAGE_TIMEOUT_MS = 15_000L
         private val MAX_FEED_EVENTS get() = Tunables.MAX_FEED_EVENTS
         private val MAX_OUTBOX_RELAYS get() = Tunables.MAX_OUTBOX_RELAYS

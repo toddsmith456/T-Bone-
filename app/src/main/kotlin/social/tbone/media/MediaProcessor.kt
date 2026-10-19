@@ -77,6 +77,9 @@ object MediaProcessor {
     /** MIME + extension of the Media3 transcode output (always MP4). */
     private const val VIDEO_MIME = "video/mp4"
     private const val VIDEO_EXT = "mp4"
+    /** Blossom video uploads are capped at 10 MB (decimal) before and after processing. */
+    const val VIDEO_MAX_BYTES = 10_000_000L
+    private const val VIDEO_TOO_BIG_MESSAGE = "video is too big"
     private const val AUDIO_COMPRESSED_MIME = "audio/mp4"
     private const val AUDIO_COMPRESSED_EXT = "m4a"
 
@@ -100,31 +103,51 @@ object MediaProcessor {
         uri: Uri,
         compress: Boolean = true,
     ): PreparedMedia? {
-        val (sourceMime, sourceExtension) = withContext(Dispatchers.IO) {
-            videoSourceType(context, uri)
+        val (sourceMime, sourceExtension, sourceSize) = withContext(Dispatchers.IO) {
+            val (mime, extension) = videoSourceType(context, uri)
+            Triple(mime, extension, sourceSizeOf(context, uri))
         }
+        if (sourceSize > VIDEO_MAX_BYTES) throw IllegalArgumentException(VIDEO_TOO_BIG_MESSAGE)
+
+        // Some content providers omit SIZE or return zero. Copy those sources
+        // once with a hard byte cap before invoking Media3, both to measure them
+        // accurately and to avoid feeding an unexpectedly huge stream to a codec.
+        val sourceCopy = if (sourceSize <= 0L) {
+            copyVideoToCache(context, uri, sourceExtension) ?: return null
+        } else null
+        val sourceUri = sourceCopy?.let { Uri.fromFile(it) } ?: uri
+
         if (!compress) {
-            return copyToCache(context, uri, sourceExtension, "tbone_video")?.let {
-                PreparedMedia(it, sourceMime, sourceExtension)
-            }
+            val original = sourceCopy ?: copyVideoToCache(context, uri, sourceExtension) ?: return null
+            return PreparedMedia(original, sourceMime, sourceExtension)
         }
 
         val transcoded = try {
-            transcodeVideo(context, uri)
+            transcodeVideo(context, sourceUri)
         } catch (cancelled: CancellationException) {
+            sourceCopy?.delete()
             throw cancelled
         } catch (error: Exception) {
             Timber.w(error, "video transcode unavailable; uploading original file")
             null
         }
         if (transcoded != null && transcoded.exists() && transcoded.length() > 0L) {
-            return PreparedMedia(transcoded, VIDEO_MIME, VIDEO_EXT)
+            if (transcoded.length() <= VIDEO_MAX_BYTES) {
+                sourceCopy?.delete()
+                return PreparedMedia(transcoded, VIDEO_MIME, VIDEO_EXT)
+            }
+            transcoded.delete()
         }
         transcoded?.delete()
 
-        return copyToCache(context, uri, sourceExtension, "tbone_video")?.let {
-            PreparedMedia(it, sourceMime, sourceExtension)
+        // A transcode can be larger than its input. Fall back only when the
+        // original bytes are within the cap; otherwise surface the exact message.
+        val original = sourceCopy ?: copyVideoToCache(context, uri, sourceExtension) ?: return null
+        if (original.length() > VIDEO_MAX_BYTES) {
+            original.delete()
+            throw IllegalArgumentException(VIDEO_TOO_BIG_MESSAGE)
         }
+        return PreparedMedia(original, sourceMime, sourceExtension)
     }
 
     /**
@@ -259,6 +282,43 @@ object MediaProcessor {
             input.use { source -> out.outputStream().use { output -> source.copyTo(output) } }
             out.takeIf { it.exists() && it.length() > 0L }
         }.getOrNull()
+    }
+
+    /** Streams an original video into cache and aborts as soon as it exceeds 10 MiB. */
+    private suspend fun copyVideoToCache(
+        context: Context,
+        uri: Uri,
+        extension: String,
+    ): File? = withContext(Dispatchers.IO) {
+        val suffix = extension.ifBlank { VIDEO_EXT }
+        val out = File(context.cacheDir, "tbone_video_${System.currentTimeMillis()}.$suffix")
+        val input = if (uri.scheme == "file") {
+            uri.path?.let(::File)?.takeIf { it.exists() }?.inputStream()
+        } else {
+            context.contentResolver.openInputStream(uri)
+        } ?: return@withContext null
+
+        try {
+            input.use { source ->
+                out.outputStream().use { output ->
+                    val buffer = ByteArray(8 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val count = source.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        if (total > VIDEO_MAX_BYTES) {
+                            throw IllegalArgumentException(VIDEO_TOO_BIG_MESSAGE)
+                        }
+                        output.write(buffer, 0, count)
+                    }
+                }
+            }
+            out.takeIf { it.exists() && it.length() > 0L }
+        } catch (error: Throwable) {
+            out.delete()
+            throw error
+        }
     }
 
     private suspend fun prepareImageFile(

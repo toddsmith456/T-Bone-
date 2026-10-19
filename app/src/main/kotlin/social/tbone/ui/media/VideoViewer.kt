@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -43,6 +45,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -52,6 +55,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Request
+import java.io.InputStream
 import social.tbone.di.ImageClientProvider
 import social.tbone.settings.VideoQuality
 import social.tbone.ui.theme.BonyColors
@@ -72,7 +76,11 @@ fun VideoViewer(
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     var confirmText by remember { mutableStateOf<String?>(null) }
-    val player = rememberVideoPlayer(url, quality, playWhenReady = true)
+    val playerState = rememberVideoPlayer(url, quality, playWhenReady = true)
+    val player = playerState.player
+    var playerError by remember(url, player, playerState.errorMessage) {
+        mutableStateOf(playerState.errorMessage)
+    }
 
     LaunchedEffect(confirmText) {
         if (confirmText != null) {
@@ -83,10 +91,20 @@ fun VideoViewer(
 
     DisposableEffect(lifecycleOwner, player) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) player.pause()
+            if (event == Lifecycle.Event.ON_STOP) player?.pause()
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    DisposableEffect(player) {
+        val listener = if (player == null) null else object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                playerError = "couldn't play this video; check the link or try another format"
+            }
+        }
+        listener?.let { player?.addListener(it) }
+        onDispose { if (listener != null) player?.removeListener(listener) }
     }
 
     val saveToDevice: () -> Unit = {
@@ -94,9 +112,11 @@ fun VideoViewer(
             val saved = withContext(Dispatchers.IO) {
                 runCatching {
                     val request = Request.Builder().url(url).build()
-                    val bytes = ImageClientProvider.client.newCall(request)
-                        .execute().use { it.body?.bytes() } ?: return@runCatching false
-                    writeVideoToGallery(context, bytes, url)
+                    ImageClientProvider.client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) return@use false
+                        val body = response.body ?: return@use false
+                        body.byteStream().use { input -> writeVideoToGallery(context, input, url) }
+                    }
                 }.getOrDefault(false)
             }
             confirmText = if (saved) "saved to videos" else "download failed"
@@ -124,25 +144,42 @@ fun VideoViewer(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(Color.Black)
+            .statusBarsPadding()
+            .navigationBarsPadding(),
     ) {
-        AndroidView(
-            factory = { viewContext ->
-                PlayerView(viewContext).apply {
-                    this.player = player
-                    useController = true
-                    controllerShowTimeoutMs = 3_000
-                    setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
-                    setShutterBackgroundColor(android.graphics.Color.BLACK)
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                    )
-                }
-            },
-            update = { it.player = player },
-            modifier = Modifier.fillMaxSize(),
-        )
+        if (player != null) {
+            AndroidView(
+                factory = { viewContext ->
+                    PlayerView(viewContext).apply {
+                        this.player = player
+                        useController = true
+                        controllerShowTimeoutMs = 3_000
+                        setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+                        setShutterBackgroundColor(android.graphics.Color.BLACK)
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                        )
+                    }
+                },
+                update = { it.player = player },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+
+        if (player == null || playerError != null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = playerError ?: "couldn't open this video; check the link or try another format",
+                    style = BonyType.body.copy(color = Color.White),
+                    modifier = Modifier
+                        .appBorder(1.dp, BonyColors.RuleStrong)
+                        .background(BonyColors.Surface.copy(alpha = 0.92f))
+                        .padding(horizontal = 18.dp, vertical = 12.dp),
+                )
+            }
+        }
 
         Row(
             modifier = Modifier
@@ -185,46 +222,59 @@ fun VideoViewerDialog(
     }
 }
 
+/** A nullable player plus a user-facing message if initialization failed. */
+data class VideoPlayerState(
+    val player: ExoPlayer?,
+    val errorMessage: String? = null,
+)
+
 /**
- * Build a player through the Tor-aware OkHttp client. For Low quality, Media3
- * is asked to choose a <=640x360 track when the source offers variants; a
- * single-track MP4 correctly falls back to that source because it has no lower
- * representation to choose.
+ * Build a player through the Tor-aware OkHttp client. All player construction
+ * and media-item setup is guarded so malformed URLs/codecs become a visible
+ * player error instead of a crash in the Compose tree.
  */
 @Composable
 fun rememberVideoPlayer(
     url: String,
     quality: VideoQuality,
     playWhenReady: Boolean,
-): ExoPlayer {
+): VideoPlayerState {
     val context = LocalContext.current
-    val player = remember(url, quality) {
-        val dataSourceFactory = OkHttpDataSource.Factory(ImageClientProvider.client)
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
-            .build()
-            .also { created ->
-                created.repeatMode = Player.REPEAT_MODE_OFF
-                if (quality == VideoQuality.LOW) {
-                    created.trackSelectionParameters = created.trackSelectionParameters
-                        .buildUpon()
-                        .setMaxVideoSize(640, 360)
-                        .build()
-                }
-                created.setMediaItem(MediaItem.fromUri(url))
-                created.prepare()
+    val state = remember(url, quality) {
+        var created: ExoPlayer? = null
+        try {
+            val instance = ExoPlayer.Builder(context)
+                .setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(ImageClientProvider.client)))
+                .build()
+            created = instance
+            instance.repeatMode = Player.REPEAT_MODE_OFF
+            if (quality == VideoQuality.LOW) {
+                instance.trackSelectionParameters = instance.trackSelectionParameters
+                    .buildUpon()
+                    .setMaxVideoSize(640, 360)
+                    .build()
             }
+            instance.setMediaItem(MediaItem.fromUri(url))
+            instance.prepare()
+            VideoPlayerState(instance)
+        } catch (error: Exception) {
+            runCatching { created?.release() }
+            VideoPlayerState(null, "couldn't open this video; check the link or try another format")
+        }
     }
+    val player = state.player
 
     LaunchedEffect(player, playWhenReady) {
-        player.repeatMode = Player.REPEAT_MODE_OFF
-        player.playWhenReady = playWhenReady
+        player?.let {
+            it.repeatMode = Player.REPEAT_MODE_OFF
+            it.playWhenReady = playWhenReady
+        }
     }
 
     DisposableEffect(player) {
-        onDispose { player.release() }
+        onDispose { player?.release() }
     }
-    return player
+    return state
 }
 
 @Composable
@@ -243,7 +293,7 @@ private fun VideoViewerButton(label: String, description: String, onClick: () ->
 
 private fun writeVideoToGallery(
     context: android.content.Context,
-    bytes: ByteArray,
+    input: InputStream,
     sourceUrl: String,
 ): Boolean {
     val resolver = context.contentResolver
@@ -258,11 +308,14 @@ private fun writeVideoToGallery(
     }
     val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return false
     val ok = runCatching {
-        resolver.openOutputStream(uri)?.use { it.write(bytes) } != null
+        resolver.openOutputStream(uri)?.use { output ->
+            input.copyTo(output, bufferSize = 16 * 1024)
+            true
+        } ?: false
     }.getOrDefault(false)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         val ready = ContentValues().apply { put(MediaStore.Video.Media.IS_PENDING, 0) }
-        resolver.update(uri, ready, null, null)
+        runCatching { resolver.update(uri, ready, null, null) }
     }
     if (!ok) resolver.delete(uri, null, null)
     return ok

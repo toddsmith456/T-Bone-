@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -100,7 +101,8 @@ fun BookmarksScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(BonyColors.Bg),
+            .background(BonyColors.Bg)
+            .statusBarsPadding(),
     ) {
         Row(
             modifier = Modifier

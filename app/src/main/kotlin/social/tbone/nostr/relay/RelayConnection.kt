@@ -78,6 +78,16 @@ class RelayConnection(
     }
 
     companion object {
+        /** Citrine loopback relays must connect directly, never through Orbot. */
+        fun isLocalRelayUrl(url: String): Boolean {
+            val host = runCatching { java.net.URI(url).host }
+                .getOrNull()
+                ?.trim('[', ']')
+                ?.lowercase()
+                ?: return false
+            return host == "localhost" || host == "::1" || host.startsWith("127.")
+        }
+
         fun defaultClient(): OkHttpClient = buildClient(useTor = false)
 
         /**
@@ -88,13 +98,14 @@ class RelayConnection(
             useTor: Boolean,
             proxyType: java.net.Proxy.Type = java.net.Proxy.Type.HTTP,
             torPort: Int = social.tbone.Tunables.TOR_HTTP_PROXY_PORT,
+            bypassProxy: Boolean = false,
         ): OkHttpClient =
             OkHttpClient.Builder()
                 .pingInterval(30, TimeUnit.SECONDS)
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(0, TimeUnit.SECONDS) // WebSocket — no read timeout
                 .apply {
-                    if (useTor) {
+                    if (useTor && !bypassProxy) {
                         proxy(java.net.Proxy(
                             proxyType,
                             java.net.InetSocketAddress("127.0.0.1", torPort),

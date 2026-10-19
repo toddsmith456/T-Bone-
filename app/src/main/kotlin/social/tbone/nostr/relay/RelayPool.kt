@@ -119,8 +119,12 @@ class RelayPool(
      * Swap the transport (e.g. plain vs. Tor SOCKS proxy) and reconnect all
      * existing relays so the new client takes effect immediately.
      */
-    fun updateTransport(client: okhttp3.OkHttpClient) {
-        connectionFactory = { url -> RelayConnection(url, client) }
+    fun updateTransport(client: okhttp3.OkHttpClient) =
+        updateTransportFactory { client }
+
+    /** Rebuilds per-relay clients, allowing loopback relays to bypass Tor only. */
+    fun updateTransportFactory(clientFactory: (url: String) -> okhttp3.OkHttpClient) {
+        connectionFactory = { url -> RelayConnection(url, clientFactory(url)) }
         val urls = connections.keys.toList()
         urls.forEach { removeRelay(it) }
         urls.forEach { addRelay(it) }
@@ -131,7 +135,15 @@ class RelayPool(
 
     companion object {
         /** Strip trailing slashes so wss://foo and wss://foo/ are treated as the same relay. */
-        fun normalize(url: String): String = url.trimEnd('/')
+        fun normalize(url: String): String = url.trim().trimEnd('/')
+
+        /** Accept only actual Nostr WebSocket relay URLs, including local ws:// relays. */
+        fun isValidRelayUrl(url: String): Boolean {
+            val uri = runCatching { java.net.URI(normalize(url)) }.getOrNull() ?: return false
+            return uri.scheme?.lowercase() in setOf("ws", "wss") &&
+                !uri.host.isNullOrBlank() &&
+                uri.userInfo == null
+        }
 
         private const val STATS_INTERVAL_MS = 5_000L
     }

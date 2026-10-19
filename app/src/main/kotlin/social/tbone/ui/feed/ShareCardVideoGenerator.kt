@@ -40,12 +40,16 @@ object ShareCardVideoGenerator {
         video: ShareCardMedia,
     ): File {
         val slot = card.videoSlot ?: error("The share card has no video window")
-        val extension = video.mimeType?.let { MimeTypeMap.getSingleton().getExtensionFromMimeType(it) }
+        val extension = (video.mimeType?.let { MimeTypeMap.getSingleton().getExtensionFromMimeType(it) }
             ?.takeIf { it.isNotBlank() }
-            ?: video.url.substringBefore('?').substringBefore('#').substringAfterLast('.', "mp4").take(8)
+            ?: video.url.substringBefore('?').substringBefore('#').substringAfterLast('.', "mp4"))
+            .lowercase()
+            .takeIf { it.matches(Regex("[a-z0-9]{1,8}")) }
+            ?: "mp4"
         val input = File(context.cacheDir, "share-video-${UUID.randomUUID()}.$extension")
         val output = File(context.cacheDir, "share_cards/note-${UUID.randomUUID()}.mp4")
         output.parentFile?.mkdirs()
+        var completed = false
         try {
             downloadVideo(video.url, input)
             val durationMs = readDurationMs(input)
@@ -99,11 +103,17 @@ object ShareCardVideoGenerator {
 
             export(context, composition, output)
             require(output.isFile && output.length() > 0L) { "The video card could not be created." }
+            completed = true
             return output
         } finally {
             input.delete()
-            // The static image is only an intermediate layer for the MP4.
-            card.file.delete()
+            if (completed) {
+                // The static card is no longer needed after a successful MP4.
+                card.file.delete()
+            } else {
+                // Keep the still image for the caller's safe-share fallback.
+                output.delete()
+            }
         }
     }
 

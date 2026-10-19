@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -61,8 +62,8 @@ enum class ProfileTab(val label: String) {
     MEDIA("MEDIA"),
 }
 
-/** One image in the profile's media gallery. */
-data class ProfileImage(val url: String, val noteId: String)
+/** One image or video attachment in the profile's media gallery. */
+data class ProfileMedia(val url: String, val noteId: String, val isVideo: Boolean = false)
 
 @HiltViewModel
 class ProfileViewModel @Inject constructor(
@@ -102,14 +103,16 @@ class ProfileViewModel @Inject constructor(
     /** Every event on the profile feed, newest first (notes, polls and reposts). */
     private val _notes = MutableStateFlow<List<Event>>(emptyList())
     val notes: StateFlow<List<Event>> = _notes.asStateFlow()
+    /** Raw relay events retained so changing filters can update the visible tabs. */
+    private val profileEvents = ConcurrentHashMap<String, Event>()
 
     /** Only the profile's replies — every note carrying a NIP-10 reply marker. */
     private val _replyNotes = MutableStateFlow<List<Event>>(emptyList())
     val replyNotes: StateFlow<List<Event>> = _replyNotes.asStateFlow()
 
-    /** Every image in the profile's own notes, newest note first (media tab). */
-    private val _mediaImages = MutableStateFlow<List<ProfileImage>>(emptyList())
-    val mediaImages: StateFlow<List<ProfileImage>> = _mediaImages.asStateFlow()
+    /** Every image/video attachment in the profile's own notes (media tab). */
+    private val _mediaItems = MutableStateFlow<List<ProfileMedia>>(emptyList())
+    val mediaItems: StateFlow<List<ProfileMedia>> = _mediaItems.asStateFlow()
 
     /** Quoted/reposted notes, resolved so the cards can render them. */
     private val _quotedEvents = MutableStateFlow<Map<String, Event>>(emptyMap())
@@ -262,16 +265,9 @@ class ProfileViewModel @Inject constructor(
                             EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL,
                             EventKind.COMMENT ->
                                 if (event.pubkey == pubkey) {
-                                    // Hide if the viewer blocked them / nsfw / hidden words.
-                                    if (social.tbone.settings.ContentFilter.shouldHide(
-                                            event,
-                                            muteRepository.effectiveMuted.value,
-                                            appSettings.hideNsfw.value,
-                                            appSettings.hideWords.value,
-                                        )
-                                    ) {
-                                        return@collect
-                                    }
+                                    // Store the raw event and derive visible tabs from
+                                    // the current filters, so changing settings updates
+                                    // this screen without reloading the profile.
                                     ingest(event)
                                     // Persist so a tapped note opens a thread instantly.
                                     viewModelScope.launch { eventRepository.save(event, "") }
@@ -307,6 +303,13 @@ class ProfileViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
+            combine(
+                muteRepository.effectiveMuted,
+                appSettings.hideNsfw,
+                appSettings.hideWords,
+            ) { _, _, _ -> Unit }.collect { rebuildProfileFeed() }
+        }
+        viewModelScope.launch {
             delay(10_000)
             _isLoading.update { false }
         }
@@ -317,29 +320,59 @@ class ProfileViewModel @Inject constructor(
      * all, replies-only, and the media gallery.
      */
     private fun ingest(event: Event) {
-        val merged = (_notes.value + event)
-            .distinctBy { it.id }
+        profileEvents[event.id] = event
+        if (profileEvents.size > MAX_FEED_EVENTS) {
+            profileEvents.values.minByOrNull { it.createdAt }?.let { profileEvents.remove(it.id) }
+        }
+        rebuildProfileFeed()
+    }
+
+    /** Re-derives all visible profile tabs from raw relay events and current rules. */
+    private fun rebuildProfileFeed() {
+        val raw = profileEvents.values
             .sortedByDescending { it.createdAt }
             .take(MAX_FEED_EVENTS)
-        _notes.value = merged
-        _replyNotes.value = merged.filter { event ->
+        val contextEvents = raw.associateBy { it.id } + _quotedEvents.value
+        val visible = raw.filterNot { event ->
+            social.tbone.settings.ContentFilter.shouldHide(
+                event,
+                muteRepository.effectiveMuted.value,
+                appSettings.hideNsfw.value,
+                appSettings.hideWords.value,
+                contextEvents,
+            )
+        }
+        _notes.value = visible
+        _replyNotes.value = visible.filter { event ->
             // NIP-22 comments (kind 1111) are replies by definition; plain notes
             // count when they carry a NIP-10 reply marker.
             event.kind == EventKind.COMMENT ||
                 (event.kind == EventKind.TEXT_NOTE && event.parsedTags.isReply)
         }
-        _mediaImages.value = merged
+        _mediaItems.value = visible
             .filter { it.kind == EventKind.TEXT_NOTE || it.kind == EventKind.COMMENT }
             .flatMap { note ->
                 parseNoteContent(note.content).mediaItems
-                    .filterIsInstance<MediaItem.Image>()
-                    .map { image -> ProfileImage(url = image.url, noteId = note.id) }
+                    .filter { it is MediaItem.Image || it is MediaItem.Video }
+                    .map { media ->
+                        ProfileMedia(
+                            url = when (media) {
+                                is MediaItem.Image -> media.url
+                                is MediaItem.Video -> media.url
+                                is MediaItem.Audio -> ""
+                            },
+                            noteId = note.id,
+                            isVideo = media is MediaItem.Video,
+                        )
+                    }
+                    .filter { it.url.isNotBlank() }
             }
             .distinctBy { it.url }
     }
 
     private fun handleQuotedEvent(event: Event) {
         _quotedEvents.update { it + (event.id to event) }
+        rebuildProfileFeed()
         refreshUnresolvedQuotes()
         viewModelScope.launch { eventRepository.save(event, "") }
         fetchMetadataFor(listOf(event.pubkey))
@@ -359,6 +392,7 @@ class ProfileViewModel @Inject constructor(
                     else runCatching { Event.fromJson(event.content) }.getOrNull()
                     if (embedded != null && embedded.verify()) {
                         _quotedEvents.update { it + (embedded.id to embedded) }
+                        rebuildProfileFeed()
                         refreshUnresolvedQuotes()
                         viewModelScope.launch { eventRepository.save(embedded, "") }
                         fetchMetadataFor(listOf(embedded.pubkey))
@@ -385,6 +419,7 @@ class ProfileViewModel @Inject constructor(
             val cached = eventRepository.getByIds(missing).associateBy { it.id }
             if (cached.isNotEmpty()) {
                 _quotedEvents.update { it + cached }
+                rebuildProfileFeed()
                 refreshUnresolvedQuotes()
                 fetchMetadataFor(cached.values.map { it.pubkey })
             }

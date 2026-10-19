@@ -33,6 +33,7 @@ import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.ui.theme.appCornerShape
 import dev.youniversal.theme.YouniversalTheme
+import social.tbone.updates.LocalUpdateAvailable
 
 /** The five entries of the app's bottom navigation bar. */
 enum class BottomTab(val label: String, val icon: ImageVector) {
@@ -55,9 +56,11 @@ fun BonyBottomBar(
     selected: BottomTab?,
     onSelect: (BottomTab) -> Unit,
     hasNotifications: Boolean = false,
+    hasUpdate: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val youniversal = YouniversalTheme.enabled
+    val appUpdateAvailable = hasUpdate || LocalUpdateAvailable.current
     val barShape = appCornerShape(MaterialTheme.shapes.extraLarge)
     Column(
         modifier = modifier
@@ -107,7 +110,7 @@ fun BonyBottomBar(
                             modifier = Modifier.size(18.dp),
                         )
                         // Bell tab shows a dot when there are unread notifications.
-                        if (hasNotifications && tab == BottomTab.NOTIF) {
+                        if ((hasNotifications && tab == BottomTab.NOTIF) || (appUpdateAvailable && tab == BottomTab.CONF)) {
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)

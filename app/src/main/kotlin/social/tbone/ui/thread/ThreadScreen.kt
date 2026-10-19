@@ -84,6 +84,7 @@ fun ThreadScreen(
     val items = uiState.items
     val latestItems by rememberUpdatedState(items)
     val latestNotFound by rememberUpdatedState(uiState.notFound)
+    val latestContentFiltered by rememberUpdatedState(uiState.contentFiltered)
     val latestRootId by rememberUpdatedState(uiState.root?.id)
     val latestLoadingContext by rememberUpdatedState(uiState.loadingContext)
 
@@ -98,7 +99,7 @@ fun ThreadScreen(
             val rootReady = latestRootId?.let { rootId ->
                 latestItems.any { it is ThreadItem.Note && it.event.id == rootId }
             } ?: false
-            target to (latestNotFound || (target >= 0 && !latestLoadingContext && rootReady))
+            target to (latestNotFound || latestContentFiltered || (target >= 0 && !latestLoadingContext && rootReady))
         }.first { (_, ready) -> ready }.first
         if (targetIndex >= 0) listState.animateScrollToItem(targetIndex)
     }
@@ -161,6 +162,14 @@ fun ThreadScreen(
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
                         text = "this note was not found on any relay",
+                        style = BonyType.meta.copy(color = BonyColors.TextMute),
+                    )
+                }
+            }
+            uiState.contentFiltered && items.isEmpty() -> {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "this note is hidden by your content filters",
                         style = BonyType.meta.copy(color = BonyColors.TextMute),
                     )
                 }

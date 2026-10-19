@@ -29,6 +29,9 @@ import social.tbone.settings.VideoQuality
 import social.tbone.settings.OrbotHelper
 import social.tbone.settings.ThemeMode
 import social.tbone.settings.UiTheme
+import social.tbone.updates.UpdateInstallResult
+import social.tbone.updates.UpdateManager
+import social.tbone.updates.UpdateState
 import javax.inject.Inject
 
 @HiltViewModel
@@ -39,12 +42,22 @@ class SettingsViewModel @Inject constructor(
     private val appSettings: AppSettings,
     private val lockManager: AppLockManager,
     private val offlineLists: social.tbone.lists.OfflineListRepository,
+    private val updateManager: UpdateManager,
     @ApplicationContext context: Context,
 ) : ViewModel() {
 
     /** Whether the active account's offline follow list / block list is switched on. */
     val offlineFollowsEnabled: StateFlow<Boolean> = offlineEnabledFlow(social.tbone.lists.ListType.FOLLOWS)
     val offlineMutesEnabled: StateFlow<Boolean> = offlineEnabledFlow(social.tbone.lists.ListType.MUTES)
+
+    val updateState: StateFlow<UpdateState> = updateManager.state
+
+    fun checkForUpdates() = updateManager.checkNow()
+
+    fun downloadUpdate() = updateManager.downloadUpdate()
+
+    fun installDownloadedUpdate(context: Context): UpdateInstallResult =
+        updateManager.installDownloadedUpdate(context)
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private fun offlineEnabledFlow(type: social.tbone.lists.ListType): StateFlow<Boolean> =

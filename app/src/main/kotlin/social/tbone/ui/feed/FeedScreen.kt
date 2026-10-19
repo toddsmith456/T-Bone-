@@ -3,6 +3,7 @@ package social.tbone.ui.feed
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
@@ -28,7 +29,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -52,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import dev.youniversal.theme.YouniversalTheme
 import social.tbone.nostr.Event
 import social.tbone.nostr.quotedEventId
@@ -92,6 +97,9 @@ fun FeedScreen(
     val replies by viewModel.replies.collectAsStateWithLifecycle()
     val repliedByMe by viewModel.repliedByMe.collectAsStateWithLifecycle()
     val notifUnread by viewModel.notifUnread.collectAsStateWithLifecycle()
+    val updateAvailable by viewModel.updateAvailable.collectAsStateWithLifecycle()
+    val globalAutoLoadEnabled by viewModel.globalAutoLoadEnabled.collectAsStateWithLifecycle()
+    val globalAutoLoadInterval by viewModel.globalAutoLoadIntervalMinutes.collectAsStateWithLifecycle()
     val pollVoteCounts by viewModel.pollVoteCounts.collectAsStateWithLifecycle()
     val pollTotalVotes by viewModel.pollTotalVotes.collectAsStateWithLifecycle()
     val pollMyVotes by viewModel.pollMyVotes.collectAsStateWithLifecycle()
@@ -100,9 +108,18 @@ fun FeedScreen(
     val listState = rememberLazyListState()
     var isRefreshing by remember { mutableStateOf(false) }
     var showBrightness by remember { mutableStateOf(false) }
+    var showGlobalIntervalMenu by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.scrollToTop.collect { listState.scrollToItem(0) }
+    }
+    LaunchedEffect(currentFeed, globalAutoLoadEnabled, globalAutoLoadInterval) {
+        if (currentFeed == FeedTab.GLOBAL && globalAutoLoadEnabled) {
+            while (true) {
+                delay(globalAutoLoadInterval.coerceIn(1, 20) * 60_000L)
+                viewModel.loadNewerGlobal()
+            }
+        }
     }
     LaunchedEffect(pendingEventScroll, uiState.events) {
         val eventId = pendingEventScroll ?: return@LaunchedEffect
@@ -150,37 +167,90 @@ fun FeedScreen(
             onSwitch = viewModel::switchFeed,
         )
 
-        // Global live status row
+        // Global controls: new events are buffered and loaded in batches, so a
+        // live relay stream cannot continuously evict the last row while reading.
         if (currentFeed == FeedTab.GLOBAL) {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(BonyColors.Surface)
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .padding(horizontal = 14.dp, vertical = 7.dp),
             ) {
-                Text(
-                    text = "●",
-                    style = BonyType.meta.copy(color = BonyColors.Accent),
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = "live · streaming kind-1",
-                    style = BonyType.meta.copy(color = BonyColors.Accent),
-                )
-                Spacer(Modifier.weight(1f))
-                Text(
-                    text = "${uiState.events.size} events",
-                    style = BonyType.meta.copy(color = BonyColors.TextMute),
-                )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    text = if (uiState.globalNewerLoading) "loading…" else "load all newer",
-                    style = BonyType.meta.copy(color = if (uiState.globalNewerLoading) BonyColors.TextMute else BonyColors.Accent),
-                    modifier = Modifier.clickable(enabled = !uiState.globalNewerLoading) {
-                        viewModel.loadNewerGlobal()
-                    },
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("●", style = BonyType.meta.copy(color = BonyColors.Accent))
+                    Spacer(Modifier.width(6.dp))
+                    Text("GLOBAL", style = BonyType.tag.copy(color = BonyColors.Accent))
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = "${uiState.events.size} loaded",
+                        style = BonyType.meta.copy(color = BonyColors.TextMute),
+                    )
+                    if (uiState.globalNewerAvailable > 0) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "${uiState.globalNewerAvailable} new",
+                            style = BonyType.meta.copy(color = BonyColors.Accent),
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Switch(
+                        checked = globalAutoLoadEnabled,
+                        onCheckedChange = viewModel::setGlobalAutoLoadEnabled,
+                    )
+                    Text(
+                        text = "auto-load",
+                        style = BonyType.meta.copy(color = BonyColors.TextMute),
+                        modifier = Modifier.padding(start = 4.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Box {
+                        Text(
+                            text = "${globalAutoLoadInterval} min  ▾",
+                            style = BonyType.tag.copy(color = BonyColors.Accent),
+                            modifier = Modifier
+                                .background(BonyColors.Bg, RoundedCornerShape(16.dp))
+                                .border(1.dp, BonyColors.RuleStrong, RoundedCornerShape(16.dp))
+                                .clickable { showGlobalIntervalMenu = true }
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                        )
+                        DropdownMenu(
+                            expanded = showGlobalIntervalMenu,
+                            onDismissRequest = { showGlobalIntervalMenu = false },
+                        ) {
+                            (1..20).forEach { minutes ->
+                                DropdownMenuItem(
+                                    text = { Text("every $minutes minute${if (minutes == 1) "" else "s"}") },
+                                    onClick = {
+                                        viewModel.setGlobalAutoLoadIntervalMinutes(minutes)
+                                        showGlobalIntervalMenu = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = when {
+                            uiState.globalNewerLoading -> "loading…"
+                            uiState.globalNewerAvailable > 0 -> "load new notes →"
+                            else -> "check now →"
+                        },
+                        style = BonyType.tag.copy(
+                            color = if (uiState.globalNewerLoading || uiState.globalOlderLoading)
+                                BonyColors.TextMute else BonyColors.Accent,
+                        ),
+                        modifier = Modifier
+                            .clickable(
+                                enabled = !uiState.globalNewerLoading && !uiState.globalOlderLoading,
+                                onClick = viewModel::loadNewerGlobal,
+                            )
+                            .padding(start = 8.dp, top = 8.dp, bottom = 8.dp),
+                    )
+                }
             }
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
         }
@@ -302,6 +372,7 @@ fun FeedScreen(
         BonyBottomBar(
             selected = if (currentFeed == FeedTab.HOME) BottomTab.HOME else null,
             hasNotifications = notifUnread,
+            hasUpdate = updateAvailable,
             onSelect = { tab ->
                 when (tab) {
                     BottomTab.HOME -> viewModel.switchFeed(FeedTab.HOME)

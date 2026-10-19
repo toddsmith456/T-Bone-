@@ -43,6 +43,7 @@ import android.content.Context
 import android.widget.Toast
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import social.tbone.nostr.relay.RelayPool
 import social.tbone.nostr.relay.RelayStatus
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -120,10 +121,7 @@ fun RelayManagementScreen(
     if (showAddDialog) {
         AddRelayDialog(
             onDismiss = { showAddDialog = false },
-            onAdd = { url ->
-                viewModel.addRelay(url)
-                showAddDialog = false
-            },
+            onAdd = viewModel::addRelay,
         )
     }
 }
@@ -143,23 +141,58 @@ fun RelayStatusDot(status: RelayStatus, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun AddRelayDialog(onDismiss: () -> Unit, onAdd: (String) -> Unit) {
+private fun AddRelayDialog(onDismiss: () -> Unit, onAdd: (String) -> Boolean) {
     var text by remember { mutableStateOf("wss://") }
+    var errorText by remember { mutableStateOf<String?>(null) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add relay") },
         text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                label = { Text("Relay URL") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            Column {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it; errorText = null },
+                    label = { Text("Relay URL") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                TextButton(
+                    onClick = {
+                        text = "ws://localhost:4869"
+                        errorText = null
+                    },
+                ) {
+                    Text("Use local Citrine relay")
+                }
+                Text(
+                    text = "Citrine on this device: ws://localhost:4869. Loopback relay traffic connects directly; other relays still follow your Tor setting.",
+                    color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                )
+                errorText?.let { message ->
+                    Text(
+                        text = message,
+                        color = Color(0xFFB3261E),
+                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+            }
         },
         confirmButton = {
-            TextButton(onClick = { onAdd(text) }) { Text("Add") }
+            TextButton(
+                onClick = {
+                    val normalized = RelayPool.normalize(text)
+                    if (!RelayPool.isValidRelayUrl(normalized)) {
+                        errorText = "Enter a valid ws:// or wss:// relay address."
+                    } else if (onAdd(normalized)) {
+                        onDismiss()
+                    } else {
+                        errorText = "Couldn't add this relay address."
+                    }
+                },
+            ) { Text("Add") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }

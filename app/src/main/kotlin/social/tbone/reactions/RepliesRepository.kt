@@ -6,6 +6,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
@@ -55,12 +57,17 @@ class RepliesRepository @Inject constructor(
 
     init {
         scope.launch {
-            accountRepository.activeAccount.collect { account ->
-                activePubkey = account?.pubkey
-                // Re-seed: counts are per-account-agnostic; repliedByMe is not,
-                // so reset the "I replied" flags on account switch.
-                _repliedByMe.value = emptySet()
-            }
+            accountRepository.activeAccount
+                .map { it?.pubkey }
+                .distinctUntilChanged()
+                .collect { pubkey ->
+                    activePubkey = pubkey
+                    // AccountRepository emits again for ordinary profile/relay
+                    // edits. Only an actual account switch should clear this
+                    // UI marker; likes/reposts and account metadata updates must
+                    // not erase the reply context already shown in the feed.
+                    _repliedByMe.value = emptySet()
+                }
         }
         // Live collector: count replies as they stream from any subscription.
         scope.launch {

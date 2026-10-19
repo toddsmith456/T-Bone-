@@ -41,7 +41,8 @@ data class RenderedShareCard(
 /** Branded share-card renderer. Images are fitted (never cropped) and scale with note length. */
 object NoteShareCardGenerator {
     private const val WIDTH = 1080
-    private const val MAX_HEIGHT = 14_000
+    private const val MAX_HEIGHT = 8_000
+    private const val MAX_CARD_MEDIA = 6
     private const val OUTER_MARGIN = 54f
     private const val CARD_TOP = 52f
     private const val CARD_RADIUS = 38f
@@ -88,37 +89,37 @@ object NoteShareCardGenerator {
         val headerHeight = 82f
         val authorHeight = 108f
         val bodyTop = CARD_TOP + CARD_PADDING + headerHeight + authorHeight + 24f
-        val noteSize = body.length.coerceIn(0, 650)
-        // Small notes intentionally get compact media; longer text earns a
-        // wider and taller picture without changing the card's text layout.
-        val photoScale = (0.52f + noteSize / 1350f).coerceIn(0.52f, 1f)
+        // Images/videos get a distinct, roomy section below the note body.
+        // Keep the card memory-bounded even for notes with many attachments.
         val visualMedia = media.filter { it.kind == ShareMediaKind.IMAGE || it.kind == ShareMediaKind.VIDEO }
-        val imageTarget = if (visualMedia.size > 16) 384 else 900
-        val imageBitmaps: Map<String, Bitmap?> = visualMedia
+        val displayedMedia = visualMedia.take(MAX_CARD_MEDIA)
+        val imageBitmaps: Map<String, Bitmap?> = displayedMedia
             .filter { it.kind == ShareMediaKind.IMAGE }
-            .associate { it.url to downloadBitmap(it.url, imageTarget) }
+            .associate { it.url to downloadBitmap(it.url, 720) }
         val profileBitmap = authorPictureUrl?.takeIf { it.isNotBlank() }?.let { downloadBitmap(it, 128) }
         val galleryTiles = mutableListOf<GalleryTile>()
 
         var nextTop = bodyTop + bodyLayout.height + 36f
-        if (visualMedia.size == 1) {
-            val item = visualMedia.first()
+        val mediaHeaderTop = if (displayedMedia.isNotEmpty()) nextTop + 4f else null
+        if (mediaHeaderTop != null) nextTop = mediaHeaderTop + 50f
+
+        if (displayedMedia.size == 1) {
+            val item = displayedMedia.first()
             val image = imageBitmaps[item.url]
             val aspect = if (image != null) image.width.toFloat() / image.height.coerceAtLeast(1) else 16f / 9f
-            val targetWidth = innerWidth * photoScale
-            val maxHeight = (150f + noteSize * 0.32f).coerceAtMost(390f)
-            val tileWidth = min(targetWidth, maxHeight * aspect)
+            val maxHeight = 700f
+            val tileWidth = min(innerWidth, maxHeight * aspect)
             val tileHeight = tileWidth / aspect
             val left = innerLeft + (innerWidth - tileWidth) / 2f
             galleryTiles += GalleryTile(item, image, RectF(left, nextTop, left + tileWidth, nextTop + tileHeight))
-            nextTop += tileHeight
-        } else if (visualMedia.size > 1) {
+            nextTop += tileHeight + 14f
+        } else if (displayedMedia.size > 1) {
             val gap = 18f
-            val tileWidth = ((innerWidth - gap) / 2f) * photoScale
-            val tileHeight = (132f + noteSize * 0.26f).coerceIn(150f, 310f)
+            val tileWidth = (innerWidth - gap) / 2f
+            val tileHeight = 292f
             val rowWidth = tileWidth * 2 + gap
             val startX = innerLeft + (innerWidth - rowWidth) / 2f
-            visualMedia.chunked(2).forEachIndexed { rowIndex, rowItems ->
+            displayedMedia.chunked(2).forEachIndexed { rowIndex, rowItems ->
                 rowItems.forEachIndexed { columnIndex, item ->
                     val left = startX + columnIndex * (tileWidth + gap)
                     val top = nextTop + rowIndex * (tileHeight + 18f)
@@ -129,10 +130,13 @@ object NoteShareCardGenerator {
                     )
                 }
             }
-            val rows = (visualMedia.size + 1) / 2
-            nextTop += rows * tileHeight + (rows - 1).coerceAtLeast(0) * 18f
+            val rows = (displayedMedia.size + 1) / 2
+            nextTop += rows * tileHeight + (rows - 1).coerceAtLeast(0) * 18f + 14f
         }
 
+        val hiddenMediaCount = (visualMedia.size - displayedMedia.size).coerceAtLeast(0)
+        val hiddenMediaTop = nextTop
+        if (hiddenMediaCount > 0) nextTop += 30f
         val audioCount = media.count { it.kind == ShareMediaKind.AUDIO }
         val audioTop = if (audioCount > 0) nextTop + 12f else nextTop
         val audioBottom = if (audioCount > 0) audioTop + 40f else audioTop
@@ -210,9 +214,36 @@ object NoteShareCardGenerator {
             bodyLayout.draw(canvas)
             canvas.restore()
 
-            // All recognized Blossom images are included. Only the video window
-            // changes in the video rendition; author, text, images and frame stay still.
+            // A labeled media zone and larger bottom gallery keep attachments
+            // visually separate from the note body. Only the selected video
+            // window changes in the video rendition.
+            mediaHeaderTop?.let { top ->
+                canvas.drawText(
+                    "MEDIA",
+                    innerLeft,
+                    top + 26f,
+                    textPaint(accent, 18f, "sans-serif-bold"),
+                )
+                canvas.drawText(
+                    "${visualMedia.size} ATTACHMENT${if (visualMedia.size == 1) "" else "S"}",
+                    innerRight,
+                    top + 26f,
+                    textPaint(muted, 15f, "sans-serif-medium").apply { textAlign = Paint.Align.RIGHT },
+                )
+                canvas.drawLine(innerLeft, top + 38f, innerRight, top + 38f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = rule
+                    strokeWidth = 2f
+                })
+            }
             galleryTiles.forEach { drawGalleryTile(canvas, it, animatedVideoUrl) }
+            if (hiddenMediaCount > 0) {
+                canvas.drawText(
+                    "+$hiddenMediaCount more media attachment${if (hiddenMediaCount == 1) "" else "s"}",
+                    innerLeft,
+                    hiddenMediaTop + 20f,
+                    textPaint(muted, 15f, "sans-serif-medium"),
+                )
+            }
             if (audioCount > 0) {
                 val audioRect = RectF(innerLeft, audioTop, innerRight, audioBottom)
                 canvas.drawRoundRect(audioRect, 12f, 12f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(22, 40, 43) })

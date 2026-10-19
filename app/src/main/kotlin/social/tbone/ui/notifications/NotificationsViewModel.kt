@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -19,10 +20,12 @@ import social.tbone.notifications.NotifGroup
 import social.tbone.notifications.NotifSummary
 import social.tbone.notifications.NotifType
 import social.tbone.notifications.NotificationsRepository
+import social.tbone.notifications.summarizeNotifications
 import social.tbone.nostr.Event
 import social.tbone.nostr.ProfileContent
 import social.tbone.profile.ProfileRepository
 import social.tbone.settings.AppSettings
+import social.tbone.settings.ContentFilter
 import javax.inject.Inject
 
 /**
@@ -45,38 +48,76 @@ class NotificationsViewModel @Inject constructor(
     private val _enabledFilters = MutableStateFlow<Set<NotifFilter>>(NotifFilter.entries.toSet())
     val enabledFilters: StateFlow<Set<NotifFilter>> = _enabledFilters.asStateFlow()
 
-    /** The visible list — flat rows filtered by [enabledFilters] and blocks. */
+    private data class NotificationFilterConfig(
+        val enabled: Set<NotifFilter>,
+        val blocked: Set<String>,
+        val hideNsfw: Boolean,
+        val hideWords: Set<String>,
+    )
+
+    private val filterConfig = combine(
+        _enabledFilters,
+        muteRepository.effectiveMuted,
+        appSettings.hideNsfw,
+        appSettings.hideWords,
+    ) { enabled, blocked, hideNsfw, hideWords ->
+        NotificationFilterConfig(enabled, blocked, hideNsfw, hideWords)
+    }
+
+    private fun notificationVisible(
+        item: FlatNotifItem,
+        config: NotificationFilterConfig,
+        referencedEvents: Map<String, Event>,
+    ): Boolean {
+        if (item.type.toFilter()?.let { it in config.enabled } != true) return false
+        if (item.actorPubkey in config.blocked) return false
+        val note = item.note ?: return true
+        return !ContentFilter.shouldHide(
+            note,
+            config.blocked,
+            config.hideNsfw,
+            config.hideWords,
+            referencedEvents,
+        )
+    }
+
+    /** Visible rows obey type filters, blocks, NSFW, and hidden-word rules. */
     val items: StateFlow<List<FlatNotifItem>> = combine(
-        repository.flat, _enabledFilters, muteRepository.effectiveMuted,
-    ) { items, enabled, blocked ->
-        if (enabled.isEmpty()) items
-        else items.filter { item ->
-            (item.type.toFilter()?.let { it in enabled } ?: true) &&
-                item.actorPubkey !in blocked
-        }
+        repository.flat, filterConfig, repository.referencedNotes,
+    ) { rows, config, referencedEvents ->
+        rows.filter { notificationVisible(it, config, referencedEvents) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Grouped state (drives filters/summary; kept for parity with Wisp). */
     val groups: StateFlow<List<NotifGroup>> = repository.groups
 
+    private val recentVisibleItems = combine(
+        repository.recentItems, filterConfig, repository.referencedNotes,
+    ) { recent, config, referencedEvents ->
+        recent.filter { notificationVisible(it, config, referencedEvents) }
+    }
+
+    /** Refresh the rolling 24h window even while the app is otherwise quiet. */
+    private val epochSecondsTicker = flow {
+        while (true) {
+            emit(System.currentTimeMillis() / 1000)
+            delay(60_000L)
+        }
+    }
+
     /**
-     * 24h summary counts derived from the BLOCKED-FILTERED list, so a blocked
-     * user's activity neither shows as rows nor inflates the summary bar.
+     * Accurate 24h totals use the uncapped recent cache, not the 500-row UI
+     * window. Notification timestamps are Nostr epoch seconds, not millis.
      */
-    val summary: StateFlow<NotifSummary> = items.map { list ->
-        val cutoff = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
-        list.filter { it.timestamp >= cutoff }
-            .fold(NotifSummary()) { acc, item ->
-                when (item.type) {
-                    NotifType.REACTION -> acc.copy(reactionCount = acc.reactionCount + 1)
-                    NotifType.REPOST -> acc.copy(repostCount = acc.repostCount + 1)
-                    NotifType.REPLY -> acc.copy(replyCount = acc.replyCount + 1)
-                    NotifType.QUOTE -> acc.copy(quoteCount = acc.quoteCount + 1)
-                    NotifType.MENTION -> acc.copy(mentionCount = acc.mentionCount + 1)
-                    NotifType.VOTE -> acc.copy(voteCount = acc.voteCount + 1)
-                    NotifType.CALENDAR -> acc.copy(calendarCount = acc.calendarCount + 1)
-                }
-            }
+    val summary: StateFlow<NotifSummary> = combine(
+        recentVisibleItems,
+        items,
+        epochSecondsTicker,
+    ) { recent, visibleRows, nowEpochSeconds ->
+        summarizeNotifications(
+            recent + visibleRows.filter { it.type == NotifType.CALENDAR },
+            nowEpochSeconds,
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NotifSummary())
 
     val hasUnread: StateFlow<Boolean> = repository.hasUnread

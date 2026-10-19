@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -26,6 +27,7 @@ import social.tbone.Tunables
 import social.tbone.account.AccountRepository
 import social.tbone.account.signer.NostrSignerFactory
 import social.tbone.db.EventRepository
+import social.tbone.settings.ContentFilter
 import social.tbone.reactions.ReactionsRepository
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
@@ -61,6 +63,8 @@ data class ThreadUiState(
     val notFound: Boolean = false,
     /** Ancestors above the focused note are still being fetched. */
     val loadingContext: Boolean = false,
+    /** The focused note is currently hidden by the viewer's content filters. */
+    val contentFiltered: Boolean = false,
 ) {
     val replyCount: Int get() = items.count { it is ThreadItem.Note && it.depth > 0 }
 }
@@ -181,6 +185,13 @@ class ThreadViewModel @Inject constructor(
             pool.messages.collect { handlePoolMessage(it) }
         }
         viewModelScope.launch(Dispatchers.Default) { load() }
+        viewModelScope.launch {
+            combine(
+                muteRepository.effectiveMuted,
+                appSettings.hideNsfw,
+                appSettings.hideWords,
+            ) { _, _, _ -> Unit }.collect { rebuild() }
+        }
     }
 
     fun boost(event: Event) {
@@ -437,12 +448,22 @@ class ThreadViewModel @Inject constructor(
     // ── Tree rebuild ──────────────────────────────────────────────────────────
 
     private fun rebuild() {
-        val focusedId = _uiState.value.focused?.id
         // A fresh snapshot: replies arrive concurrently on the pool collector.
         val snapshot = threadEvents.values.toList()
+        val contextEvents = snapshot.associateBy { it.id }
+        val blocked = muteRepository.effectiveMuted.value
+        val hideNsfw = appSettings.hideNsfw.value
+        val hideWords = appSettings.hideWords.value
+        val visibleEvents = snapshot.filter {
+            !ContentFilter.shouldHide(it, blocked, hideNsfw, hideWords, contextEvents)
+        }
+        val focused = _uiState.value.focused
+        val focusedHidden = focused != null &&
+            ContentFilter.shouldHide(focused, blocked, hideNsfw, hideWords, contextEvents)
+        val focusedId = focused?.id?.takeUnless { focusedHidden }
         val items = ThreadTree.build(
             rootId = rootId,
-            events = snapshot,
+            events = visibleEvents,
             focusedId = focusedId,
             scrollTargetId = focusedId,
             // The entire thread is rendered at once: no depth folding and no
@@ -450,7 +471,7 @@ class ThreadViewModel @Inject constructor(
             maxSiblingsInline = Int.MAX_VALUE,
             depthCap = Int.MAX_VALUE,
         )
-        _uiState.update { it.copy(items = items) }
+        _uiState.update { it.copy(items = items, contentFiltered = focusedHidden) }
     }
 
     // ── Single message collector ──────────────────────────────────────────────
@@ -492,17 +513,9 @@ class ThreadViewModel @Inject constructor(
                             taggedWith.any { it == rootId || it in relatedIds }
                         if (!inThread) return
 
-                        val app = appSettings
-                        if (social.tbone.settings.ContentFilter.shouldHide(
-                                event,
-                                muteRepository.effectiveMuted.value,
-                                app.hideNsfw.value,
-                                app.hideWords.value,
-                            )
-                        ) {
-                            return
-                        }
-
+                        // Retain raw events in memory so changing a filter while
+                        // this thread is open can reveal them again. [rebuild]
+                        // applies the current filters before producing visible rows.
                         val isNew = threadEvents.put(event.id, event) == null
                         viewModelScope.launch { eventRepository.save(event, "") }
                         if (isNew) {

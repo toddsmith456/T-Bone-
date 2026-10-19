@@ -5,6 +5,35 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-10-19
+
+### Added
+- A Settings updater that checks GitHub releases daily, keeps an update badge
+  visible, verifies APK package/version/signing compatibility, and hands a
+  compatible update to Android's installer.
+- A 1–20 minute Global auto-load interval selector and quick-add support for
+  Citrine's local relay at `ws://localhost:4869` (also works with Tor enabled).
+- Videos in the profile media gallery, opened with the regular in-app player;
+  notification rows now preview attached pictures.
+
+### Changed
+- Global live events are buffered to keep the bottom of the feed stable, and
+  manual/automatic newer-note loading pages through available results. Older
+  Global and notification history now use cursor-based paging.
+- Share cards give attachments a larger, dedicated section. Notifications keep
+  the latest 200 rows in the local cache and calculate rolling 24-hour totals.
+- Added top insets for Bookmarks and usable top/bottom insets in the image viewer.
+
+### Fixed
+- Video uploads are capped at 10 MB and report “video is too big”; video-card
+  export failures fall back to the still image, and player errors no longer
+  crash the viewer.
+- Blocked authors' replies/reposts and notes matching hidden words are filtered
+  across feeds, profiles, threads, and notifications.
+- Reply markers no longer clear on ordinary account updates; quoted and
+  reposted notes retain clickable reply context.
+
+
 ## [0.4.0] — 2026-10-18
 
 ### Added

@@ -104,6 +104,7 @@ data class FlatNotifItem(
     val id: String,
     val type: NotifType,
     val actorPubkey: String,
+    /** Nostr `created_at` epoch seconds. */
     val timestamp: Long,
     val referencedEventId: String? = null,
     val replyEventId: String? = null,
@@ -128,3 +129,40 @@ data class NotifSummary(
     val voteCount: Int = 0,
     val calendarCount: Int = 0,
 )
+
+/** Pure seconds-based summary helper; calendar rows are upcoming, not 24h activity. */
+internal fun summarizeNotifications(items: List<FlatNotifItem>, nowEpochSeconds: Long): NotifSummary {
+    val cutoff = nowEpochSeconds - 86_400L
+    var replies = 0
+    var reactions = 0
+    var reposts = 0
+    var mentions = 0
+    var quotes = 0
+    var votes = 0
+    var calendars = 0
+    for (item in items) {
+        if (item.type == NotifType.CALENDAR) {
+            calendars++
+            continue
+        }
+        if (item.timestamp !in cutoff..nowEpochSeconds) continue
+        when (item.type) {
+            NotifType.REPLY -> replies++
+            NotifType.REACTION -> reactions++
+            NotifType.REPOST -> reposts++
+            NotifType.QUOTE -> quotes++
+            NotifType.MENTION -> mentions++
+            NotifType.VOTE -> votes++
+            NotifType.CALENDAR -> Unit
+        }
+    }
+    return NotifSummary(
+        replyCount = replies,
+        reactionCount = reactions,
+        repostCount = reposts,
+        mentionCount = mentions,
+        quoteCount = quotes,
+        voteCount = votes,
+        calendarCount = calendars,
+    )
+}
