@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="dev.youniversal.theme.YouniversalPaletteTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:29" hostname="e2b.local" time="0.076">
+  <properties/>
+  <testcase name="cream background matches the classic T-Bone cream background" classname="dev.youniversal.theme.YouniversalPaletteTest" time="0.075"/>
+  <testcase name="light and cream accent colors retain strong text contrast" classname="dev.youniversal.theme.YouniversalPaletteTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

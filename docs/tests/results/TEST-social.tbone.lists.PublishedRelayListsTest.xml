@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="social.tbone.lists.PublishedRelayListsTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:31" hostname="e2b.local" time="0.01">
+  <properties/>
+  <testcase name="preferred relay list includes read and unmarked but not write-only relays" classname="social.tbone.lists.PublishedRelayListsTest" time="0.004"/>
+  <testcase name="blossom list normalizes and deduplicates server tags" classname="social.tbone.lists.PublishedRelayListsTest" time="0.006"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

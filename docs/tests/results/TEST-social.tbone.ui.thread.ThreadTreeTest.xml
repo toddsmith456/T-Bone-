@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="social.tbone.ui.thread.ThreadTreeTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:32" hostname="e2b.local" time="0.02">
+  <properties/>
+  <testcase name="quotedNoteIsNotTreatedAsAReply" classname="social.tbone.ui.thread.ThreadTreeTest" time="0.009"/>
+  <testcase name="cyclesDoNotHang" classname="social.tbone.ui.thread.ThreadTreeTest" time="0.0"/>
+  <testcase name="missingRootRendersTopMostNotesAsRoots" classname="social.tbone.ui.thread.ThreadTreeTest" time="0.0"/>
+  <testcase name="threadScreenRendersEverythingExpanded" classname="social.tbone.ui.thread.ThreadTreeTest" time="0.005"/>
+  <testcase name="orphanIsReparentedToRootInsteadOfDropped" classname="social.tbone.ui.thread.ThreadTreeTest" time="0.0"/>
+  <testcase name="pathToFocusedNoteIsNeverFolded" classname="social.tbone.ui.thread.ThreadTreeTest" time="0.0"/>
+  <testcase name="expandingFanOutRevealsEveryReply" classname="social.tbone.ui.thread.ThreadTreeTest" time="0.0"/>
+  <testcase name="highFanOutShowsMoreRow" classname="social.tbone.ui.thread.ThreadTreeTest" time="0.001"/>
+  <testcase name="siblingsAreChronological" classname="social.tbone.ui.thread.ThreadTreeTest" time="0.001"/>
+  <testcase name="deepBranchFoldsBehindShowMoreRow" classname="social.tbone.ui.thread.ThreadTreeTest" time="0.0"/>
+  <testcase name="midAirConnectorsAreMarked" classname="social.tbone.ui.thread.ThreadTreeTest" time="0.0"/>
+  <testcase name="rootFirstThenRepliesDepthFirst" classname="social.tbone.ui.thread.ThreadTreeTest" time="0.0"/>
+  <testcase name="focusedNoteIsHighlightedAndCountsDescendants" classname="social.tbone.ui.thread.ThreadTreeTest" time="0.0"/>
+  <testcase name="missingRootStillRendersRepliesWhoseParentWasNotDelivered" classname="social.tbone.ui.thread.ThreadTreeTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

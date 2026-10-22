@@ -18,6 +18,9 @@ object EventKind {
     const val PRIVATE_DM = 14        // NIP-17: private direct message
     const val POLL_RESPONSE = 1018   // NIP-88: poll vote
     const val POLL = 1068            // NIP-88: poll
+    const val FILE_METADATA = 1063   // NIP-94: file metadata (webxdc apps per NIP-DC)
+    const val WEBXDC_UPDATE = 4932   // NIP-DC: webxdc state update
+    const val WEBXDC_REALTIME = 20932 // NIP-DC: ephemeral webxdc realtime data
     const val RELAY_LIST = 10002     // NIP-65: relay list metadata
     const val BLOSSOM_SERVER_LIST = 10063 // BUD-03: user's Blossom server list
     const val AUTH = 22242           // NIP-42: relay authentication

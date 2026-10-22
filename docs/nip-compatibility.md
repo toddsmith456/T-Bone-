@@ -14,6 +14,8 @@ Legend: ✅ Supported &nbsp;|&nbsp; 🚧 Partial &nbsp;|&nbsp; 🔌 Plugin &nbsp
 | 10002 | Relay List | Read relays extracted and connected on login; list persisted to account |
 | 22242 | Auth | Signed automatically in response to NIP-42 relay challenges |
 | 24133 | Nostr Connect | Used internally by `NsecBunkerSigner` for NIP-46 request/response |
+| 1063 | File Metadata | Read for the webxdc tool: filtered by `#m application/x-webxdc` (NIP-DC), parsed into an app card with icon, size and `webxdc` uuid |
+| 4932 | Webxdc update | Not subscribed (single-player player); updates are journalled locally with the same serial semantics |
 
 ## Built into the App
 

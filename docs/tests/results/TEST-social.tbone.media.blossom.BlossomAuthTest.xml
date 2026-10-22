@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="social.tbone.media.blossom.BlossomAuthTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:31" hostname="e2b.local" time="0.033">
+  <properties/>
+  <testcase name="server tag holds the bare lowercase domain with no scheme or port" classname="social.tbone.media.blossom.BlossomAuthTest" time="0.009"/>
+  <testcase name="authorization header uses scheme plus standard base64 with padding" classname="social.tbone.media.blossom.BlossomAuthTest" time="0.006"/>
+  <testcase name="x and size tags are omitted for operations that do not need them" classname="social.tbone.media.blossom.BlossomAuthTest" time="0.003"/>
+  <testcase name="token json round-trips back to the signed event" classname="social.tbone.media.blossom.BlossomAuthTest" time="0.004"/>
+  <testcase name="upload token is kind 24242 not NIP-98 27235" classname="social.tbone.media.blossom.BlossomAuthTest" time="0.001"/>
+  <testcase name="builds tags as json arrays of string primitives" classname="social.tbone.media.blossom.BlossomAuthTest" time="0.002"/>
+  <testcase name="one token can be scoped to the whole pool and never repeats a host" classname="social.tbone.media.blossom.BlossomAuthTest" time="0.001"/>
+  <testcase name="hash is lowercased so it matches the X-SHA-256 header and blob url" classname="social.tbone.media.blossom.BlossomAuthTest" time="0.001"/>
+  <testcase name="expiration is in the future" classname="social.tbone.media.blossom.BlossomAuthTest" time="0.002"/>
+  <testcase name="upload token carries the tags servers validate" classname="social.tbone.media.blossom.BlossomAuthTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

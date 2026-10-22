@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="social.tbone.media.blossom.BlossomClientTest" tests="10" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:31" hostname="e2b.local" time="0.287">
+  <properties/>
+  <testcase name="sha256Hex matches a known reference vector" classname="social.tbone.media.blossom.BlossomClientTest" time="0.184"/>
+  <testcase name="a rejected token is reported as an authorization problem" classname="social.tbone.media.blossom.BlossomClientTest" time="0.055"/>
+  <testcase name="sha256 of a file matches the reference digest" classname="social.tbone.media.blossom.BlossomClientTest" time="0.003"/>
+  <testcase name="has() probes the bare hash url and reports false on 404" classname="social.tbone.media.blossom.BlossomClientTest" time="0.005"/>
+  <testcase name="falls back to the content-addressed url when the server sends no body" classname="social.tbone.media.blossom.BlossomClientTest" time="0.009"/>
+  <testcase name="sends an authenticated PUT to the upload endpoint" classname="social.tbone.media.blossom.BlossomClientTest" time="0.009"/>
+  <testcase name="a 402 is reported as payment required" classname="social.tbone.media.blossom.BlossomClientTest" time="0.004"/>
+  <testcase name="surfaces the server's own X-Reason instead of a bare status code" classname="social.tbone.media.blossom.BlossomClientTest" time="0.006"/>
+  <testcase name="sha256 handles files larger than the streaming buffer" classname="social.tbone.media.blossom.BlossomClientTest" time="0.006"/>
+  <testcase name="delete() uses DELETE on the blob url with the auth header" classname="social.tbone.media.blossom.BlossomClientTest" time="0.004"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

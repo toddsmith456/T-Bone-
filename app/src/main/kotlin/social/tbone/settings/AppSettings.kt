@@ -10,6 +10,8 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import social.tbone.media.blossom.BlossomServerUrl
 import social.tbone.nostr.geohash.GeohashChannelEntry
 import social.tbone.nostr.geohash.GeohashChannelStore
+import social.tbone.webxdc.XdcCustomTool
+import social.tbone.webxdc.XdcCustomToolsCodec
 import androidx.datastore.preferences.core.edit
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
@@ -71,6 +73,8 @@ class AppSettings @Inject constructor(
         private val TOOLBOX_DURESS_PIN_ENABLED = booleanPreferencesKey("toolbox_duress_pin_enabled")
         private val TOOLBOX_DURESS_PIN_HASH = stringPreferencesKey("toolbox_duress_pin_hash")
         private val TOOLBOX_TOOL_ORDER = stringPreferencesKey("toolbox_tool_order")
+        // Saved webxdc mini apps promoted to toolbox tools (JSON array).
+        private val XDC_CUSTOM_TOOLS = stringPreferencesKey("xdc_custom_tools")
         // Geohash identity seed (base64, 32 bytes) — random per install, like Amethyst's remote-signer path.
         private val GEOHASH_IDENTITY_SEED = stringPreferencesKey("geohash_identity_seed")
         private val GEOHASH_CHANNELS = stringPreferencesKey("geohash_channels")
@@ -200,6 +204,10 @@ class AppSettings @Inject constructor(
     private val _toolboxToolOrder = MutableStateFlow<List<String>>(emptyList())
     val toolboxToolOrder = _toolboxToolOrder.asStateFlow()
 
+    /** User-created tools backed by saved webxdc apps. */
+    private val _xdcCustomTools = MutableStateFlow<List<XdcCustomTool>>(emptyList())
+    val xdcCustomTools = _xdcCustomTools.asStateFlow()
+
     /** Saved geohash channels (messenger contact list), in display order. */
     private val _geohashChannels = MutableStateFlow<List<GeohashChannelEntry>>(emptyList())
     val geohashChannels = _geohashChannels.asStateFlow()
@@ -320,6 +328,7 @@ class AppSettings @Inject constructor(
                 _toolboxDuressPinEnabled.value = prefs[TOOLBOX_DURESS_PIN_ENABLED] ?: false
                 _toolboxToolOrder.value = prefs[TOOLBOX_TOOL_ORDER]
                     ?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
+                _xdcCustomTools.value = XdcCustomToolsCodec.decode(prefs[XDC_CUSTOM_TOOLS])
                 _geohashChannels.value = prefs[GEOHASH_CHANNELS]?.let { GeohashChannelStore.decode(it) } ?: emptyList()
                 _geohashNickname.value = prefs[GEOHASH_NICKNAME] ?: ""
                 _blockedPubkeys.value = prefs[BLOCKED_PUBKEYS] ?: emptySet()
@@ -457,6 +466,11 @@ class AppSettings @Inject constructor(
     suspend fun setToolboxToolOrder(order: List<String>) {
         _toolboxToolOrder.value = order
         dataStore.edit { it[TOOLBOX_TOOL_ORDER] = order.joinToString(",") }
+    }
+
+    suspend fun setXdcCustomTools(tools: List<XdcCustomTool>) {
+        _xdcCustomTools.value = tools
+        dataStore.edit { it[XDC_CUSTOM_TOOLS] = XdcCustomToolsCodec.encode(tools) }
     }
 
     suspend fun setToolboxScreenshotBlockEnabled(enabled: Boolean) {

@@ -22,6 +22,7 @@ import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.Widgets
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Icon
@@ -41,6 +42,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -49,6 +51,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.roundToInt
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
+import social.tbone.ui.toolbox.webxdc.XdcToolIcons
 
 /** Uniform tool row height in dp — used for drag math. */
 private val TOOL_ROW_HEIGHT = 68.dp
@@ -69,11 +72,14 @@ fun ToolboxScreen(
     onGeohashChannels: () -> Unit,
     onCalendar: () -> Unit,
     onWallet: () -> Unit,
+    onWebxdc: () -> Unit,
+    onOpenXdcTool: (String) -> Unit,
     onToolboxSettings: () -> Unit,
     viewModel: ToolboxViewModel = hiltViewModel(),
 ) {
     val pinEnabled by viewModel.pinEnabled.collectAsStateWithLifecycle()
     val savedOrder by viewModel.toolOrder.collectAsStateWithLifecycle()
+    val xdcTools by viewModel.xdcCustomTools.collectAsStateWithLifecycle()
     // rememberSaveable survives navigating to sub-screens and back, so the PIN
     // is only asked once per toolbox visit (it resets when the toolbox back
     // stack entry is popped, i.e. leaving to the main menu).
@@ -84,13 +90,42 @@ fun ToolboxScreen(
         return
     }
 
-    // Ordered tool list (persisted; falls back to the default until set).
-    val order = remember(savedOrder) {
-        val o = savedOrder.filter { it in ToolIds }.let { if (it.isEmpty()) viewModel.defaultToolOrder else it }
-        // Include any tools not yet in the saved order (e.g. added later).
-        (o + viewModel.defaultToolOrder.filter { it !in o }).toMutableList()
+    // Tools keyed by id, built here so the click handlers are in scope.
+    // Custom webxdc apps promoted to tools use the "xdc_<appId>" id namespace.
+    val toolsById: Map<String, ToolEntry> = buildMap {
+        // Subtitle is kept to one line: the row is a fixed 68.dp.
+        put("webxdc", ToolEntry(Icons.Outlined.Widgets, "webxdc",
+            "single-player · local, store & nostr", onWebxdc))
+        put("notes", ToolEntry(Icons.Outlined.EditNote, "encrypted notes",
+            "notes, checklists, folders & inline attachments", onNotes))
+        put("bookmarks", ToolEntry(Icons.Outlined.BookmarkBorder, "bookmarks",
+            "encrypted local bookmarks, folders & quotes", onBookmarks))
+        put("voice", ToolEntry(Icons.Outlined.Mic, "voice recorder",
+            "record, anonymize, save or share a voice note", onVoiceRecorder))
+        put("geohash", ToolEntry(Icons.Outlined.Place, "geohash channels",
+            "location channels with an anonymous per-area npub", onGeohashChannels))
+        put("calendar", ToolEntry(Icons.Outlined.CalendarMonth, "calendar",
+            "fully local encrypted calendar", onCalendar))
+        put("wallet", ToolEntry(Icons.Outlined.Bolt, "wallet tool",
+            "NWC connection, zaps & zap-only activity", onWallet))
+        xdcTools.forEach { tool ->
+            put("xdc_${tool.appId}", ToolEntry(
+                icon = XdcToolIcons.byId(tool.iconId),
+                title = tool.name,
+                subtitle = "webxdc mini app",
+                onClick = { onOpenXdcTool(tool.appId) },
+            ))
+        }
     }
-    var currentOrder by remember(savedOrder) { mutableStateOf(order.toList()) }
+
+    // Ordered tool list (persisted; falls back to the default until set).
+    val order = remember(savedOrder, toolsById.keys) {
+        val o = savedOrder.filter { it in toolsById }
+            .let { if (it.isEmpty()) viewModel.defaultToolOrder.filter { id -> id in toolsById } else it }
+        // Include any tools not yet in the saved order (e.g. added later).
+        (o + toolsById.keys.filter { it !in o }).toMutableList()
+    }
+    var currentOrder by remember(savedOrder, toolsById.keys) { mutableStateOf(order.toList()) }
 
     // Drag state.
     var draggingIndex by remember { mutableIntStateOf(-1) }
@@ -99,21 +134,6 @@ fun ToolboxScreen(
     val density = LocalDensity.current
     val rowHeightPx = with(density) { TOOL_ROW_HEIGHT.toPx() }
 
-    // Tools keyed by id, built here so the click handlers are in scope.
-    val toolsById: Map<String, ToolEntry> = mapOf(
-        "notes" to ToolEntry(Icons.Outlined.EditNote, "encrypted notes",
-            "notes, checklists, folders & inline attachments", onNotes),
-        "bookmarks" to ToolEntry(Icons.Outlined.BookmarkBorder, "bookmarks",
-            "encrypted local bookmarks, folders & quotes", onBookmarks),
-        "voice" to ToolEntry(Icons.Outlined.Mic, "voice recorder",
-            "record, anonymize, save or share a voice note", onVoiceRecorder),
-        "geohash" to ToolEntry(Icons.Outlined.Place, "geohash channels",
-            "location channels with an anonymous per-area npub", onGeohashChannels),
-        "calendar" to ToolEntry(Icons.Outlined.CalendarMonth, "calendar",
-            "fully local encrypted calendar", onCalendar),
-        "wallet" to ToolEntry(Icons.Outlined.Bolt, "wallet tool",
-            "NWC connection, zaps & zap-only activity", onWallet),
-    )
     val tools = currentOrder.mapNotNull { id -> toolsById[id]?.let { id to it } }
 
     fun persist(order: List<String>) {
@@ -247,8 +267,6 @@ private data class ToolEntry(
     val onClick: () -> Unit,
 )
 
-private val ToolIds = setOf("notes", "bookmarks", "voice", "geohash", "calendar", "wallet")
-
 @Composable
 internal fun ToolRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
     Row(
@@ -274,9 +292,21 @@ internal fun ToolRow(icon: ImageVector, title: String, subtitle: String, onClick
         }
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = BonyType.body.copy(color = BonyColors.Text))
+            Text(
+                title,
+                style = BonyType.body.copy(color = BonyColors.Text),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             Spacer(Modifier.height(2.dp))
-            Text(subtitle, style = BonyType.meta.copy(color = BonyColors.TextMute))
+            // The row is a fixed 68.dp; keep long subtitles on one line instead
+            // of clipping them mid-glyph.
+            Text(
+                subtitle,
+                style = BonyType.meta.copy(color = BonyColors.TextMute),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
         Text("≡", style = BonyType.body.copy(color = BonyColors.TextMute))
     }

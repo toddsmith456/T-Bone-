@@ -1,0 +1,39 @@
+
+> Configure project :app
+[fork] No release keystore configured (KEYSTORE_PATH/KEYSTORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD). Release builds will fall back to the debug key. For Play-store-quality releases set up a keystore ? see docs/RELEASE.md.
+
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preDebugBuild UP-TO-DATE
+> Task :app:generateDebugBuildConfig UP-TO-DATE
+> Task :app:checkDebugAarMetadata UP-TO-DATE
+> Task :app:generateDebugResValues UP-TO-DATE
+> Task :app:mapDebugSourceSetPaths UP-TO-DATE
+> Task :app:generateDebugResources UP-TO-DATE
+> Task :app:mergeDebugResources UP-TO-DATE
+> Task :app:packageDebugResources UP-TO-DATE
+> Task :app:parseDebugLocalResources UP-TO-DATE
+> Task :app:createDebugCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksDebug UP-TO-DATE
+> Task :app:processDebugMainManifest UP-TO-DATE
+> Task :app:processDebugManifest UP-TO-DATE
+> Task :app:processDebugManifestForPackage UP-TO-DATE
+> Task :app:processDebugResources UP-TO-DATE
+> Task :app:kspDebugKotlin
+> Task :app:compileDebugKotlin
+w: file:///home/user/tbone/app/src/main/kotlin/social/tbone/calendar/CalendarCrypto.kt:81:14 'val isInsideSecureHardware: Boolean' is deprecated. Deprecated in Java.
+w: file:///home/user/tbone/app/src/main/kotlin/social/tbone/media/MediaProcessor.kt:381:5 Annotation 'androidx.media3.common.util.UnstableApi' is not an opt-in requirement marker; therefore, its usage in @OptIn is ignored.
+w: file:///home/user/tbone/app/src/main/kotlin/social/tbone/nostr/geohash/GeohashKeyDerivation.kt:76:42 Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'java.security.SecureRandom?'.
+w: file:///home/user/tbone/app/src/main/kotlin/social/tbone/notes/NotesCrypto.kt:99:14 'val isInsideSecureHardware: Boolean' is deprecated. Deprecated in Java.
+w: file:///home/user/tbone/app/src/main/kotlin/social/tbone/ui/feed/NoteActionsMenu.kt:87:5 This declaration needs opt-in. Its usage should be marked with '@kotlinx.serialization.ExperimentalSerializationApi' or '@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)'
+w: file:///home/user/tbone/app/src/main/kotlin/social/tbone/ui/feed/NoteActionsMenu.kt:267:51 '@property:Deprecated(...) val Icons.Outlined.OpenInNew: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Outlined.OpenInNew.
+w: file:///home/user/tbone/app/src/main/kotlin/social/tbone/ui/feed/NoteBodyText.kt:177:25 '@Deprecated(...) @Composable() @ComposableTarget(...) fun ClickableText(text: AnnotatedString, modifier: Modifier = ..., style: TextStyle = ..., softWrap: Boolean = ..., overflow: TextOverflow = ..., maxLines: Int = ..., onTextLayout: (TextLayoutResult) -> Unit = ..., onClick: (Int) -> Unit): Unit' is deprecated. Use Text or BasicText and pass an AnnotatedString that contains a LinkAnnotation.
+w: file:///home/user/tbone/app/src/main/kotlin/social/tbone/ui/toolbox/WalletToolScreen.kt:86:9 '@Deprecated(...) @Composable() @ComposableTarget(...) fun Divider(modifier: Modifier = ..., thickness: Dp = ..., color: Color = ...): Unit' is deprecated. Renamed to HorizontalDivider.
+w: file:///home/user/tbone/app/src/main/kotlin/social/tbone/ui/toolbox/webxdc/XdcPlayerScreen.kt:288:34 '@Deprecated(...) fun setSaveFormData(p0: Boolean): Unit' is deprecated. Deprecated in Java.
+w: file:///home/user/tbone/app/src/main/kotlin/social/tbone/ui/toolbox/webxdc/XdcPlayerScreen.kt:289:34 'var allowFileAccessFromFileURLs: Boolean' is deprecated. Deprecated in Java.
+w: file:///home/user/tbone/app/src/main/kotlin/social/tbone/ui/toolbox/webxdc/XdcPlayerScreen.kt:290:34 'var allowUniversalAccessFromFileURLs: Boolean' is deprecated. Deprecated in Java.
+w: file:///home/user/tbone/app/src/main/kotlin/social/tbone/updates/UpdateManager.kt:271:21 '@Deprecated(...) field versionCode: Int' is deprecated. Deprecated in Java.
+w: file:///home/user/tbone/app/src/main/kotlin/social/tbone/updates/UpdateManager.kt:325:40 '@Deprecated(...) static field ACTION_INSTALL_PACKAGE: String' is deprecated. Deprecated in Java.
+
+BUILD SUCCESSFUL in 1m 40s
+16 actionable tasks: 2 executed, 14 up-to-date

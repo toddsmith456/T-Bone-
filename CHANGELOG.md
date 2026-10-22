@@ -5,6 +5,23 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+- **webxdc tool**: a single-player Webxdc player in the toolbox.
+  - Four sources: a local `.xdc` file, the official webxdc.org store
+    (`apps.testrun.org`), a T-Bone feed filtered to
+    `npub1zx2…ftjq`, and a Nostr-wide feed of kind-1063
+    `#m application/x-webxdc` events (NIP-DC).
+  - Saved apps run offline in a sandboxed WebView served from a private
+    per-app origin; every other origin is denied and HTML carries a strict CSP.
+  - The full `window.webxdc` API is implemented on-device (updates journal,
+    file import, share sheet, no-op realtime channel) so mini apps behave
+    normally without peers.
+  - Any saved app can be added as a toolbox tool with a custom name and one of
+    20 generic icons; tools are reorderable like the built-in ones.
+  - Adds `#m` filter support to `Filter`, NIP-DC kind constants, and
+    `XdcArchive`/`XdcUpdateStore`/NIP-DC parsing with unit tests, including an
+    opt-in check against ten real `.xdc` packages.
+
 ## [0.4.1] — 2026-10-19
 
 ### Added

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="social.tbone.backup.EncryptedBackupCryptoTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:30" hostname="e2b.local" time="0.925">
+  <properties/>
+  <testcase name="PBKDF2 matches RFC 8018 HMAC-SHA256 vector" classname="social.tbone.backup.EncryptedBackupCryptoTest" time="0.044"/>
+  <testcase name="encrypted stream round trips and rejects a wrong passphrase" classname="social.tbone.backup.EncryptedBackupCryptoTest" time="0.88"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

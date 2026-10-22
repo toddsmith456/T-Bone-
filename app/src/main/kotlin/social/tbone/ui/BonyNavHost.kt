@@ -57,6 +57,8 @@ import social.tbone.ui.toolbox.ToolboxScreen
 import social.tbone.ui.toolbox.ToolboxSettingsScreen
 import social.tbone.ui.toolbox.VoiceRecorderScreen
 import social.tbone.ui.toolbox.WalletToolScreen
+import social.tbone.ui.toolbox.webxdc.XdcPlayerScreen
+import social.tbone.ui.toolbox.webxdc.XdcScreen
 import social.tbone.ui.toolbox.calendar.CalendarEventEditorScreen
 import social.tbone.ui.toolbox.calendar.CalendarScreen
 import social.tbone.ui.toolbox.geohash.GeohashChannelScreen
@@ -107,6 +109,8 @@ private const val ROUTE_TOOLBOX            = "toolbox"
 private const val ROUTE_VOICE              = "voice"
 private const val ROUTE_WALLET             = "wallet"
 private const val ROUTE_TOOLBOX_SETTINGS = "toolbox_settings"
+private const val ROUTE_XDC             = "webxdc"
+private const val ROUTE_XDC_PLAYER      = "webxdc_player/{appId}"
 private const val ROUTE_GEOHASH          = "geohash"
 private const val ROUTE_GEOHASH_CHAT     = "geohash_chat?code={code}"
 private const val ROUTE_CALENDAR         = "calendar"
@@ -206,6 +210,10 @@ fun BonyNavHost() {
                             onGeohashChannels = { navController.navigate(ROUTE_GEOHASH) },
                             onCalendar = { navController.navigate(ROUTE_CALENDAR) },
                             onWallet = { navController.navigate(ROUTE_WALLET) },
+                            onWebxdc = { navController.navigate(ROUTE_XDC) },
+                            onOpenXdcTool = { appId ->
+                                navController.navigate("webxdc_player/" + Uri.encode(appId))
+                            },
                             onToolboxSettings = { navController.navigate(ROUTE_TOOLBOX_SETTINGS) },
                         )
                     }
@@ -241,6 +249,25 @@ fun BonyNavHost() {
                 }
                 composable(ROUTE_TOOLBOX_SETTINGS) {
                     ToolboxSettingsScreen(onBack = { navController.popBackStack() })
+                }
+                composable(ROUTE_XDC) {
+                    // The tool keeps the shared bottom bar, like the other toolbox screens.
+                    WithBottomBar(current = BottomTab.TOOLS, navController = navController) {
+                        XdcScreen(
+                            onBack = { navController.popBackStack() },
+                            onOpenApp = { appId ->
+                                navController.navigate("webxdc_player/" + Uri.encode(appId))
+                            },
+                        )
+                    }
+                }
+                composable(
+                    ROUTE_XDC_PLAYER,
+                    arguments = listOf(navArgument("appId") { type = NavType.StringType }),
+                ) {
+                    // Full screen on purpose: a mini app needs every pixel and
+                    // must not sit under the app's bottom navigation.
+                    XdcPlayerScreen(onBack = { navController.popBackStack() })
                 }
                 composable(ROUTE_WALLET) {
                     // Keep the shared navigation bar below the wallet relay

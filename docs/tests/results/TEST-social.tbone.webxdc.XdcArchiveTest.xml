@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="social.tbone.webxdc.XdcArchiveTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:32" hostname="e2b.local" time="0.022">
+  <properties/>
+  <testcase name="looksLikeXdcAcceptsRealShape" classname="social.tbone.webxdc.XdcArchiveTest" time="0.008"/>
+  <testcase name="fallsBackToFileNameWithoutManifest" classname="social.tbone.webxdc.XdcArchiveTest" time="0.003"/>
+  <testcase name="identifierIsStableAndContentAddressed" classname="social.tbone.webxdc.XdcArchiveTest" time="0.003"/>
+  <testcase name="readsManifestNameAndIcon" classname="social.tbone.webxdc.XdcArchiveTest" time="0.002"/>
+  <testcase name="rejectsPathTraversal" classname="social.tbone.webxdc.XdcArchiveTest" time="0.0"/>
+  <testcase name="manifestHandlesEscapesSingleQuotesAndComments" classname="social.tbone.webxdc.XdcArchiveTest" time="0.001"/>
+  <testcase name="acceptsStoredZipEntries" classname="social.tbone.webxdc.XdcArchiveTest" time="0.0"/>
+  <testcase name="rejectsNonZipBytes" classname="social.tbone.webxdc.XdcArchiveTest" time="0.0"/>
+  <testcase name="absolutePathsAreSandboxedNotEscaped" classname="social.tbone.webxdc.XdcArchiveTest" time="0.002"/>
+  <testcase name="normalisePathRejectsTraversalAndDrives" classname="social.tbone.webxdc.XdcArchiveTest" time="0.0"/>
+  <testcase name="rejectsArchiveWithoutIndexHtml" classname="social.tbone.webxdc.XdcArchiveTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

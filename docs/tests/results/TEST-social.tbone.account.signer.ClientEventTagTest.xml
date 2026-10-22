@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="social.tbone.account.signer.ClientEventTagTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:30" hostname="e2b.local" time="0.015">
+  <properties/>
+  <testcase name="disabled client tagging leaves the unsigned event untouched" classname="social.tbone.account.signer.ClientEventTagTest" time="0.014"/>
+  <testcase name="adds T-Bone client tag to enabled templates before signing" classname="social.tbone.account.signer.ClientEventTagTest" time="0.001"/>
+  <testcase name="does not add a duplicate when a client tag is already present" classname="social.tbone.account.signer.ClientEventTagTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

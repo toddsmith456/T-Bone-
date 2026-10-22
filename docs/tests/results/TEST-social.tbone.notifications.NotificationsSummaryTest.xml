@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="social.tbone.notifications.NotificationsSummaryTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:31" hostname="e2b.local" time="0.002">
+  <properties/>
+  <testcase name="summary uses epoch seconds and includes only the past day" classname="social.tbone.notifications.NotificationsSummaryTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="social.tbone.webxdc.XdcRealFilesTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:33" hostname="e2b.local" time="0.322">
+  <properties/>
+  <testcase name="parsesEveryRealPackage" classname="social.tbone.webxdc.XdcRealFilesTest" time="0.322"/>
+  <system-out><![CDATA[OK 1c9e60c6b427119c5fbc91ad2af0413779d9af4ecc804c022f7af23e798bc005.bin.xdc -> "XDC-Chess" files=7 icon=16550 bytes archive=63850
+OK 98d405bf23477628e1c2e8da6c1c471815129c8902e0bb2ef8a18d29c64d80e5.xdc -> "Shell" files=5 icon=514 bytes archive=163507
+OK aca7b91a444ec91da30841b8d1a1369b395409c0be670e1014369b36fdb74c23.xdc -> "Gomoku" files=20 icon=0 bytes archive=880182
+OK acbnnick-scramble-v1.0.4.xdc -> "Scramble" files=10 icon=16823 bytes archive=295147
+OK arcanecircle-2048-v2.4.0.xdc -> "2048" files=5 icon=696 bytes archive=37333
+OK arcanecircle-arkanoid-v3.10.0.xdc -> "Arkanoid" files=5 icon=6497 bytes archive=73384
+OK arcanecircle-audiodash-v1.1.0.xdc -> "Audio Dash" files=4 icon=5731 bytes archive=17681
+OK cbd30342db73b1563ddeee42667526c9aecbe852f2b17dbff3f5bc95d4575a38.xdc -> "Heretic (Shareware)" files=48 icon=240044 bytes archive=10601925
+OK e1ef6768391108a8b300203b7781556211780afd97126ce2ecf8b41b1397ea07.xdc -> "Oregon Trail" files=48 icon=119130 bytes archive=9474278
+OK nelson9608-calculator-xdc-V1.0.0.xdc -> "Calculator" files=7 icon=1541 bytes archive=66292
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -29,6 +29,12 @@ data class Filter(
     @SerialName("#E") val bigETags: List<String>? = null,
     @SerialName("#p") val pTags: List<String>? = null,
     @SerialName("#t") val tTags: List<String>? = null,
+    /**
+     * NIP-DC discovery: webxdc apps are kind 1063 events whose `m` tag is
+     * `application/x-webxdc`. `#m` is the only relay-indexable way to find
+     * them, and it is also used for other MIME-filtered NIP-94 feeds.
+     */
+    @SerialName("#m") val mTags: List<String>? = null,
     @SerialName("#g") val gTags: List<String>? = null,
     val search: String? = null,  // NIP-50: full-text search (relay-dependent)
 ) {
