@@ -1,7 +1,12 @@
 package social.tbone.ui.feed
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -47,6 +52,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -323,96 +329,7 @@ fun FeedScreen(
                                 },
                                 style = BonyType.meta.copy(color = BonyColors.TextMute),
                             )
-                            if (currentFeed == FeedTab.CLOCK) {
-                                Spacer(Modifier.height(6.dp))
-                                Text(
-                                    text = "${clockHours}h ago · try a shorter window",
-                                    style = BonyType.caption.copy(color = BonyColors.TextMute),
-                                )
-                            }
-                        }
-                    }
-                }
-                else -> {
-                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                        // Compact horizontally-scrollable strip of home-pinned
-                        // location channels with unread badges.
-                        item(key = "geohash_home") {
-                            GeohashHomeStrip(
-                                onOpenGeohash = onOpenGeohash,
-                            )
-                        }
-                        items(uiState.events, key = { it.id }) { event ->
-                            val refId = remember(event.id) {
-                                when (event.kind) {
-                                    social.tbone.nostr.EventKind.REPOST ->
-                                        event.parsedTags.firstOrNull { it.name == "e" }?.value()
-                                    else -> event.parsedTags.quotedEventId
-                                        ?: extractInlineQuoteId(event.content)
-                                }
-                            }
-                            val quotedEvent = refId?.let { quotedEvents[it] }
-                            NoteCard(
-                                event = event,
-                                profile = profiles[event.pubkey],
-                                profiles = profiles,
-                                quotedEvent = quotedEvent,
-                                onThreadClick = onThreadClick,
-                                onProfileClick = onProfileClick,
-                                onHashtagClick = onHashtagClick,
-                                onReply = onReplyClick,
-                                onBoost = viewModel::boost,
-                                onQuote = onQuoteClick,
-                                onLike = viewModel::react,
-                                reactors = if (event.kind == social.tbone.nostr.EventKind.REPOST)
-                                    quotedEvent?.let { reactions[it.id] }
-                                else
-                                    reactions[event.id],
-                                replies = replies,
-                                repliedByMe = repliedByMe,
-                                pollVoteCounts = pollVoteCounts,
-                                pollTotalVotes = pollTotalVotes,
-                                pollMyVotes = pollMyVotes,
-                                pollVoteVersion = pollVoteVersion,
-                                onPollVote = viewModel::voteOnPoll,
-                                activePubkey = activeAccount?.pubkey,
-                                quotedEvents = quotedEvents,
-                                quotedEventId = refId,
-                            )
-                        }
-                        item(key = "feed_paging") {
-                            if (currentFeed == FeedTab.CLOCK) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable(
-                                            enabled = uiState.clockCanLoadOlder && !uiState.clockOlderLoading,
-                                            onClick = viewModel::loadOlderClock,
-                                        )
-                                        .padding(vertical = 18.dp),
-                                    horizontalArrangement = Arrangement.Center,
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    if (uiState.clockOlderLoading) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(14.dp),
-                                            color = BonyColors.Accent,
-                                            strokeWidth = 1.5.dp,
-                                        )
-                                        Spacer(Modifier.width(8.dp))
-                                    }
-                                    Text(
-                                        text = when {
-                                            uiState.clockOlderLoading -> "rewinding…"
-                                            uiState.clockCanLoadOlder -> "keep going back · 100 more"
-                                            else -> "start of the archive"
-                                        },
-                                        style = BonyType.caption.copy(
-                                            color = if (uiState.clockCanLoadOlder) BonyColors.Accent else BonyColors.TextMute,
-                                        ),
-                                    )
-                                }
-                            } else if (currentFeed == FeedTab.SUGGESTED) {
+                            if (currentFeed == FeedTab.SUGGESTED) {
                                 Text(
                                     text = "─── the end · pull to refresh ───",
                                     style = BonyType.caption.copy(color = BonyColors.TextMute),
@@ -451,8 +368,9 @@ fun FeedScreen(
                                     )
                                 }
                             } else {
+                                // Follows and Clock both load one page and stop.
                                 Text(
-                                    text = "─── pull to load older ───",
+                                    text = "─── pull to refresh ───",
                                     style = BonyType.caption.copy(color = BonyColors.TextMute),
                                     textAlign = TextAlign.Center,
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
@@ -744,11 +662,15 @@ private val FeedTab.label: String
 // ── Clock feed: hour selector ────────────────────────────────────────────────
 
 /**
- * Compact, horizontally scrollable 1–24 h picker for the clock feed.
+ * The clock feed's hour picker.
  *
- * The selection is persisted (see `AppSettings.clockFeedHours`), so reopening
- * the app lands on the same anchor. The strip auto-scrolls to the active hour
- * so a saved 24 h is visible without hunting.
+ * Collapsed by default: one line showing the hour you chose, which is all you
+ * need once it is set — a 24-chip row permanently parked under the tabs costs a
+ * whole note's worth of vertical space. Tapping the line expands the scrollable
+ * 1–24 h strip; picking an hour collapses it again.
+ *
+ * The selection persists (`AppSettings.clockFeedHours`), so the collapsed line
+ * is also the state you get on the next launch.
  */
 @Composable
 private fun ClockHourStrip(
@@ -756,23 +678,26 @@ private fun ClockHourStrip(
     anchor: Long,
     onSelect: (Int) -> Unit,
 ) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
-    LaunchedEffect(selected) {
-        // Keep the chosen hour near the middle of the strip.
-        val target = (selected - 1 - 3).coerceAtLeast(0)
-        listState.animateScrollToItem(target)
+
+    // When it opens, put the active hour in view without a scroll animation —
+    // the row is appearing, not moving.
+    LaunchedEffect(expanded, selected) {
+        if (expanded) listState.scrollToItem((selected - 1 - 2).coerceAtLeast(0))
     }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(BonyColors.Surface)
-            .padding(vertical = 7.dp),
+            .padding(vertical = 6.dp),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp),
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 14.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
@@ -792,45 +717,55 @@ private fun ClockHourStrip(
                 style = BonyType.meta.copy(color = BonyColors.TextMute),
             )
             Spacer(Modifier.weight(1f))
+            // The chevron is the only affordance the collapsed row needs.
             Text(
-                text = "time travel",
-                style = BonyType.caption.copy(color = BonyColors.TextMute),
+                text = if (expanded) "▴" else "▾",
+                style = BonyType.tag.copy(color = BonyColors.TextMute),
             )
         }
-        Spacer(Modifier.height(6.dp))
-        LazyRow(
-            state = listState,
-            contentPadding = PaddingValues(horizontal = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            modifier = Modifier.fillMaxWidth(),
+
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
         ) {
-            items(24) { index ->
-                val hours = index + 1
-                val isSelected = hours == selected
-                val shape = appCornerShape(MaterialTheme.shapes.small, RectangleShape)
-                Box(
-                    modifier = Modifier
-                        .clip(shape)
-                        .border(
-                            1.dp,
-                            if (isSelected) BonyColors.Accent else BonyColors.Rule,
-                            shape,
+            LazyRow(
+                state = listState,
+                contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 6.dp, bottom = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                items(24) { index ->
+                    val hours = index + 1
+                    val isSelected = hours == selected
+                    val shape = appCornerShape(MaterialTheme.shapes.small, RectangleShape)
+                    Box(
+                        modifier = Modifier
+                            .clip(shape)
+                            .border(
+                                1.dp,
+                                if (isSelected) BonyColors.Accent else BonyColors.Rule,
+                                shape,
+                            )
+                            .background(
+                                if (isSelected) BonyColors.AccentBg else BonyColors.Bg,
+                                shape,
+                            )
+                            .clickable {
+                                onSelect(hours)
+                                expanded = false
+                            }
+                            .heightIn(min = 32.dp)
+                            .padding(horizontal = 11.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "${hours}h",
+                            style = BonyType.tag.copy(
+                                color = if (isSelected) BonyColors.Accent else BonyColors.TextMute,
+                            ),
                         )
-                        .background(
-                            if (isSelected) BonyColors.AccentBg else BonyColors.Bg,
-                            shape,
-                        )
-                        .clickable { onSelect(hours) }
-                        .heightIn(min = 32.dp)
-                        .padding(horizontal = 11.dp, vertical = 6.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = "${hours}h",
-                        style = BonyType.tag.copy(
-                            color = if (isSelected) BonyColors.Accent else BonyColors.TextMute,
-                        ),
-                    )
+                    }
                 }
             }
         }

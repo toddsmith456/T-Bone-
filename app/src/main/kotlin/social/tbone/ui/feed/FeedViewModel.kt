@@ -78,8 +78,6 @@ data class FeedUiState(
     val globalCanLoadOlder: Boolean = false,
     /** Clock feed: epoch second the timeline is anchored at (now − hours). */
     val clockAnchor: Long = 0L,
-    val clockOlderLoading: Boolean = false,
-    val clockCanLoadOlder: Boolean = false,
     /** Suggested feed: how many of the curated accounts produced notes on screen. */
     val suggestedAuthors: Int = 0,
     val suggestedTotal: Int = 0,
@@ -255,7 +253,6 @@ class FeedViewModel @Inject constructor(
     // ── Clock feed ────────────────────────────────────────────────────────────
     /** Authors of the clock feed (the follow set, resolved once per load). */
     @Volatile private var clockAuthors: List<String> = emptyList()
-    @Volatile private var clockOlderSubId: String? = null
 
     // ── Suggested feed ────────────────────────────────────────────────────────
     /** One subscription per author chunk (relays reject a single 1,300-author REQ). */
@@ -957,7 +954,6 @@ class FeedViewModel @Inject constructor(
         followsForRelaySelection = emptyList()
         followRelayMap.clear()
 
-        unsub(clockOlderSubId); clockOlderSubId = null
         clockAuthors = emptyList()
 
         suggestedSubIds.forEach { pool.unsubscribe(it) }
@@ -999,8 +995,6 @@ class FeedViewModel @Inject constructor(
                 isLoading = true,
                 error = null,
                 clockAnchor = anchor,
-                clockOlderLoading = false,
-                clockCanLoadOlder = false,
                 globalOlderLoading = false,
                 globalNewerLoading = false,
                 globalNewerAvailable = 0,
@@ -1059,8 +1053,6 @@ class FeedViewModel @Inject constructor(
             it.copy(
                 events = applyContentFilter(kept),
                 clockAnchor = anchor,
-                clockOlderLoading = false,
-                clockCanLoadOlder = kept.isNotEmpty(),
                 isLoading = kept.isEmpty(),
                 error = null,
             )
@@ -1089,43 +1081,7 @@ class FeedViewModel @Inject constructor(
         )
         viewModelScope.launch {
             delay(SETTLE_TIMEOUT_MS)
-            if (feedSubId != null) {
-                val size = synchronized(feedEvents) { feedEvents.size }
-                _uiState.update {
-                    it.copy(isLoading = false, clockCanLoadOlder = size >= CLOCK_PAGE_SIZE)
-                }
-            }
-        }
-    }
-
-    /** Advances the clock feed one page further into the past. */
-    fun loadOlderClock() {
-        if (_currentFeed.value != FeedTab.CLOCK) return
-        val state = _uiState.value
-        if (state.clockOlderLoading || !state.clockCanLoadOlder || clockAuthors.isEmpty()) return
-        val oldest = synchronized(feedEvents) { feedEvents.lastOrNull()?.createdAt } ?: return
-        if (oldest <= 0L) return
-
-        _uiState.update { it.copy(clockOlderLoading = true) }
-        val id = sub(
-            listOf(
-                Filter(
-                    authors = clockAuthors,
-                    kinds = FEED_KINDS,
-                    until = oldest - 1,
-                    limit = CLOCK_PAGE_SIZE,
-                )
-            ),
-            label = "clock-older",
-        )
-        clockOlderSubId = id
-        viewModelScope.launch {
-            delay(SETTLE_TIMEOUT_MS)
-            if (clockOlderSubId == id) {
-                clockOlderSubId = null
-                unsub(id)
-                _uiState.update { it.copy(clockOlderLoading = false) }
-            }
+            if (feedSubId != null) _uiState.update { it.copy(isLoading = false) }
         }
     }
 
@@ -1148,8 +1104,6 @@ class FeedViewModel @Inject constructor(
                 isLoading = true,
                 error = null,
                 clockAnchor = 0L,
-                clockOlderLoading = false,
-                clockCanLoadOlder = false,
                 globalOlderLoading = false,
                 globalNewerLoading = false,
                 globalNewerAvailable = 0,
@@ -1213,14 +1167,7 @@ class FeedViewModel @Inject constructor(
         if (feedSettled) return
         feedSettled = true
         flushBuffer()
-        val size = synchronized(feedEvents) { feedEvents.size }
-        _uiState.update {
-            it.copy(
-                isLoading = false,
-                clockOlderLoading = false,
-                clockCanLoadOlder = size >= CLOCK_PAGE_SIZE,
-            )
-        }
+        _uiState.update { it.copy(isLoading = false) }
     }
 
     /**
@@ -1328,19 +1275,14 @@ class FeedViewModel @Inject constructor(
                                 settleSuggested()
                             }
                         }
-                        msg.subscriptionId == clockOlderSubId -> {
-                            unsub(clockOlderSubId); clockOlderSubId = null
-                            _uiState.update { it.copy(clockOlderLoading = false) }
-                        }
                         msg.subscriptionId == globalOlderSubId -> {
                             handleGlobalPageEose(globalOlderRequest, poolMessage.relayUrl)
                         }
                         msg.subscriptionId == globalNewerSubId -> {
                             handleGlobalPageEose(globalNewerRequest, poolMessage.relayUrl)
                         }
-                        // The clock feed's own subscription: settle through its
-                        // window-specific path so `clockCanLoadOlder` is set (the
-                        // generic branch below only knows about Global paging).
+                        // The clock feed's own subscription settles through its own
+                        // path; the generic branch below only knows about Global paging.
                         msg.subscriptionId == feedSubId && _currentFeed.value == FeedTab.CLOCK -> {
                             settleWindowFeed()
                         }
