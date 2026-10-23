@@ -1,14 +1,14 @@
 package social.tbone.ui.feed
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
-import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,34 +19,38 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.outlined.Construction
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
@@ -56,8 +60,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.delay
 import dev.youniversal.theme.YouniversalTheme
+import kotlinx.coroutines.delay
 import social.tbone.nostr.Event
 import social.tbone.nostr.quotedEventId
 import social.tbone.nostr.relay.RelayStatus
@@ -100,6 +104,7 @@ fun FeedScreen(
     val updateAvailable by viewModel.updateAvailable.collectAsStateWithLifecycle()
     val globalAutoLoadEnabled by viewModel.globalAutoLoadEnabled.collectAsStateWithLifecycle()
     val globalAutoLoadInterval by viewModel.globalAutoLoadIntervalMinutes.collectAsStateWithLifecycle()
+    val clockHours by viewModel.clockFeedHours.collectAsStateWithLifecycle()
     val pollVoteCounts by viewModel.pollVoteCounts.collectAsStateWithLifecycle()
     val pollTotalVotes by viewModel.pollTotalVotes.collectAsStateWithLifecycle()
     val pollMyVotes by viewModel.pollMyVotes.collectAsStateWithLifecycle()
@@ -166,6 +171,46 @@ fun FeedScreen(
             currentFeed = currentFeed,
             onSwitch = viewModel::switchFeed,
         )
+
+        // ── Clock feed: the hour the timeline is anchored at ─────────────────
+        if (currentFeed == FeedTab.CLOCK) {
+            ClockHourStrip(
+                selected = clockHours,
+                anchor = uiState.clockAnchor,
+                onSelect = viewModel::setClockFeedHours,
+            )
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+        }
+
+        // ── Suggested feed: whose notes these are ────────────────────────────
+        if (currentFeed == FeedTab.SUGGESTED) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(BonyColors.Surface)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = FeedTabIcons.tbone,
+                    contentDescription = null,
+                    tint = BonyColors.Accent,
+                    modifier = Modifier.size(13.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("T-BONE PICKS", style = BonyType.tag.copy(color = BonyColors.Accent))
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = if (uiState.suggestedAuthors > 0) {
+                        "${uiState.suggestedAuthors} of ${uiState.suggestedTotal} accounts posting"
+                    } else {
+                        "${uiState.suggestedTotal} accounts"
+                    },
+                    style = BonyType.meta.copy(color = BonyColors.TextMute),
+                )
+            }
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+        }
 
         // Global controls: new events are buffered and loaded in batches, so a
         // live relay stream cannot continuously evict the last row while reading.
@@ -269,10 +314,23 @@ fun FeedScreen(
                 }
                 uiState.events.isEmpty() && !isRefreshing -> {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "no notes yet",
-                            style = BonyType.meta.copy(color = BonyColors.TextMute),
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = when (currentFeed) {
+                                    FeedTab.CLOCK -> "nothing in this window"
+                                    FeedTab.SUGGESTED -> "no notes from these accounts"
+                                    else -> "no notes yet"
+                                },
+                                style = BonyType.meta.copy(color = BonyColors.TextMute),
+                            )
+                            if (currentFeed == FeedTab.CLOCK) {
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    text = "${clockHours}h ago · try a shorter window",
+                                    style = BonyType.caption.copy(color = BonyColors.TextMute),
+                                )
+                            }
+                        }
                     }
                 }
                 else -> {
@@ -323,7 +381,45 @@ fun FeedScreen(
                             )
                         }
                         item(key = "feed_paging") {
-                            if (currentFeed == FeedTab.GLOBAL) {
+                            if (currentFeed == FeedTab.CLOCK) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable(
+                                            enabled = uiState.clockCanLoadOlder && !uiState.clockOlderLoading,
+                                            onClick = viewModel::loadOlderClock,
+                                        )
+                                        .padding(vertical = 18.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    if (uiState.clockOlderLoading) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(14.dp),
+                                            color = BonyColors.Accent,
+                                            strokeWidth = 1.5.dp,
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                    }
+                                    Text(
+                                        text = when {
+                                            uiState.clockOlderLoading -> "rewinding…"
+                                            uiState.clockCanLoadOlder -> "keep going back · 100 more"
+                                            else -> "start of the archive"
+                                        },
+                                        style = BonyType.caption.copy(
+                                            color = if (uiState.clockCanLoadOlder) BonyColors.Accent else BonyColors.TextMute,
+                                        ),
+                                    )
+                                }
+                            } else if (currentFeed == FeedTab.SUGGESTED) {
+                                Text(
+                                    text = "─── the end · pull to refresh ───",
+                                    style = BonyType.caption.copy(color = BonyColors.TextMute),
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                                )
+                            } else if (currentFeed == FeedTab.GLOBAL) {
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -557,11 +653,17 @@ private fun FeedTabStrip(
     val youniversal = YouniversalTheme.enabled
     val effectiveFontScale = LocalDensity.current.fontScale.coerceAtLeast(0.1f)
     // Youniversal composes its text scale with Android's system scale. Cap the
-    // rendered tab-label size so large accessibility/theme scales cannot force
-    // either half-width tab outside the screen.
-    val youniversalLabelSize =
-        (11f * effectiveFontScale).coerceAtMost(15f).div(effectiveFontScale).sp
-    val youniversalLetterSpacing = (0.4f / effectiveFontScale).sp
+    // rendered tab-label size so large accessibility/theme scales cannot force a
+    // quarter-width tab outside the screen.
+    // Four tabs on one row leaves ~90 dp per tab even on a small phone, so the
+    // label has a hard ceiling: 9 dp normally, and never more than 12 dp when
+    // Youniversal composes its scale on top of the system one. Dividing by the
+    // effective scale keeps the *rendered* size fixed instead of letting a 2x
+    // accessibility setting push "SUGGESTED" out of its slot.
+    val labelDp = if (youniversal) (9f * effectiveFontScale).coerceAtMost(12f) else 9f
+    val tabLabelSize = (labelDp / effectiveFontScale).sp
+    val tabLetterSpacing = (0.2f / effectiveFontScale).sp
+
     Box(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -570,33 +672,51 @@ private fun FeedTabStrip(
         ) {
             FeedTab.values().forEach { tab ->
                 val active = currentFeed == tab
-                val label = if (tab == FeedTab.HOME) "FOLLOWING" else "GLOBAL"
                 val tabShape = appCornerShape(MaterialTheme.shapes.small, RectangleShape)
+                // Tint animates so switching feels like the same control moving,
+                // not four unrelated buttons lighting up.
+                val tint by animateColorAsState(
+                    targetValue = if (active) BonyColors.Accent else BonyColors.TextMute,
+                    animationSpec = tween(160),
+                    label = "feedTabTint",
+                )
                 Column(
                     modifier = Modifier
                         .weight(1f)
                         .clip(tabShape)
                         .clickable { onSwitch(tab) }
                         .background(BonyColors.Surface, tabShape)
-                        .then(if (active) Modifier.border(
-                            width = 1.dp, color = BonyColors.Accent,
-                            shape = tabShape,
-                        ) else Modifier)
-                        .heightIn(min = 46.dp)
-                        .padding(horizontal = 10.dp, vertical = 10.dp),
+                        .then(
+                            if (active) Modifier.border(
+                                width = 1.dp, color = BonyColors.Accent, shape = tabShape,
+                            ) else Modifier
+                        )
+                        .heightIn(min = 50.dp)
+                        .padding(horizontal = 2.dp, vertical = 7.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
                 ) {
+                    Icon(
+                        imageVector = FeedTabIcons.forTab(tab),
+                        // The label below is the accessible name; announcing both
+                        // would read each tab twice.
+                        contentDescription = null,
+                        tint = tint,
+                        modifier = Modifier.size(17.dp),
+                    )
+                    Spacer(Modifier.height(3.dp))
                     Text(
-                        text = label,
+                        text = tab.label,
                         style = BonyType.tag.copy(
-                            fontSize = if (youniversal) youniversalLabelSize else BonyType.tag.fontSize,
-                            letterSpacing = if (youniversal) youniversalLetterSpacing else BonyType.tag.letterSpacing,
-                            color = if (active) BonyColors.Accent else BonyColors.TextMute,
+                            fontSize = tabLabelSize,
+                            letterSpacing = tabLetterSpacing,
+                            color = tint,
                         ),
                         modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center,
                         maxLines = 1,
                         softWrap = false,
-                        overflow = TextOverflow.Ellipsis,
+                        overflow = TextOverflow.Clip,
                     )
                 }
             }
@@ -610,4 +730,118 @@ private fun FeedTabStrip(
                 .align(Alignment.BottomCenter),
         )
     }
+}
+
+/** Short label under each tab icon. */
+private val FeedTab.label: String
+    get() = when (this) {
+        FeedTab.HOME -> "FOLLOWS"
+        FeedTab.CLOCK -> "CLOCK"
+        FeedTab.SUGGESTED -> "SUGGESTED"
+        FeedTab.GLOBAL -> "GLOBAL"
+    }
+
+// ── Clock feed: hour selector ────────────────────────────────────────────────
+
+/**
+ * Compact, horizontally scrollable 1–24 h picker for the clock feed.
+ *
+ * The selection is persisted (see `AppSettings.clockFeedHours`), so reopening
+ * the app lands on the same anchor. The strip auto-scrolls to the active hour
+ * so a saved 24 h is visible without hunting.
+ */
+@Composable
+private fun ClockHourStrip(
+    selected: Int,
+    anchor: Long,
+    onSelect: (Int) -> Unit,
+) {
+    val listState = rememberLazyListState()
+    LaunchedEffect(selected) {
+        // Keep the chosen hour near the middle of the strip.
+        val target = (selected - 1 - 3).coerceAtLeast(0)
+        listState.animateScrollToItem(target)
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(BonyColors.Surface)
+            .padding(vertical = 7.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = FeedTabIcons.clock,
+                contentDescription = null,
+                tint = BonyColors.Accent,
+                modifier = Modifier.size(13.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = "${selected}h ago",
+                style = BonyType.tag.copy(color = BonyColors.Accent),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "· ${clockTimeLabel(anchor)}",
+                style = BonyType.meta.copy(color = BonyColors.TextMute),
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = "time travel",
+                style = BonyType.caption.copy(color = BonyColors.TextMute),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        LazyRow(
+            state = listState,
+            contentPadding = PaddingValues(horizontal = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            items(24) { index ->
+                val hours = index + 1
+                val isSelected = hours == selected
+                val shape = appCornerShape(MaterialTheme.shapes.small, RectangleShape)
+                Box(
+                    modifier = Modifier
+                        .clip(shape)
+                        .border(
+                            1.dp,
+                            if (isSelected) BonyColors.Accent else BonyColors.Rule,
+                            shape,
+                        )
+                        .background(
+                            if (isSelected) BonyColors.AccentBg else BonyColors.Bg,
+                            shape,
+                        )
+                        .clickable { onSelect(hours) }
+                        .heightIn(min = 32.dp)
+                        .padding(horizontal = 11.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "${hours}h",
+                        style = BonyType.tag.copy(
+                            color = if (isSelected) BonyColors.Accent else BonyColors.TextMute,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** "09:12" in the device's own timezone — the anchor, not "now". */
+private fun clockTimeLabel(anchorSeconds: Long): String {
+    if (anchorSeconds <= 0L) return ""
+    val cal = java.util.Calendar.getInstance().apply { timeInMillis = anchorSeconds * 1000L }
+    val h = cal.get(java.util.Calendar.HOUR_OF_DAY)
+    val m = cal.get(java.util.Calendar.MINUTE)
+    return "%02d:%02d".format(h, m)
 }

@@ -37,6 +37,9 @@ class AppSettings @Inject constructor(
     private val scope: CoroutineScope,
 ) {
     companion object {
+        /** Default anchor for the clock feed: six hours back. */
+        const val DEFAULT_CLOCK_HOURS = 6
+
         private val TOR_ENABLED = booleanPreferencesKey("tor_enabled")
         // False until the user (or auto-detect) explicitly sets the preference.
         // Lets first-run logic distinguish "never set" from "user chose off".
@@ -44,6 +47,8 @@ class AppSettings @Inject constructor(
         private val LAST_VIEWED_NOTIFICATIONS_AT = longPreferencesKey("last_viewed_notifications_at")
         private val GLOBAL_AUTO_LOAD_ENABLED = booleanPreferencesKey("global_auto_load_enabled")
         private val GLOBAL_AUTO_LOAD_INTERVAL_MINUTES = intPreferencesKey("global_auto_load_interval_minutes")
+        // Clock feed: how many hours back the timeline is anchored. Persists across launches.
+        private val CLOCK_FEED_HOURS = intPreferencesKey("clock_feed_hours")
         private val PIN_ENABLED = booleanPreferencesKey("pin_enabled")
         private val PIN_HASH = stringPreferencesKey("pin_hash")
         // Duress pin: entering it on the lock screen wipes all app data instead
@@ -150,6 +155,10 @@ class AppSettings @Inject constructor(
 
     private val _globalAutoLoadIntervalMinutes = MutableStateFlow(5)
     val globalAutoLoadIntervalMinutes = _globalAutoLoadIntervalMinutes.asStateFlow()
+
+    /** Hours back the clock feed is anchored (1..24). */
+    private val _clockFeedHours = MutableStateFlow(DEFAULT_CLOCK_HOURS)
+    val clockFeedHours = _clockFeedHours.asStateFlow()
 
     private val _pinEnabled = MutableStateFlow(false)
     val pinEnabled = _pinEnabled.asStateFlow()
@@ -310,6 +319,7 @@ class AppSettings @Inject constructor(
                 _lastViewedNotificationsAt.value = prefs[LAST_VIEWED_NOTIFICATIONS_AT] ?: 0L
                 _globalAutoLoadEnabled.value = prefs[GLOBAL_AUTO_LOAD_ENABLED] ?: true
                 _globalAutoLoadIntervalMinutes.value = (prefs[GLOBAL_AUTO_LOAD_INTERVAL_MINUTES] ?: 5).coerceIn(1, 20)
+                _clockFeedHours.value = (prefs[CLOCK_FEED_HOURS] ?: DEFAULT_CLOCK_HOURS).coerceIn(1, 24)
                 _pinEnabled.value = prefs[PIN_ENABLED] ?: false
                 _duressPinEnabled.value = prefs[DURESS_PIN_ENABLED] ?: false
                 _imageLoadMode.value = ImageLoadMode.fromPref(prefs[IMAGE_LOAD_MODE])
@@ -384,6 +394,13 @@ class AppSettings @Inject constructor(
         val safeMinutes = minutes.coerceIn(1, 20)
         _globalAutoLoadIntervalMinutes.value = safeMinutes
         dataStore.edit { it[GLOBAL_AUTO_LOAD_INTERVAL_MINUTES] = safeMinutes }
+    }
+
+    /** Clamps to 1..24 and persists, so the clock feed survives a restart. */
+    suspend fun setClockFeedHours(hours: Int) {
+        val safe = hours.coerceIn(1, 24)
+        _clockFeedHours.value = safe
+        dataStore.edit { it[CLOCK_FEED_HOURS] = safe }
     }
 
     suspend fun setPinEnabled(enabled: Boolean) {

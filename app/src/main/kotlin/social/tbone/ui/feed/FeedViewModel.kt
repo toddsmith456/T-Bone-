@@ -21,9 +21,11 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import social.tbone.account.Account
 import social.tbone.account.AccountRepository
 import social.tbone.db.EventRepository
+import social.tbone.feed.SuggestedFollows
 import social.tbone.lists.ListType
 import social.tbone.lists.MuteListRepository
 import social.tbone.lists.OfflineListRepository
@@ -57,7 +59,14 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.UUID
 import javax.inject.Inject
 
-enum class FeedTab { HOME, GLOBAL }
+/**
+ * The four feeds, in tab order.
+ *
+ * [HOME] is your follow list, [CLOCK] is the same follow list anchored N hours
+ * in the past, [SUGGESTED] is the curated author set shipped with the app and
+ * [GLOBAL] is everything the relays have.
+ */
+enum class FeedTab { HOME, CLOCK, SUGGESTED, GLOBAL }
 
 data class FeedUiState(
     val events: List<Event> = emptyList(),
@@ -67,6 +76,14 @@ data class FeedUiState(
     val globalNewerLoading: Boolean = false,
     val globalNewerAvailable: Int = 0,
     val globalCanLoadOlder: Boolean = false,
+    /** Clock feed: epoch second the timeline is anchored at (now − hours). */
+    val clockAnchor: Long = 0L,
+    val clockOlderLoading: Boolean = false,
+    val clockCanLoadOlder: Boolean = false,
+    /** Suggested feed: how many of the curated accounts produced notes on screen. */
+    val suggestedAuthors: Int = 0,
+    val suggestedTotal: Int = 0,
+    val suggestedLoading: Boolean = false,
 )
 
 private enum class GlobalPageKind { OLDER, NEWER }
@@ -103,9 +120,12 @@ class FeedViewModel @Inject constructor(
     private val muteRepository: MuteListRepository,
     private val eventOpenCoordinator: EventOpenCoordinator,
     private val updateManager: UpdateManager,
+    private val suggestedFollows: SuggestedFollows,
 ) : ViewModel() {
 
-    private val _uiState = MutableStateFlow(FeedUiState())
+    // The suggested feed's roster is known at construction, so the header can
+    // show "1,346 accounts" before the first request finishes.
+    private val _uiState = MutableStateFlow(FeedUiState(suggestedTotal = suggestedFollows.size))
     val uiState: StateFlow<FeedUiState> = _uiState.asStateFlow()
 
     // Sorted set keeps the feed in createdAt-desc order without re-sorting on every insert.
@@ -187,6 +207,23 @@ class FeedViewModel @Inject constructor(
         viewModelScope.launch { appSettings.setGlobalAutoLoadIntervalMinutes(minutes) }
     }
 
+    /** Hours back the clock feed is anchored; persisted in DataStore. */
+    val clockFeedHours: StateFlow<Int> = appSettings.clockFeedHours
+
+    /**
+     * Move the clock feed's anchor. Re-anchors immediately when the clock feed is
+     * already on screen, so the list jumps instead of waiting for a tab switch.
+     */
+    fun setClockFeedHours(hours: Int) {
+        val safe = hours.coerceIn(1, 24)
+        if (safe == appSettings.clockFeedHours.value) return
+        viewModelScope.launch {
+            appSettings.setClockFeedHours(safe)
+            val account = activeAccount.value ?: return@launch
+            if (_currentFeed.value == FeedTab.CLOCK) reanchorClockFeed(account, safe)
+        }
+    }
+
     val activeAccount: StateFlow<Account?> = accountRepository.activeAccount
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -215,6 +252,18 @@ class FeedViewModel @Inject constructor(
     private val globalInitialEoseRelays: MutableSet<String> = ConcurrentHashMap.newKeySet()
     @Volatile private var globalOlderCursor: Long? = null
     @Volatile private var globalVisibleLimit: Int = GLOBAL_PAGE_SIZE
+    // ── Clock feed ────────────────────────────────────────────────────────────
+    /** Authors of the clock feed (the follow set, resolved once per load). */
+    @Volatile private var clockAuthors: List<String> = emptyList()
+    @Volatile private var clockOlderSubId: String? = null
+
+    // ── Suggested feed ────────────────────────────────────────────────────────
+    /** One subscription per author chunk (relays reject a single 1,300-author REQ). */
+    private val suggestedSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    /** Subscription IDs that have reported EOSE at least once, one per chunk. */
+    private val suggestedEoseChunks: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    @Volatile private var suggestedChunks: Int = 0
+
     private var followSubId: String? = null
     private var metadataSubId: String? = null
     private var relayListSubId: String? = null
@@ -258,9 +307,13 @@ class FeedViewModel @Inject constructor(
             accountRepository.activeAccount
                 .distinctUntilChanged { old, new -> old?.pubkey == new?.pubkey }
                 .collect { account ->
-                    if (account == null) clearFeed()
-                    else if (_currentFeed.value == FeedTab.GLOBAL) loadGlobalFeed(account)
-                    else loadFeed(account)
+                    when {
+                        account == null -> clearFeed()
+                        _currentFeed.value == FeedTab.GLOBAL -> loadGlobalFeed(account)
+                        _currentFeed.value == FeedTab.CLOCK -> loadClockFeed(account)
+                        _currentFeed.value == FeedTab.SUGGESTED -> loadSuggestedFeed(account)
+                        else -> loadFeed(account)
+                    }
                 }
         }
 
@@ -279,6 +332,8 @@ class FeedViewModel @Inject constructor(
                 .collect { (pk, mode) ->
                     val applied = appliedFollowMode
                     if (applied == null || appliedForPubkey != pk) return@collect // a load is/will be in charge
+                    // Only HOME rebuilds from the offline list; CLOCK resolves its own
+                    // authors on load and SUGGESTED never uses the user's follows.
                     if (mode == applied || _currentFeed.value != FeedTab.HOME) return@collect
                     activeAccount.value?.takeIf { it.pubkey == pk }?.let { loadFeed(it, clearEvents = false) }
                 }
@@ -312,6 +367,8 @@ class FeedViewModel @Inject constructor(
         val account = activeAccount.value ?: return
         when (tab) {
             FeedTab.HOME -> loadFeed(account)
+            FeedTab.CLOCK -> loadClockFeed(account)
+            FeedTab.SUGGESTED -> loadSuggestedFeed(account)
             FeedTab.GLOBAL -> loadGlobalFeed(account)
         }
     }
@@ -639,8 +696,12 @@ class FeedViewModel @Inject constructor(
 
     fun refresh() {
         val account = activeAccount.value ?: return
-        if (_currentFeed.value == FeedTab.GLOBAL) loadGlobalFeed(account)
-        else loadFeed(account, clearEvents = false)
+        when (_currentFeed.value) {
+            FeedTab.GLOBAL -> loadGlobalFeed(account)
+            FeedTab.CLOCK -> loadClockFeed(account)
+            FeedTab.SUGGESTED -> loadSuggestedFeed(account)
+            FeedTab.HOME -> loadFeed(account, clearEvents = false)
+        }
     }
 
     private fun loadFeed(account: Account, clearEvents: Boolean = true) {
@@ -866,6 +927,331 @@ class FeedViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Resets every subscription, buffer and cursor shared by the four feeds.
+     *
+     * HOME and GLOBAL have their own (older, subtly different) reset blocks; this
+     * helper exists so the clock and suggested loaders share exactly one — a
+     * missed field here would leak events between feeds.
+     */
+    private fun resetFeedState(clearEvents: Boolean = true) {
+        loadJob?.cancel()
+        appliedFollowMode = null
+        appliedForPubkey = null
+        collectJob?.cancel()
+        activeSubIds.clear()
+
+        unsub(feedSubId); feedSubId = null
+        unsub(globalOlderSubId); globalOlderSubId = null
+        unsub(globalNewerSubId); globalNewerSubId = null
+        globalOlderRequest = null
+        globalNewerRequest = null
+        globalInitialExpectedRelays = emptySet()
+        globalInitialEoseRelays.clear()
+        globalOlderCursor = null
+        globalVisibleLimit = GLOBAL_PAGE_SIZE
+        unsub(followSubId); followSubId = null
+        unsub(metadataSubId); metadataSubId = null
+        unsub(relayListSubId); relayListSubId = null
+        unsub(followsRelayListSubId); followsRelayListSubId = null
+        followsForRelaySelection = emptyList()
+        followRelayMap.clear()
+
+        unsub(clockOlderSubId); clockOlderSubId = null
+        clockAuthors = emptyList()
+
+        suggestedSubIds.forEach { pool.unsubscribe(it) }
+        suggestedSubIds.clear()
+        suggestedEoseChunks.clear()
+        suggestedChunks = 0
+
+        feedSettled = false
+        followsReceived = false
+        pendingBuffer.clear()
+        focusedEventId = null
+        _pendingEventScroll.value = null
+        requestedQuoteIds.clear()
+        _unresolvedQuoteIds.value = emptySet()
+        quoteSubIds.forEach { pool.unsubscribe(it) }
+        quoteSubIds.clear()
+        metadataFetchSubIds.forEach { pool.unsubscribe(it) }
+        metadataFetchSubIds.clear()
+        if (clearEvents) synchronized(feedEvents) { feedEvents.clear() }
+        pendingGlobalEvents.clear()
+    }
+
+    /**
+     * The clock feed: your follow timeline, frozen N hours ago.
+     *
+     * `until` is the anchor (now − [AppSettings.clockFeedHours]); paging walks
+     * further back from there. Nothing newer than the anchor is allowed in, so
+     * the window cannot creep forward while the user is reading.
+     */
+    private fun loadClockFeed(account: Account) {
+        resetFeedState()
+        lastLoadedPubkey = null
+        val hours = appSettings.clockFeedHours.value.coerceIn(1, 24)
+        val anchor = nowSeconds() - hours * 3600L
+
+        _uiState.update {
+            it.copy(
+                events = emptyList(),
+                isLoading = true,
+                error = null,
+                clockAnchor = anchor,
+                clockOlderLoading = false,
+                clockCanLoadOlder = false,
+                globalOlderLoading = false,
+                globalNewerLoading = false,
+                globalNewerAvailable = 0,
+                globalCanLoadOlder = false,
+            )
+        }
+
+        val relays = account.relays.ifEmpty { DEFAULT_RELAYS }
+        relays.forEach { pool.addRelay(it) }
+
+        collectJob = viewModelScope.launch(Dispatchers.Default) { collectMessages() }
+
+        loadJob = viewModelScope.launch {
+            // Same follow source as HOME: the offline list wins when it is switched on.
+            val local = offlineLists.snapshot(ListType.FOLLOWS, account.pubkey)
+            val follows = if (local.enabled) local.pubkeySet().toList()
+                else account.follows.ifEmpty { fetchFollowsOnce(account) }
+            val authors = (follows + account.pubkey).distinct()
+            clockAuthors = authors
+
+            followsReceived = true
+            feedSubId = sub(
+                listOf(
+                    Filter(
+                        authors = authors,
+                        kinds = FEED_KINDS,
+                        until = anchor,
+                        limit = CLOCK_PAGE_SIZE,
+                    )
+                ),
+                label = "clock",
+            )
+
+            viewModelScope.launch {
+                delay(SETTLE_TIMEOUT_MS)
+                settleWindowFeed()
+            }
+        }
+    }
+
+    /**
+     * Moves the clock window in place, without blanking the screen.
+     *
+     * Rewinding (6h -> 24h) keeps every loaded note and quietly tops up the new,
+     * earlier stretch. Fast-forwarding (24h -> 6h) drops the notes that are now
+     * "too old to exist yet" and streams the newer ones in. Either way the list
+     * never flashes empty, which is what makes the hour strip feel instant.
+     */
+    private fun reanchorClockFeed(account: Account, hours: Int) {
+        val anchor = nowSeconds() - hours * 3600L
+        val kept = synchronized(feedEvents) {
+            feedEvents.removeAll { it.createdAt >= anchor }
+            feedEvents.toList()
+        }
+        _uiState.update {
+            it.copy(
+                events = applyContentFilter(kept),
+                clockAnchor = anchor,
+                clockOlderLoading = false,
+                clockCanLoadOlder = kept.isNotEmpty(),
+                isLoading = kept.isEmpty(),
+                error = null,
+            )
+        }
+
+        // Only the clock subscription is replaced; quote/profile/reaction subs stay.
+        unsub(feedSubId); feedSubId = null
+        followsReceived = true
+        feedSettled = true
+        if (clockAuthors.isEmpty()) {
+            loadClockFeed(account)
+            return
+        }
+
+        account.relays.ifEmpty { DEFAULT_RELAYS }.forEach { pool.addRelay(it) }
+        feedSubId = sub(
+            listOf(
+                Filter(
+                    authors = clockAuthors,
+                    kinds = FEED_KINDS,
+                    until = anchor,
+                    limit = CLOCK_PAGE_SIZE,
+                )
+            ),
+            label = "clock",
+        )
+        viewModelScope.launch {
+            delay(SETTLE_TIMEOUT_MS)
+            if (feedSubId != null) {
+                val size = synchronized(feedEvents) { feedEvents.size }
+                _uiState.update {
+                    it.copy(isLoading = false, clockCanLoadOlder = size >= CLOCK_PAGE_SIZE)
+                }
+            }
+        }
+    }
+
+    /** Advances the clock feed one page further into the past. */
+    fun loadOlderClock() {
+        if (_currentFeed.value != FeedTab.CLOCK) return
+        val state = _uiState.value
+        if (state.clockOlderLoading || !state.clockCanLoadOlder || clockAuthors.isEmpty()) return
+        val oldest = synchronized(feedEvents) { feedEvents.lastOrNull()?.createdAt } ?: return
+        if (oldest <= 0L) return
+
+        _uiState.update { it.copy(clockOlderLoading = true) }
+        val id = sub(
+            listOf(
+                Filter(
+                    authors = clockAuthors,
+                    kinds = FEED_KINDS,
+                    until = oldest - 1,
+                    limit = CLOCK_PAGE_SIZE,
+                )
+            ),
+            label = "clock-older",
+        )
+        clockOlderSubId = id
+        viewModelScope.launch {
+            delay(SETTLE_TIMEOUT_MS)
+            if (clockOlderSubId == id) {
+                clockOlderSubId = null
+                unsub(id)
+                _uiState.update { it.copy(clockOlderLoading = false) }
+            }
+        }
+    }
+
+    /**
+     * The suggested feed: a fixed, curated author set shipped with the app.
+     *
+     * The set is ~1,300 accounts, so it is queried as several sliced REQs that
+     * merge into a single timeline. There is no "older" paging on purpose — this
+     * feed is a cross-section of what those accounts posted recently.
+     */
+    private fun loadSuggestedFeed(account: Account) {
+        resetFeedState()
+        lastLoadedPubkey = null
+        val chunks = suggestedFollows.chunks()
+        suggestedChunks = chunks.size
+
+        _uiState.update {
+            it.copy(
+                events = emptyList(),
+                isLoading = true,
+                error = null,
+                clockAnchor = 0L,
+                clockOlderLoading = false,
+                clockCanLoadOlder = false,
+                globalOlderLoading = false,
+                globalNewerLoading = false,
+                globalNewerAvailable = 0,
+                globalCanLoadOlder = false,
+                suggestedLoading = true,
+                suggestedTotal = suggestedFollows.size,
+                suggestedAuthors = 0,
+            )
+        }
+
+        val relays = account.relays.ifEmpty { DEFAULT_RELAYS }
+        relays.forEach { pool.addRelay(it) }
+        suggestedEoseChunks.clear()
+
+        followsReceived = true
+        collectJob = viewModelScope.launch(Dispatchers.Default) { collectMessages() }
+
+        if (chunks.isEmpty()) {
+            feedSettled = true
+            _uiState.update { it.copy(isLoading = false, suggestedLoading = false) }
+            return
+        }
+
+        // Enough per chunk to fill MAX_FEED_EVENTS across all of them, capped so a
+        // single chunk cannot dominate the merged timeline.
+        val perChunk = ((MAX_FEED_EVENTS.toFloat() / chunks.size).toInt() + 8).coerceIn(12, 40)
+        chunks.forEach { chunk ->
+            val id = sub(
+                listOf(Filter(authors = chunk, kinds = FEED_KINDS, limit = perChunk)),
+                label = "suggested",
+            )
+            suggestedSubIds.add(id)
+        }
+
+        viewModelScope.launch {
+            delay(SUGGESTED_TIMEOUT_MS)
+            settleSuggested()
+        }
+    }
+
+    /** Flushes once every chunk has been answered (or the timeout wins). */
+    private fun settleSuggested() {
+        if (feedSettled) return
+        feedSettled = true
+        // One-shot feed: nine merged slices are enough, no need to keep nine
+        // live subscriptions open (and re-flushing) for the rest of the session.
+        suggestedSubIds.forEach { pool.unsubscribe(it) }
+        suggestedSubIds.clear()
+        flushBuffer()
+        _uiState.update {
+            it.copy(
+                isLoading = false,
+                suggestedLoading = false,
+                suggestedAuthors = synchronized(feedEvents) { feedEvents.map { e -> e.pubkey }.toSet().size },
+            )
+        }
+    }
+
+    /** Shared settle for the clock feed (single subscription + EOSE/timeout). */
+    private fun settleWindowFeed() {
+        if (feedSettled) return
+        feedSettled = true
+        flushBuffer()
+        val size = synchronized(feedEvents) { feedEvents.size }
+        _uiState.update {
+            it.copy(
+                isLoading = false,
+                clockOlderLoading = false,
+                clockCanLoadOlder = size >= CLOCK_PAGE_SIZE,
+            )
+        }
+    }
+
+    /**
+     * One-shot kind-3 fetch for accounts whose follow list is not cached locally.
+     * Resolves the first event that arrives, or an empty list after [timeoutMs].
+     */
+    private suspend fun fetchFollowsOnce(account: Account, timeoutMs: Long = 8_000): List<String> {
+        val cached = account.follows
+        if (cached.isNotEmpty()) return cached
+        val result = kotlinx.coroutines.CompletableDeferred<List<String>>()
+        val id = pool.subscribe(
+            listOf(Filter(authors = listOf(account.pubkey), kinds = listOf(EventKind.FOLLOW_LIST), limit = 1)),
+            label = "clock-follows",
+        )
+        val job = viewModelScope.launch(Dispatchers.Default) {
+            pool.messages.collect { (_, message) ->
+                if (message is RelayMessage.EventMessage &&
+                    message.subscriptionId == id &&
+                    message.event.kind == EventKind.FOLLOW_LIST &&
+                    message.event.verify()
+                ) {
+                    result.complete(message.event.parsedTags.pubkeys)
+                }
+            }
+        }
+        val follows = withTimeoutOrNull(timeoutMs) { result.await() } ?: emptyList()
+        job.cancel()
+        pool.unsubscribe(id)
+        return follows
+    }
+
     private fun settleGlobalInitial() {
         if (!feedSettled) {
             feedSettled = true
@@ -878,6 +1264,8 @@ class FeedViewModel @Inject constructor(
             it.copy(isLoading = false, globalCanLoadOlder = canLoadOlder)
         }
     }
+
+    private fun nowSeconds(): Long = System.currentTimeMillis() / 1000L
 
     /** Subscribe and track the ID before sending REQ so fast relays cannot beat registration. */
     private fun sub(filters: List<Filter>, label: String = "feed"): String {
@@ -931,11 +1319,30 @@ class FeedViewModel @Inject constructor(
                             metadataFetchSubIds.remove(msg.subscriptionId)
                             unsub(msg.subscriptionId)
                         }
+                        msg.subscriptionId in suggestedSubIds -> {
+                            // Settle once every chunk has been answered by at least one
+                            // relay, so the merged timeline appears in one go instead of
+                            // chunk by chunk.
+                            suggestedEoseChunks.add(msg.subscriptionId)
+                            if (suggestedChunks > 0 && suggestedEoseChunks.size >= suggestedChunks) {
+                                settleSuggested()
+                            }
+                        }
+                        msg.subscriptionId == clockOlderSubId -> {
+                            unsub(clockOlderSubId); clockOlderSubId = null
+                            _uiState.update { it.copy(clockOlderLoading = false) }
+                        }
                         msg.subscriptionId == globalOlderSubId -> {
                             handleGlobalPageEose(globalOlderRequest, poolMessage.relayUrl)
                         }
                         msg.subscriptionId == globalNewerSubId -> {
                             handleGlobalPageEose(globalNewerRequest, poolMessage.relayUrl)
+                        }
+                        // The clock feed's own subscription: settle through its
+                        // window-specific path so `clockCanLoadOlder` is set (the
+                        // generic branch below only knows about Global paging).
+                        msg.subscriptionId == feedSubId && _currentFeed.value == FeedTab.CLOCK -> {
+                            settleWindowFeed()
                         }
                         msg.subscriptionId == feedSubId && _currentFeed.value == FeedTab.GLOBAL -> {
                             globalInitialEoseRelays.add(RelayPool.normalize(poolMessage.relayUrl))
@@ -1141,12 +1548,15 @@ class FeedViewModel @Inject constructor(
 
     private fun addToFeed(event: Event) {
         if (EventKind.isPrivateMessaging(event.kind)) return
-        // Only persist home feed events — global feed is a live view and must not
-        // pollute the cache that getRecentFeedEvents returns on next home load.
+        // Only persist home feed events — global/clock/suggested are views and must
+        // not pollute the cache that getRecentFeedEvents returns on next home load.
         if (_currentFeed.value == FeedTab.HOME) {
             val accountPubkey = activeAccount.value?.pubkey ?: return
             viewModelScope.launch { eventRepository.save(event, accountPubkey) }
         }
+        // The clock feed is anchored in the past: a note published after the anchor
+        // belongs to "now", so it must never slide into the window while reading.
+        if (_currentFeed.value == FeedTab.CLOCK && event.createdAt >= _uiState.value.clockAnchor) return
         if (!feedSettled) {
             pendingBuffer.add(event)
             return
@@ -1384,6 +1794,15 @@ class FeedViewModel @Inject constructor(
     }
 
     companion object {
+        /** Kinds every timeline feed shows: notes, reposts and polls. */
+        private val FEED_KINDS = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL)
+        /** Page size for the clock feed, both initial load and "older". */
+        private const val CLOCK_PAGE_SIZE = 100
+        /** How long HOME/CLOCK wait for EOSE before showing what arrived. */
+        private const val SETTLE_TIMEOUT_MS = 12_000L
+        /** The suggested feed fans out over ~9 chunks; give the slowest one time. */
+        private const val SUGGESTED_TIMEOUT_MS = 14_000L
+
         private const val GLOBAL_PAGE_SIZE = 100
         private const val GLOBAL_NEWER_LIMIT = 10_000
         private const val MAX_GLOBAL_EVENTS = 50_000
