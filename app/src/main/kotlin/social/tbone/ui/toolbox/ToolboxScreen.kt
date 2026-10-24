@@ -25,6 +25,7 @@ import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Widgets
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Update
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -72,6 +73,7 @@ fun ToolboxScreen(
     onGeohashChannels: () -> Unit,
     onCalendar: () -> Unit,
     onWallet: () -> Unit,
+    onUpdateCenter: () -> Unit,
     onWebxdc: () -> Unit,
     onOpenXdcTool: (String) -> Unit,
     onToolboxSettings: () -> Unit,
@@ -108,6 +110,8 @@ fun ToolboxScreen(
             "fully local encrypted calendar", onCalendar))
         put("wallet", ToolEntry(Icons.Outlined.Bolt, "wallet tool",
             "Lightning zaps & Monero xaps", onWallet))
+        put("updates", ToolEntry(Icons.Outlined.Update, "update center",
+            "check, download & install app updates", onUpdateCenter))
         xdcTools.forEach { tool ->
             put("xdc_${tool.appId}", ToolEntry(
                 icon = XdcToolIcons.byId(tool.iconId),

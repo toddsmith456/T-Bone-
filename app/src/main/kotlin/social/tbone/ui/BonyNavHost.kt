@@ -36,6 +36,7 @@ import social.tbone.account.AccountRepository
 import social.tbone.notifications.DeepLinkHandler
 import social.tbone.security.AppLockManager
 import social.tbone.ui.components.BonyBottomBar
+import social.tbone.ui.components.LocalUiDeclutter
 import social.tbone.ui.components.BottomTab
 import social.tbone.ui.compose.ComposeScreen
 import social.tbone.ui.lock.PinLockScreen
@@ -54,6 +55,7 @@ import social.tbone.ui.notes.NotesInfoScreen
 import social.tbone.ui.notes.FolderContentsScreen
 import social.tbone.ui.notes.NotesScreen
 import social.tbone.ui.toolbox.ToolboxScreen
+import social.tbone.ui.toolbox.UpdateCenterScreen
 import social.tbone.ui.toolbox.ToolboxSettingsScreen
 import social.tbone.ui.toolbox.VoiceRecorderScreen
 import social.tbone.ui.toolbox.WalletToolScreen
@@ -80,6 +82,7 @@ import social.tbone.ui.settings.SettingsScreen
 import social.tbone.ui.profile.ProfileEditScreen
 import social.tbone.ui.thread.ThreadScreen
 import social.tbone.ui.theme.BonyColors
+import social.tbone.ui.theme.ThemeViewModel
 import javax.inject.Inject
 
 private const val ROUTE_ONBOARDING        = "onboarding"
@@ -108,6 +111,7 @@ private const val ROUTE_NOTES_INFO         = "notes_info"
 private const val ROUTE_TOOLBOX            = "toolbox"
 private const val ROUTE_VOICE              = "voice"
 private const val ROUTE_WALLET             = "wallet"
+private const val ROUTE_UPDATE_CENTER      = "update_center"
 private const val ROUTE_TOOLBOX_SETTINGS = "toolbox_settings"
 private const val ROUTE_XDC             = "webxdc"
 private const val ROUTE_XDC_PLAYER      = "webxdc_player/{appId}"
@@ -125,6 +129,8 @@ fun BonyNavHost() {
     val viewModel: StartupViewModel = hiltViewModel()
     val lockViewModel: LockViewModel = hiltViewModel()
     val mediaSettings: MediaSettingsViewModel = hiltViewModel()
+    val chromeSettings: ThemeViewModel = hiltViewModel()
+    val uiDeclutter by chromeSettings.uiDeclutterEnabled.collectAsStateWithLifecycle()
     val startupState by viewModel.startupState.collectAsStateWithLifecycle()
     val isLocked by lockViewModel.isLocked.collectAsStateWithLifecycle()
     val imageLoadMode by mediaSettings.imageLoadMode.collectAsStateWithLifecycle()
@@ -164,6 +170,7 @@ fun BonyNavHost() {
             val start = if ((startupState as StartupState.Ready).hasAccount) ROUTE_FEED else ROUTE_ONBOARDING
 
             CompositionLocalProvider(
+                LocalUiDeclutter provides uiDeclutter,
                 LocalImageLoadMode provides imageLoadMode,
                 LocalVideoQuality provides videoQuality,
                 LocalVideoPlaybackMode provides videoPlaybackMode,
@@ -210,6 +217,7 @@ fun BonyNavHost() {
                             onGeohashChannels = { navController.navigate(ROUTE_GEOHASH) },
                             onCalendar = { navController.navigate(ROUTE_CALENDAR) },
                             onWallet = { navController.navigate(ROUTE_WALLET) },
+                            onUpdateCenter = { navController.navigate(ROUTE_UPDATE_CENTER) },
                             onWebxdc = { navController.navigate(ROUTE_XDC) },
                             onOpenXdcTool = { appId ->
                                 navController.navigate("webxdc_player/" + Uri.encode(appId))
@@ -274,6 +282,11 @@ fun BonyNavHost() {
                     // notifications and above Android's navigation buttons.
                     WithBottomBar(current = BottomTab.TOOLS, navController = navController) {
                         WalletToolScreen(onBack = { navController.popBackStack() })
+                    }
+                }
+                composable(ROUTE_UPDATE_CENTER) {
+                    WithBottomBar(current = BottomTab.TOOLS, navController = navController) {
+                        UpdateCenterScreen(onBack = { navController.popBackStack() })
                     }
                 }
                 composable(ROUTE_GEOHASH) {

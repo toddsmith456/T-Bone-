@@ -3,6 +3,7 @@ package dev.youniversal.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.TextUnit
@@ -39,8 +40,11 @@ public fun youniversalTypography(
             fontFamily = fontFamily,
             fontWeight = fontWeight,
             fontSize = size(fontSize),
-            lineHeight = size(lineHeight),
+            // Preserve tall glyphs, accents and descenders in selected fonts;
+            // the extra leading prevents tight labels from cropping their bounds.
+            lineHeight = size(lineHeight + if (fontFamily != null) 2 else 0),
             letterSpacing = letterSpacing.sp,
+            platformStyle = if (fontFamily != null) PlatformTextStyle(includeFontPadding = true) else null,
         )
 
     return Typography(

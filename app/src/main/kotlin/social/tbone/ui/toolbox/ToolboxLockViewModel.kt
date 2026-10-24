@@ -1,13 +1,18 @@
 package social.tbone.ui.toolbox
 
 import androidx.lifecycle.ViewModel
+import kotlinx.coroutines.flow.StateFlow
 import dagger.hilt.android.lifecycle.HiltViewModel
+import social.tbone.settings.AppSettings
 import javax.inject.Inject
 
 @HiltViewModel
 class ToolboxLockViewModel @Inject constructor(
     private val security: ToolboxSecurity,
+    appSettings: AppSettings,
 ) : ViewModel() {
+
+    val keypadScrambled: StateFlow<Boolean> = appSettings.toolboxPinKeypadScrambled
 
     private var unlocked = false
 

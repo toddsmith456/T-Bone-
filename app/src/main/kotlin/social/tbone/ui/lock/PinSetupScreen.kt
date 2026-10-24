@@ -18,12 +18,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.hilt.navigation.compose.hiltViewModel
 import kotlinx.coroutines.launch
 import social.tbone.ui.theme.BonyColors
@@ -35,11 +37,19 @@ fun PinSetupScreen(
     onDone: () -> Unit,
     onBack: () -> Unit,
     isDuress: Boolean = false,
+    /** Optional toolbox override; otherwise the app-wide keypad preference is used. */
+    scrambleKeypad: Boolean? = null,
     /** Optional override — when set, called with the confirmed PIN instead of the app-lock path. */
     onSave: ((String) -> Unit)? = null,
     viewModel: PinSetupViewModel = hiltViewModel(),
 ) {
     val scope = rememberCoroutineScope()
+    val appScramble by viewModel.appPinKeypadScrambled.collectAsStateWithLifecycle()
+    val shouldScramble = scrambleKeypad ?: appScramble
+    var keypadAttempt by remember { mutableIntStateOf(0) }
+    val keypadDigits = remember(shouldScramble, keypadAttempt) {
+        PinKeypadLayout.digits(scramble = shouldScramble)
+    }
     var firstPin by remember { mutableStateOf("") }
     var confirmPin by remember { mutableStateOf("") }
     var isConfirmStep by remember { mutableStateOf(false) }
@@ -57,6 +67,7 @@ fun PinSetupScreen(
     fun advance() {
         if (!isConfirmStep) {
             isConfirmStep = true
+            keypadAttempt++
         } else {
             if (firstPin == confirmPin) {
                 scope.launch {
@@ -74,6 +85,7 @@ fun PinSetupScreen(
                             firstPin = ""
                             confirmPin = ""
                             isConfirmStep = false
+                            keypadAttempt++
                         }
                     } else {
                         viewModel.setPin(firstPin)
@@ -85,6 +97,7 @@ fun PinSetupScreen(
                 firstPin = ""
                 confirmPin = ""
                 isConfirmStep = false
+                keypadAttempt++
             }
         }
     }
@@ -147,6 +160,7 @@ fun PinSetupScreen(
             Spacer(Modifier.height(48.dp))
 
             PinKeypad(
+                digits = keypadDigits,
                 onDigit = { d ->
                     if (!isConfirmStep && firstPin.length < 4) firstPin += d
                     else if (isConfirmStep && confirmPin.length < 4) confirmPin += d

@@ -63,6 +63,7 @@ fun ToolboxSettingsScreen(
 
     val screenshotBlockEnabled by viewModel.screenshotBlockEnabled.collectAsStateWithLifecycle()
     val pinEnabled by viewModel.pinEnabled.collectAsStateWithLifecycle()
+    val pinKeypadScrambled by viewModel.pinKeypadScrambled.collectAsStateWithLifecycle()
     val duressPinEnabled by viewModel.duressPinEnabled.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
 
@@ -181,6 +182,26 @@ fun ToolboxSettingsScreen(
             )
         }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("scramble toolbox PIN keypad", style = BonyType.body.copy(color = BonyColors.Text))
+                Text(
+                    "randomize digit positions for each PIN entry",
+                    style = BonyType.meta.copy(color = BonyColors.TextMute),
+                )
+            }
+            BonyToggle(
+                checked = pinKeypadScrambled,
+                enabled = true,
+                onCheckedChange = viewModel::setPinKeypadScrambled,
+            )
+        }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
         // Toolbox duress PIN
         Row(
@@ -275,6 +296,7 @@ fun ToolboxSettingsScreen(
             onDone = { showPinSetup = false },
             onBack = { showPinSetup = false },
             isDuress = false,
+            scrambleKeypad = pinKeypadScrambled,
             onSave = { pin -> viewModel.setPin(pin) { showPinSetup = false } },
         )
     }
@@ -284,6 +306,7 @@ fun ToolboxSettingsScreen(
             onDone = { showDuressSetup = false },
             onBack = { showDuressSetup = false },
             isDuress = true,
+            scrambleKeypad = pinKeypadScrambled,
             onSave = { pin -> viewModel.setDuressPin(pin) { showDuressSetup = false } },
         )
     }

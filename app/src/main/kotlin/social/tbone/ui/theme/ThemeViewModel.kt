@@ -101,6 +101,13 @@ class ThemeViewModel @Inject constructor(
     val uiTheme: StateFlow<UiTheme> = appSettings.uiTheme
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UiTheme.BONY)
 
+    val uiDeclutterEnabled: StateFlow<Boolean> = appSettings.uiDeclutterEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun setUiDeclutterEnabled(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setUiDeclutterEnabled(enabled) }
+    }
+
     fun setThemeMode(mode: ThemeMode) {
         viewModelScope.launch { appSettings.setThemeMode(mode) }
     }

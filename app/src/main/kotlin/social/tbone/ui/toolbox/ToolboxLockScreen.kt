@@ -22,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -30,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import social.tbone.ui.lock.PinKeypad
 import social.tbone.ui.theme.BonyColors
@@ -48,7 +50,12 @@ fun ToolboxLockScreen(
     viewModel: ToolboxLockViewModel = hiltViewModel(),
 ) {
     val scope = rememberCoroutineScope()
+    val scrambleKeypad by viewModel.keypadScrambled.collectAsStateWithLifecycle()
     var pin by remember { mutableStateOf("") }
+    var keypadAttempt by remember { mutableIntStateOf(0) }
+    val keypadDigits = remember(scrambleKeypad, keypadAttempt) {
+        social.tbone.ui.lock.PinKeypadLayout.digits(scramble = scrambleKeypad)
+    }
     var isError by remember { mutableStateOf(false) }
     val shakeOffset = remember { Animatable(0f) }
 
@@ -73,6 +80,7 @@ fun ToolboxLockScreen(
                     },
                 )
                 pin = ""
+                keypadAttempt++
                 isError = false
             }
         }
@@ -125,6 +133,7 @@ fun ToolboxLockScreen(
             Spacer(Modifier.height(48.dp))
 
             PinKeypad(
+                digits = keypadDigits,
                 onDigit = { d -> if (pin.length < 4) pin += d },
                 onBackspace = { if (pin.isNotEmpty()) pin = pin.dropLast(1) },
             )

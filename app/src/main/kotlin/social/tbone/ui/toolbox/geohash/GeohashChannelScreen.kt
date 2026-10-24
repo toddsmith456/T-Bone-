@@ -51,7 +51,6 @@ import social.tbone.ui.theme.BonyType
  * the top and used consistently in every channel. No relay connection happens
  * here — channels only connect when you open one.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun GeohashChannelScreen(
     onBack: () -> Unit,
@@ -60,112 +59,19 @@ fun GeohashChannelScreen(
 ) {
     val channels by viewModel.channels.collectAsStateWithLifecycle()
     val nickname by viewModel.nickname.collectAsStateWithLifecycle()
-
     var showAdd by remember { mutableStateOf(false) }
     var target by remember { mutableStateOf<GeohashChannelEntry?>(null) }
 
-    Box(modifier = Modifier.fillMaxSize()) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(BonyColors.Bg)
-            .statusBarsPadding(),
-    ) {
-        // ── Top bar ───────────────────────────────────────────────────────────
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("←", style = BonyType.body.copy(color = BonyColors.TextMute), modifier = Modifier.clickable { onBack() })
-            Spacer(Modifier.width(8.dp))
-            Text("location channels", style = BonyType.body.copy(color = BonyColors.Text), modifier = Modifier.weight(1f))
-        }
-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+    GeohashChannelContent(
+        channels = channels,
+        nickname = nickname,
+        onBack = onBack,
+        onNicknameChange = viewModel::setNickname,
+        onOpenChannel = onOpenChannel,
+        onAdd = { showAdd = true },
+        onChannelLongPress = { target = it },
+    )
 
-        // ── Nickname selector (consistent across all channels) ────────────────
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "name",
-                style = BonyType.meta.copy(color = BonyColors.TextMute),
-                modifier = Modifier.width(56.dp),
-            )
-            OutlinedTextField(
-                value = nickname,
-                onValueChange = { viewModel.setNickname(it) },
-                placeholder = { Text("your nickname", style = BonyType.meta.copy(color = BonyColors.TextMute)) },
-                singleLine = true,
-                textStyle = BonyType.body.copy(color = BonyColors.Text),
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                modifier = Modifier.weight(1f),
-            )
-        }
-
-        Text(
-            text = "long-press a channel to pin, move or delete",
-            style = BonyType.caption.copy(color = BonyColors.TextMute),
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
-        )
-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
-
-        // ── Channel list ──────────────────────────────────────────────────────
-        if (channels.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "no channels yet — tap + to add a geohash",
-                    style = BonyType.meta.copy(color = BonyColors.TextMute),
-                )
-            }
-        } else {
-            val sorted = channels.sortedWith(
-                compareByDescending<GeohashChannelEntry> { it.pinned }.thenBy { it.sortOrder },
-            )
-            LazyColumn(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .navigationBarsPadding(),
-            ) {
-                items(sorted, key = { it.code }) { channel ->
-                    ChannelRow(
-                        channel = channel,
-                        onClick = { onOpenChannel(channel.code) },
-                        onLongClick = { target = channel },
-                    )
-                    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
-                }
-                item { Spacer(Modifier.height(88.dp)) }
-            }
-        }
-    }
-
-    // ── Floating + button ─────────────────────────────────────────────────────
-    Box(
-        modifier = Modifier
-            .align(Alignment.BottomEnd)
-            .navigationBarsPadding()
-            .padding(end = 16.dp, bottom = 12.dp)
-            .appBorder(1.dp, BonyColors.AccentDim)
-            .background(BonyColors.Surface)
-            .clickable { showAdd = true }
-            .padding(horizontal = 18.dp, vertical = 12.dp),
-    ) {
-        Text(text = "+", style = BonyType.button.copy(color = BonyColors.Accent))
-    }
-    }
-
-    // ── Add-channel dialog ────────────────────────────────────────────────────
     if (showAdd) {
         AddChannelDialog(
             onDismiss = { showAdd = false },
@@ -177,37 +83,180 @@ fun GeohashChannelScreen(
         )
     }
 
-    // ── Long-press popup ──────────────────────────────────────────────────────
     target?.let { channel ->
-        Box(
+        GeohashChannelContextMenu(
+            channel = channel,
+            onDismiss = { target = null },
+            onPinToggle = { viewModel.pinToggle(channel.code) },
+            onPinToHomeToggle = { viewModel.pinToHomeToggle(channel.code) },
+            onMoveUp = { viewModel.moveUp(channel.code) },
+            onMoveDown = { viewModel.moveDown(channel.code) },
+            onDelete = { viewModel.deleteChannel(channel.code) },
+        )
+    }
+}
+
+@Composable
+private fun GeohashChannelContent(
+    channels: List<GeohashChannelEntry>,
+    nickname: String,
+    onBack: () -> Unit,
+    onNicknameChange: (String) -> Unit,
+    onOpenChannel: (String) -> Unit,
+    onAdd: () -> Unit,
+    onChannelLongPress: (GeohashChannelEntry) -> Unit,
+) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(BonyColors.Bg.copy(alpha = 0.75f))
-                .clickable { target = null },
-            contentAlignment = Alignment.Center,
+                .background(BonyColors.Bg)
+                .statusBarsPadding(),
         ) {
-            Column(
-                modifier = Modifier
-                    .appBorder(1.dp, BonyColors.RuleStrong)
-                    .background(BonyColors.Surface)
-                    .clickable(enabled = false) {}
-                    .padding(vertical = 6.dp),
-            ) {
-                Text(
-                    text = "channel ${channel.code}" + if (channel.pinned) " · pinned" else "",
-                    style = BonyType.caption.copy(color = BonyColors.TextMute),
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            GeohashChannelTitleBar(onBack)
+            NicknameEditor(nickname, onNicknameChange)
+            Text(
+                text = "long-press a channel to pin, move or delete",
+                style = BonyType.caption.copy(color = BonyColors.TextMute),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
+            )
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+
+            GeohashChannelList(
+                channels = channels,
+                onOpenChannel = onOpenChannel,
+                onChannelLongPress = onChannelLongPress,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
+                .padding(end = 16.dp, bottom = 12.dp)
+                .appBorder(1.dp, BonyColors.AccentDim)
+                .background(BonyColors.Surface)
+                .clickable(onClick = onAdd)
+                .padding(horizontal = 18.dp, vertical = 12.dp),
+        ) {
+            Text(text = "+", style = BonyType.button.copy(color = BonyColors.Accent))
+        }
+    }
+}
+
+@Composable
+private fun GeohashChannelTitleBar(onBack: () -> Unit) {
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("←", style = BonyType.body.copy(color = BonyColors.TextMute), modifier = Modifier.clickable(onClick = onBack))
+            Spacer(Modifier.width(8.dp))
+            Text("location channels", style = BonyType.body.copy(color = BonyColors.Text), modifier = Modifier.weight(1f))
+        }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+    }
+}
+
+@Composable
+private fun NicknameEditor(nickname: String, onNicknameChange: (String) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "name",
+            style = BonyType.meta.copy(color = BonyColors.TextMute),
+            modifier = Modifier.width(56.dp),
+        )
+        OutlinedTextField(
+            value = nickname,
+            onValueChange = onNicknameChange,
+            placeholder = { Text("your nickname", style = BonyType.meta.copy(color = BonyColors.TextMute)) },
+            singleLine = true,
+            textStyle = BonyType.body.copy(color = BonyColors.Text),
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+@Composable
+private fun GeohashChannelList(
+    channels: List<GeohashChannelEntry>,
+    onOpenChannel: (String) -> Unit,
+    onChannelLongPress: (GeohashChannelEntry) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (channels.isEmpty()) {
+        Box(modifier = modifier, contentAlignment = Alignment.Center) {
+            Text(
+                text = "no channels yet — tap + to add a geohash",
+                style = BonyType.meta.copy(color = BonyColors.TextMute),
+            )
+        }
+    } else {
+        val sorted = channels.sortedWith(
+            compareByDescending<GeohashChannelEntry> { it.pinned }.thenBy { it.sortOrder },
+        )
+        LazyColumn(modifier = modifier.navigationBarsPadding()) {
+            items(sorted, key = { it.code }) { channel ->
+                ChannelRow(
+                    channel = channel,
+                    onClick = { onOpenChannel(channel.code) },
+                    onLongClick = { onChannelLongPress(channel) },
                 )
-                PopupRow(if (channel.pinned) "unpin" else "pin") { viewModel.pinToggle(channel.code); target = null }
-                PopupRow(if (channel.pinnedToHome) "remove from home" else "pin to home") {
-                    viewModel.pinToHomeToggle(channel.code)
-                    target = null
-                }
-                PopupRow("move up") { viewModel.moveUp(channel.code); target = null }
-                PopupRow("move down") { viewModel.moveDown(channel.code); target = null }
                 Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
-                PopupRow("delete", destructive = true) { viewModel.deleteChannel(channel.code); target = null }
             }
+            item { Spacer(Modifier.height(88.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun GeohashChannelContextMenu(
+    channel: GeohashChannelEntry,
+    onDismiss: () -> Unit,
+    onPinToggle: () -> Unit,
+    onPinToHomeToggle: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(BonyColors.Bg.copy(alpha = 0.75f))
+            .clickable(onClick = onDismiss),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier
+                .appBorder(1.dp, BonyColors.RuleStrong)
+                .background(BonyColors.Surface)
+                .clickable(enabled = false) {}
+                .padding(vertical = 6.dp),
+        ) {
+            Text(
+                text = "channel ${channel.code}" + if (channel.pinned) " · pinned" else "",
+                style = BonyType.caption.copy(color = BonyColors.TextMute),
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            )
+            PopupRow(if (channel.pinned) "unpin" else "pin", onClick = { onPinToggle(); onDismiss() })
+            PopupRow(
+                if (channel.pinnedToHome) "remove from home" else "pin to home",
+                onClick = { onPinToHomeToggle(); onDismiss() },
+            )
+            PopupRow("move up", onClick = { onMoveUp(); onDismiss() })
+            PopupRow("move down", onClick = { onMoveDown(); onDismiss() })
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+            PopupRow("delete", destructive = true, onClick = { onDelete(); onDismiss() })
         }
     }
 }

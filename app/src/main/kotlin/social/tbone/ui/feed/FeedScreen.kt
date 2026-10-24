@@ -73,6 +73,8 @@ import social.tbone.nostr.quotedEventId
 import social.tbone.nostr.relay.RelayStatus
 import social.tbone.ui.components.AccountSwitcherSheet
 import social.tbone.ui.components.BonyBottomBar
+import social.tbone.ui.components.LocalUiDeclutter
+import social.tbone.ui.components.RelayHealthDot
 import social.tbone.ui.components.BottomTab
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
@@ -117,9 +119,14 @@ fun FeedScreen(
     val pollVoteVersion by viewModel.pollVoteVersion.collectAsStateWithLifecycle()
 
     val listState = rememberLazyListState()
+    val uiDeclutter = LocalUiDeclutter.current
     var isRefreshing by remember { mutableStateOf(false) }
     var showBrightness by remember { mutableStateOf(false) }
     var showGlobalIntervalMenu by remember { mutableStateOf(false) }
+
+    LaunchedEffect(uiDeclutter) {
+        if (uiDeclutter) showBrightness = false
+    }
 
     LaunchedEffect(Unit) {
         viewModel.scrollToTop.collect { listState.scrollToItem(0) }
@@ -161,6 +168,7 @@ fun FeedScreen(
             onSearchClick = onSearchClick,
             onBrightnessClick = { showBrightness = true },
             onSettingsClick = onSettingsClick,
+            compact = uiDeclutter,
         )
 
         // ── Account row: avatar + name open the profile; ↕ switches accounts ──
@@ -176,6 +184,7 @@ fun FeedScreen(
         FeedTabStrip(
             currentFeed = currentFeed,
             onSwitch = viewModel::switchFeed,
+            compact = uiDeclutter,
         )
 
         // ── Clock feed: the hour the timeline is anchored at ─────────────────
@@ -565,6 +574,7 @@ private fun FeedTopBar(
     onSearchClick: () -> Unit,
     onBrightnessClick: () -> Unit,
     onSettingsClick: () -> Unit,
+    compact: Boolean,
 ) {
     val relayStatuses by viewModel.relayStatuses.collectAsStateWithLifecycle()
     val torEnabled by viewModel.torEnabled.collectAsStateWithLifecycle()
@@ -576,39 +586,43 @@ private fun FeedTopBar(
             .fillMaxWidth()
             .background(BonyColors.Bg)
             .statusBarsPadding()
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = 14.dp, vertical = if (compact) 2.dp else 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // The wordmark opens Settings.
-        Text(
-            text = "t-bone",
-            style = BonyType.wordmark.copy(color = BonyColors.Text),
-            modifier = Modifier
-                .weight(1f)
-                .clickable(onClick = onSettingsClick),
-        )
-
-        // Brightness control (between the wordmark and the relays display).
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clickable(onClick = onBrightnessClick),
-            contentAlignment = Alignment.Center,
-        ) {
+        if (!compact) {
+            // The wordmark remains the classic shortcut to Settings.
             Text(
-                text = "◐",
-                style = BonyType.title.copy(color = BonyColors.TextMute),
+                text = "t-bone",
+                style = BonyType.wordmark.copy(color = BonyColors.Text),
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = onSettingsClick),
             )
-        }
-        Spacer(Modifier.width(4.dp))
 
-        if (totalCount > 0) {
-            Text(
-                text = "relays $connectedCount/$totalCount",
-                style = BonyType.metaDim.copy(color = BonyColors.TextMute),
-                modifier = Modifier.clickable { onRelayManagementClick() },
-            )
-            Spacer(Modifier.width(10.dp))
+            // Brightness control is hidden only in declutter mode.
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clickable(onClick = onBrightnessClick),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "◐",
+                    style = BonyType.title.copy(color = BonyColors.TextMute),
+                )
+            }
+            Spacer(Modifier.width(4.dp))
+
+            if (totalCount > 0) {
+                Text(
+                    text = "relays $connectedCount/$totalCount",
+                    style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+                    modifier = Modifier.clickable { onRelayManagementClick() },
+                )
+                Spacer(Modifier.width(10.dp))
+            }
+        } else {
+            Spacer(Modifier.weight(1f))
         }
 
         Box(
@@ -623,13 +637,21 @@ private fun FeedTopBar(
             )
         }
 
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(if (compact) 0.dp else 8.dp))
 
-        TorPill(
-            torEnabled = torEnabled,
-            connected = connectedCount > 0,
-            onClick = onRelayManagementClick,
-        )
+        if (compact) {
+            RelayHealthDot(
+                connected = connectedCount,
+                total = totalCount,
+                onClick = onRelayManagementClick,
+            )
+        } else {
+            TorPill(
+                torEnabled = torEnabled,
+                connected = connectedCount > 0,
+                onClick = onRelayManagementClick,
+            )
+        }
     }
 }
 
@@ -665,6 +687,7 @@ private fun TorPill(torEnabled: Boolean, connected: Boolean, onClick: () -> Unit
 private fun FeedTabStrip(
     currentFeed: FeedTab,
     onSwitch: (FeedTab) -> Unit,
+    compact: Boolean,
 ) {
     val youniversal = YouniversalTheme.enabled
     val effectiveFontScale = LocalDensity.current.fontScale.coerceAtLeast(0.1f)
@@ -707,8 +730,8 @@ private fun FeedTabStrip(
                                 width = 1.dp, color = BonyColors.Accent, shape = tabShape,
                             ) else Modifier
                         )
-                        .heightIn(min = 50.dp)
-                        .padding(horizontal = 2.dp, vertical = 7.dp),
+                        .heightIn(min = if (compact) 36.dp else 50.dp)
+                        .padding(horizontal = 2.dp, vertical = if (compact) 4.dp else 7.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
@@ -716,24 +739,26 @@ private fun FeedTabStrip(
                         imageVector = FeedTabIcons.forTab(tab),
                         // The label below is the accessible name; announcing both
                         // would read each tab twice.
-                        contentDescription = null,
+                        contentDescription = if (compact) tab.label else null,
                         tint = tint,
                         modifier = Modifier.size(17.dp),
                     )
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        text = tab.label,
-                        style = BonyType.tag.copy(
-                            fontSize = tabLabelSize,
-                            letterSpacing = tabLetterSpacing,
-                            color = tint,
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Clip,
-                    )
+                    if (!compact) {
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = tab.label,
+                            style = BonyType.tag.copy(
+                                fontSize = tabLabelSize,
+                                letterSpacing = tabLetterSpacing,
+                                color = tint,
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Clip,
+                        )
+                    }
                 }
             }
         }

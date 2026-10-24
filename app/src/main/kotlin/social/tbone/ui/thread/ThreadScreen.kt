@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -30,10 +30,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -180,17 +176,16 @@ fun ThreadScreen(
                     modifier = Modifier.fillMaxSize().navigationBarsPadding(),
                     contentPadding = PaddingValues(bottom = 28.dp),
                 ) {
-                    itemsIndexed(
+                    items(
                         items = items,
-                        key = { _, item -> item.key },
-                        contentType = { _, item -> item::class.simpleName ?: "item" },
-                    ) { index, item ->
+                        key = { item -> item.key },
+                        contentType = { item -> item::class.simpleName ?: "item" },
+                    ) { item ->
                         // Every branch is rendered expanded, so Note is the only
                         // item kind the tree produces here.
                         if (item is ThreadItem.Note) {
                             ThreadRow(
                                 item = item,
-                                previousDepth = items.getOrNull(index - 1)?.depth ?: -1,
                                 uiState = uiState,
                                 profiles = profiles,
                                 quotedEvents = quotedEvents,
@@ -215,7 +210,9 @@ fun ThreadScreen(
                     }
 
                     item(key = "thread_dead_end") {
-                        ThreadDeadEnd(uiState.replyCount)
+                        val lastNoteDepth = items.lastOrNull { it is ThreadItem.Note }
+                            ?.let { (it as ThreadItem.Note).depth } ?: 0
+                        ThreadDeadEnd(uiState.replyCount, lastNoteDepth)
                     }
                 }
             }
@@ -233,8 +230,6 @@ fun ThreadScreen(
 @Composable
 private fun ThreadRow(
     item: ThreadItem.Note,
-    /** Depth of the row rendered above this one (-1 for the first row). */
-    previousDepth: Int,
     uiState: ThreadUiState,
     profiles: Map<String, social.tbone.nostr.ProfileContent>,
     quotedEvents: Map<String, Event>,
@@ -271,11 +266,7 @@ private fun ThreadRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .threadRail(
-                depth = depth,
-                previousDepth = previousDepth,
-                dashedCorner = item.connectorStartsMidAir,
-            ),
+            .threadRail(depth = depth, highlightLastRail = item.highlighted),
     ) {
         NoteCard(
             event = event,
@@ -314,18 +305,14 @@ private fun ThreadRow(
 
 /** "no more replies" terminator with a rail stub, like the reference app. */
 @Composable
-private fun ThreadDeadEnd(replyCount: Int) {
+private fun ThreadDeadEnd(replyCount: Int, depth: Int) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 22.dp, top = 6.dp, bottom = 18.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .threadRail(depth.coerceAtMost(ThreadIndent.MAX_RAIL_DEPTH), highlightLastRail = false)
+            .padding(top = 6.dp, bottom = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .width(1.dp)
-                .height(22.dp)
-                .background(BonyColors.Rule),
-        )
-        Spacer(Modifier.width(8.dp))
         Text(
             text = if (replyCount == 0) "no replies yet" else "end of thread",
             style = BonyType.meta.copy(color = BonyColors.TextMute),
@@ -333,98 +320,36 @@ private fun ThreadDeadEnd(replyCount: Int) {
     }
 }
 
-/** Indent geometry shared by the rail drawing and the row padding. */
+/** Compact zebra rails modeled on Amethyst's thread view (2dp strokes, 3dp per level). */
 internal object ThreadIndent {
-    val STEP = 14.dp
-    val START = 22.dp
-    const val MAX_RAIL_DEPTH = 3
+    const val MAX_RAIL_DEPTH = 16
+    val LEFT_INSET = 2.dp
+    val RAIL_STEP = 3.dp
+    val RAIL_WIDTH = 2.dp
 }
 
 /**
- * Draws the thread rails behind a row.
- *
- * For a row at depth `d`, rails are drawn at every level `0..d-1`, plus a
- * rounded corner at level `d-1` turning into the row.
+ * Draws a tight vertical rail for each reply level. Unlike the former wide elbow
+ * tree, adjacent rows line up as continuous stripes, leaving the note cards wide
+ * enough to read on a phone. The selected note's innermost stripe uses the accent.
  */
 private fun Modifier.threadRail(
     depth: Int,
-    previousDepth: Int,
-    dashedCorner: Boolean,
+    highlightLastRail: Boolean,
 ): Modifier {
     if (depth <= 0) return this
     return this.drawBehind {
-        val stroke = 1.5.dp.toPx()
-        val step = ThreadIndent.STEP.toPx()
-        val start = ThreadIndent.START.toPx()
-        val color = BonyColors.Rule
-        val h = size.height
-        val cornerRadius = 7.dp.toPx()
-        val dash = PathEffect.dashPathEffect(
-            floatArrayOf(3.dp.toPx(), 4.dp.toPx()), 0f,
-        )
-
+        val inset = ThreadIndent.LEFT_INSET.toPx()
+        val step = ThreadIndent.RAIL_STEP.toPx()
+        val stroke = ThreadIndent.RAIL_WIDTH.toPx()
         for (level in 0 until depth) {
-            val x = start + level * step
-            val isLast = level == depth - 1
-            // A rail continues from the row above only when that row also drew
-            // a rail at this level (i.e. it sat deeper than this level). If not,
-            // the rail starts in mid-air and is dashed at the top.
-            val dashedTop = if (isLast) dashedCorner else previousDepth < level + 1
-            if (!isLast) {
-                // Pass-through rail: half-step short of the bottom so the lines
-                // read as a continuous ladder instead of touching.
-                if (dashedTop) {
-                    drawLine(
-                        color = color,
-                        start = Offset(x, 0f),
-                        end = Offset(x, h - 4.dp.toPx()),
-                        strokeWidth = stroke,
-                        cap = StrokeCap.Round,
-                        pathEffect = dash,
-                    )
-                } else {
-                    drawLine(
-                        color = color,
-                        start = Offset(x, 0f),
-                        end = Offset(x, h - 4.dp.toPx()),
-                        strokeWidth = stroke,
-                        cap = StrokeCap.Round,
-                    )
-                }
-            } else {
-                // Corner rail: straight down then curving right into the row.
-                val bottom = h - 4.dp.toPx()
-                if (dashedTop) {
-                    drawLine(
-                        color = color,
-                        start = Offset(x, 0f),
-                        end = Offset(x, bottom - cornerRadius),
-                        strokeWidth = stroke,
-                        cap = StrokeCap.Round,
-                        pathEffect = dash,
-                    )
-                } else {
-                    drawLine(
-                        color = color,
-                        start = Offset(x, 0f),
-                        end = Offset(x, bottom - cornerRadius),
-                        strokeWidth = stroke,
-                        cap = StrokeCap.Round,
-                    )
-                }
-                // Quarter arc turning the vertical rail into the note row:
-                // tangent to the rail at (x, bottom - r) and horizontal at
-                // (x + r, bottom).
-                drawArc(
-                    color = color,
-                    startAngle = 180f,
-                    sweepAngle = -90f,
-                    useCenter = false,
-                    topLeft = Offset(x, bottom - cornerRadius * 2),
-                    size = Size(cornerRadius * 2, cornerRadius * 2),
-                    style = Stroke(width = stroke, cap = StrokeCap.Round),
-                )
-            }
+            val x = inset + level * step
+            drawLine(
+                color = if (highlightLastRail && level == depth - 1) BonyColors.Accent else BonyColors.RuleStrong,
+                start = Offset(x, 0f),
+                end = Offset(x, size.height),
+                strokeWidth = stroke,
+            )
         }
-    }
+    }.padding(start = ThreadIndent.LEFT_INSET + ThreadIndent.RAIL_STEP * depth)
 }

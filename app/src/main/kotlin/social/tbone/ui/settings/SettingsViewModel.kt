@@ -79,6 +79,8 @@ class SettingsViewModel @Inject constructor(
 
     val pinEnabled: StateFlow<Boolean> = lockManager.isPinEnabled
 
+    val appPinKeypadScrambled: StateFlow<Boolean> = appSettings.appPinKeypadScrambled
+
     val duressPinEnabled: StateFlow<Boolean> = lockManager.isDuressPinEnabled
 
     val screenshotBlockEnabled: StateFlow<Boolean> = appSettings.screenshotBlockEnabled
@@ -345,6 +347,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setScreenshotBlockEnabled(enabled: Boolean) {
         viewModelScope.launch { appSettings.setScreenshotBlockEnabled(enabled) }
+    }
+
+    fun setAppPinKeypadScrambled(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setAppPinKeypadScrambled(enabled) }
     }
 
     fun disablePin() {

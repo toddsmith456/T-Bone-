@@ -60,6 +60,7 @@ fun BonyBottomBar(
     modifier: Modifier = Modifier,
 ) {
     val youniversal = YouniversalTheme.enabled
+    val compact = LocalUiDeclutter.current
     val appUpdateAvailable = hasUpdate || LocalUpdateAvailable.current
     val barShape = appCornerShape(MaterialTheme.shapes.extraLarge)
     Column(
@@ -98,9 +99,9 @@ fun BonyBottomBar(
                                 shape = appCornerShape(MaterialTheme.shapes.small, RectangleShape),
                             ) else Modifier,
                         )
-                        .padding(vertical = 8.dp),
+                        .padding(vertical = if (compact) 5.dp else 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (compact) 0.dp else 2.dp),
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
@@ -119,7 +120,9 @@ fun BonyBottomBar(
                             )
                         }
                     }
-                    Text(text = tab.label, style = BonyType.caption.copy(color = contentColor))
+                    if (!compact) {
+                        Text(text = tab.label, style = BonyType.caption.copy(color = contentColor))
+                    }
                 }
             }
         }

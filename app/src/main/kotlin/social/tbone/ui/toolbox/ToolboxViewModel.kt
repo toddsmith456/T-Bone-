@@ -35,7 +35,7 @@ class ToolboxViewModel @Inject constructor(
 
     /** Default order used until the user reorders. */
     val defaultToolOrder: List<String> =
-        listOf("webxdc", "notes", "bookmarks", "voice", "geohash", "calendar", "wallet")
+        listOf("webxdc", "notes", "bookmarks", "voice", "geohash", "calendar", "wallet", "updates")
 
     fun setToolOrder(order: List<String>) {
         viewModelScope.launch { appSettings.setToolboxToolOrder(order) }

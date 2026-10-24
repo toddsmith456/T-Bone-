@@ -23,12 +23,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -43,9 +43,13 @@ fun PinLockScreen(
     onUnlocked: () -> Unit,
     viewModel: PinLockViewModel = hiltViewModel(),
 ) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val scrambleKeypad by viewModel.keypadScrambled.collectAsStateWithLifecycle()
     var pin by remember { mutableStateOf("") }
+    var keypadAttempt by remember { mutableIntStateOf(0) }
+    val keypadDigits = remember(scrambleKeypad, keypadAttempt) {
+        PinKeypadLayout.digits(scramble = scrambleKeypad)
+    }
     var isError by remember { mutableStateOf(false) }
     val shakeOffset = remember { Animatable(0f) }
 
@@ -78,6 +82,7 @@ fun PinLockScreen(
                     },
                 )
                 pin = ""
+                keypadAttempt++
                 isError = false
             }
         }
@@ -134,6 +139,7 @@ fun PinLockScreen(
 
             // Numpad
             PinKeypad(
+                digits = keypadDigits,
                 onDigit = { d -> if (pin.length < 4) pin += d },
                 onBackspace = { if (pin.isNotEmpty()) pin = pin.dropLast(1) },
             )
@@ -146,13 +152,9 @@ fun PinLockScreen(
 internal fun PinKeypad(
     onDigit: (String) -> Unit,
     onBackspace: () -> Unit,
+    digits: List<String> = PinKeypadLayout.DEFAULT_DIGITS,
 ) {
-    val rows = listOf(
-        listOf("1", "2", "3"),
-        listOf("4", "5", "6"),
-        listOf("7", "8", "9"),
-        listOf("←", "0", ""),
-    )
+    val rows = PinKeypadLayout.rows(digits)
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         rows.forEach { row ->
             Row(

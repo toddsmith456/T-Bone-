@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -54,6 +55,7 @@ import androidx.compose.material3.MaterialTheme
 import social.tbone.ui.theme.ThemeViewModel
 import social.tbone.ui.components.DotAvatar
 import social.tbone.ui.components.SectionHeader
+import social.tbone.ui.components.LocalUiDeclutter
 import social.tbone.ui.onboarding.BonyButton
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
@@ -62,12 +64,6 @@ import social.tbone.ui.theme.colorToHex
 import social.tbone.ui.theme.parseHexColor
 import androidx.compose.runtime.remember
 import social.tbone.account.SignerType
-import social.tbone.BuildConfig
-import social.tbone.updates.UpdateInstallResult
-import social.tbone.updates.UpdateState
-import android.provider.Settings as AndroidSettings
-import java.util.Date
-import androidx.compose.ui.text.style.TextOverflow
 
 @Composable
 fun SettingsScreen(
@@ -87,6 +83,7 @@ fun SettingsScreen(
     val torEnabled by viewModel.torEnabled.collectAsStateWithLifecycle()
     val pinEnabled by viewModel.pinEnabled.collectAsStateWithLifecycle()
     val duressPinEnabled by viewModel.duressPinEnabled.collectAsStateWithLifecycle()
+    val scrambleAppPinKeypad by viewModel.appPinKeypadScrambled.collectAsStateWithLifecycle()
     val screenshotBlockEnabled by viewModel.screenshotBlockEnabled.collectAsStateWithLifecycle()
     val noteMenuModerationEnabled by viewModel.noteMenuModerationEnabled.collectAsStateWithLifecycle()
     val clientTagEnabled by viewModel.clientTagEnabled.collectAsStateWithLifecycle()
@@ -101,12 +98,18 @@ fun SettingsScreen(
     val uiTheme by viewModel.uiTheme.collectAsStateWithLifecycle()
     val activeAccount by viewModel.activeAccount.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
-    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val offlineFollowsOn by viewModel.offlineFollowsEnabled.collectAsStateWithLifecycle()
     val offlineMutesOn by viewModel.offlineMutesEnabled.collectAsStateWithLifecycle()
     var showAccentSheet by remember { mutableStateOf(false) }
     val themeViewModel: ThemeViewModel = hiltViewModel()
     val youniversalState = themeViewModel.youniversalState
+    val declutterEnabled by themeViewModel.uiDeclutterEnabled.collectAsStateWithLifecycle()
+    val declutterMode = LocalUiDeclutter.current
+    val expandedSections = remember { mutableStateMapOf<String, Boolean>() }
+    fun sectionExpanded(id: String): Boolean = !declutterMode || expandedSections[id] == true
+    fun toggleSection(id: String) {
+        expandedSections[id] = expandedSections[id] != true
+    }
 
     Column(
         modifier = Modifier
@@ -117,14 +120,41 @@ fun SettingsScreen(
             .verticalScroll(rememberScrollState()),
     ) {
         SettingsTopBar(onBack)
+        SettingsSwitchRow(
+            title = "UI declutter",
+            description = "compact tabs and make Settings categories collapsible",
+            checked = declutterEnabled,
+            onCheckedChange = themeViewModel::setUiDeclutterEnabled,
+        )
+        Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
         TorActiveStrip(torEnabled)
-        SettingsAccountSection(activeAccount, onAddAccount, onAccountManagement)
-        SettingsRelaySection(onRelayManagement)
-        SettingsUpdateSection(updateState, viewModel, context)
-        SettingsOfflineListsSection(offlineFollowsOn, offlineMutesOn, onOfflineList)
-        SettingsContentFiltersSection(onContentFilters)
-        SettingsNoteActionsSection(noteMenuModerationEnabled, clientTagEnabled, viewModel)
-        ReactionSettingsSection(viewModel)
+        SettingsAccountSection(
+            activeAccount, onAddAccount, onAccountManagement,
+            compact = declutterMode, expanded = sectionExpanded("account"),
+            onToggle = { toggleSection("account") },
+        )
+        SettingsRelaySection(
+            onRelayManagement, compact = declutterMode, expanded = sectionExpanded("relays"),
+            onToggle = { toggleSection("relays") },
+        )
+        SettingsOfflineListsSection(
+            offlineFollowsOn, offlineMutesOn, onOfflineList,
+            compact = declutterMode, expanded = sectionExpanded("lists"),
+            onToggle = { toggleSection("lists") },
+        )
+        SettingsContentFiltersSection(
+            onContentFilters, compact = declutterMode, expanded = sectionExpanded("content"),
+            onToggle = { toggleSection("content") },
+        )
+        SettingsNoteActionsSection(
+            noteMenuModerationEnabled, clientTagEnabled, viewModel,
+            compact = declutterMode, expanded = sectionExpanded("note_actions"),
+            onToggle = { toggleSection("note_actions") },
+        )
+        ReactionSettingsSection(
+            viewModel, compact = declutterMode, expanded = sectionExpanded("reactions"),
+            onToggle = { toggleSection("reactions") },
+        )
         SettingsMediaSection(
             viewModel = viewModel,
             onProfileEdit = onProfileEdit,
@@ -133,9 +163,20 @@ fun SettingsScreen(
             videoQuality = videoQuality,
             videoPlaybackMode = videoPlaybackMode,
             videoThumbnails = videoThumbnails,
+            compact = declutterMode,
+            expanded = sectionExpanded("media"),
+            onToggle = { toggleSection("media") },
         )
-        SettingsAvatarSection(viewModel, avatarMode, avatarAnimated)
-        SettingsThemeEngineSection(viewModel, uiTheme)
+        SettingsAvatarSection(
+            viewModel, avatarMode, avatarAnimated,
+            compact = declutterMode, expanded = sectionExpanded("avatars"),
+            onToggle = { toggleSection("avatars") },
+        )
+        SettingsThemeEngineSection(
+            viewModel, uiTheme,
+            compact = declutterMode, expanded = sectionExpanded("theme_engine"),
+            onToggle = { toggleSection("theme_engine") },
+        )
         SettingsAppearanceSection(
             viewModel = viewModel,
             uiTheme = uiTheme,
@@ -143,6 +184,9 @@ fun SettingsScreen(
             accentColor = accentColor,
             youniversalState = youniversalState,
             onChooseAccent = { showAccentSheet = true },
+            compact = declutterMode,
+            expanded = sectionExpanded("appearance"),
+            onToggle = { toggleSection("appearance") },
         )
         SettingsPrivacySection(
             viewModel = viewModel,
@@ -153,8 +197,16 @@ fun SettingsScreen(
             duressPinEnabled = duressPinEnabled,
             onPinSetup = onPinSetup,
             onDuressPinSetup = onDuressPinSetup,
+            scrambleAppPinKeypad = scrambleAppPinKeypad,
+            compact = declutterMode,
+            expanded = sectionExpanded("privacy"),
+            onToggle = { toggleSection("privacy") },
         )
-        SettingsDebugSection(viewModel, context, accounts, activeAccount)
+        SettingsDebugSection(
+            viewModel, context, accounts, activeAccount,
+            compact = declutterMode, expanded = sectionExpanded("debug"),
+            onToggle = { toggleSection("debug") },
+        )
         Spacer(Modifier.height(96.dp))
     }
 
@@ -243,9 +295,10 @@ private fun TorActiveStrip(torEnabled: Boolean) {
 }
 
 @Composable
-private fun SettingsAccountSection(activeAccount: Account?, onAddAccount: () -> Unit, onAccountManagement: () -> Unit) {
+private fun SettingsAccountSection(activeAccount: Account?, onAddAccount: () -> Unit, onAccountManagement: () -> Unit, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
     // ── Account section ───────────────────────────────────────────────────
-    SectionHeader("ACCOUNT")
+    SettingsCategoryHeader("ACCOUNT", compact, expanded, onToggle)
+    if (compact && !expanded) return
 
     activeAccount?.let { account ->
         AccountSettingsRow(account = account, onManage = onAccountManagement)
@@ -267,9 +320,10 @@ private fun SettingsAccountSection(activeAccount: Account?, onAddAccount: () -> 
 }
 
 @Composable
-private fun SettingsRelaySection(onRelayManagement: () -> Unit) {
+private fun SettingsRelaySection(onRelayManagement: () -> Unit, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
     // ── Relays section ────────────────────────────────────────────────────
-    SectionHeader("RELAYS")
+    SettingsCategoryHeader("RELAYS", compact, expanded, onToggle)
+    if (compact && !expanded) return
 
     Row(
         modifier = Modifier
@@ -285,132 +339,10 @@ private fun SettingsRelaySection(onRelayManagement: () -> Unit) {
 }
 
 @Composable
-private fun SettingsUpdateSection(
-    state: UpdateState,
-    viewModel: SettingsViewModel,
-    context: Context,
-) {
-    SectionHeader("UPDATES")
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
-    ) {
-        Text(
-            text = "installed v${BuildConfig.VERSION_NAME} · checks GitHub daily",
-            style = BonyType.meta.copy(color = BonyColors.TextMute),
-        )
-        Spacer(Modifier.height(5.dp))
-        val status = when {
-            state.isChecking && state.latestVersion == null -> "checking for releases…"
-            state.updateAvailable -> "update available · v${state.latestVersion}"
-            state.latestVersion != null -> "up to date · latest is v${state.latestVersion}"
-            state.isChecking -> "checking GitHub…"
-            else -> "release status not checked yet"
-        }
-        Text(
-            text = status,
-            style = BonyType.body.copy(
-                color = if (state.updateAvailable) BonyColors.Accent else BonyColors.Text,
-            ),
-        )
-        if (state.lastCheckedAt > 0L) {
-            Text(
-                text = "last check · ${android.text.format.DateFormat.getDateFormat(context).format(Date(state.lastCheckedAt))}",
-                style = BonyType.caption.copy(color = BonyColors.TextMute),
-            )
-        }
-        state.error?.let { error ->
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = error,
-                style = BonyType.meta.copy(color = BonyColors.Warn),
-            )
-        }
-        if (state.updateAvailable && !state.releaseNotes.isNullOrBlank()) {
-            Spacer(Modifier.height(5.dp))
-            Text(
-                text = state.releaseNotes.take(1_500),
-                style = BonyType.meta.copy(color = BonyColors.TextDim),
-                maxLines = 4,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (state.isDownloading) {
-            Spacer(Modifier.height(5.dp))
-            Text(
-                text = state.downloadProgress?.let { "downloading · $it%" } ?: "downloading update…",
-                style = BonyType.meta.copy(color = BonyColors.Accent),
-            )
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (state.updateAvailable) {
-                val signingMismatch = state.error?.contains("signing certificate", ignoreCase = true) == true
-                if (state.apkReady) {
-                    BonyButton(
-                        label = "install update",
-                        primary = true,
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            when (viewModel.installDownloadedUpdate(context)) {
-                                UpdateInstallResult.NEEDS_PERMISSION -> runCatching {
-                                    context.startActivity(
-                                        Intent(
-                                            AndroidSettings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                                            Uri.parse("package:${context.packageName}"),
-                                        ),
-                                    )
-                                }
-                                UpdateInstallResult.FAILED,
-                                UpdateInstallResult.NOT_READY,
-                                UpdateInstallResult.STARTED -> Unit
-                            }
-                        },
-                    )
-                } else if (!state.apkUrl.isNullOrBlank() && !signingMismatch) {
-                    BonyButton(
-                        label = if (state.isDownloading) "downloading…" else "download update",
-                        primary = true,
-                        enabled = !state.isDownloading,
-                        modifier = Modifier.weight(1f),
-                        onClick = viewModel::downloadUpdate,
-                    )
-                }
-                BonyButton(
-                    label = "GitHub release",
-                    primary = false,
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(state.releaseUrl))) }
-                    },
-                )
-            }
-            BonyButton(
-                label = if (state.isChecking) "checking…" else "check now",
-                primary = false,
-                enabled = !state.isChecking,
-                modifier = if (state.updateAvailable) Modifier.weight(1f) else Modifier,
-                onClick = viewModel::checkForUpdates,
-            )
-        }
-        if (state.updateAvailable && state.apkReady) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "APK package and signing certificate verified for this installation.",
-                style = BonyType.caption.copy(color = BonyColors.TextMute),
-            )
-        }
-    }
-    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
-}
-
-@Composable
-private fun SettingsOfflineListsSection(offlineFollowsOn: Boolean, offlineMutesOn: Boolean, onOfflineList: (String) -> Unit) {
+private fun SettingsOfflineListsSection(offlineFollowsOn: Boolean, offlineMutesOn: Boolean, onOfflineList: (String) -> Unit, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
     // ── Offline lists section ─────────────────────────────────────────────
-    SectionHeader("LISTS")
+    SettingsCategoryHeader("LISTS", compact, expanded, onToggle)
+    if (compact && !expanded) return
 
     listOf(
         Triple("offline follow list", offlineFollowsOn, "follows"),
@@ -437,9 +369,10 @@ private fun SettingsOfflineListsSection(offlineFollowsOn: Boolean, offlineMutesO
 }
 
 @Composable
-private fun SettingsContentFiltersSection(onContentFilters: () -> Unit) {
+private fun SettingsContentFiltersSection(onContentFilters: () -> Unit, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
     // ── Content filters section ───────────────────────────────────────────
-    SectionHeader("CONTENT")
+    SettingsCategoryHeader("CONTENT", compact, expanded, onToggle)
+    if (compact && !expanded) return
 
     Row(
         modifier = Modifier
@@ -461,9 +394,10 @@ private fun SettingsContentFiltersSection(onContentFilters: () -> Unit) {
 }
 
 @Composable
-private fun SettingsNoteActionsSection(noteMenuModerationEnabled: Boolean, clientTagEnabled: Boolean, viewModel: SettingsViewModel) {
+private fun SettingsNoteActionsSection(noteMenuModerationEnabled: Boolean, clientTagEnabled: Boolean, viewModel: SettingsViewModel, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
     // ── Note actions and event attribution ─────────────────────────────────
-    SectionHeader("NOTE ACTIONS")
+    SettingsCategoryHeader("NOTE ACTIONS", compact, expanded, onToggle)
+    if (compact && !expanded) return
     SettingsSwitchRow(
         title = "show block/report actions",
         description = "Adds block poster and public NIP-56 report to note menus · off by default",
@@ -483,9 +417,10 @@ private fun SettingsNoteActionsSection(noteMenuModerationEnabled: Boolean, clien
 }
 
 @Composable
-private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: () -> Unit, onBlossom: () -> Unit, imageLoadMode: ImageLoadMode, videoQuality: VideoQuality, videoPlaybackMode: VideoPlaybackMode, videoThumbnails: Boolean) {
+private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: () -> Unit, onBlossom: () -> Unit, imageLoadMode: ImageLoadMode, videoQuality: VideoQuality, videoPlaybackMode: VideoPlaybackMode, videoThumbnails: Boolean, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
     // ── Media section ─────────────────────────────────────────────────────
-    SectionHeader("MEDIA")
+    SettingsCategoryHeader("MEDIA", compact, expanded, onToggle)
+    if (compact && !expanded) return
 
     // Profile picture & banner upload.
     Row(
@@ -644,9 +579,10 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
 }
 
 @Composable
-private fun SettingsAvatarSection(viewModel: SettingsViewModel, avatarMode: AvatarMode, avatarAnimated: Boolean) {
+private fun SettingsAvatarSection(viewModel: SettingsViewModel, avatarMode: AvatarMode, avatarAnimated: Boolean, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
     // ── Avatars section ───────────────────────────────────────────────────
-    SectionHeader("AVATARS")
+    SettingsCategoryHeader("AVATARS", compact, expanded, onToggle)
+    if (compact && !expanded) return
 
     Column(
         modifier = Modifier
@@ -707,9 +643,10 @@ private fun SettingsAvatarSection(viewModel: SettingsViewModel, avatarMode: Avat
 }
 
 @Composable
-private fun SettingsThemeEngineSection(viewModel: SettingsViewModel, uiTheme: UiTheme) {
+private fun SettingsThemeEngineSection(viewModel: SettingsViewModel, uiTheme: UiTheme, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
     // ── Theme engine (Bony vs Youniversal) ──────────────────────────────
-    SectionHeader("THEME ENGINE")
+    SettingsCategoryHeader("THEME ENGINE", compact, expanded, onToggle)
+    if (compact && !expanded) return
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -762,9 +699,10 @@ private fun SettingsThemeEngineSection(viewModel: SettingsViewModel, uiTheme: Ui
 }
 
 @Composable
-private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiTheme, themeMode: ThemeMode, accentColor: String?, youniversalState: YouniversalThemeState, onChooseAccent: () -> Unit) {
+private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiTheme, themeMode: ThemeMode, accentColor: String?, youniversalState: YouniversalThemeState, onChooseAccent: () -> Unit, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
     // ── Appearance section ────────────────────────────────────────────────
-    SectionHeader("APPEARANCE")
+    SettingsCategoryHeader("APPEARANCE", compact, expanded, onToggle)
+    if (compact && !expanded) return
 
     if (uiTheme == UiTheme.BONY) {
         Column(
@@ -1069,9 +1007,10 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
 }
 
 @Composable
-private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Context, torEnabled: Boolean, pinEnabled: Boolean, screenshotBlockEnabled: Boolean, duressPinEnabled: Boolean, onPinSetup: () -> Unit, onDuressPinSetup: () -> Unit) {
+private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Context, torEnabled: Boolean, pinEnabled: Boolean, screenshotBlockEnabled: Boolean, duressPinEnabled: Boolean, onPinSetup: () -> Unit, onDuressPinSetup: () -> Unit, scrambleAppPinKeypad: Boolean, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
     // ── Privacy section ───────────────────────────────────────────────────
-    SectionHeader("PRIVACY")
+    SettingsCategoryHeader("PRIVACY", compact, expanded, onToggle)
+    if (compact && !expanded) return
 
     Row(
         modifier = Modifier
@@ -1131,6 +1070,14 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
     }
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
+    SettingsSwitchRow(
+        title = "scramble app PIN keypad",
+        description = "randomize digit positions for each PIN entry",
+        checked = scrambleAppPinKeypad,
+        onCheckedChange = viewModel::setAppPinKeypadScrambled,
+    )
+    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+
     // ── Screenshot blocker (app-wide) ────────────────────────────────────
     Row(
         modifier = Modifier
@@ -1186,9 +1133,10 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
 }
 
 @Composable
-private fun SettingsDebugSection(viewModel: SettingsViewModel, context: Context, accounts: List<Account>, activeAccount: Account?) {
+private fun SettingsDebugSection(viewModel: SettingsViewModel, context: Context, accounts: List<Account>, activeAccount: Account?, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
     // ── Debug section ─────────────────────────────────────────────────────
-    SectionHeader("DEBUG")
+    SettingsCategoryHeader("DEBUG", compact, expanded, onToggle)
+    if (compact && !expanded) return
 
     Row(
         modifier = Modifier
@@ -1261,6 +1209,37 @@ private fun AccountSettingsRow(account: Account, onManage: () -> Unit) {
             Text(signerLabel, style = BonyType.meta.copy(color = BonyColors.Accent))
         }
         Text("↻", style = BonyType.body.copy(color = BonyColors.TextMute))
+    }
+}
+
+@Composable
+private fun SettingsCategoryHeader(
+    title: String,
+    compact: Boolean,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    if (!compact) {
+        SectionHeader(title)
+        return
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(BonyColors.SurfaceAlt)
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 14.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, style = BonyType.caption.copy(color = BonyColors.TextMute))
+        Spacer(Modifier.weight(1f))
+        Text(
+            text = if (expanded) "⌄" else "›",
+            style = BonyType.body.copy(color = BonyColors.TextMute),
+        )
+    }
+    if (!expanded) {
+        Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
     }
 }
 

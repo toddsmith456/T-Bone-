@@ -24,6 +24,9 @@ class ToolboxSettingsViewModel @Inject constructor(
     val pinEnabled: StateFlow<Boolean> = appSettings.toolboxPinEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    val pinKeypadScrambled: StateFlow<Boolean> = appSettings.toolboxPinKeypadScrambled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
     val duressPinEnabled: StateFlow<Boolean> = appSettings.toolboxDuressPinEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
@@ -32,6 +35,10 @@ class ToolboxSettingsViewModel @Inject constructor(
 
     fun setScreenshotBlockEnabled(enabled: Boolean) {
         viewModelScope.launch { appSettings.setToolboxScreenshotBlockEnabled(enabled) }
+    }
+
+    fun setPinKeypadScrambled(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setToolboxPinKeypadScrambled(enabled) }
     }
 
     fun setPin(pin: String, onDone: () -> Unit) {

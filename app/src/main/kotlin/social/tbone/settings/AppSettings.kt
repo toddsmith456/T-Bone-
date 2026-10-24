@@ -60,6 +60,10 @@ class AppSettings @Inject constructor(
         private val ACCENT_COLOR = stringPreferencesKey("accent_color")
         // UI engine: bony (default) vs youniversal
         private val UI_THEME = stringPreferencesKey("ui_theme")
+        // One-switch compact chrome and separately randomized PIN keypads.
+        private val UI_DECLUTTER_ENABLED = booleanPreferencesKey("ui_declutter_enabled")
+        private val APP_PIN_KEYPAD_SCRAMBLED = booleanPreferencesKey("app_pin_keypad_scrambled")
+        private val TOOLBOX_PIN_KEYPAD_SCRAMBLED = booleanPreferencesKey("toolbox_pin_keypad_scrambled")
         // Screenshot blocker (FLAG_SECURE) — app-wide.
         private val SCREENSHOT_BLOCK_ENABLED = booleanPreferencesKey("screenshot_block_enabled")
         // Toolbox-only settings.
@@ -162,6 +166,9 @@ class AppSettings @Inject constructor(
     private val _duressPinEnabled = MutableStateFlow(false)
     val duressPinEnabled = _duressPinEnabled.asStateFlow()
 
+    private val _appPinKeypadScrambled = MutableStateFlow(false)
+    val appPinKeypadScrambled = _appPinKeypadScrambled.asStateFlow()
+
     private val _imageLoadMode = MutableStateFlow(ImageLoadMode.ON)
     val imageLoadMode = _imageLoadMode.asStateFlow()
 
@@ -193,6 +200,9 @@ class AppSettings @Inject constructor(
     private val _uiTheme = MutableStateFlow(UiTheme.BONY)
     val uiTheme = _uiTheme.asStateFlow()
 
+    private val _uiDeclutterEnabled = MutableStateFlow(false)
+    val uiDeclutterEnabled = _uiDeclutterEnabled.asStateFlow()
+
     private val _screenshotBlockEnabled = MutableStateFlow(false)
     val screenshotBlockEnabled = _screenshotBlockEnabled.asStateFlow()
 
@@ -201,6 +211,9 @@ class AppSettings @Inject constructor(
 
     private val _toolboxPinEnabled = MutableStateFlow(false)
     val toolboxPinEnabled = _toolboxPinEnabled.asStateFlow()
+
+    private val _toolboxPinKeypadScrambled = MutableStateFlow(false)
+    val toolboxPinKeypadScrambled = _toolboxPinKeypadScrambled.asStateFlow()
 
     private val _toolboxDuressPinEnabled = MutableStateFlow(false)
     val toolboxDuressPinEnabled = _toolboxDuressPinEnabled.asStateFlow()
@@ -322,6 +335,7 @@ class AppSettings @Inject constructor(
                 _clockFeedHours.value = (prefs[CLOCK_FEED_HOURS] ?: DEFAULT_CLOCK_HOURS).coerceIn(1, 24)
                 _pinEnabled.value = prefs[PIN_ENABLED] ?: false
                 _duressPinEnabled.value = prefs[DURESS_PIN_ENABLED] ?: false
+                _appPinKeypadScrambled.value = prefs[APP_PIN_KEYPAD_SCRAMBLED] ?: false
                 _imageLoadMode.value = ImageLoadMode.fromPref(prefs[IMAGE_LOAD_MODE])
                 _videoQuality.value = VideoQuality.fromPref(prefs[VIDEO_QUALITY])
                 _videoPlaybackMode.value = VideoPlaybackMode.fromPref(prefs[VIDEO_PLAYBACK_MODE])
@@ -332,9 +346,11 @@ class AppSettings @Inject constructor(
                 _themeMode.value = ThemeMode.fromPref(prefs[THEME_MODE])
                 _accentColor.value = prefs[ACCENT_COLOR]
                 _uiTheme.value = UiTheme.fromPref(prefs[UI_THEME])
+                _uiDeclutterEnabled.value = prefs[UI_DECLUTTER_ENABLED] ?: false
                 _screenshotBlockEnabled.value = prefs[SCREENSHOT_BLOCK_ENABLED] ?: false
                 _toolboxScreenshotBlockEnabled.value = prefs[TOOLBOX_SCREENSHOT_BLOCK_ENABLED] ?: false
                 _toolboxPinEnabled.value = prefs[TOOLBOX_PIN_ENABLED] ?: false
+                _toolboxPinKeypadScrambled.value = prefs[TOOLBOX_PIN_KEYPAD_SCRAMBLED] ?: false
                 _toolboxDuressPinEnabled.value = prefs[TOOLBOX_DURESS_PIN_ENABLED] ?: false
                 _toolboxToolOrder.value = prefs[TOOLBOX_TOOL_ORDER]
                     ?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
@@ -408,6 +424,11 @@ class AppSettings @Inject constructor(
         dataStore.edit { it[PIN_ENABLED] = enabled }
     }
 
+    suspend fun setAppPinKeypadScrambled(enabled: Boolean) {
+        _appPinKeypadScrambled.value = enabled
+        dataStore.edit { it[APP_PIN_KEYPAD_SCRAMBLED] = enabled }
+    }
+
     suspend fun setPinHash(hash: String) {
         dataStore.edit { it[PIN_HASH] = hash }
     }
@@ -469,6 +490,11 @@ class AppSettings @Inject constructor(
         dataStore.edit { it[UI_THEME] = theme.prefValue }
     }
 
+    suspend fun setUiDeclutterEnabled(enabled: Boolean) {
+        _uiDeclutterEnabled.value = enabled
+        dataStore.edit { it[UI_DECLUTTER_ENABLED] = enabled }
+    }
+
     /** Custom accent color as "#RRGGBB", or null to use the default green. */
     suspend fun setAccentColor(hex: String?) {
         dataStore.edit { prefs ->
@@ -503,6 +529,11 @@ class AppSettings @Inject constructor(
 
     suspend fun setToolboxPinEnabled(enabled: Boolean) {
         dataStore.edit { it[TOOLBOX_PIN_ENABLED] = enabled }
+    }
+
+    suspend fun setToolboxPinKeypadScrambled(enabled: Boolean) {
+        _toolboxPinKeypadScrambled.value = enabled
+        dataStore.edit { it[TOOLBOX_PIN_KEYPAD_SCRAMBLED] = enabled }
     }
 
     suspend fun setToolboxPinHash(hash: String) {

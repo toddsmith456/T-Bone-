@@ -1,16 +1,21 @@
 package social.tbone.ui.lock
 
 import androidx.lifecycle.ViewModel
+import kotlinx.coroutines.flow.StateFlow
 import dagger.hilt.android.lifecycle.HiltViewModel
 import social.tbone.security.AppLockManager
 import social.tbone.security.DataWiper
+import social.tbone.settings.AppSettings
 import javax.inject.Inject
 
 @HiltViewModel
 class PinLockViewModel @Inject constructor(
     private val lockManager: AppLockManager,
     private val dataWiper: DataWiper,
+    appSettings: AppSettings,
 ) : ViewModel() {
+
+    val keypadScrambled: StateFlow<Boolean> = appSettings.appPinKeypadScrambled
 
     suspend fun verifyPin(input: String): Boolean = lockManager.verifyPin(input)
 

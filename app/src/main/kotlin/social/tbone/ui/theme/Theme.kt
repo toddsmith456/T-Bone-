@@ -11,6 +11,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -180,15 +181,35 @@ object BonyType {
     private val currentFontFamily: FontFamily
         get() = activeYouniversalFontFamily ?: JetBrainsMono
 
-    val wordmark get() = TextStyle(fontFamily = currentFontFamily, fontWeight = FontWeight.Bold,     fontSize = 30.sp, lineHeight = 30.sp, letterSpacing = (-1.0).sp)
-    val title    get() = TextStyle(fontFamily = currentFontFamily, fontWeight = FontWeight.Bold,     fontSize = 20.sp, lineHeight = 26.sp, letterSpacing = (-0.3).sp)
-    val body     get() = TextStyle(fontFamily = currentFontFamily, fontWeight = FontWeight.Normal,   fontSize = 15.sp, lineHeight = 22.sp, letterSpacing = 0.sp)
-    val bodyDim  get() = TextStyle(fontFamily = currentFontFamily, fontWeight = FontWeight.Normal,   fontSize = 14.sp, lineHeight = 20.sp, letterSpacing = 0.sp)
-    val meta     get() = TextStyle(fontFamily = currentFontFamily, fontWeight = FontWeight.Normal,   fontSize = 13.sp, lineHeight = 18.sp, letterSpacing = 0.4.sp)
-    val metaDim  get() = TextStyle(fontFamily = currentFontFamily, fontWeight = FontWeight.Normal,   fontSize = 12.sp, lineHeight = 16.sp, letterSpacing = 0.4.sp)
-    val caption  get() = TextStyle(fontFamily = currentFontFamily, fontWeight = FontWeight.Normal,   fontSize = 11.sp, lineHeight = 14.sp, letterSpacing = 1.5.sp)
-    val tag      get() = TextStyle(fontFamily = currentFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, lineHeight = 14.sp, letterSpacing = 1.0.sp)
-    val button   get() = TextStyle(fontFamily = currentFontFamily, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, lineHeight = 16.sp, letterSpacing = 1.0.sp)
+    private fun style(
+        weight: FontWeight,
+        size: Int,
+        lineHeight: Int,
+        letterSpacing: Float = 0f,
+    ): TextStyle {
+        val customYouniversalFont = activeYouniversalFontFamily != null
+        return TextStyle(
+            fontFamily = currentFontFamily,
+            fontWeight = weight,
+            fontSize = size.sp,
+            // Nunito/system sans metrics are taller than JetBrains Mono's. The
+            // old tight mono leading clipped accents and descenders in several
+            // legacy BonyType labels when a Youniversal font was selected.
+            lineHeight = (lineHeight + if (customYouniversalFont) 2 else 0).sp,
+            letterSpacing = letterSpacing.sp,
+            platformStyle = if (customYouniversalFont) PlatformTextStyle(includeFontPadding = true) else null,
+        )
+    }
+
+    val wordmark get() = style(FontWeight.Bold, 30, 30, -1.0f)
+    val title    get() = style(FontWeight.Bold, 20, 26, -0.3f)
+    val body     get() = style(FontWeight.Normal, 15, 22)
+    val bodyDim  get() = style(FontWeight.Normal, 14, 20)
+    val meta     get() = style(FontWeight.Normal, 13, 18, 0.4f)
+    val metaDim  get() = style(FontWeight.Normal, 12, 16, 0.4f)
+    val caption  get() = style(FontWeight.Normal, 11, 14, 1.5f)
+    val tag      get() = style(FontWeight.SemiBold, 11, 14, 1.0f)
+    val button   get() = style(FontWeight.SemiBold, 13, 16, 1.0f)
 }
 
 /**

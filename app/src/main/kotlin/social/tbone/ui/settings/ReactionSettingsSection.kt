@@ -43,14 +43,38 @@ import social.tbone.ui.theme.BonyType
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun ReactionSettingsSection(viewModel: SettingsViewModel) {
+internal fun ReactionSettingsSection(
+    viewModel: SettingsViewModel,
+    compact: Boolean,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
     val enabled by viewModel.multiReactionsEnabled.collectAsStateWithLifecycle()
     val emojis by viewModel.reactionEmojis.collectAsStateWithLifecycle()
     var input by remember { mutableStateOf("") }
     val max = AppSettings.MAX_REACTION_EMOJIS
     val full = emojis.size >= max
 
-    SectionHeader("REACTIONS")
+    if (compact) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(BonyColors.SurfaceAlt)
+                .clickable(onClick = onToggle)
+                .padding(horizontal = 14.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("REACTIONS", style = BonyType.caption.copy(color = BonyColors.TextMute))
+            Spacer(Modifier.weight(1f))
+            Text(if (expanded) "⌄" else "›", style = BonyType.body.copy(color = BonyColors.TextMute))
+        }
+        if (!expanded) {
+            Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+            return
+        }
+    } else {
+        SectionHeader("REACTIONS")
+    }
 
     Row(
         modifier = Modifier
