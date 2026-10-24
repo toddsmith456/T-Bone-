@@ -187,12 +187,17 @@ fun NoteActionsMenu(
                             val result = runCatching {
                                 withContext(Dispatchers.IO) {
                                     val video = NoteShareCardGenerator.firstVideo(event)
+                                    // Resolve the quoted note first: the card
+                                    // draws it as a quote block, never as a raw
+                                    // nostr:nevent1… string.
+                                    val quote = viewModel.quoteFor(event)
                                     val card = NoteShareCardGenerator.renderCard(
                                         context = context,
                                         event = event,
                                         authorName = authorName,
                                         authorPictureUrl = authorPictureUrl,
                                         animatedVideoUrl = video?.url,
+                                        quote = quote,
                                     )
                                     if (video != null && card.videoSlot != null) {
                                         runCatching {

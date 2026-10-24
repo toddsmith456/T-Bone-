@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.media.ExifInterface
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.media3.common.Format
@@ -77,9 +78,23 @@ object MediaProcessor {
     /** MIME + extension of the Media3 transcode output (always MP4). */
     private const val VIDEO_MIME = "video/mp4"
     private const val VIDEO_EXT = "mp4"
-    /** Blossom video uploads are capped at 10 MB (decimal) before and after processing. */
-    const val VIDEO_MAX_BYTES = 10_000_000L
-    private const val VIDEO_TOO_BIG_MESSAGE = "video is too big"
+    /**
+     * Safety ceiling for a video picked for upload — **not** a product limit.
+     *
+     * v0.4.1 introduced a 10 MB ceiling and rejected anything larger before the
+     * transcoder ran, which is smaller than a 20-second phone clip: virtually
+     * every video failed with "video is too big". The server already enforces
+     * its own size limit (Blossom answers 413 `file too large`), so the client
+     * only guards against absurd files, and everything under this ceiling is
+     * uploaded (transcoded when that genuinely makes it smaller).
+     */
+    const val VIDEO_MAX_BYTES = VideoUploadPolicy.MAX_BYTES
+
+    /** Videos taller than this are downscaled before upload; smaller ones are sent as-is. */
+    private const val VIDEO_TARGET_HEIGHT = VideoUploadPolicy.TARGET_HEIGHT
+
+    private val VIDEO_TOO_BIG_MESSAGE: String
+        get() = "video is larger than ${VIDEO_MAX_BYTES / (1024L * 1024L)} MB"
     private const val AUDIO_COMPRESSED_MIME = "audio/mp4"
     private const val AUDIO_COMPRESSED_EXT = "m4a"
 
@@ -94,9 +109,11 @@ object MediaProcessor {
 
     /**
      * Prepares a video for upload. Media3 Transformer is tried first when
-     * compression is enabled. If the source codec/container is not supported,
-     * upload the original bytes with their detected MIME type and extension
-     * rather than rejecting a file the user's Blossom server may accept.
+     * compression is enabled **and** the source is bigger than the 1280p
+     * profile. If the source codec/container is not supported, or the transcode
+     * does not actually shrink the file, the original bytes are uploaded with
+     * their detected MIME type and extension rather than rejecting a file the
+     * user's Blossom server may accept.
      */
     suspend fun prepareVideoMedia(
         context: Context,
@@ -107,7 +124,7 @@ object MediaProcessor {
             val (mime, extension) = videoSourceType(context, uri)
             Triple(mime, extension, sourceSizeOf(context, uri))
         }
-        if (sourceSize > VIDEO_MAX_BYTES) throw IllegalArgumentException(VIDEO_TOO_BIG_MESSAGE)
+        if (!VideoUploadPolicy.isWithinCeiling(sourceSize)) throw IllegalArgumentException(VIDEO_TOO_BIG_MESSAGE)
 
         // Some content providers omit SIZE or return zero. Copy those sources
         // once with a hard byte cap before invoking Media3, both to measure them
@@ -122,17 +139,30 @@ object MediaProcessor {
             return PreparedMedia(original, sourceMime, sourceExtension)
         }
 
-        val transcoded = try {
-            transcodeVideo(context, sourceUri)
-        } catch (cancelled: CancellationException) {
-            sourceCopy?.delete()
-            throw cancelled
-        } catch (error: Exception) {
-            Timber.w(error, "video transcode unavailable; uploading original file")
-            null
-        }
+        // Re-encoding a clip that is already at or under 1280p costs quality and
+        // time and can even make it larger, so only taller sources are
+        // transcoded (an unknown height is given the benefit of the doubt).
+        val sourceHeight = withContext(Dispatchers.IO) { videoHeightOf(context, sourceUri) }
+        val transcoded = if (VideoUploadPolicy.needsTranscode(sourceHeight)) {
+            try {
+                transcodeVideo(context, sourceUri)
+            } catch (cancelled: CancellationException) {
+                sourceCopy?.delete()
+                throw cancelled
+            } catch (error: Exception) {
+                Timber.w(error, "video transcode unavailable; uploading original file")
+                null
+            }
+        } else null
+
         if (transcoded != null && transcoded.exists() && transcoded.length() > 0L) {
-            if (transcoded.length() <= VIDEO_MAX_BYTES) {
+            val originalBytes = sourceSize.takeIf { it > 0L } ?: sourceCopy?.length() ?: -1L
+            // Never throw away a finished transcode because it is "too big" for
+            // an arbitrary client cap — only prefer the original when it is
+            // genuinely smaller, and keep the safety ceiling for both.
+            if (VideoUploadPolicy.preferTranscoded(transcoded.length(), originalBytes) &&
+                VideoUploadPolicy.isWithinCeiling(transcoded.length())
+            ) {
                 sourceCopy?.delete()
                 return PreparedMedia(transcoded, VIDEO_MIME, VIDEO_EXT)
             }
@@ -140,8 +170,6 @@ object MediaProcessor {
         }
         transcoded?.delete()
 
-        // A transcode can be larger than its input. Fall back only when the
-        // original bytes are within the cap; otherwise surface the exact message.
         val original = sourceCopy ?: copyVideoToCache(context, uri, sourceExtension) ?: return null
         if (original.length() > VIDEO_MAX_BYTES) {
             original.delete()
@@ -284,7 +312,7 @@ object MediaProcessor {
         }.getOrNull()
     }
 
-    /** Streams an original video into cache and aborts as soon as it exceeds 10 MiB. */
+    /** Streams an original video into cache and aborts if it passes [VIDEO_MAX_BYTES]. */
     private suspend fun copyVideoToCache(
         context: Context,
         uri: Uri,
@@ -437,9 +465,32 @@ object MediaProcessor {
         }
     }
 
+    /** Height (as displayed, i.e. after rotation) of the source video, or 0 if unknown. */
+    private fun videoHeightOf(context: Context, uri: Uri): Int = runCatching {
+        val retriever = MediaMetadataRetriever()
+        try {
+            if (uri.scheme == "file") {
+                uri.path?.let { path -> retriever.setDataSource(path) }
+            } else {
+                retriever.setDataSource(context, uri)
+            }
+            val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                ?.toIntOrNull() ?: 0
+            val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                ?.toIntOrNull() ?: 0
+            val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+                ?.toIntOrNull() ?: 0
+            // A portrait clip is stored landscape plus a 90° rotation flag; the
+            // height that decides whether to downscale is the displayed one.
+            if (rotation == 90 || rotation == 270) width else height
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }.getOrDefault(0)
+
     private suspend fun transcodeVideo(context: Context, uri: Uri): File? {
         val out = File(context.cacheDir, "tbone_video_comp_${System.currentTimeMillis()}.mp4")
-        val presentation = Presentation.createForHeight(1280)
+        val presentation = Presentation.createForHeight(VIDEO_TARGET_HEIGHT)
         val effects = Effects(emptyList(), listOf(presentation))
         val edited = EditedMediaItem.Builder(MediaItem.fromUri(uri))
             .setEffects(effects)
@@ -450,6 +501,8 @@ object MediaProcessor {
 
         return suspendCancellableCoroutine { cont ->
             val transformer = Transformer.Builder(context)
+                .setVideoMimeType(androidx.media3.common.MimeTypes.VIDEO_H264)
+                .setAudioMimeType(androidx.media3.common.MimeTypes.AUDIO_AAC)
                 .addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                     cont.resume(out)

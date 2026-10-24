@@ -186,12 +186,6 @@ fun ProfileScreen(
                             ))
                         },
                     )
-                    Spacer(Modifier.width(14.dp))
-                    Text(
-                        text = "⋯",
-                        style = BonyType.body.copy(color = BonyColors.TextMute),
-                        modifier = Modifier.clickable { /* more menu — future */ },
-                    )
                 }
                 Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 

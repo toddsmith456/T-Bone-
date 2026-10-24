@@ -255,6 +255,11 @@ fun VerifyIdentityScreen(
                         )
                     }
                 }
+
+                // Breathing room under the QR card. Without it the code's
+                // quiet zone and the last pixels of the screen image touch the
+                // scroll edge, which reads as a clipped card.
+                Spacer(Modifier.height(if (showQr) 36.dp else 24.dp))
             }
         }
 

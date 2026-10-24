@@ -22,6 +22,35 @@ All notable changes to this fork are documented here. Format follows
     `XdcArchive`/`XdcUpdateStore`/NIP-DC parsing with unit tests, including an
     opt-in check against ten real `.xdc` packages.
 
+### Changed
+- **Feed tab icon**: `FOLLOWS` is a single person — head and one open shoulder
+  arc — with no plus. The plus merged into the shoulder line at 17 dp and read
+  as "add someone" rather than "the people you follow".
+
+### Fixed
+- **Video uploads work again.** v0.4.1 capped clips at 10 MB and rejected
+  anything larger *before* transcoding, so nearly every phone video failed with
+  "video is too big". The cap is now a 500 MB safety ceiling; clips at or below
+  1280p are uploaded untouched, taller ones are downscaled to 1280p, and a
+  finished transcode is never discarded for exceeding a client-side limit.
+- **Share cards with video** now contain a properly sized, playable video
+  window. Media3's compositor already scales an overlay by
+  `overlaySize / backgroundSize`, and the video input was additionally scaled
+  by `slot / output`, double-scaling it into a squashed postage stamp. The
+  export is also validated (duration and video track) before it is shared, so a
+  dud MP4 falls back to the still card instead of being sent.
+- **Share cards of image-only notes** no longer print "(empty note)". The text
+  slot is left empty and the media section moves up into the space.
+- **Share cards of quoted notes** draw a real quote block — quoted author, the
+  first lines of their note and an attachment count — instead of the raw
+  `nostr:nevent1…` string, mirroring the in-feed quote card.
+- **Profile**: removed the dead ⋯ overflow button in the top bar, and the
+  identity QR view now has breathing room beneath the code.
+- **Feed timeline restored.** The previous feed-strip refactor dropped the
+  `LazyColumn` branch of `FeedScreen`, so any feed with notes rendered an empty
+  screen. The timeline is back; `FOLLOWS` and `CLOCK` share one footer
+  (`─── pull to refresh ───`) and `CLOCK` has no older-paging of any kind.
+
 ## [0.4.1] — 2026-10-19
 
 ### Added

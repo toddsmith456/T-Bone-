@@ -10,11 +10,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import social.tbone.account.AccountRepository
 import social.tbone.account.signer.NostrSignerFactory
+import social.tbone.db.EventRepository
 import social.tbone.lists.MuteListRepository
 import social.tbone.lists.MuteOutcome
 import social.tbone.nostr.Event
 import social.tbone.nostr.Nip56Report
 import social.tbone.nostr.Nip56ReportReason
+import social.tbone.nostr.quotedEventId
+import social.tbone.profile.ProfileRepository
 import social.tbone.notes.BookmarkFolderUi
 import social.tbone.notes.BookmarkSaveResult
 import social.tbone.notes.BookmarksRepository
@@ -31,10 +34,40 @@ class NoteActionsViewModel @Inject constructor(
     private val signerFactory: NostrSignerFactory,
     private val relayPool: RelayPool,
     private val bookmarksRepository: BookmarksRepository,
+    private val eventRepository: EventRepository,
+    private val profileRepository: ProfileRepository,
 ) : ViewModel() {
     val moderationActionsEnabled = appSettings.noteMenuModerationEnabled
     val bookmarkFolders: StateFlow<List<BookmarkFolderUi>> = bookmarksRepository.folders
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * Resolves the note that [event] quotes, far enough to draw a real quote
+     * block on a share card.
+     *
+     * Cache-first and synchronous with respect to the caller: the feed and
+     * every thread view already store resolved quotes in the event cache, so
+     * this is normally one indexed read with no relay round-trip. Returns null
+     * only when the note quotes nothing or the quoted note is on no device /
+     * relay we have seen — the card then draws an "unavailable" quote box.
+     */
+    suspend fun quoteFor(event: Event): ShareCardQuote? {
+        val quotedId = event.parsedTags.quotedEventId
+            ?: extractInlineQuoteId(event.content)
+            ?: return null
+        val quoted = eventRepository.getById(quotedId) ?: return null
+        val media = ShareCardMediaParser.parse(quoted)
+        val nestedId = quoted.parsedTags.quotedEventId ?: extractInlineQuoteId(quoted.content)
+        val body = ShareCardMediaParser.stripMediaUrls(quoted.content, media)
+        val text = if (nestedId != null) stripQuoteRefs(body, nestedId) else body
+        return ShareCardQuote(
+            eventId = quoted.id,
+            authorPubkey = quoted.pubkey,
+            authorName = profileRepository.profiles.value[quoted.pubkey]?.bestName,
+            text = text,
+            mediaCount = media.size,
+        )
+    }
 
     fun saveBookmark(event: Event, folderId: String, onFinished: (String) -> Unit) {
         viewModelScope.launch {

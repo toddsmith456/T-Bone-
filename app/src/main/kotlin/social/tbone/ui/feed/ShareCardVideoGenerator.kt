@@ -30,7 +30,6 @@ import kotlin.coroutines.resumeWithException
 /** Builds a playable MP4 with a still share-card frame and one live video window. */
 object ShareCardVideoGenerator {
     private const val MAX_VIDEO_BYTES = 300L * 1024L * 1024L
-    private const val MAX_OUTPUT_DIMENSION = 3840
     private const val FRAME_RATE = 30
 
     @androidx.media3.common.util.UnstableApi
@@ -54,17 +53,20 @@ object ShareCardVideoGenerator {
             downloadVideo(video.url, input)
             val durationMs = readDurationMs(input)
             require(durationMs > 0L) { "Could not read the source video duration." }
-            val scale = minOf(1f, MAX_OUTPUT_DIMENSION.toFloat() / maxOf(card.width, card.height))
-            val outputWidth = evenDimension(card.width * scale)
-            val outputHeight = evenDimension(card.height * scale)
-            val scaledSlot = android.graphics.RectF(
-                slot.left * outputWidth / card.width,
-                slot.top * outputHeight / card.height,
-                slot.right * outputWidth / card.width,
-                slot.bottom * outputHeight / card.height,
+            val (outputWidth, outputHeight) = ShareCardVideoLayout.outputSize(card.width, card.height)
+            val frame = ShareCardVideoLayout.slotInOutput(
+                left = slot.left,
+                top = slot.top,
+                right = slot.right,
+                bottom = slot.bottom,
+                cardWidth = card.width,
+                cardHeight = card.height,
+                outputWidth = outputWidth,
+                outputHeight = outputHeight,
             )
-            val slotWidth = evenDimension(scaledSlot.width())
-            val slotHeight = evenDimension(scaledSlot.height())
+            val scaledSlot = android.graphics.RectF(frame.left, frame.top, frame.right, frame.bottom)
+            val slotWidth = frame.width
+            val slotHeight = frame.height
             val backgroundItem = MediaItem.Builder()
                 .setUri(Uri.fromFile(card.file))
                 .setMimeType("image/png")
@@ -103,6 +105,12 @@ object ShareCardVideoGenerator {
 
             export(context, composition, output)
             require(output.isFile && output.length() > 0L) { "The video card could not be created." }
+            // A container that exists is not a playable card: some exports end
+            // up with a zero-duration or video-less file. Treat that as a
+            // failure so the caller shares the still card instead of a dud.
+            require(readDurationMs(output) > 0L && readVideoTrackPresent(output)) {
+                "The video card could not be created."
+            }
             completed = true
             return output
         } finally {
@@ -170,9 +178,16 @@ object ShareCardVideoGenerator {
         }
     }
 
-    private fun evenDimension(value: Float): Int {
-        val whole = value.toInt().coerceAtLeast(2)
-        return if (whole % 2 == 0) whole else (whole - 1).coerceAtLeast(2)
+    /** True when the exported file actually contains a decodable video track. */
+    private fun readVideoTrackPresent(file: File): Boolean {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(file.absolutePath)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO) == "yes" &&
+                (retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0) > 0
+        } finally {
+            runCatching { retriever.release() }
+        }
     }
 
     private fun readDurationMs(file: File): Long {
@@ -197,8 +212,13 @@ object ShareCardVideoGenerator {
             val centerX = (slot.centerX() / outputWidth) * 2f - 1f
             // NDC's y-axis points upward while Android canvas coordinates point down.
             val centerY = 1f - (slot.centerY() / outputHeight) * 2f
+            // Scale MUST stay 1. Media3's compositor already sizes the overlay
+            // quad by overlaySize / backgroundSize (OverlayMatrixProvider), and
+            // the video input is pre-sized to the slot by Presentation, so the
+            // quad is the slot. Scaling it again by slot/output shrank the live
+            // window to a stamp and squashed its aspect — the old bug.
             return OverlaySettings.Builder()
-                .setScale(slot.width() / outputWidth, slot.height() / outputHeight)
+                .setScale(ShareCardVideoLayout.OVERLAY_SCALE, ShareCardVideoLayout.OVERLAY_SCALE)
                 .setOverlayFrameAnchor(0f, 0f)
                 .setBackgroundFrameAnchor(centerX, centerY)
                 .build()
@@ -208,4 +228,64 @@ object ShareCardVideoGenerator {
             const val VIDEO_SEQUENCE_INDEX = 0
         }
     }
+}
+
+/**
+ * Pure pixel mapping from card coordinates to the exported MP4 frame.
+ *
+ * Kept free of Android types so the geometry can be unit-tested on the JVM:
+ * the card is up to 1080 × 8000 px and the encoder wants an even-sized frame
+ * no larger than 3840 px on its longest edge, with the video window scaled by
+ * exactly the same factor.
+ */
+internal object ShareCardVideoLayout {
+    /**
+     * The compositor's overlay scale. Always 1: the video input is already
+     * sized to the slot and Media3 scales the overlay by overlay/background
+     * itself, so any other value double-scales the video window.
+     */
+    const val OVERLAY_SCALE = 1f
+
+    private const val MAX_OUTPUT_DIMENSION = 3840
+
+    private fun even(value: Int): Int = if (value % 2 == 0) value else (value - 1).coerceAtLeast(2)
+
+    fun outputSize(cardWidth: Int, cardHeight: Int): Pair<Int, Int> {
+        val scale = minOf(1f, MAX_OUTPUT_DIMENSION.toFloat() / maxOf(cardWidth, cardHeight).coerceAtLeast(1))
+        return even((cardWidth * scale).toInt().coerceAtLeast(2)) to
+            even((cardHeight * scale).toInt().coerceAtLeast(2))
+    }
+
+    /** The card-pixel video window mapped into the exported frame, clamped and even-sized. */
+    fun slotInOutput(
+        left: Float,
+        top: Float,
+        right: Float,
+        bottom: Float,
+        cardWidth: Int,
+        cardHeight: Int,
+        outputWidth: Int,
+        outputHeight: Int,
+    ): VideoSlotFrame {
+        val scaleX = outputWidth.toFloat() / cardWidth.coerceAtLeast(1)
+        val scaleY = outputHeight.toFloat() / cardHeight.coerceAtLeast(1)
+        val l = (left * scaleX).coerceIn(0f, outputWidth - 2f)
+        val t = (top * scaleY).coerceIn(0f, outputHeight - 2f)
+        val r = (right * scaleX).coerceIn(l + 2f, outputWidth.toFloat())
+        val b = (bottom * scaleY).coerceIn(t + 2f, outputHeight.toFloat())
+        return VideoSlotFrame(l, t, even((r - l).toInt().coerceAtLeast(2)), even((b - t).toInt().coerceAtLeast(2)))
+    }
+}
+
+/** Video window in exported-frame pixels. */
+internal data class VideoSlotFrame(
+    val left: Float,
+    val top: Float,
+    val width: Int,
+    val height: Int,
+) {
+    val right: Float get() = left + width
+    val bottom: Float get() = top + height
+    val centerX: Float get() = left + width / 2f
+    val centerY: Float get() = top + height / 2f
 }

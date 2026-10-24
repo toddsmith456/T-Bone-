@@ -6,14 +6,15 @@ the author set and the time window differ.
 
 | # | Tab | Icon | Author set | Time |
 |---|-----|------|-----------|------|
-| 1 | `FOLLOWS` | person + plus | your follow list (offline list when switched on) | live |
+| 1 | `FOLLOWS` | person | your follow list (offline list when switched on) | live |
 | 2 | `CLOCK` | clock | the same follow list | you pick 1–24 h ago |
 | 3 | `SUGGESTED` | T-Bone tooth | the curated roster in `assets/tbone-suggested-follows.txt` | recent |
 | 4 | `GLOBAL` | globe | every author the relays carry | live |
 
 ## Follows
 
-Unchanged. Kind 1/6/9, newest first, paged as you scroll.
+Kind 1/6/9, newest first, one page per load: pull to refresh for more. There is
+no older-paging control, and `CLOCK` deliberately behaves the same way.
 
 ## Clock
 
@@ -55,6 +56,9 @@ Unchanged: buffered live events, a manual/intervalled "load new" control and
 ## Icons
 
 `ui/feed/FeedTabIcons.kt` draws all four as `ImageVector`s on a 24-unit grid.
+`FOLLOWS` is a plain person — head plus one open shoulder arc, no plus sign: the
+tab is a place, not an "add someone" button, and a plus merged with the shoulder
+into a blob at 17 dp.
 Material's outlined icons are pre-baked fills and go muddy at 17 dp next to the
 app's hairline rules; these stay crisp and take `Icon(tint = …)`, which is what
 lets every theme colour them (accent when active, `TextMute` otherwise).

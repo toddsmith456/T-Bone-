@@ -51,29 +51,22 @@ object FeedTabIcons {
         }.build()
 
     /**
-     * following — the universal "add person / follow" glyph: a head, a shoulder
-     * line and a plus where the second person would be. A plus reads as
-     * "follow" in every social app; a tick would read as "already following".
+     * following — one person: a head and an open shoulder arc, centred on the
+     * grid. There is no plus. The tab is a place, not an "add someone" button,
+     * and at 17 dp the plus merged with the shoulder line into a blob.
      */
     val following: ImageVector = icon("feed_following") {
         // head
-        moveTo(9.0f, 4.4f)
-        curveTo(10.93f, 4.4f, 12.5f, 5.97f, 12.5f, 7.9f)
-        curveTo(12.5f, 9.83f, 10.93f, 11.4f, 9.0f, 11.4f)
-        curveTo(7.07f, 11.4f, 5.5f, 9.83f, 5.5f, 7.9f)
-        curveTo(5.5f, 5.97f, 7.07f, 4.4f, 9.0f, 4.4f)
+        moveTo(12.0f, 4.4f)
+        curveTo(13.93f, 4.4f, 15.5f, 5.97f, 15.5f, 7.9f)
+        curveTo(15.5f, 9.83f, 13.93f, 11.4f, 12.0f, 11.4f)
+        curveTo(10.07f, 11.4f, 8.5f, 9.83f, 8.5f, 7.9f)
+        curveTo(8.5f, 5.97f, 10.07f, 4.4f, 12.0f, 4.4f)
         close()
-        // shoulders, open on the right so the plus sits in the gap
-        moveTo(2.9f, 20.2f)
-        verticalLineTo(19.0f)
-        curveTo(2.9f, 15.9f, 5.6f, 13.6f, 9.0f, 13.6f)
-        horizontalLineTo(10.2f)
-        curveTo(11.4f, 13.6f, 12.5f, 13.9f, 13.4f, 14.5f)
-        // plus
-        moveTo(18.2f, 13.6f)
-        verticalLineTo(19.4f)
-        moveTo(15.3f, 16.5f)
-        horizontalLineTo(21.1f)
+        // shoulders: one open arc, deliberately not closed into a bowl
+        moveTo(4.1f, 20.3f)
+        curveTo(4.1f, 16.2f, 7.65f, 13.6f, 12.0f, 13.6f)
+        curveTo(16.35f, 13.6f, 19.9f, 16.2f, 19.9f, 20.3f)
     }
 
     /**

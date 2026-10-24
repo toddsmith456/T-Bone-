@@ -379,6 +379,104 @@ fun FeedScreen(
                         }
                     }
                 }
+                else -> {
+                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                        // Compact horizontally-scrollable strip of home-pinned
+                        // location channels with unread badges.
+                        item(key = "geohash_home") {
+                            GeohashHomeStrip(
+                                onOpenGeohash = onOpenGeohash,
+                            )
+                        }
+                        items(uiState.events, key = { it.id }) { event ->
+                            val refId = remember(event.id) {
+                                when (event.kind) {
+                                    social.tbone.nostr.EventKind.REPOST ->
+                                        event.parsedTags.firstOrNull { it.name == "e" }?.value()
+                                    else -> event.parsedTags.quotedEventId
+                                        ?: extractInlineQuoteId(event.content)
+                                }
+                            }
+                            val quotedEvent = refId?.let { quotedEvents[it] }
+                            NoteCard(
+                                event = event,
+                                profile = profiles[event.pubkey],
+                                profiles = profiles,
+                                quotedEvent = quotedEvent,
+                                onThreadClick = onThreadClick,
+                                onProfileClick = onProfileClick,
+                                onHashtagClick = onHashtagClick,
+                                onReply = onReplyClick,
+                                onBoost = viewModel::boost,
+                                onQuote = onQuoteClick,
+                                onLike = viewModel::react,
+                                reactors = if (event.kind == social.tbone.nostr.EventKind.REPOST)
+                                    quotedEvent?.let { reactions[it.id] }
+                                else
+                                    reactions[event.id],
+                                replies = replies,
+                                repliedByMe = repliedByMe,
+                                pollVoteCounts = pollVoteCounts,
+                                pollTotalVotes = pollTotalVotes,
+                                pollMyVotes = pollMyVotes,
+                                pollVoteVersion = pollVoteVersion,
+                                onPollVote = viewModel::voteOnPoll,
+                                activePubkey = activeAccount?.pubkey,
+                                quotedEvents = quotedEvents,
+                                quotedEventId = refId,
+                            )
+                        }
+                        item(key = "feed_paging") {
+                            if (currentFeed == FeedTab.SUGGESTED) {
+                                Text(
+                                    text = "─── the end · pull to refresh ───",
+                                    style = BonyType.caption.copy(color = BonyColors.TextMute),
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                                )
+                            } else if (currentFeed == FeedTab.GLOBAL) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable(
+                                            enabled = uiState.globalCanLoadOlder && !uiState.globalOlderLoading,
+                                            onClick = viewModel::loadOlderGlobal,
+                                        )
+                                        .padding(vertical = 18.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    if (uiState.globalOlderLoading) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(14.dp),
+                                            color = BonyColors.Accent,
+                                            strokeWidth = 1.5.dp,
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                    }
+                                    Text(
+                                        text = when {
+                                            uiState.globalOlderLoading -> "loading 100 older notes…"
+                                            uiState.globalCanLoadOlder -> "load 100 older notes"
+                                            else -> "no more older notes available"
+                                        },
+                                        style = BonyType.caption.copy(
+                                            color = if (uiState.globalCanLoadOlder) BonyColors.Accent else BonyColors.TextMute,
+                                        ),
+                                    )
+                                }
+                            } else {
+                                // Follows and Clock both load one page and stop.
+                                Text(
+                                    text = "─── pull to refresh ───",
+                                    style = BonyType.caption.copy(color = BonyColors.TextMute),
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
 

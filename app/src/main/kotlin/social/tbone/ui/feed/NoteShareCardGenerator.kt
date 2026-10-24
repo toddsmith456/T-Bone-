@@ -19,6 +19,7 @@ import android.text.TextUtils
 import okhttp3.Request
 import social.tbone.di.ImageClientProvider
 import social.tbone.nostr.Event
+import social.tbone.nostr.quotedEventId
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -28,6 +29,19 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import kotlin.math.max
 import kotlin.math.min
+
+/**
+ * The note referenced by a quote, resolved far enough to draw a real quote
+ * block on a share card: who wrote it, what it says, and whether it carried
+ * media. Resolved from the local event cache by `NoteActionsViewModel`.
+ */
+data class ShareCardQuote(
+    val eventId: String,
+    val authorPubkey: String,
+    val authorName: String?,
+    val text: String,
+    val mediaCount: Int,
+)
 
 /** Bitmap + layout metadata used by both PNG and video-card sharing. */
 data class RenderedShareCard(
@@ -48,6 +62,8 @@ object NoteShareCardGenerator {
     private const val CARD_RADIUS = 38f
     private const val CARD_PADDING = 50f
     private const val MAX_IMAGE_RESPONSE_BYTES = 18L * 1024L * 1024L
+    /** Quoted bodies are capped the same way the feed caps them. */
+    private const val QUOTE_MAX_LINES = 6
 
     fun firstVideoUrl(event: Event): String? = firstVideo(event)?.url
 
@@ -68,9 +84,14 @@ object NoteShareCardGenerator {
         authorName: String? = null,
         authorPictureUrl: String? = null,
         animatedVideoUrl: String? = null,
+        quote: ShareCardQuote? = null,
     ): RenderedShareCard {
         val media = ShareCardMediaParser.parse(event)
-        val body = ShareCardMediaParser.stripMediaUrls(event.content, media).ifBlank { "(empty note)" }
+        val quotedId = event.parsedTags.quotedEventId ?: extractInlineQuoteId(event.content)
+        // A quote must never print its own reference: the reference is drawn as
+        // a quote block below the text, exactly like NoteCard does in the feed.
+        val body = shareCardBodyText(event.content, media, quotedId)
+        val hasBody = body.isNotBlank()
         val cardLeft = OUTER_MARGIN
         val cardRight = WIDTH - OUTER_MARGIN
         val innerLeft = cardLeft + CARD_PADDING
@@ -99,7 +120,13 @@ object NoteShareCardGenerator {
         val profileBitmap = authorPictureUrl?.takeIf { it.isNotBlank() }?.let { downloadBitmap(it, 128) }
         val galleryTiles = mutableListOf<GalleryTile>()
 
-        var nextTop = bodyTop + bodyLayout.height + 36f
+        // No body text means no text block at all: an image-only note starts its
+        // attachments directly under the author row, with no placeholder and no
+        // 36 px orphaned gap where the text used to be.
+        var nextTop = if (hasBody) bodyTop + bodyLayout.height + 36f else bodyTop - 24f
+        val quoteBlock = buildQuoteBlock(quote, quotedId, nextTop, innerLeft, innerWidth)
+        if (quoteBlock != null) nextTop = quoteBlock.bounds.bottom + 22f
+
         val mediaHeaderTop = if (displayedMedia.isNotEmpty()) nextTop + 4f else null
         if (mediaHeaderTop != null) nextTop = mediaHeaderTop + 50f
 
@@ -140,7 +167,11 @@ object NoteShareCardGenerator {
         val audioCount = media.count { it.kind == ShareMediaKind.AUDIO }
         val audioTop = if (audioCount > 0) nextTop + 12f else nextTop
         val audioBottom = if (audioCount > 0) audioTop + 40f else audioTop
-        val footerTop = max(bodyTop + bodyLayout.height + 44f, audioBottom + 20f)
+        val footerTop = max(
+            if (hasBody) bodyTop + bodyLayout.height + 44f
+            else (quoteBlock?.bounds?.bottom ?: (bodyTop - 24f)) + 20f,
+            audioBottom + 20f,
+        )
         val cardBottom = footerTop + 104f
         val imageHeight = max(640, (cardBottom + CARD_TOP + 30f).toInt())
         require(imageHeight <= MAX_HEIGHT) { "This note has too many images or too much text for one share card" }
@@ -205,14 +236,18 @@ object NoteShareCardGenerator {
                 textPaint(muted, 19f, "sans-serif"),
             )
 
-            canvas.drawRoundRect(
-                RectF(innerLeft, bodyTop - 5f, innerLeft + 5f, bodyTop + bodyLayout.height + 5f),
-                3f, 3f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent },
-            )
-            canvas.save()
-            canvas.translate(innerLeft + 22f, bodyTop)
-            bodyLayout.draw(canvas)
-            canvas.restore()
+            if (hasBody) {
+                canvas.drawRoundRect(
+                    RectF(innerLeft, bodyTop - 5f, innerLeft + 5f, bodyTop + bodyLayout.height + 5f),
+                    3f, 3f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent },
+                )
+                canvas.save()
+                canvas.translate(innerLeft + 22f, bodyTop)
+                bodyLayout.draw(canvas)
+                canvas.restore()
+            }
+
+            quoteBlock?.let { drawQuoteBlock(canvas, it, accent, muted, rule) }
 
             // A labeled media zone and larger bottom gallery keep attachments
             // visually separate from the note body. Only the selected video
@@ -284,6 +319,85 @@ object NoteShareCardGenerator {
     }
 
     private data class GalleryTile(val media: ShareCardMedia, val bitmap: Bitmap?, val bounds: RectF)
+
+    /** A quote drawn below the note body: label, quoted author, quoted text, media count. */
+    private data class QuoteBlock(
+        val bounds: RectF,
+        val layout: StaticLayout?,
+        val author: String,
+        val mediaCount: Int,
+    )
+
+    /**
+     * Builds the quote box for a note that quotes another note.
+     *
+     * The reference itself (`nostr:nevent1…`) is never drawn: [quotedId] only
+     * says a quote exists, and the box mirrors the in-feed quote card — who
+     * wrote the quoted note, its first [QUOTE_MAX_LINES] lines, and how many
+     * attachments came with it. A quote that is not in the local event cache
+     * still gets a real box, with its author's npub and "not available" instead
+     * of a raw bech32 string.
+     */
+    private fun buildQuoteBlock(
+        quote: ShareCardQuote?,
+        quotedId: String?,
+        top: Float,
+        innerLeft: Float,
+        innerWidth: Float,
+    ): QuoteBlock? {
+        if (quotedId == null) return null
+        val text = quote?.text?.trim().orEmpty()
+        val layout = if (text.isEmpty()) null else StaticLayout.Builder
+            .obtain(text, 0, text.length, textPaint(Color.rgb(208, 226, 224), 28f, "sans-serif"), (innerWidth - 44f).toInt())
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setIncludePad(false)
+            .setLineSpacing(6f, 1.08f)
+            .setMaxLines(QUOTE_MAX_LINES)
+            .setEllipsize(TextUtils.TruncateAt.END)
+            .build()
+        val author = quote?.authorName?.trim()?.takeIf { it.isNotEmpty() }
+            ?: quote?.let { "@${it.authorPubkey.take(8)}…${it.authorPubkey.takeLast(6)}" }
+            ?: "not available on this device"
+        val mediaCount = quote?.mediaCount ?: 0
+        val height = 68f + (layout?.height?.toFloat() ?: 0f) + (if (mediaCount > 0) 24f else 0f) + 16f
+        return QuoteBlock(
+            bounds = RectF(innerLeft, top, innerLeft + innerWidth, top + height),
+            layout = layout,
+            author = author,
+            mediaCount = mediaCount,
+        )
+    }
+
+    private fun drawQuoteBlock(canvas: Canvas, block: QuoteBlock, accent: Int, muted: Int, rule: Int) {
+        val bounds = block.bounds
+        canvas.drawRoundRect(bounds, 16f, 16f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(19, 35, 38) })
+        canvas.drawRoundRect(RectF(bounds.left + 1f, bounds.top + 10f, bounds.left + 6f, bounds.bottom - 10f), 3f, 3f,
+            Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent })
+        canvas.drawRoundRect(bounds, 16f, 16f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = rule
+            style = Paint.Style.STROKE
+            strokeWidth = 2f
+        })
+        canvas.drawText("QUOTED NOTE", bounds.left + 22f, bounds.top + 28f, textPaint(accent, 15f, "sans-serif-bold"))
+        val authorPaint = textPaint(Color.rgb(231, 241, 238), 24f, "sans-serif-medium")
+        val author = TextUtils.ellipsize(block.author, authorPaint, bounds.width() - 44f, TextUtils.TruncateAt.END)
+        canvas.drawText(author.toString(), bounds.left + 22f, bounds.top + 56f, authorPaint)
+        block.layout?.let { layout ->
+            canvas.save()
+            canvas.translate(bounds.left + 22f, bounds.top + 68f)
+            layout.draw(canvas)
+            canvas.restore()
+        }
+        if (block.mediaCount > 0) {
+            val baseline = bounds.top + 68f + (block.layout?.height?.toFloat() ?: 0f) + 20f
+            canvas.drawText(
+                "▣ ${block.mediaCount} attachment${if (block.mediaCount == 1) "" else "s"}",
+                bounds.left + 22f,
+                baseline,
+                textPaint(muted, 16f, "sans-serif-medium"),
+            )
+        }
+    }
 
     private fun drawGalleryTile(canvas: Canvas, tile: GalleryTile, animatedVideoUrl: String?) {
         val bounds = tile.bounds
@@ -419,4 +533,21 @@ object NoteShareCardGenerator {
             textSize = sizePx
             typeface = Typeface.create(family, Typeface.NORMAL)
         }
+}
+
+/**
+ * The body line(s) a share card prints for a note.
+ *
+ * Two things are always removed: the media URLs (the gallery owns them) and the
+ * quote reference (`nostr:nevent1…`, drawn as a quote block instead). What is
+ * left can legitimately be empty — an image-only note gets an empty text slot,
+ * never a "(empty note)" placeholder.
+ */
+internal fun shareCardBodyText(
+    content: String,
+    media: List<ShareCardMedia>,
+    quotedId: String?,
+): String {
+    val plain = ShareCardMediaParser.stripMediaUrls(content, media)
+    return if (quotedId != null) stripQuoteRefs(plain, quotedId) else plain
 }

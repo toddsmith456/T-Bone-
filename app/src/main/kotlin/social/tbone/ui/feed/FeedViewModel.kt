@@ -1738,7 +1738,7 @@ class FeedViewModel @Inject constructor(
     companion object {
         /** Kinds every timeline feed shows: notes, reposts and polls. */
         private val FEED_KINDS = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL)
-        /** Page size for the clock feed, both initial load and "older". */
+        /** Page size for the clock feed's single page (there is no older-paging). */
         private const val CLOCK_PAGE_SIZE = 100
         /** How long HOME/CLOCK wait for EOSE before showing what arrived. */
         private const val SETTLE_TIMEOUT_MS = 12_000L
