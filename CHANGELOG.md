@@ -5,14 +5,26 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.4.7] — 2026-10-24
+
 ### Added
-- **External-wallet payments**: Lightning zaps now request and verify a NIP-57 BOLT-11 invoice before handing it to a compatible wallet app; if no app handles it, the invoice remains available to copy or scan as a QR code. Monero xaps read author-published NIP-A3 kind-10133 `payto` targets and hand off via `monero:` with the same copy/QR fallback.
-- **Wallet toolbox tabs**: Lightning zap visibility, default sats and editable presets are independent of any wallet connection; a Monero tab toggles xap buttons and publishes/removes the user's address while preserving unrelated and unknown payment-target tags.
+- **Amber onboarding install**: show a Get Amber action only when the NIP-55
+  signer is absent; resolve the current publisher-signed Zapstore asset, verify
+  its event, APK hash, package/version, and signing certificate, then hand it to
+  Android's installer with the required user approval.
+- **External-wallet payments**: Lightning zaps now request and verify a NIP-57
+  BOLT-11 invoice before handing it to a compatible wallet app; if no app handles
+  it, the invoice remains available to copy or scan as a QR code. Monero xaps
+  read author-published NIP-A3 kind-10133 `payto` targets and hand off via
+  `monero:` with the same copy/QR fallback.
+- **Wallet toolbox tabs**: Lightning zap visibility, default sats and editable
+  presets are independent of any wallet connection; a Monero tab toggles xap
+  buttons and publishes/removes the user's address while preserving unrelated
+  and unknown payment-target tags.
 - **webxdc tool**: a single-player Webxdc player in the toolbox.
   - Four sources: a local `.xdc` file, the official webxdc.org store
-    (`apps.testrun.org`), a T-Bone feed filtered to
-    `npub1zx2…ftjq`, and a Nostr-wide feed of kind-1063
-    `#m application/x-webxdc` events (NIP-DC).
+    (`apps.testrun.org`), a T-Bone feed filtered to `npub1zx2…ftjq`, and a
+    Nostr-wide feed of kind-1063 `#m application/x-webxdc` events (NIP-DC).
   - Saved apps run offline in a sandboxed WebView served from a private
     per-app origin; every other origin is denied and HTML carries a strict CSP.
   - The full `window.webxdc` API is implemented on-device (updates journal,
@@ -25,14 +37,26 @@ All notable changes to this fork are documented here. Format follows
     opt-in check against ten real `.xdc` packages.
 
 ### Removed
-- **Nostr Wallet Connect (NIP-47)**: removed the in-app NWC connection, invoice payment, pending/paid/uncertain zap tracking, and NIP-04 fallback. Existing zap amounts are migrated to the external-wallet Lightning settings; saved NWC credentials and payment-outcome state are cleared on upgrade.
+- **Nostr Wallet Connect (NIP-47)**: removed the in-app NWC connection, invoice
+  payment, pending/paid/uncertain zap tracking, and NIP-04 fallback. Existing
+  zap amounts are migrated to the external-wallet Lightning settings; saved
+  NWC credentials and payment-outcome state are cleared on upgrade.
 
 ### Changed
+- **Profile search** now compatibility-normalizes Unicode names (including
+  mathematical/fancy alphabets, fullwidth text, and accents) and queries common
+  styled forms on the search relay.
 - **Feed tab icon**: `FOLLOWS` is a single person — head and one open shoulder
   arc — with no plus. The plus merged into the shoulder line at 17 dp and read
   as "add someone" rather than "the people you follow".
 
 ### Fixed
+- **Profile search results** no longer flash away while the relay is queried;
+  relay results merge into cached matches, search subscriptions are scoped and
+  closed at EOSE/timeout, and empty results stay in a searching state until the
+  relay responds.
+- **Profile metadata race**: older relay events or delayed database writes can
+  no longer replace a newer profile in memory or Room.
 - **Video uploads work again.** v0.4.1 capped clips at 10 MB and rejected
   anything larger *before* transcoding, so nearly every phone video failed with
   "video is too big". The cap is now a 500 MB safety ceiling; clips at or below

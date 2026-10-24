@@ -195,7 +195,20 @@ fun SearchScreen(
                 }
 
                 is SearchUiState.Results -> {
-                    if (state.profiles.isEmpty()) {
+                    if (state.profiles.isEmpty() && state.isSearching) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                        ) {
+                            CircularProgressIndicator()
+                            Text(
+                                text = "Searching profiles…",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 12.dp),
+                            )
+                        }
+                    } else if (state.profiles.isEmpty()) {
                         Text(
                             text = "No results",
                             style = MaterialTheme.typography.bodyMedium,
@@ -203,8 +216,20 @@ fun SearchScreen(
                             modifier = Modifier.align(Alignment.Center),
                         )
                     } else {
-                        LazyColumn(modifier = Modifier.fillMaxSize().navigationBarsPadding(),
-                        contentPadding = PaddingValues(bottom = 28.dp)) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize().navigationBarsPadding(),
+                            contentPadding = PaddingValues(bottom = 28.dp),
+                        ) {
+                            if (state.isSearching) {
+                                item(key = "profile-search-progress") {
+                                    Text(
+                                        text = "Searching relay for more matches…",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                                    )
+                                }
+                            }
                             items(state.profiles, key = { it.pubkey }) { match ->
                                 ProfileRow(
                                     pubkey = match.pubkey,

@@ -36,6 +36,10 @@ data class Filter(
      */
     @SerialName("#m") val mTags: List<String>? = null,
     @SerialName("#g") val gTags: List<String>? = null,
+    /** NIP-82 software assets use `i` for the app identifier and releases use `a`. */
+    @SerialName("#i") val iTags: List<String>? = null,
+    @SerialName("#a") val aTags: List<String>? = null,
+    @SerialName("#d") val dTags: List<String>? = null,
     val search: String? = null,  // NIP-50: full-text search (relay-dependent)
 ) {
     fun toJsonObject(): JsonObject {

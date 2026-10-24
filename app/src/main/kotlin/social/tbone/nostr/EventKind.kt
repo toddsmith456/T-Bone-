@@ -19,6 +19,9 @@ object EventKind {
     const val POLL_RESPONSE = 1018   // NIP-88: poll vote
     const val POLL = 1068            // NIP-88: poll
     const val FILE_METADATA = 1063   // NIP-94: file metadata (webxdc apps per NIP-DC)
+    const val SOFTWARE_RELEASE = 30063 // NIP-82: software release
+    const val SOFTWARE_APPLICATION = 32267 // NIP-82: software application
+    const val SOFTWARE_ASSET = 3063 // NIP-82: software asset
     const val WEBXDC_UPDATE = 4932   // NIP-DC: webxdc state update
     const val WEBXDC_REALTIME = 20932 // NIP-DC: ephemeral webxdc realtime data
     const val RELAY_LIST = 10002     // NIP-65: relay list metadata

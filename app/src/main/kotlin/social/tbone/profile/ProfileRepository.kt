@@ -1,7 +1,6 @@
 package social.tbone.profile
 
 import android.util.LruCache
-import social.tbone.Tunables
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -10,6 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import social.tbone.Tunables
 import social.tbone.db.ProfileDao
 import social.tbone.db.ProfileEntity
 import social.tbone.db.toProfileContent
@@ -24,12 +24,14 @@ class ProfileRepository @Inject constructor(private val dao: ProfileDao) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    // Cache, timestamp guard and observable map are changed together so two
+    // overlapping relay responses cannot let an older kind-0 event win a race.
+    private val profileLock = Any()
+
     // LruCache is the authoritative in-memory store; capped at 1000 entries.
-    // The StateFlow emits snapshots of it so Compose can observe changes.
     private val cache = LruCache<String, ProfileContent>(Tunables.PROFILE_CACHE_SIZE)
 
-    // Tracks the createdAt of the newest event processed per pubkey (in-memory guard).
-    // Capped to match the profile cache — old entries evicted together.
+    // Tracks the createdAt of the newest event processed per pubkey.
     private val latestTimestamp = LruCache<String, Long>(Tunables.PROFILE_CACHE_SIZE)
 
     private val _profiles = MutableStateFlow<Map<String, ProfileContent>>(emptyMap())
@@ -38,14 +40,22 @@ class ProfileRepository @Inject constructor(private val dao: ProfileDao) {
     init {
         scope.launch {
             val cached = dao.getAll()
-            if (cached.isEmpty()) return@launch
-            cached.forEach { entity ->
-                val content = entity.toProfileContent() ?: return@forEach
-                latestTimestamp.put(entity.pubkey, entity.createdAt)
-                cache.put(entity.pubkey, content)
+            synchronized(profileLock) {
+                cached.forEach { entity ->
+                    val content = entity.toProfileContent() ?: return@forEach
+                    val current = latestTimestamp.get(entity.pubkey) ?: -1L
+                    // A relay can deliver a newer event while the initial DB read
+                    // is still running; never seed the cache over that event.
+                    if (entity.createdAt > current) {
+                        latestTimestamp.put(entity.pubkey, entity.createdAt)
+                        cache.put(entity.pubkey, content)
+                    }
+                }
+                // Merge instead of replacing: events processed during the disk
+                // read stay visible, and the lock prevents a stale snapshot race.
+                val snapshot = cache.snapshot()
+                _profiles.update { it + snapshot }
             }
-            // Bulk load on init: snapshot once is acceptable; per-event updates are targeted below.
-            _profiles.update { it + cache.snapshot() }
         }
     }
 
@@ -53,19 +63,23 @@ class ProfileRepository @Inject constructor(private val dao: ProfileDao) {
         if (event.kind != EventKind.METADATA) return
         val content = ProfileContent.parse(event.content) ?: return
 
-        synchronized(latestTimestamp) {
+        val accepted = synchronized(profileLock) {
             val existing = latestTimestamp.get(event.pubkey) ?: -1L
-            if (event.createdAt <= existing) return
-            latestTimestamp.put(event.pubkey, event.createdAt)
+            if (event.createdAt <= existing) {
+                false
+            } else {
+                latestTimestamp.put(event.pubkey, event.createdAt)
+                cache.put(event.pubkey, content)
+                _profiles.update { it + (event.pubkey to content) }
+                true
+            }
         }
+        if (!accepted) return
 
-        cache.put(event.pubkey, content)
-        // Targeted update: add/replace the single changed entry rather than snapshotting
-        // the entire LruCache (O(n)) on every kind-0 event.
-        _profiles.update { it + (event.pubkey to content) }
-
+        // DAO writes are independently ordered by createdAt as well, because IO
+        // scheduling need not preserve the order of events accepted above.
         scope.launch {
-            dao.upsert(ProfileEntity(event.pubkey, event.content, event.createdAt))
+            dao.upsertIfNewer(ProfileEntity(event.pubkey, event.content, event.createdAt))
         }
     }
 

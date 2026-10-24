@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Needed only when the user chooses to install an APK downloaded from GitHub. -->
+    <!-- Needed only when the user chooses to install a verified APK from GitHub or Zapstore. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Voice recorder (toolbox): needed to capture audio. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -19,6 +19,8 @@
     <!-- Required on API 30+ to query installed packages -->
     <queries>
         <package android:name="org.torproject.android" />
+        <!-- Detect the dedicated NIP-55 Amber signer during onboarding. -->
+        <package android:name="com.greenart7c3.nostrsigner" />
         <!-- Discover other Nostr clients for DM handoff -->
         <intent>
             <action android:name="android.intent.action.VIEW" />

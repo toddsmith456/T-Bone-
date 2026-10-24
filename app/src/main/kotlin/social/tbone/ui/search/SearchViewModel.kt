@@ -4,30 +4,32 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.takeWhile
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.withTimeoutOrNull
+import social.tbone.Tunables
+import social.tbone.db.EventRepository
+import social.tbone.notes.BookmarksRepository
+import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
 import social.tbone.nostr.Filter
 import social.tbone.nostr.Nip19
-import social.tbone.nostr.Event
 import social.tbone.nostr.ProfileContent
 import social.tbone.nostr.relay.RelayMessage
-import social.tbone.db.EventRepository
-import social.tbone.notes.BookmarksRepository
-import social.tbone.ui.feed.EventOpenCoordinator
 import social.tbone.nostr.relay.RelayPool
 import social.tbone.profile.ProfileRepository
-import social.tbone.Tunables
+import social.tbone.profile.ProfileSearch
+import social.tbone.ui.feed.EventOpenCoordinator
 import javax.inject.Inject
 
 data class ProfileMatch(val pubkey: String, val profile: ProfileContent?)
@@ -43,7 +45,11 @@ sealed interface SearchUiState {
     data class NpubInput(val pubkey: String, val profile: ProfileContent?) : SearchUiState
     data class HashtagInput(val tag: String) : SearchUiState
     data object Searching : SearchUiState
-    data class Results(val profiles: List<ProfileMatch>) : SearchUiState
+    data class Results(
+        val profiles: List<ProfileMatch>,
+        val query: String = "",
+        val isSearching: Boolean = false,
+    ) : SearchUiState
 }
 
 @OptIn(FlowPreview::class)
@@ -64,6 +70,7 @@ class SearchViewModel @Inject constructor(
 
     private var searchRelayAdded = false
     private var eventLookupJob: Job? = null
+    private var profileLookupJob: Job? = null
 
     init {
         viewModelScope.launch {
@@ -76,6 +83,8 @@ class SearchViewModel @Inject constructor(
     private suspend fun processQuery(q: String) {
         eventLookupJob?.cancel()
         eventLookupJob = null
+        profileLookupJob?.cancel()
+        profileLookupJob = null
         if (q.isEmpty()) {
             _uiState.update { SearchUiState.Idle }
             return
@@ -140,15 +149,16 @@ class SearchViewModel @Inject constructor(
                 return@launch
             }
 
-            if (!searchRelayAdded) {
-                pool.acquireRelay(Tunables.SEARCH_RELAY)
-                searchRelayAdded = true
-            }
-            val subId = pool.subscribe(listOf(Filter(ids = listOf(eventId), limit = 1)), label = "search-event")
+            ensureSearchRelay()
+            val subId = pool.subscribeTo(
+                listOf(Filter(ids = listOf(eventId), limit = 1)),
+                label = "search-event",
+                relays = setOf(Tunables.SEARCH_RELAY),
+            )
             try {
                 val terminal = withTimeoutOrNull(Tunables.SEARCH_EOSE_TIMEOUT_MS) {
-                    pool.messages.first { (_, message) ->
-                        when (message) {
+                    pool.messages.first { (relayUrl, message) ->
+                        relayUrl == Tunables.SEARCH_RELAY && when (message) {
                             is RelayMessage.EventMessage -> message.subscriptionId == subId &&
                                 message.event.id.equals(eventId, ignoreCase = true) && message.event.verify()
                             is RelayMessage.EndOfStoredEvents -> message.subscriptionId == subId
@@ -173,27 +183,23 @@ class SearchViewModel @Inject constructor(
 
     fun openInMainFeed(event: Event) = eventOpenCoordinator.openInMainFeed(event)
 
-    /**
-     * Subscribes for a single kind-0 metadata event from the given pubkey on the
-     * search relay, and refreshes the NpubInput state when it arrives. Times out
-     * after [Tunables.SEARCH_EOSE_TIMEOUT_MS] so we never leak a subscription.
-     */
+    /** Fetch one metadata event for a pasted npub, scoped to the search relay. */
     private fun fetchProfileForPubkey(hex: String) {
-        if (!searchRelayAdded) {
-            pool.acquireRelay(Tunables.SEARCH_RELAY)
-            searchRelayAdded = true
-        }
-        val subId = pool.subscribe(listOf(
-            Filter(kinds = listOf(EventKind.METADATA), authors = listOf(hex), limit = 1)
-        ))
-        viewModelScope.launch {
+        ensureSearchRelay()
+        val subId = pool.subscribeTo(
+            listOf(Filter(kinds = listOf(EventKind.METADATA), authors = listOf(hex), limit = 1)),
+            label = "search-profile-by-pubkey",
+            relays = setOf(Tunables.SEARCH_RELAY),
+        )
+        profileLookupJob = viewModelScope.launch {
             try {
                 withTimeoutOrNull(Tunables.SEARCH_EOSE_TIMEOUT_MS) {
-                    pool.messages.collect { (_, msg) ->
+                    pool.messages.takeWhile { (relayUrl, msg) ->
+                        if (relayUrl != Tunables.SEARCH_RELAY) return@takeWhile true
                         when (msg) {
                             is RelayMessage.EventMessage -> {
-                                if (msg.subscriptionId == subId && msg.event.verify() &&
-                                    msg.event.pubkey == hex
+                                if (msg.subscriptionId == subId && msg.event.kind == EventKind.METADATA &&
+                                    msg.event.verify() && msg.event.pubkey == hex
                                 ) {
                                     profileRepository.processEvent(msg.event)
                                     val fresh = profileRepository.getProfile(hex)
@@ -203,16 +209,12 @@ class SearchViewModel @Inject constructor(
                                         } else state
                                     }
                                 }
+                                true
                             }
-                            is RelayMessage.EndOfStoredEvents -> {
-                                if (msg.subscriptionId == subId) {
-                                    pool.unsubscribe(subId)
-                                    currentCoroutineContext().cancel()
-                                }
-                            }
-                            else -> Unit
+                            is RelayMessage.EndOfStoredEvents -> msg.subscriptionId != subId
+                            else -> true
                         }
-                    }
+                    }.collect()
                 }
             } finally {
                 pool.unsubscribe(subId)
@@ -221,64 +223,137 @@ class SearchViewModel @Inject constructor(
     }
 
     private suspend fun searchProfiles(query: String) {
-        // Seed with local cache matches immediately
-        val local = profileRepository.profiles.value
-            .filter { (_, p) ->
-                p.bestName?.contains(query, ignoreCase = true) == true ||
-                p.nip05?.contains(query, ignoreCase = true) == true
-            }
-            .map { (pubkey, p) -> ProfileMatch(pubkey, p) }
-            .sortedBy { it.profile?.bestName }
-            .take(20)
+        val normalizedQuery = ProfileSearch.normalize(query)
+        val previouslyVisible = (_uiState.value as? SearchUiState.Results)
+            ?.profiles
+            .orEmpty()
+            .filter { match -> match.profile?.let { ProfileSearch.matches(query, it) } == true }
+        val cachedMatches = profileRepository.profiles.value
+            .filter { (_, profile) -> ProfileSearch.matches(query, profile) }
+            .map { (pubkey, profile) -> ProfileMatch(pubkey, profile) }
 
-        _uiState.update { SearchUiState.Results(local) }
-
-        // Connect to the search relay once per screen visit; released in onCleared.
-        if (!searchRelayAdded) {
-            pool.acquireRelay(Tunables.SEARCH_RELAY)
-            searchRelayAdded = true
+        _uiState.update {
+            SearchUiState.Results(
+                profiles = mergeMatches(query, previouslyVisible + cachedMatches),
+                query = normalizedQuery,
+                isSearching = true,
+            )
         }
-        val subId = pool.subscribe(listOf(
-            Filter(kinds = listOf(EventKind.METADATA), search = query, limit = 20)
-        ))
+
+        ensureSearchRelay()
+        val filters = ProfileSearch.relayQueryVariants(query).map { relayQuery ->
+            Filter(kinds = listOf(EventKind.METADATA), search = relayQuery, limit = RELAY_PROFILE_LIMIT)
+        }
+        val subId = pool.subscribeTo(
+            filters,
+            label = "search-profiles",
+            relays = setOf(Tunables.SEARCH_RELAY),
+        )
+        val cacheMonitor = viewModelScope.launch(Dispatchers.Default) {
+            // ProfileRepository loads its persisted cache asynchronously. Keep
+            // this active query in sync so a late cache load cannot leave an
+            // empty or incomplete relay result on screen.
+            profileRepository.profiles.collect { profiles ->
+                if (_query.value.trim() != query) return@collect
+                val freshMatches = profiles
+                    .filter { (_, profile) -> ProfileSearch.matches(query, profile) }
+                    .map { (pubkey, profile) -> ProfileMatch(pubkey, profile) }
+                _uiState.update { state ->
+                    if (state is SearchUiState.Results && state.query == normalizedQuery) {
+                        state.copy(profiles = mergeMatches(query, state.profiles + freshMatches))
+                    } else state
+                }
+            }
+        }
 
         try {
-            // EOSE timeout: unsubscribe after 10 s even if the relay never sends EOSE.
+            // Complete on EOSE or timeout. A result list stays visible while the
+            // relay is queried, and every event is merged into—not substituted
+            // for—the cached list so late relay responses cannot make matches blink.
             withTimeoutOrNull(Tunables.SEARCH_EOSE_TIMEOUT_MS) {
-                pool.messages.collect { (_, msg) ->
+                pool.messages.takeWhile { (relayUrl, msg) ->
+                    if (relayUrl != Tunables.SEARCH_RELAY) return@takeWhile true
                     when (msg) {
                         is RelayMessage.EventMessage -> {
-                            if (msg.subscriptionId == subId && msg.event.verify()) {
-                                profileRepository.processEvent(msg.event)
-                                val pubkey = msg.event.pubkey
-                                val current = (_uiState.value as? SearchUiState.Results)?.profiles ?: local
-                                if (current.none { it.pubkey == pubkey }) {
-                                    val updated = (current + ProfileMatch(pubkey, profileRepository.getProfile(pubkey)))
-                                        .sortedBy { it.profile?.bestName }
-                                    _uiState.update { SearchUiState.Results(updated) }
+                            if (msg.subscriptionId == subId &&
+                                msg.event.kind == EventKind.METADATA &&
+                                msg.event.verify() && _query.value.trim() == query
+                            ) {
+                                val incoming = ProfileContent.parse(msg.event.content)
+                                if (incoming != null && ProfileSearch.matches(query, incoming)) {
+                                    profileRepository.processEvent(msg.event)
+                                    val fresh = profileRepository.getProfile(msg.event.pubkey) ?: incoming
+                                    if (ProfileSearch.matches(query, fresh)) {
+                                        _uiState.update { state ->
+                                            if (state is SearchUiState.Results && state.query == normalizedQuery) {
+                                                state.copy(
+                                                    profiles = mergeMatches(
+                                                        query,
+                                                        state.profiles + ProfileMatch(msg.event.pubkey, fresh),
+                                                    ),
+                                                    isSearching = true,
+                                                )
+                                            } else state
+                                        }
+                                    }
                                 }
                             }
+                            true
                         }
                         is RelayMessage.EndOfStoredEvents -> {
                             if (msg.subscriptionId == subId) {
-                                pool.unsubscribe(subId)
-                                currentCoroutineContext().cancel()
-                            }
+                                markSearchFinished(normalizedQuery)
+                                false
+                            } else true
                         }
-                        else -> Unit
+                        else -> true
                     }
-                }
+                }.collect()
             }
         } finally {
+            cacheMonitor.cancel()
             pool.unsubscribe(subId)
+            if (_query.value.trim() == query) markSearchFinished(normalizedQuery)
+        }
+    }
+
+    private fun mergeMatches(query: String, matches: List<ProfileMatch>): List<ProfileMatch> =
+        matches.asSequence()
+            .filter { it.profile != null && ProfileSearch.matches(query, it.profile) }
+            .associateBy { it.pubkey }
+            .values
+            .sortedWith(
+                compareBy<ProfileMatch> { ProfileSearch.normalize(it.profile?.bestName ?: "") }
+                    .thenBy { it.pubkey },
+            )
+            .take(MAX_PROFILE_RESULTS)
+
+    private fun markSearchFinished(normalizedQuery: String) {
+        _uiState.update { state ->
+            if (state is SearchUiState.Results && state.query == normalizedQuery) {
+                state.copy(isSearching = false)
+            } else state
+        }
+    }
+
+    private fun ensureSearchRelay() {
+        if (!searchRelayAdded) {
+            pool.acquireRelay(Tunables.SEARCH_RELAY)
+            searchRelayAdded = true
         }
     }
 
     override fun onCleared() {
         eventLookupJob?.cancel()
+        profileLookupJob?.cancel()
         if (searchRelayAdded) {
             pool.releaseRelay(Tunables.SEARCH_RELAY)
             searchRelayAdded = false
         }
+    }
+
+    private companion object {
+        const val RELAY_PROFILE_LIMIT = 20
+        const val MAX_PROFILE_RESULTS = 50
     }
 }

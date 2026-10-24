@@ -1,7 +1,12 @@
 package social.tbone.ui.onboarding
 
 import social.tbone.ui.theme.appBorder
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,6 +33,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,11 +45,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.platform.LocalContext
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.ui.theme.appCornerShape
+import social.tbone.updates.AmberInstallResult
+import social.tbone.updates.AmberInstallState
 
 @Composable
 fun OnboardingScreen(
@@ -51,12 +62,54 @@ fun OnboardingScreen(
     viewModel: OnboardingViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val amberInstallState by viewModel.amberInstallState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    val installPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        val result = viewModel.installAmber(context)
+        if (result == AmberInstallResult.NEEDS_PERMISSION) {
+            viewModel.noteAmberInstallPermissionMissing()
+        }
+        viewModel.refreshAmberInstallState()
+    }
+    val requestInstallPermission: () -> Unit = {
+        val settingsIntent = Intent(
+            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.parse("package:${context.packageName}"),
+        )
+        runCatching { installPermissionLauncher.launch(settingsIntent) }
+            .onFailure { viewModel.noteAmberInstallPermissionMissing() }
+    }
 
     LaunchedEffect(uiState.success) { if (uiState.success) onAccountAdded() }
     LaunchedEffect(uiState.error) {
         uiState.error?.let { snackbarHostState.showSnackbar(it); viewModel.clearError() }
+    }
+    LaunchedEffect(
+        amberInstallState.apkReady,
+        amberInstallState.installLaunched,
+        amberInstallState.needsInstallPermission,
+        amberInstallState.isInstalled,
+    ) {
+        if (amberInstallState.apkReady && !amberInstallState.installLaunched &&
+            !amberInstallState.needsInstallPermission && !amberInstallState.isInstalled
+        ) {
+            if (viewModel.installAmber(context) == AmberInstallResult.NEEDS_PERMISSION) {
+                requestInstallPermission()
+            }
+        }
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshAmberInstallState()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     BackHandler(enabled = uiState.showNsecBunkerForm) { viewModel.hideNsecBunkerForm() }
@@ -83,7 +136,15 @@ fun OnboardingScreen(
                 AmberHandoffView()
             } else {
                 MethodPicker(
+                    amberInstallState = amberInstallState,
                     onAmberClick = { viewModel.addAccountWithAmber(context.packageName) },
+                    onGetAmber = viewModel::downloadAmber,
+                    onInstallAmber = {
+                        if (viewModel.installAmber(context) == AmberInstallResult.NEEDS_PERMISSION) {
+                            requestInstallPermission()
+                        }
+                    },
+                    onRequestInstallPermission = requestInstallPermission,
                     onNsecBunkerClick = viewModel::showNsecBunkerForm,
                     onLocalKeyClick = viewModel::addLocalKeyAccount,
                 )
@@ -101,7 +162,11 @@ fun OnboardingScreen(
 
 @Composable
 private fun MethodPicker(
+    amberInstallState: AmberInstallState,
     onAmberClick: () -> Unit,
+    onGetAmber: () -> Unit,
+    onInstallAmber: () -> Unit,
+    onRequestInstallPermission: () -> Unit,
     onNsecBunkerClick: () -> Unit,
     onLocalKeyClick: () -> Unit,
 ) {
@@ -137,12 +202,48 @@ private fun MethodPicker(
     SignerCard(
         name = "Amber",
         nipTag = "NIP-55",
-        description = "Delegates signing to the Amber signer app via Android intents.",
+        description = "Amber is a simple Signing app to keep your Nsec safe. It is recommended to always use it.",
         keyFooter = "key never leaves signer",
         keyFooterDanger = false,
         recommended = true,
         onClick = onAmberClick,
     )
+
+    if (!amberInstallState.isInstalled) {
+        Spacer(Modifier.height(8.dp))
+        val amberButtonLabel = when {
+            amberInstallState.isDownloading -> "DOWNLOADING AMBER · ${amberInstallState.downloadProgress ?: 0}%"
+            amberInstallState.needsInstallPermission -> "ALLOW INSTALL"
+            amberInstallState.apkReady -> "INSTALL AMBER${amberInstallState.version?.let { " · $it" } ?: ""}"
+            amberInstallState.error != null -> "RETRY GET AMBER"
+            else -> "GET AMBER"
+        }
+        val amberButtonClick = when {
+            amberInstallState.isDownloading -> ({})
+            amberInstallState.needsInstallPermission -> onRequestInstallPermission
+            amberInstallState.apkReady -> onInstallAmber
+            else -> onGetAmber
+        }
+        BonyButton(
+            label = amberButtonLabel,
+            primary = true,
+            enabled = !amberInstallState.isDownloading,
+            onClick = amberButtonClick,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = amberInstallState.error
+                ?: if (amberInstallState.apkReady) {
+                    "Amber ${amberInstallState.version.orEmpty()} is verified. Android will ask you to approve the install."
+                } else {
+                    "Get the latest signed Amber APK from Zapstore. Android will ask before installing."
+                },
+            style = BonyType.caption.copy(
+                color = if (amberInstallState.error != null) BonyColors.Warn else BonyColors.TextMute,
+            ),
+        )
+    }
 
     Spacer(Modifier.height(10.dp))
 

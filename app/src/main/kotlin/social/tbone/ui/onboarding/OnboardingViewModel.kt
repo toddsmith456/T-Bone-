@@ -1,5 +1,6 @@
 package social.tbone.ui.onboarding
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.lifecycle.ViewModel
@@ -19,6 +20,9 @@ import social.tbone.account.signer.LocalKeySigner
 import social.tbone.account.signer.NsecBunkerSigner
 import social.tbone.account.signer.SigningIndicator
 import social.tbone.nostr.Nip19
+import social.tbone.updates.AmberInstallManager
+import social.tbone.updates.AmberInstallResult
+import social.tbone.updates.AmberInstallState
 import social.tbone.nostr.relay.RelayPool
 import javax.inject.Inject
 
@@ -35,13 +39,28 @@ class OnboardingViewModel @Inject constructor(
     private val amberBridge: AmberSignerBridge,
     private val signingIndicator: SigningIndicator,
     private val pool: RelayPool,
+    private val amberInstallManager: AmberInstallManager,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(OnboardingUiState())
     val uiState: StateFlow<OnboardingUiState> = _uiState.asStateFlow()
+    val amberInstallState: StateFlow<AmberInstallState> = amberInstallManager.state
+
+    fun downloadAmber() = amberInstallManager.downloadLatestAmber()
+
+    fun installAmber(activityContext: Context): AmberInstallResult =
+        amberInstallManager.installDownloadedAmber(activityContext)
+
+    fun refreshAmberInstallState() = amberInstallManager.refreshInstalled()
+
+    fun noteAmberInstallPermissionMissing() = amberInstallManager.noteInstallPermissionStillMissing()
 
     /** NIP-55: ask Amber for the user's public key. */
     fun addAccountWithAmber(callerPackage: String) {
+        if (!amberInstallManager.isAmberInstalled()) {
+            _uiState.update { it.copy(error = "Amber isn't installed yet. Tap GET AMBER to install it, then try again.") }
+            return
+        }
         _uiState.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("nostrsigner:")).apply {
