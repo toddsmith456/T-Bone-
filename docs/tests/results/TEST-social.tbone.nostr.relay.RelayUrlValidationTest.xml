@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="social.tbone.nostr.relay.RelayUrlValidationTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:31" hostname="e2b.local" time="0.001">
+<testsuite name="social.tbone.nostr.relay.RelayUrlValidationTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-24T05:00:50" hostname="e2b.local" time="0.003">
   <properties/>
   <testcase name="accepts Citrine loopback and secure relay URLs" classname="social.tbone.nostr.relay.RelayUrlValidationTest" time="0.001"/>
-  <testcase name="rejects non relay schemes and credentialed URLs" classname="social.tbone.nostr.relay.RelayUrlValidationTest" time="0.0"/>
+  <testcase name="rejects non relay schemes and credentialed URLs" classname="social.tbone.nostr.relay.RelayUrlValidationTest" time="0.001"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

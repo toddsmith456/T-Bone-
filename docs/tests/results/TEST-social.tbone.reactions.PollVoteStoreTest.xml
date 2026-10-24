@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="social.tbone.reactions.PollVoteStoreTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:31" hostname="e2b.local" time="0.022">
+<testsuite name="social.tbone.reactions.PollVoteStoreTest" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-24T05:00:50" hostname="e2b.local" time="0.027">
   <properties/>
-  <testcase name="latest vote persists per account and older vote cannot replace it" classname="social.tbone.reactions.PollVoteStoreTest" time="0.011"/>
-  <testcase name="failed optimistic vote restores previous choice only when it is still current" classname="social.tbone.reactions.PollVoteStoreTest" time="0.011"/>
+  <testcase name="latest vote persists per account and older vote cannot replace it" classname="social.tbone.reactions.PollVoteStoreTest" time="0.015"/>
+  <testcase name="failed optimistic vote restores previous choice only when it is still current" classname="social.tbone.reactions.PollVoteStoreTest" time="0.012"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

@@ -6,6 +6,8 @@ All notable changes to this fork are documented here. Format follows
 ## [Unreleased]
 
 ### Added
+- **External-wallet payments**: Lightning zaps now request and verify a NIP-57 BOLT-11 invoice before handing it to a compatible wallet app; if no app handles it, the invoice remains available to copy or scan as a QR code. Monero xaps read author-published NIP-A3 kind-10133 `payto` targets and hand off via `monero:` with the same copy/QR fallback.
+- **Wallet toolbox tabs**: Lightning zap visibility, default sats and editable presets are independent of any wallet connection; a Monero tab toggles xap buttons and publishes/removes the user's address while preserving unrelated and unknown payment-target tags.
 - **webxdc tool**: a single-player Webxdc player in the toolbox.
   - Four sources: a local `.xdc` file, the official webxdc.org store
     (`apps.testrun.org`), a T-Bone feed filtered to
@@ -21,6 +23,9 @@ All notable changes to this fork are documented here. Format follows
   - Adds `#m` filter support to `Filter`, NIP-DC kind constants, and
     `XdcArchive`/`XdcUpdateStore`/NIP-DC parsing with unit tests, including an
     opt-in check against ten real `.xdc` packages.
+
+### Removed
+- **Nostr Wallet Connect (NIP-47)**: removed the in-app NWC connection, invoice payment, pending/paid/uncertain zap tracking, and NIP-04 fallback. Existing zap amounts are migrated to the external-wallet Lightning settings; saved NWC credentials and payment-outcome state are cleared on upgrade.
 
 ### Changed
 - **Feed tab icon**: `FOLLOWS` is a single person — head and one open shoulder

@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="social.tbone.ui.feed.NoteContentTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:32" hostname="e2b.local" time="0.033">
+<testsuite name="social.tbone.ui.feed.NoteContentTest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-10-24T05:00:50" hostname="e2b.local" time="0.016">
   <properties/>
-  <testcase name="unrelatedInlineReferenceSurvivesStripping" classname="social.tbone.ui.feed.NoteContentTest" time="0.011"/>
-  <testcase name="commonAudioFormatsBecomePlayerItemsAndLeaveNoVisibleUrlText" classname="social.tbone.ui.feed.NoteContentTest" time="0.012"/>
-  <testcase name="mediaFramePreservesFitSizeAndTrimsOnlyLetterboxSpace" classname="social.tbone.ui.feed.NoteContentTest" time="0.001"/>
+  <testcase name="unrelatedInlineReferenceSurvivesStripping" classname="social.tbone.ui.feed.NoteContentTest" time="0.009"/>
+  <testcase name="commonAudioFormatsBecomePlayerItemsAndLeaveNoVisibleUrlText" classname="social.tbone.ui.feed.NoteContentTest" time="0.001"/>
+  <testcase name="mediaFramePreservesFitSizeAndTrimsOnlyLetterboxSpace" classname="social.tbone.ui.feed.NoteContentTest" time="0.0"/>
   <testcase name="inlineQuoteReferenceIsExtracted" classname="social.tbone.ui.feed.NoteContentTest" time="0.001"/>
-  <testcase name="multipleImagesAllBecomeMediaItems" classname="social.tbone.ui.feed.NoteContentTest" time="0.0"/>
+  <testcase name="multipleImagesAllBecomeMediaItems" classname="social.tbone.ui.feed.NoteContentTest" time="0.001"/>
   <testcase name="videoAspectRatioAccountsForRotationAndPixelAspect" classname="social.tbone.ui.feed.NoteContentTest" time="0.0"/>
-  <testcase name="gifAndQueryStringsAreImages" classname="social.tbone.ui.feed.NoteContentTest" time="0.0"/>
+  <testcase name="gifAndQueryStringsAreImages" classname="social.tbone.ui.feed.NoteContentTest" time="0.001"/>
   <testcase name="quoteReferenceIsStrippedFromTheBody" classname="social.tbone.ui.feed.NoteContentTest" time="0.0"/>
-  <testcase name="videoIsMediaButNotAnImage" classname="social.tbone.ui.feed.NoteContentTest" time="0.001"/>
+  <testcase name="videoIsMediaButNotAnImage" classname="social.tbone.ui.feed.NoteContentTest" time="0.0"/>
   <testcase name="broaderVideoContainersAreRecognized" classname="social.tbone.ui.feed.NoteContentTest" time="0.0"/>
   <testcase name="plainTextHasNoMedia" classname="social.tbone.ui.feed.NoteContentTest" time="0.0"/>
-  <testcase name="imageUrlBecomesMediaItem" classname="social.tbone.ui.feed.NoteContentTest" time="0.001"/>
+  <testcase name="imageUrlBecomesMediaItem" classname="social.tbone.ui.feed.NoteContentTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

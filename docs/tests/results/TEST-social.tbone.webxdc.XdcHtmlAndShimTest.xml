@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="social.tbone.webxdc.XdcHtmlAndShimTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:33" hostname="e2b.local" time="0.006">
+<testsuite name="social.tbone.webxdc.XdcHtmlAndShimTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-24T05:00:51" hostname="e2b.local" time="0.009">
   <properties/>
-  <testcase name="injectsBridgeAsFirstHeadChild" classname="social.tbone.webxdc.XdcHtmlAndShimTest" time="0.002"/>
-  <testcase name="shimExposesTheWholeWebxdcSurface" classname="social.tbone.webxdc.XdcHtmlAndShimTest" time="0.001"/>
-  <testcase name="jsQuoteEscapesEverythingDangerous" classname="social.tbone.webxdc.XdcHtmlAndShimTest" time="0.002"/>
-  <testcase name="shimEscapesHostileIdentityStrings" classname="social.tbone.webxdc.XdcHtmlAndShimTest" time="0.0"/>
+  <testcase name="injectsBridgeAsFirstHeadChild" classname="social.tbone.webxdc.XdcHtmlAndShimTest" time="0.001"/>
+  <testcase name="shimExposesTheWholeWebxdcSurface" classname="social.tbone.webxdc.XdcHtmlAndShimTest" time="0.002"/>
+  <testcase name="jsQuoteEscapesEverythingDangerous" classname="social.tbone.webxdc.XdcHtmlAndShimTest" time="0.001"/>
+  <testcase name="shimEscapesHostileIdentityStrings" classname="social.tbone.webxdc.XdcHtmlAndShimTest" time="0.002"/>
   <testcase name="injectsWhenThereIsNoHead" classname="social.tbone.webxdc.XdcHtmlAndShimTest" time="0.001"/>
-  <testcase name="doesNotInjectTwice" classname="social.tbone.webxdc.XdcHtmlAndShimTest" time="0.0"/>
+  <testcase name="doesNotInjectTwice" classname="social.tbone.webxdc.XdcHtmlAndShimTest" time="0.001"/>
   <testcase name="cspForbidsExternalOrigins" classname="social.tbone.webxdc.XdcHtmlAndShimTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="social.tbone.media.blossom.BlossomLiveTest" tests="1" skipped="1" failures="0" errors="0" timestamp="2026-10-22T06:34:31" hostname="e2b.local" time="0.003">
+<testsuite name="social.tbone.media.blossom.BlossomLiveTest" tests="1" skipped="1" failures="0" errors="0" timestamp="2026-10-24T05:00:50" hostname="e2b.local" time="0.004">
   <properties/>
-  <testcase name="uploads to a live blossom server and fetches the blob back" classname="social.tbone.media.blossom.BlossomLiveTest" time="0.003">
+  <testcase name="uploads to a live blossom server and fetches the blob back" classname="social.tbone.media.blossom.BlossomLiveTest" time="0.004">
     <skipped/>
   </testcase>
   <system-out><![CDATA[]]></system-out>

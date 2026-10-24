@@ -32,6 +32,9 @@ class EventRepository @Inject constructor(private val dao: EventDao) {
 
     suspend fun getById(id: String): Event? = dao.getById(id)?.toEvent()
 
+    suspend fun getLatestByAuthorAndKind(pubkey: String, kind: Int): Event? =
+        dao.getLatestByAuthorAndKind(pubkey.lowercase(), kind)?.toEvent()
+
     suspend fun getByIds(ids: List<String>): List<Event> =
         dao.getByIds(ids).map(EventEntity::toEvent)
 

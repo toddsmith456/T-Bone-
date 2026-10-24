@@ -149,7 +149,7 @@ def toolbox():
         ("mic", "voice recorder", "record, anonymize, save or share a voice note"),
         ("place", "geohash channels", "location channels with an anonymous per-area npub"),
         ("calendar_month", "calendar", "fully local encrypted calendar"),
-        ("bolt", "wallet tool", "NWC connection, zaps & zap-only activity"),
+        ("bolt", "wallet tool", "Lightning zaps & Monero xaps"),
     ]
     rows = ""
     for name, title, subtitle in tools:

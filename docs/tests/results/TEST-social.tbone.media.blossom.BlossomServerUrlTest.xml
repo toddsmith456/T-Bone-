@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="social.tbone.media.blossom.BlossomServerUrlTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:31" hostname="e2b.local" time="0.007">
+<testsuite name="social.tbone.media.blossom.BlossomServerUrlTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-24T05:00:50" hostname="e2b.local" time="0.006">
   <properties/>
-  <testcase name="domain strips scheme port path and case" classname="social.tbone.media.blossom.BlossomServerUrlTest" time="0.001"/>
+  <testcase name="domain strips scheme port path and case" classname="social.tbone.media.blossom.BlossomServerUrlTest" time="0.0"/>
   <testcase name="normalize accepts what users actually type" classname="social.tbone.media.blossom.BlossomServerUrlTest" time="0.0"/>
-  <testcase name="endpoints hang off the server root without doubling slashes" classname="social.tbone.media.blossom.BlossomServerUrlTest" time="0.002"/>
-  <testcase name="blob url carries the extension when one is known" classname="social.tbone.media.blossom.BlossomServerUrlTest" time="0.002"/>
-  <testcase name="a normalized server survives the domain extraction round trip" classname="social.tbone.media.blossom.BlossomServerUrlTest" time="0.0"/>
+  <testcase name="endpoints hang off the server root without doubling slashes" classname="social.tbone.media.blossom.BlossomServerUrlTest" time="0.004"/>
+  <testcase name="blob url carries the extension when one is known" classname="social.tbone.media.blossom.BlossomServerUrlTest" time="0.0"/>
+  <testcase name="a normalized server survives the domain extraction round trip" classname="social.tbone.media.blossom.BlossomServerUrlTest" time="0.001"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

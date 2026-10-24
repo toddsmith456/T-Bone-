@@ -24,6 +24,15 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="nostr" />
         </intent>
+        <!-- Discover wallet apps before handing off payment URIs. -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="lightning" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="monero" />
+        </intent>
     </queries>
 
     <application

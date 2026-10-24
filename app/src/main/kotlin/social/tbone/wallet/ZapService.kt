@@ -3,13 +3,13 @@ package social.tbone.wallet
 import android.net.Uri
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.add
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -17,6 +17,8 @@ import kotlinx.serialization.json.longOrNull
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
+import okhttp3.ResponseBody
+import okio.Buffer
 import social.tbone.Tunables
 import social.tbone.account.signer.NostrSignerFactory
 import social.tbone.di.ImageClientProvider
@@ -25,9 +27,10 @@ import social.tbone.nostr.Nip19
 import social.tbone.nostr.ProfileContent
 import social.tbone.nostr.UnsignedEvent
 import social.tbone.nostr.relay.RelayPool
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Builds the callback request required by NIP-57 Appendix B. In particular,
@@ -43,6 +46,9 @@ internal fun buildNip57InvoiceCallbackUrl(
     require(amountMsats > 0) { "zap amount must be positive" }
     val base = callback.toHttpUrlOrNull() ?: error("invalid Lightning callback")
     require(base.scheme == "https") { "Lightning callback must use HTTPS" }
+    require(base.username.isEmpty() && base.password.isEmpty() && base.fragment == null) {
+        "Lightning callback URL has unsupported credentials or fragment"
+    }
     val lnurl = zapRequest.parsedTags
         .singleOrNull { it.name == "lnurl" }
         ?.value()
@@ -64,32 +70,31 @@ internal fun buildNip57InvoiceCallbackUrl(
 }
 
 /**
- * NIP-57 zap flow backed by NWC. Every step is checked before the next one:
- * recipient address, LNURL metadata, amount bounds, recipient pubkey, signed
- * zap request, invoice, and finally the one-shot NWC payment. There is no
- * automatic payment retry because a timeout can mean the wallet is still
- * settling the invoice.
+ * Creates a standards-compliant NIP-57 zap request and invoice, then returns
+ * the verified BOLT-11 invoice for the UI to hand to an external wallet. T-Bone
+ * never pays the invoice and never claims that opening a wallet completed it.
  */
 @Singleton
 class ZapService @Inject constructor(
     private val signerFactory: NostrSignerFactory,
-    private val nwcRepository: NwcRepository,
     private val pool: RelayPool,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val activeZapMutex = Mutex()
     private val activeZapEventIds = ConcurrentHashMap.newKeySet<String>()
 
-    /** The singleton service serializes each target event across all screens. */
-    suspend fun zap(
+    /** Serializes duplicate invoice requests for a note across all screens. */
+    suspend fun createInvoice(
         event: Event,
         profile: ProfileContent,
         amountSats: Long,
-    ): Result<Unit> {
+    ): Result<String> {
         val accepted = activeZapMutex.withLock { activeZapEventIds.add(event.id) }
-        if (!accepted) return Result.failure(IllegalStateException("zap for this note is already in progress"))
+        if (!accepted) {
+            return Result.failure(IllegalStateException("An invoice for this note is already being prepared"))
+        }
         return try {
-            zapOnce(event, profile, amountSats)
+            createInvoiceOnce(event, profile, amountSats)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
@@ -99,11 +104,11 @@ class ZapService @Inject constructor(
         }
     }
 
-    private suspend fun zapOnce(
+    private suspend fun createInvoiceOnce(
         event: Event,
         profile: ProfileContent,
         amountSats: Long,
-    ): Result<Unit> {
+    ): Result<String> {
         val lightningAddress = profile.lightningAddress
             ?: return Result.failure(IllegalArgumentException("This profile has no Lightning address"))
         require(amountSats in 1..1_000_000) { "zap amount must be between 1 and 1,000,000 sats" }
@@ -121,7 +126,6 @@ class ZapService @Inject constructor(
         val signer = signerFactory.forActiveAccount()
             ?: return Result.failure(IllegalStateException("No active Nostr signer"))
         val relayHints = pool.relayUrls()
-            .filterNot { it in nwcRepository.nwcRelayUrls() }
             .take(5)
             .ifEmpty { Tunables.DEFAULT_RELAYS.take(3) }
         val lnurlTag = Nip19.lnurlToBech32(payInfo.endpointUrl)
@@ -132,9 +136,7 @@ class ZapService @Inject constructor(
                 relayHints.forEach { add(it) }
             })
             add(buildJsonArray { add("amount"); add(amountMsats.toString()) })
-            // NIP-57 requires the LNURL-pay endpoint in bech32 form here. A
-            // lud16 such as alice@example.com is not a valid replacement: the
-            // provider and receipt validator use this tag to bind the payment.
+            // NIP-57 binds the bech32 LNURL-pay endpoint into the signed request.
             add(buildJsonArray { add("lnurl"); add(lnurlTag) })
             add(buildJsonArray { add("p"); add(event.pubkey) })
             add(buildJsonArray { add("e"); add(event.id) })
@@ -146,25 +148,10 @@ class ZapService @Inject constructor(
             tags = zapTags,
         )
         val zapRequest = signer.signEvent(unsigned).getOrElse { return Result.failure(it) }
-        val invoice = requestInvoice(payInfo.callback, amountMsats, zapRequest)
-            .getOrElse { return Result.failure(it) }
-
-        // Important: call pay exactly once. If this returns a timeout, the UI
-        // tells the user to check the wallet rather than creating a duplicate.
-        val payment = nwcRepository.payInvoice(
-            invoice = invoice,
-            zapRequest = zapRequest,
-            recipientIdentifier = lightningAddress,
-            targetEventId = event.id,
-        )
-        if (payment.isSuccess) {
-            nwcRepository.recordOutgoingZap(
-                eventId = event.id,
-                amountMsats = amountMsats,
-                description = "zap · ${profile.bestName ?: event.pubkey.take(8)}",
-            )
+        require(zapRequest.kind == 9734 && zapRequest.pubkey.equals(signer.pubkey, ignoreCase = true) && zapRequest.verify()) {
+            "The signed zap request could not be verified"
         }
-        return payment
+        return requestInvoice(payInfo.callback, amountMsats, zapRequest)
     }
 
     private data class PayInfo(
@@ -176,12 +163,7 @@ class ZapService @Inject constructor(
         val nostrPubkey: String,
     )
 
-    /**
-     * Resolves either NIP-57 profile field: lud16 is a Lightning Address and
-     * lud06 is a bech32 LNURL-pay endpoint. This mirrors Amethyst's
-     * `lnAddress()` preference while keeping the endpoint validation here at
-     * the payment boundary.
-     */
+    /** Resolves either NIP-57 profile field: lud16 first, then lud06. */
     private suspend fun resolveLightningAddress(address: String): Result<PayInfo> = withContext(Dispatchers.IO) {
         try {
             val value = address.trim()
@@ -191,21 +173,24 @@ class ZapService @Inject constructor(
                 require(at in 1 until value.lastIndex) { "invalid Lightning address" }
                 val user = value.substring(0, at)
                 val domain = value.substring(at + 1)
-                require(!domain.any(Char::isWhitespace)) { "invalid Lightning address domain" }
+                require(!user.any(Char::isWhitespace) && !domain.any(Char::isWhitespace)) {
+                    "invalid Lightning address"
+                }
                 val host = Uri.parse("https://$domain").host
                 require(host.equals(domain, ignoreCase = true)) { "invalid Lightning address domain" }
                 "https://$domain/.well-known/lnurlp/${Uri.encode(user)}"
             } else {
                 Nip19.lnurlToUrl(value) ?: error("invalid LNURL payment address")
             }
-            val callbackUrl = url.toHttpUrlOrNull() ?: error("invalid Lightning callback")
-            require(callbackUrl.scheme == "https") {
-                "Lightning callback must use HTTPS"
+            val metadataUrl = url.toHttpUrlOrNull() ?: error("invalid Lightning address URL")
+            require(metadataUrl.scheme == "https" && metadataUrl.username.isEmpty() && metadataUrl.password.isEmpty()) {
+                "Lightning address metadata must use HTTPS"
             }
-            val response = ImageClientProvider.client.newCall(Request.Builder().url(callbackUrl).get().build())
+            val response = httpClient().newCall(Request.Builder().url(metadataUrl).get().build())
                 .execute().use { r ->
                     require(r.isSuccessful) { "Lightning address lookup failed (${r.code})" }
-                    r.body?.string() ?: error("Lightning address returned no metadata")
+                    r.body?.readUtf8Limited(MAX_JSON_BYTES)
+                        ?: error("Lightning address returned no metadata")
                 }
             val obj = json.parseToJsonElement(response).jsonObject
             require(obj["status"]?.jsonPrimitive?.contentOrNull?.equals("ERROR", ignoreCase = true) != true) {
@@ -213,19 +198,31 @@ class ZapService @Inject constructor(
                     ?: obj["message"]?.jsonPrimitive?.contentOrNull
                     ?: "Lightning address lookup failed"
             }
+            val callback = obj["callback"]?.jsonPrimitive?.contentOrNull
+                ?: error("Lightning address has no callback")
+            val callbackUrl = callback.toHttpUrlOrNull() ?: error("invalid Lightning callback")
+            require(callbackUrl.scheme == "https" && callbackUrl.username.isEmpty() && callbackUrl.password.isEmpty()) {
+                "Lightning callback must use HTTPS"
+            }
+            val minSendable = obj["minSendable"]?.jsonPrimitive?.longOrNull
+                ?: error("Lightning address has no minimum")
+            val maxSendable = obj["maxSendable"]?.jsonPrimitive?.longOrNull
+                ?: error("Lightning address has no maximum")
+            require(minSendable > 0 && maxSendable >= minSendable) { "Lightning address has invalid amount limits" }
+            val pubkey = obj["nostrPubkey"]?.jsonPrimitive?.contentOrNull
+                ?: error("Lightning address has no Nostr pubkey")
+            require(pubkey.matches(Regex("^[0-9a-fA-F]{64}$"))) {
+                "Lightning address has an invalid Nostr pubkey"
+            }
             Result.success(
                 PayInfo(
                     endpointUrl = url,
-                    callback = obj["callback"]?.jsonPrimitive?.contentOrNull
-                        ?: error("Lightning address has no callback"),
-                    minSendable = obj["minSendable"]?.jsonPrimitive?.longOrNull
-                        ?: error("Lightning address has no minimum"),
-                    maxSendable = obj["maxSendable"]?.jsonPrimitive?.longOrNull
-                        ?: error("Lightning address has no maximum"),
+                    callback = callback,
+                    minSendable = minSendable,
+                    maxSendable = maxSendable,
                     allowsNostr = obj["allowsNostr"]?.jsonPrimitive?.contentOrNull?.toBoolean() == true ||
                         obj["allowsNostr"]?.jsonPrimitive?.booleanOrNull == true,
-                    nostrPubkey = obj["nostrPubkey"]?.jsonPrimitive?.contentOrNull
-                        ?: error("Lightning address has no Nostr pubkey"),
+                    nostrPubkey = pubkey,
                 ),
             )
         } catch (cancelled: CancellationException) {
@@ -246,10 +243,11 @@ class ZapService @Inject constructor(
                 amountMsats = amountMsats,
                 zapRequest = zapRequest,
             )
-            val body = ImageClientProvider.client.newCall(Request.Builder().url(url).get().build())
+            val body = httpClient().newCall(Request.Builder().url(url).get().build())
                 .execute().use { response ->
                     require(response.isSuccessful) { "invoice request failed (${response.code})" }
-                    response.body?.string() ?: error("invoice response was empty")
+                    response.body?.readUtf8Limited(MAX_JSON_BYTES)
+                        ?: error("invoice response was empty")
                 }
             val obj = json.parseToJsonElement(body).jsonObject
             require(obj["status"]?.jsonPrimitive?.contentOrNull?.equals("ERROR", ignoreCase = true) != true) {
@@ -270,5 +268,32 @@ class ZapService @Inject constructor(
         } catch (error: Exception) {
             Result.failure(error)
         }
+    }
+
+    /** Reuse the app's Tor-aware client with finite timeouts and no insecure redirects. */
+    private fun httpClient() = ImageClientProvider.client.newBuilder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(12, TimeUnit.SECONDS)
+        .callTimeout(20, TimeUnit.SECONDS)
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
+
+    private fun ResponseBody.readUtf8Limited(maxBytes: Int): String {
+        val buffer = Buffer()
+        val source = source()
+        var total = 0L
+        while (true) {
+            val remaining = maxBytes + 1L - total
+            val read = source.read(buffer, minOf(8_192L, remaining))
+            if (read == -1L) break
+            total += read
+            require(total <= maxBytes) { "HTTP response was too large" }
+        }
+        return buffer.readUtf8()
+    }
+
+    companion object {
+        private const val MAX_JSON_BYTES = 128 * 1024
     }
 }

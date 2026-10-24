@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="social.tbone.nostr.Nip19Test" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:31" hostname="e2b.local" time="0.003">
+<testsuite name="social.tbone.nostr.Nip19Test" tests="2" skipped="0" failures="0" errors="0" timestamp="2026-10-24T05:00:50" hostname="e2b.local" time="0.004">
   <properties/>
-  <testcase name="encodes a plain nevent with just the event id" classname="social.tbone.nostr.Nip19Test" time="0.002"/>
-  <testcase name="encodes a nevent reference with author and kind hints" classname="social.tbone.nostr.Nip19Test" time="0.001"/>
+  <testcase name="encodes a plain nevent with just the event id" classname="social.tbone.nostr.Nip19Test" time="0.001"/>
+  <testcase name="encodes a nevent reference with author and kind hints" classname="social.tbone.nostr.Nip19Test" time="0.003"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

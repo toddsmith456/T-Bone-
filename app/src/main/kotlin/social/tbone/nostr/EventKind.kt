@@ -23,15 +23,9 @@ object EventKind {
     const val WEBXDC_REALTIME = 20932 // NIP-DC: ephemeral webxdc realtime data
     const val RELAY_LIST = 10002     // NIP-65: relay list metadata
     const val BLOSSOM_SERVER_LIST = 10063 // BUD-03: user's Blossom server list
-    const val AUTH = 22242           // NIP-42: relay authentication
-    const val NOSTR_CONNECT = 24133  // NIP-46: nsecBunker request/response
-
-    // NIP-47 Nostr Wallet Connect.
-    const val NWC_INFO = 13194
-    const val NWC_REQUEST = 23194
-    const val NWC_RESPONSE = 23195
-    const val NWC_NOTIFICATION = 23196   // legacy NIP-47 notification kind
-    const val NWC_NOTIFICATION_V2 = 23197 // current NIP-47 notification kind
+    const val PAYMENT_TARGETS = 10133  // NIP-A3: replaceable payment-target list
+    const val AUTH = 22242             // NIP-42: relay authentication
+    const val NOSTR_CONNECT = 24133    // NIP-46: nsecBunker request/response
 
     /** NIP-17/59 kinds that must never be treated as public feed content. */
     fun isPrivateMessaging(kind: Int): Boolean = kind == PRIVATE_DM ||

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="social.tbone.account.AccountRepositoryTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:29" hostname="e2b.local" time="0.343">
+<testsuite name="social.tbone.account.AccountRepositoryTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-10-24T05:00:49" hostname="e2b.local" time="0.299">
   <properties/>
-  <testcase name="first account on a new install receives only the new install relay defaults" classname="social.tbone.account.AccountRepositoryTest" time="0.322"/>
-  <testcase name="adding an account to existing install does not seed or overwrite relay settings" classname="social.tbone.account.AccountRepositoryTest" time="0.013"/>
+  <testcase name="first account on a new install receives only the new install relay defaults" classname="social.tbone.account.AccountRepositoryTest" time="0.267"/>
+  <testcase name="adding an account to existing install does not seed or overwrite relay settings" classname="social.tbone.account.AccountRepositoryTest" time="0.023"/>
   <testcase name="first account custom relay list is preserved" classname="social.tbone.account.AccountRepositoryTest" time="0.007"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>

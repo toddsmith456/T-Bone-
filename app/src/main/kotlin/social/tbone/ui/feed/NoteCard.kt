@@ -8,6 +8,7 @@ import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.ChatBubble
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,24 +28,30 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.flow.collect
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
 import social.tbone.nostr.Nip19
@@ -62,8 +69,11 @@ import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.ui.theme.appCornerShape
 import dev.youniversal.theme.YouniversalTheme
-import social.tbone.wallet.NwcWalletViewModel
-import social.tbone.wallet.canShowZapControls
+import android.widget.Toast
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import social.tbone.wallet.ExternalWalletHandoff
+import social.tbone.wallet.WalletViewModel
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -706,27 +716,20 @@ private fun NoteEngagementRow(
     repliedByMe: Set<String> = emptySet(),
     modifier: Modifier = Modifier,
 ) {
-    val walletViewModel: NwcWalletViewModel = hiltViewModel()
-    val hapticFeedback = LocalHapticFeedback.current
-    LaunchedEffect(event.id) {
-        walletViewModel.zapSuccessEvents.collect { completedEventId ->
-            if (completedEventId == event.id) {
-                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-            }
-        }
-    }
-    val zapsEnabled by walletViewModel.zapsEnabled.collectAsStateWithLifecycle()
-    val walletState by walletViewModel.connectionState.collectAsStateWithLifecycle()
-    val pendingZaps by walletViewModel.pendingZapIds.collectAsStateWithLifecycle()
-    val sentZaps by walletViewModel.sentZapIds.collectAsStateWithLifecycle()
-    val uncertainZaps by walletViewModel.uncertainZapIds.collectAsStateWithLifecycle()
+    val walletViewModel: WalletViewModel = hiltViewModel()
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val lightningZapsEnabled by walletViewModel.lightningZapsEnabled.collectAsStateWithLifecycle()
+    val moneroXapsEnabled by walletViewModel.moneroXapsEnabled.collectAsStateWithLifecycle()
     val zapAmountSats by walletViewModel.zapAmountSats.collectAsStateWithLifecycle()
     val zapAmounts by walletViewModel.zapAmounts.collectAsStateWithLifecycle()
     var zapPickerOpen by remember(event.id) { mutableStateOf(false) }
+    var zapPending by remember(event.id) { mutableStateOf(false) }
+    var xapPending by remember(event.id) { mutableStateOf(false) }
+    var handoffRequest by remember(event.id) { mutableStateOf<WalletHandoffRequest?>(null) }
     val zapChoices = remember(zapAmountSats, zapAmounts) {
         listOf(zapAmountSats) + zapAmounts.filterNot { it == zapAmountSats }
     }
-    val canZap = canShowZapControls(zapsEnabled, walletState)
     val lightningAddress = profile?.lightningAddress
     val hasReacted = activePubkey != null && reactors?.contains(activePubkey) == true
     val likeCount = reactors?.size ?: 0
@@ -782,38 +785,23 @@ private fun NoteEngagementRow(
                 onLike = onLike,
             )
         }
-        if (canZap) {
-            val pending = event.id in pendingZaps
-            val sent = event.id in sentZaps
-            val uncertain = event.id in uncertainZaps
+        if (lightningZapsEnabled) {
             Box {
                 EngagementButton(
                     icon = Icons.Outlined.Bolt,
-                    contentDescription = when {
-                        sent -> "Send another zap"
-                        uncertain -> "Zap status unknown; check wallet"
-                        else -> "Choose zap amount"
-                    },
+                    contentDescription = if (zapPending) "Preparing Lightning invoice" else "Choose zap amount",
                     count = 0,
-                    tint = when {
-                        sent -> BonyColors.Accent
-                        pending || uncertain -> BonyColors.Warn
-                        else -> BonyColors.TextMute
-                    },
+                    tint = if (zapPending) BonyColors.Warn else BonyColors.TextMute,
                     onClick = {
-                        if (!pending && !uncertain) {
+                        if (!zapPending) {
                             when {
-                                profile == null -> walletViewModel.report("profile Lightning address is still loading")
-                                lightningAddress == null -> walletViewModel.report("this profile has no Lightning address for zaps")
+                                profile == null -> Toast.makeText(context, "Author profile is still loading", Toast.LENGTH_SHORT).show()
+                                lightningAddress.isNullOrBlank() -> Toast.makeText(context, "This author has no Lightning address", Toast.LENGTH_LONG).show()
                                 else -> zapPickerOpen = true
                             }
                         }
                     },
                 )
-                // Material3 menus use surfaceContainer, which otherwise
-                // falls back to a bright paper color in the light/cream modes.
-                // Override it locally so the zap picker follows every Bony
-                // palette, including Cream.
                 val menuScheme = androidx.compose.material3.MaterialTheme.colorScheme.copy(
                     surfaceContainer = BonyColors.Surface,
                     surfaceContainerHigh = BonyColors.Surface,
@@ -834,8 +822,39 @@ private fun NoteEngagementRow(
                                 },
                                 onClick = {
                                     zapPickerOpen = false
-                                    if (profile != null && lightningAddress != null) {
-                                        walletViewModel.sendZap(event, profile, amountSats = amount)
+                                    val recipient = profile
+                                    if (!zapPending && recipient != null && !lightningAddress.isNullOrBlank()) {
+                                        scope.launch {
+                                            zapPending = true
+                                            try {
+                                                walletViewModel.createZapInvoice(event, recipient, amount).fold(
+                                                    onSuccess = { invoice ->
+                                                        val launched = ExternalWalletHandoff.openLightningWallet(context, invoice)
+                                                        if (launched) {
+                                                            Toast.makeText(
+                                                                context,
+                                                                "Invoice handed off. Review and confirm payment in your wallet.",
+                                                                Toast.LENGTH_LONG,
+                                                            ).show()
+                                                        } else {
+                                                            handoffRequest = WalletHandoffRequest(
+                                                                WalletHandoffRail.LIGHTNING,
+                                                                invoice,
+                                                            )
+                                                        }
+                                                    },
+                                                    onFailure = { error ->
+                                                        Toast.makeText(
+                                                            context,
+                                                            error.message ?: "Could not prepare a Lightning invoice",
+                                                            Toast.LENGTH_LONG,
+                                                        ).show()
+                                                    },
+                                                )
+                                            } finally {
+                                                zapPending = false
+                                            }
+                                        }
                                     }
                                 },
                             )
@@ -844,7 +863,76 @@ private fun NoteEngagementRow(
                 }
             }
         }
+        if (moneroXapsEnabled) {
+            EngagementButton(
+                customIcon = { tint -> MoneroGlyph(tint) },
+                contentDescription = if (xapPending) "Looking up Monero address" else "Xap with Monero",
+                count = 0,
+                tint = if (xapPending) BonyColors.Warn else BonyColors.TextMute,
+                onClick = {
+                    if (!xapPending) {
+                        scope.launch {
+                            xapPending = true
+                            try {
+                                val lookup = walletViewModel.lookupMoneroTarget(event.pubkey)
+                                val address = lookup.moneroAddress
+                                when {
+                                    address == null && lookup.fullySynced && !lookup.usedLocalCache -> Toast.makeText(
+                                        context,
+                                        if (lookup.event == null) {
+                                            "This author has not published a Monero payment address"
+                                        } else {
+                                            "This author's latest payment-target event has no usable Monero address"
+                                        },
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                    address == null -> Toast.makeText(
+                                        context,
+                                        "Could not load this author's Monero address from connected relays",
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                    else -> {
+                                        if (!lookup.fullySynced || lookup.usedLocalCache) {
+                                            Toast.makeText(
+                                                context,
+                                                "Using the last saved Monero target. Verify it in your wallet before sending.",
+                                                Toast.LENGTH_LONG,
+                                            ).show()
+                                        }
+                                        if (ExternalWalletHandoff.openMoneroWallet(context, address)) {
+                                            Toast.makeText(
+                                                context,
+                                                "Monero hand-off started. Confirm recipient and amount in your wallet.",
+                                                Toast.LENGTH_LONG,
+                                            ).show()
+                                        } else {
+                                            handoffRequest = WalletHandoffRequest(
+                                                WalletHandoffRail.MONERO,
+                                                address,
+                                            )
+                                        }
+                                    }
+                                }
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Exception) {
+                                Toast.makeText(
+                                    context,
+                                    error.message ?: "Could not look up this Monero target",
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            } finally {
+                                xapPending = false
+                            }
+                        }
+                    }
+                },
+            )
+        }
         NoteActionsMenu(event = event, authorName = profile?.bestName, authorPictureUrl = profile?.picture)
+    }
+    handoffRequest?.let { request ->
+        WalletHandoffDialog(request = request, onDismiss = { handoffRequest = null })
     }
 }
 
@@ -931,7 +1019,8 @@ private fun LikeButton(
  */
 @Composable
 private fun EngagementButton(
-    icon: ImageVector,
+    icon: ImageVector? = null,
+    customIcon: (@Composable (Color) -> Unit)? = null,
     contentDescription: String,
     count: Int,
     tint: Color,
@@ -942,14 +1031,21 @@ private fun EngagementButton(
         modifier = Modifier
             .clip(RectangleShape)
             .clickable(onClick = onClick)
+            .semantics {
+                this.contentDescription = contentDescription
+                role = Role.Button
+            }
             .padding(horizontal = 8.dp, vertical = 8.dp),
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = contentDescription,
-            tint = tint,
-            modifier = Modifier.size(20.dp),
-        )
+        when {
+            customIcon != null -> customIcon(tint)
+            icon != null -> Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = tint,
+                modifier = Modifier.size(20.dp),
+            )
+        }
         if (count > 0 || contentDescription == "Reply" || contentDescription == "Like") {
             Spacer(Modifier.width(4.dp))
             Text(
@@ -957,6 +1053,31 @@ private fun EngagementButton(
                 style = BonyType.metaDim.copy(color = tint),
             )
         }
+    }
+}
+
+@Composable
+private fun MoneroGlyph(tint: Color) {
+    Canvas(Modifier.size(20.dp)) {
+        val scale = size.minDimension / 24f
+        drawCircle(
+            color = tint,
+            radius = 9f * scale,
+            center = center,
+            style = Stroke(width = 1.7f * scale),
+        )
+        val path = Path().apply {
+            moveTo(4f * scale, 16.5f * scale)
+            lineTo(4f * scale, 9f * scale)
+            lineTo(12f * scale, 16f * scale)
+            lineTo(20f * scale, 9f * scale)
+            lineTo(20f * scale, 16.5f * scale)
+        }
+        drawPath(
+            path = path,
+            color = tint,
+            style = Stroke(width = 1.7f * scale, cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
     }
 }
 

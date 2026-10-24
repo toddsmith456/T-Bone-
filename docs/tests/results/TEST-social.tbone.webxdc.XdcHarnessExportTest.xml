@@ -1,17 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="social.tbone.webxdc.XdcHarnessExportTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:32" hostname="e2b.local" time="0.767">
+<testsuite name="social.tbone.webxdc.XdcHarnessExportTest" tests="1" skipped="1" failures="0" errors="0" timestamp="2026-10-24T05:00:51" hostname="e2b.local" time="0.001">
   <properties/>
-  <testcase name="exportsServedTree" classname="social.tbone.webxdc.XdcHarnessExportTest" time="0.767"/>
-  <system-out><![CDATA[exported XDC-Chess -> /home/user/xdc-proof/served/1c9e60c6b427119c5fbc91ad2af04137 (files=7)
-exported Shell -> /home/user/xdc-proof/served/98d405bf23477628e1c2e8da6c1c4718 (files=5)
-exported Gomoku -> /home/user/xdc-proof/served/aca7b91a444ec91da30841b8d1a1369b (files=20)
-exported Scramble -> /home/user/xdc-proof/served/b580fe573a05ddfeb946b2965807f207 (files=10)
-exported 2048 -> /home/user/xdc-proof/served/48558391f11527c8dd07eb6edcbe4cfd (files=5)
-exported Arkanoid -> /home/user/xdc-proof/served/fe124700ce70b83ee16939c7b6df06c3 (files=5)
-exported Audio Dash -> /home/user/xdc-proof/served/c1561137d40f904f836ee3b37cd6d16e (files=4)
-exported Heretic (Shareware) -> /home/user/xdc-proof/served/cbd30342db73b1563ddeee42667526c9 (files=48)
-exported Oregon Trail -> /home/user/xdc-proof/served/e1ef6768391108a8b300203b77815562 (files=48)
-exported Calculator -> /home/user/xdc-proof/served/2c8f2a4d1cf75422cdec63ed879cbe7b (files=7)
-]]></system-out>
+  <testcase name="exportsServedTree" classname="social.tbone.webxdc.XdcHarnessExportTest" time="0.001">
+    <skipped/>
+  </testcase>
+  <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

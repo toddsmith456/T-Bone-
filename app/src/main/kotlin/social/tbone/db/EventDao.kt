@@ -23,6 +23,10 @@ interface EventDao {
     @Query("SELECT * FROM events WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<EventEntity>
 
+    /** Latest replaceable event (used for author-published NIP-A3 targets). */
+    @Query("SELECT * FROM events WHERE pubkey = :pubkey AND kind = :kind ORDER BY createdAt DESC, id DESC LIMIT 1")
+    suspend fun getLatestByAuthorAndKind(pubkey: String, kind: Int): EventEntity?
+
     /** Authored events are needed by notifications after a process restart. */
     @Query("SELECT * FROM events WHERE pubkey = :pubkey ORDER BY createdAt DESC LIMIT :limit")
     suspend fun getRecentByAuthor(pubkey: String, limit: Int): List<EventEntity>

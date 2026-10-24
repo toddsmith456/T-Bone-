@@ -107,7 +107,7 @@ fun ToolboxScreen(
         put("calendar", ToolEntry(Icons.Outlined.CalendarMonth, "calendar",
             "fully local encrypted calendar", onCalendar))
         put("wallet", ToolEntry(Icons.Outlined.Bolt, "wallet tool",
-            "NWC connection, zaps & zap-only activity", onWallet))
+            "Lightning zaps & Monero xaps", onWallet))
         xdcTools.forEach { tool ->
             put("xdc_${tool.appId}", ToolEntry(
                 icon = XdcToolIcons.byId(tool.iconId),

@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="social.tbone.settings.ContentFilterTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:31" hostname="e2b.local" time="0.007">
+<testsuite name="social.tbone.settings.ContentFilterTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-24T05:00:50" hostname="e2b.local" time="0.005">
   <properties/>
-  <testcase name="mention of blocked author in a non-reply remains visible" classname="social.tbone.settings.ContentFilterTest" time="0.005"/>
+  <testcase name="mention of blocked author in a non-reply remains visible" classname="social.tbone.settings.ContentFilterTest" time="0.002"/>
   <testcase name="reply is hidden when the referenced parent author is blocked" classname="social.tbone.settings.ContentFilterTest" time="0.0"/>
-  <testcase name="reply to blocked author is hidden even when replier is not blocked" classname="social.tbone.settings.ContentFilterTest" time="0.0"/>
-  <testcase name="hidden words match case-insensitively" classname="social.tbone.settings.ContentFilterTest" time="0.001"/>
+  <testcase name="reply to blocked author is hidden even when replier is not blocked" classname="social.tbone.settings.ContentFilterTest" time="0.002"/>
+  <testcase name="hidden words match case-insensitively" classname="social.tbone.settings.ContentFilterTest" time="0.0"/>
   <testcase name="reposts of blocked authors are hidden without the target cached" classname="social.tbone.settings.ContentFilterTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>

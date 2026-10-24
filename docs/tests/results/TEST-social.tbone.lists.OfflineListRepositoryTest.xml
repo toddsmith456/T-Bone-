@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="social.tbone.lists.OfflineListRepositoryTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:31" hostname="e2b.local" time="0.177">
+<testsuite name="social.tbone.lists.OfflineListRepositoryTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-10-24T05:00:50" hostname="e2b.local" time="0.163">
   <properties/>
-  <testcase name="addByNpubHexAndRejectsGarbageDuplicatesAndSelf" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.031"/>
-  <testcase name="persistsAcrossRepositoryInstances" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.016"/>
+  <testcase name="addByNpubHexAndRejectsGarbageDuplicatesAndSelf" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.033"/>
+  <testcase name="persistsAcrossRepositoryInstances" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.012"/>
   <testcase name="startFromCopyDoesNotStampSyncTime" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.006"/>
-  <testcase name="mergeImportOnlyAddsNewEntriesAndSkipsOwner" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.011"/>
-  <testcase name="listsAreIsolatedPerAccountAndPerType" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.015"/>
-  <testcase name="startsOffAndEmpty" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.003"/>
-  <testcase name="replaceImportSwapsListButNotFlags" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.009"/>
-  <testcase name="removingAnAccountWipesItsLists" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.017"/>
+  <testcase name="mergeImportOnlyAddsNewEntriesAndSkipsOwner" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.008"/>
+  <testcase name="listsAreIsolatedPerAccountAndPerType" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.008"/>
+  <testcase name="startsOffAndEmpty" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.004"/>
+  <testcase name="replaceImportSwapsListButNotFlags" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.008"/>
+  <testcase name="removingAnAccountWipesItsLists" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.018"/>
   <testcase name="exportFromOneAccountImportIntoAnother" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.019"/>
-  <testcase name="storedStateHoldsNoPictureData" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.006"/>
-  <testcase name="cannotSwitchOnBeforeInitialSync" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.007"/>
-  <testcase name="syncReplacesTheLocalListWholesaleAndKeepsSwitch" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.009"/>
-  <testcase name="initialSyncEnablesAndSwitchRemembersState" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.01"/>
-  <testcase name="removeAndUndo" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.013"/>
+  <testcase name="storedStateHoldsNoPictureData" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.008"/>
+  <testcase name="cannotSwitchOnBeforeInitialSync" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.004"/>
+  <testcase name="syncReplacesTheLocalListWholesaleAndKeepsSwitch" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.008"/>
+  <testcase name="initialSyncEnablesAndSwitchRemembersState" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.011"/>
+  <testcase name="removeAndUndo" classname="social.tbone.lists.OfflineListRepositoryTest" time="0.012"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

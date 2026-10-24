@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="social.tbone.media.MimeTypesTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:31" hostname="e2b.local" time="0.002">
+<testsuite name="social.tbone.media.MimeTypesTest" tests="7" skipped="0" failures="0" errors="0" timestamp="2026-10-24T05:00:50" hostname="e2b.local" time="0.005">
   <properties/>
   <testcase name="detects video types" classname="social.tbone.media.MimeTypesTest" time="0.001"/>
   <testcase name="extracts extension from a display name" classname="social.tbone.media.MimeTypesTest" time="0.0"/>
   <testcase name="infers mime types from common video and audio extensions" classname="social.tbone.media.MimeTypesTest" time="0.0"/>
   <testcase name="tolerates parameters, casing and whitespace" classname="social.tbone.media.MimeTypesTest" time="0.0"/>
-  <testcase name="unknown types yield an empty extension so the bare hash url is used" classname="social.tbone.media.MimeTypesTest" time="0.0"/>
+  <testcase name="unknown types yield an empty extension so the bare hash url is used" classname="social.tbone.media.MimeTypesTest" time="0.001"/>
   <testcase name="maps common image video and audio types" classname="social.tbone.media.MimeTypesTest" time="0.0"/>
-  <testcase name="normalizes MPEG audio MIME and extension aliases" classname="social.tbone.media.MimeTypesTest" time="0.0"/>
+  <testcase name="normalizes MPEG audio MIME and extension aliases" classname="social.tbone.media.MimeTypesTest" time="0.001"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

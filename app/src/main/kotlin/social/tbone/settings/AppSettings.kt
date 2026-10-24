@@ -22,15 +22,6 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Encrypted-at-rest NWC connection material. Never contains the raw URI secret. */
-data class StoredNwcConnection(
-    val walletPubkey: String,
-    val relayUrls: List<String>,
-    val clientPubkey: String,
-    val encryptedSecretBase64: String,
-    val lud16: String?,
-)
-
 @Singleton
 class AppSettings @Inject constructor(
     private val dataStore: DataStore<Preferences>,
@@ -109,20 +100,25 @@ class AppSettings @Inject constructor(
         private val BLOSSOM_DEFAULT_SERVER = stringPreferencesKey("blossom_default_server")
         private val BLOSSOM_COMPRESS = booleanPreferencesKey("blossom_compress")
         private val BLOSSOM_AUDIO_COMPRESS = booleanPreferencesKey("blossom_audio_compress")
-        // Nostr Wallet Connect — the connection secret is stored only as an
-        // Android-Keystore-encrypted blob. The raw NWC URI is never persisted.
-        private val NWC_ZAPS_ENABLED = booleanPreferencesKey("nwc_zaps_enabled")
-        private val NWC_ZAP_AMOUNT_SATS = longPreferencesKey("nwc_zap_amount_sats")
-        private val NWC_ZAP_AMOUNTS = stringPreferencesKey("nwc_zap_amounts")
-        // A deliberate Disconnect survives screen navigation and process restarts.
-        private val NWC_USER_DISCONNECTED = booleanPreferencesKey("nwc_user_disconnected")
-        private val NWC_WALLET_PUBKEY = stringPreferencesKey("nwc_wallet_pubkey")
-        private val NWC_RELAY_URLS = stringPreferencesKey("nwc_relay_urls")
-        private val NWC_CLIENT_PUBKEY = stringPreferencesKey("nwc_client_pubkey")
-        private val NWC_ENCRYPTED_SECRET = stringPreferencesKey("nwc_encrypted_secret")
-        private val NWC_LUD16 = stringPreferencesKey("nwc_lud16")
-        private val NWC_PAID_ZAP_IDS = stringSetPreferencesKey("nwc_paid_zap_ids")
-        private val NWC_UNCERTAIN_ZAP_IDS = stringSetPreferencesKey("nwc_uncertain_zap_ids")
+        // External-wallet Lightning zaps and optional Monero xaps.
+        private val LIGHTNING_ZAPS_ENABLED = booleanPreferencesKey("lightning_zaps_enabled")
+        private val LIGHTNING_ZAP_AMOUNT_SATS = longPreferencesKey("lightning_zap_amount_sats")
+        private val LIGHTNING_ZAP_AMOUNTS = stringPreferencesKey("lightning_zap_amounts")
+        private val MONERO_XAPS_ENABLED = booleanPreferencesKey("monero_xaps_enabled")
+
+        // One-time migration sources from the removed NWC wallet feature. The
+        // old connection and payment outcome data is deleted during migration.
+        private val LEGACY_NWC_ZAPS_ENABLED = booleanPreferencesKey("nwc_zaps_enabled")
+        private val LEGACY_NWC_ZAP_AMOUNT_SATS = longPreferencesKey("nwc_zap_amount_sats")
+        private val LEGACY_NWC_ZAP_AMOUNTS = stringPreferencesKey("nwc_zap_amounts")
+        private val LEGACY_NWC_USER_DISCONNECTED = booleanPreferencesKey("nwc_user_disconnected")
+        private val LEGACY_NWC_WALLET_PUBKEY = stringPreferencesKey("nwc_wallet_pubkey")
+        private val LEGACY_NWC_RELAY_URLS = stringPreferencesKey("nwc_relay_urls")
+        private val LEGACY_NWC_CLIENT_PUBKEY = stringPreferencesKey("nwc_client_pubkey")
+        private val LEGACY_NWC_ENCRYPTED_SECRET = stringPreferencesKey("nwc_encrypted_secret")
+        private val LEGACY_NWC_LUD16 = stringPreferencesKey("nwc_lud16")
+        private val LEGACY_NWC_PAID_ZAP_IDS = stringSetPreferencesKey("nwc_paid_zap_ids")
+        private val LEGACY_NWC_UNCERTAIN_ZAP_IDS = stringSetPreferencesKey("nwc_uncertain_zap_ids")
         // Screen time (parental): daily allowance + rollover tracking.
         private val SCREEN_TIME_ENABLED = booleanPreferencesKey("screen_time_enabled")
         private val SCREEN_TIME_MINUTES = intPreferencesKey("screen_time_minutes")
@@ -209,7 +205,7 @@ class AppSettings @Inject constructor(
     private val _toolboxDuressPinEnabled = MutableStateFlow(false)
     val toolboxDuressPinEnabled = _toolboxDuressPinEnabled.asStateFlow()
 
-    /** Ordered list of tool ids in the toolbox (including the NWC wallet tool). */
+    /** Ordered list of tool ids in the toolbox. */
     private val _toolboxToolOrder = MutableStateFlow<List<String>>(emptyList())
     val toolboxToolOrder = _toolboxToolOrder.asStateFlow()
 
@@ -283,14 +279,17 @@ class AppSettings @Inject constructor(
     private val _blossomAudioCompress = MutableStateFlow(false)
     val blossomAudioCompress = _blossomAudioCompress.asStateFlow()
 
-    private val _nwcZapsEnabled = MutableStateFlow(false)
-    val nwcZapsEnabled = _nwcZapsEnabled.asStateFlow()
+    private val _lightningZapsEnabled = MutableStateFlow(false)
+    val lightningZapsEnabled = _lightningZapsEnabled.asStateFlow()
 
-    private val _nwcZapAmountSats = MutableStateFlow(21L)
-    val nwcZapAmountSats = _nwcZapAmountSats.asStateFlow()
+    private val _moneroXapsEnabled = MutableStateFlow(false)
+    val moneroXapsEnabled = _moneroXapsEnabled.asStateFlow()
 
-    private val _nwcZapAmounts = MutableStateFlow(ZapAmounts.DEFAULT)
-    val nwcZapAmounts = _nwcZapAmounts.asStateFlow()
+    private val _lightningZapAmountSats = MutableStateFlow(21L)
+    val lightningZapAmountSats = _lightningZapAmountSats.asStateFlow()
+
+    private val _lightningZapAmounts = MutableStateFlow(ZapAmounts.DEFAULT)
+    val lightningZapAmounts = _lightningZapAmounts.asStateFlow()
 
     /** Parental screen time: enabled / daily minutes / rollover tracking. */
     private val _screenTimeEnabled = MutableStateFlow(false)
@@ -313,6 +312,7 @@ class AppSettings @Inject constructor(
 
     init {
         scope.launch {
+            migrateRemovedNwcPreferences()
             dataStore.data.collect { prefs ->
                 _torExplicitlySet.value = prefs[TOR_EXPLICITLY_SET] == true
                 _torEnabled.value = prefs[TOR_ENABLED] ?: false
@@ -364,9 +364,10 @@ class AppSettings @Inject constructor(
                         ?.takeIf { it in storedServers }
                 _blossomCompress.value = prefs[BLOSSOM_COMPRESS] ?: true
                 _blossomAudioCompress.value = prefs[BLOSSOM_AUDIO_COMPRESS] ?: false
-                _nwcZapsEnabled.value = prefs[NWC_ZAPS_ENABLED] ?: false
-                _nwcZapAmountSats.value = ZapAmounts.validOrDefault(prefs[NWC_ZAP_AMOUNT_SATS])
-                _nwcZapAmounts.value = ZapAmounts.parse(prefs[NWC_ZAP_AMOUNTS])
+                _lightningZapsEnabled.value = prefs[LIGHTNING_ZAPS_ENABLED] ?: false
+                _moneroXapsEnabled.value = prefs[MONERO_XAPS_ENABLED] ?: false
+                _lightningZapAmountSats.value = ZapAmounts.validOrDefault(prefs[LIGHTNING_ZAP_AMOUNT_SATS])
+                _lightningZapAmounts.value = ZapAmounts.parse(prefs[LIGHTNING_ZAP_AMOUNTS])
                 _screenTimeEnabled.value = prefs[SCREEN_TIME_ENABLED] ?: false
                 _screenTimeMinutes.value = prefs[SCREEN_TIME_MINUTES] ?: 120
                 _initialized.value = true
@@ -596,102 +597,74 @@ class AppSettings @Inject constructor(
         dataStore.edit { it[CLIENT_TAG_ENABLED] = enabled }
     }
 
-    // ── Nostr Wallet Connect ─────────────────────────────────────────────────
+    // ── External-wallet payments ────────────────────────────────────────────
 
-    suspend fun setNwcZapsEnabled(enabled: Boolean) {
-        _nwcZapsEnabled.value = enabled
-        dataStore.edit { it[NWC_ZAPS_ENABLED] = enabled }
+    suspend fun setLightningZapsEnabled(enabled: Boolean) {
+        _lightningZapsEnabled.value = enabled
+        dataStore.edit { it[LIGHTNING_ZAPS_ENABLED] = enabled }
+    }
+
+    suspend fun setMoneroXapsEnabled(enabled: Boolean) {
+        _moneroXapsEnabled.value = enabled
+        dataStore.edit { it[MONERO_XAPS_ENABLED] = enabled }
     }
 
     /**
-     * The amount used when a zap control is activated directly. It is deliberately
-     * separate from the editable preset list: users can send an arbitrary amount
-     * without having to keep that amount as a quick-choice preset.
+     * The default Lightning zap amount is separate from the editable preset
+     * list, so users may set any valid value without keeping it as a preset.
      */
-    suspend fun setNwcZapAmountSats(amount: Long) {
+    suspend fun setLightningZapAmountSats(amount: Long) {
         val valid = ZapAmounts.requireValid(amount)
-        _nwcZapAmountSats.value = valid
-        dataStore.edit { it[NWC_ZAP_AMOUNT_SATS] = valid }
+        _lightningZapAmountSats.value = valid
+        dataStore.edit { it[LIGHTNING_ZAP_AMOUNT_SATS] = valid }
     }
 
-    suspend fun setNwcZapAmounts(amounts: List<Long>) {
+    suspend fun setLightningZapAmounts(amounts: List<Long>) {
         val clean = ZapAmounts.normalize(amounts)
-        _nwcZapAmounts.value = clean
-        dataStore.edit { it[NWC_ZAP_AMOUNTS] = clean.joinToString(",") }
+        _lightningZapAmounts.value = clean
+        dataStore.edit { it[LIGHTNING_ZAP_AMOUNTS] = clean.joinToString(",") }
     }
 
-    suspend fun addNwcZapAmount(amount: Long) {
-        setNwcZapAmounts(_nwcZapAmounts.value + ZapAmounts.requireValid(amount))
+    suspend fun addLightningZapAmount(amount: Long) {
+        setLightningZapAmounts(_lightningZapAmounts.value + ZapAmounts.requireValid(amount))
     }
 
-    suspend fun removeNwcZapAmount(amount: Long) {
-        val next = ZapAmounts.remove(_nwcZapAmounts.value, amount)
-        if (next == _nwcZapAmounts.value) return
-        setNwcZapAmounts(next)
+    suspend fun removeLightningZapAmount(amount: Long) {
+        val next = ZapAmounts.remove(_lightningZapAmounts.value, amount)
+        if (next == _lightningZapAmounts.value) return
+        setLightningZapAmounts(next)
     }
 
-    suspend fun moveNwcZapAmount(from: Int, to: Int) {
-        val next = ZapAmounts.move(_nwcZapAmounts.value, from, to)
-        if (next == _nwcZapAmounts.value) return
-        setNwcZapAmounts(next)
+    suspend fun moveLightningZapAmount(from: Int, to: Int) {
+        val next = ZapAmounts.move(_lightningZapAmounts.value, from, to)
+        if (next == _lightningZapAmounts.value) return
+        setLightningZapAmounts(next)
     }
 
-    suspend fun setNwcUserDisconnected(disconnected: Boolean) {
-        dataStore.edit { it[NWC_USER_DISCONNECTED] = disconnected }
-    }
-
-    suspend fun isNwcUserDisconnected(): Boolean = dataStore.data.first()[NWC_USER_DISCONNECTED] ?: false
-
-    suspend fun getNwcConnection(): StoredNwcConnection? {
-        val prefs = dataStore.data.first()
-        val wallet = prefs[NWC_WALLET_PUBKEY] ?: return null
-        val relays = prefs[NWC_RELAY_URLS]
-            ?.split("\n")
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
-            .orEmpty()
-        val client = prefs[NWC_CLIENT_PUBKEY] ?: return null
-        val encrypted = prefs[NWC_ENCRYPTED_SECRET] ?: return null
-        if (relays.isEmpty()) return null
-        return StoredNwcConnection(wallet, relays, client, encrypted, prefs[NWC_LUD16])
-    }
-
-    suspend fun setNwcConnection(connection: StoredNwcConnection) {
-        dataStore.edit {
-            it[NWC_WALLET_PUBKEY] = connection.walletPubkey
-            it[NWC_RELAY_URLS] = connection.relayUrls.joinToString("\n")
-            it[NWC_CLIENT_PUBKEY] = connection.clientPubkey
-            it[NWC_ENCRYPTED_SECRET] = connection.encryptedSecretBase64
-            if (connection.lud16.isNullOrBlank()) it.remove(NWC_LUD16)
-            else it[NWC_LUD16] = connection.lud16
+    /** Copies only the reusable zap preferences, then removes NWC secrets and outcomes. */
+    private suspend fun migrateRemovedNwcPreferences() {
+        dataStore.edit { prefs ->
+            if (prefs[LIGHTNING_ZAPS_ENABLED] == null) {
+                prefs[LEGACY_NWC_ZAPS_ENABLED]?.let { prefs[LIGHTNING_ZAPS_ENABLED] = it }
+            }
+            if (prefs[LIGHTNING_ZAP_AMOUNT_SATS] == null) {
+                prefs[LEGACY_NWC_ZAP_AMOUNT_SATS]?.let { prefs[LIGHTNING_ZAP_AMOUNT_SATS] = it }
+            }
+            if (prefs[LIGHTNING_ZAP_AMOUNTS] == null) {
+                prefs[LEGACY_NWC_ZAP_AMOUNTS]?.let { prefs[LIGHTNING_ZAP_AMOUNTS] = it }
+            }
+            prefs.remove(LEGACY_NWC_ZAPS_ENABLED)
+            prefs.remove(LEGACY_NWC_ZAP_AMOUNT_SATS)
+            prefs.remove(LEGACY_NWC_ZAP_AMOUNTS)
+            prefs.remove(LEGACY_NWC_USER_DISCONNECTED)
+            prefs.remove(LEGACY_NWC_WALLET_PUBKEY)
+            prefs.remove(LEGACY_NWC_RELAY_URLS)
+            prefs.remove(LEGACY_NWC_CLIENT_PUBKEY)
+            prefs.remove(LEGACY_NWC_ENCRYPTED_SECRET)
+            prefs.remove(LEGACY_NWC_LUD16)
+            prefs.remove(LEGACY_NWC_PAID_ZAP_IDS)
+            prefs.remove(LEGACY_NWC_UNCERTAIN_ZAP_IDS)
         }
-    }
-
-    suspend fun clearNwcConnection() {
-        dataStore.edit {
-            it.remove(NWC_WALLET_PUBKEY)
-            it.remove(NWC_RELAY_URLS)
-            it.remove(NWC_CLIENT_PUBKEY)
-            it.remove(NWC_ENCRYPTED_SECRET)
-            it.remove(NWC_LUD16)
-        }
-    }
-
-    /** Event ids only; never persist invoices, preimages, or NWC secrets. */
-    suspend fun nwcPaidZapIds(): Set<String> = dataStore.data.first()[NWC_PAID_ZAP_IDS].orEmpty()
-    suspend fun nwcUncertainZapIds(): Set<String> = dataStore.data.first()[NWC_UNCERTAIN_ZAP_IDS].orEmpty()
-
-    suspend fun markNwcZapPaid(eventId: String) {
-        dataStore.edit { it[NWC_PAID_ZAP_IDS] = (it[NWC_PAID_ZAP_IDS].orEmpty() + eventId).toList().takeLast(500).toSet() }
-    }
-
-    suspend fun markNwcZapUncertain(eventId: String) {
-        dataStore.edit { it[NWC_UNCERTAIN_ZAP_IDS] = (it[NWC_UNCERTAIN_ZAP_IDS].orEmpty() + eventId).toList().takeLast(500).toSet() }
-    }
-
-    /** Called once the wallet's late answer resolves a payment that had timed out. */
-    suspend fun clearNwcZapUncertain(eventId: String) {
-        dataStore.edit { it[NWC_UNCERTAIN_ZAP_IDS] = it[NWC_UNCERTAIN_ZAP_IDS].orEmpty() - eventId }
     }
 
     // ── Screen time (parental) ───────────────────────────────────────────────

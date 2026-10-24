@@ -1,22 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="social.tbone.lists.ListFileFormatTest" tests="16" skipped="0" failures="0" errors="0" timestamp="2026-10-22T06:34:31" hostname="e2b.local" time="0.112">
+<testsuite name="social.tbone.lists.ListFileFormatTest" tests="16" skipped="0" failures="0" errors="0" timestamp="2026-10-24T05:00:50" hostname="e2b.local" time="0.063">
   <properties/>
-  <testcase name="acceptsContainerObjects" classname="social.tbone.lists.ListFileFormatTest" time="0.018"/>
-  <testcase name="acceptsFullySignedRelayEventWithExtraFields" classname="social.tbone.lists.ListFileFormatTest" time="0.011"/>
-  <testcase name="acceptsJsonArrayOfNpubHexAndNprofileStrings" classname="social.tbone.lists.ListFileFormatTest" time="0.007"/>
-  <testcase name="rejectsAFollowFileImportedAsMuteListAndViceVersa" classname="social.tbone.lists.ListFileFormatTest" time="0.018"/>
-  <testcase name="acceptsPlainTextListsFromOtherTools" classname="social.tbone.lists.ListFileFormatTest" time="0.023"/>
-  <testcase name="exportIsAStandardNostrListEvent" classname="social.tbone.lists.ListFileFormatTest" time="0.012"/>
-  <testcase name="exportThenImportRoundTripsEverything" classname="social.tbone.lists.ListFileFormatTest" time="0.002"/>
+  <testcase name="acceptsContainerObjects" classname="social.tbone.lists.ListFileFormatTest" time="0.013"/>
+  <testcase name="acceptsFullySignedRelayEventWithExtraFields" classname="social.tbone.lists.ListFileFormatTest" time="0.004"/>
+  <testcase name="acceptsJsonArrayOfNpubHexAndNprofileStrings" classname="social.tbone.lists.ListFileFormatTest" time="0.003"/>
+  <testcase name="rejectsAFollowFileImportedAsMuteListAndViceVersa" classname="social.tbone.lists.ListFileFormatTest" time="0.017"/>
+  <testcase name="acceptsPlainTextListsFromOtherTools" classname="social.tbone.lists.ListFileFormatTest" time="0.01"/>
+  <testcase name="exportIsAStandardNostrListEvent" classname="social.tbone.lists.ListFileFormatTest" time="0.001"/>
+  <testcase name="exportThenImportRoundTripsEverything" classname="social.tbone.lists.ListFileFormatTest" time="0.001"/>
   <testcase name="arrayOfEventsPicksNewestMatchingKind" classname="social.tbone.lists.ListFileFormatTest" time="0.002"/>
   <testcase name="suggestedFileNameIsStable" classname="social.tbone.lists.ListFileFormatTest" time="0.001"/>
-  <testcase name="duplicatesAreCollapsedKeepingFirst" classname="social.tbone.lists.ListFileFormatTest" time="0.002"/>
+  <testcase name="duplicatesAreCollapsedKeepingFirst" classname="social.tbone.lists.ListFileFormatTest" time="0.0"/>
   <testcase name="emptyListExportsAndReimportsAsNoEntriesError" classname="social.tbone.lists.ListFileFormatTest" time="0.0"/>
   <testcase name="garbageIsRejectedWithAMessage" classname="social.tbone.lists.ListFileFormatTest" time="0.001"/>
   <testcase name="badRelayHintsAreDropped" classname="social.tbone.lists.ListFileFormatTest" time="0.001"/>
-  <testcase name="uppercaseHexAndNpubAreNormalised" classname="social.tbone.lists.ListFileFormatTest" time="0.001"/>
-  <testcase name="acceptsArrayOfBareTags" classname="social.tbone.lists.ListFileFormatTest" time="0.0"/>
-  <testcase name="nip51FollowSetKindIsAcceptedForFollowsButNotMutes" classname="social.tbone.lists.ListFileFormatTest" time="0.001"/>
+  <testcase name="uppercaseHexAndNpubAreNormalised" classname="social.tbone.lists.ListFileFormatTest" time="0.002"/>
+  <testcase name="acceptsArrayOfBareTags" classname="social.tbone.lists.ListFileFormatTest" time="0.003"/>
+  <testcase name="nip51FollowSetKindIsAcceptedForFollowsButNotMutes" classname="social.tbone.lists.ListFileFormatTest" time="0.002"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
 </testsuite>

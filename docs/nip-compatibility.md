@@ -12,6 +12,7 @@ Legend: ✅ Supported &nbsp;|&nbsp; 🚧 Partial &nbsp;|&nbsp; 🔌 Plugin &nbsp
 | 6 | Repost | Rendered as embedded card with original author and content; publishing (boost) supported |
 | 7 | Reaction | NIP-25 `+` reactions tracked per event; optimistic publish with rollback; like count displayed |
 | 10002 | Relay List | Read relays extracted and connected on login; list persisted to account |
+| 10133 | Payment Targets | NIP-A3 Monero/xmr targets read from connected relays; own address updates preserve other and unknown tags |
 | 22242 | Auth | Signed automatically in response to NIP-42 relay challenges |
 | 24133 | Nostr Connect | Used internally by `NsecBunkerSigner` for NIP-46 request/response |
 | 1063 | File Metadata | Read for the webxdc tool: filtered by `#m application/x-webxdc` (NIP-DC), parsed into an app card with icon, size and `webxdc` uuid |
@@ -50,7 +51,8 @@ Legend: ✅ Supported &nbsp;|&nbsp; 🚧 Partial &nbsp;|&nbsp; 🔌 Plugin &nbsp
 | [NIP-25](https://github.com/nostr-protocol/nips/blob/master/25.md) | Reactions | ✅ | `+` like reactions with count; optimistic update + rollback; emoji reactions are plugin territory |
 | [NIP-36](https://github.com/nostr-protocol/nips/blob/master/36.md) | Sensitive content | planned | Content warnings |
 | [NIP-51](https://github.com/nostr-protocol/nips/blob/master/51.md) | Lists | 🔌 | Mute list (kind 10000) used by BLOCK unless the offline block list is ON; pin lists, bookmarks; hashtag/custom feed lists |
-| [NIP-57](https://github.com/nostr-protocol/nips/blob/master/57.md) | Lightning zaps | 🔌 | |
+| [NIP-57](https://github.com/nostr-protocol/nips/blob/master/57.md) | Lightning zaps | 🚧 | Signs a zap request, checks the returned BOLT-11 amount, then hands the invoice to an external wallet; no payment confirmation is inferred from opening the wallet |
+| [NIP-A3](https://github.com/nostr-protocol/nips/blob/master/A3.md) | Payment targets | 🚧 | Reads/publishes kind-10133 Monero targets (`monero` and `xmr`); hands off to an external Monero wallet without inventing a zap receipt |
 
 ## Uncommon NIPs
 
@@ -59,7 +61,6 @@ Legend: ✅ Supported &nbsp;|&nbsp; 🚧 Partial &nbsp;|&nbsp; 🔌 Plugin &nbsp
 | [NIP-13](https://github.com/nostr-protocol/nips/blob/master/13.md) | Proof of work | — | Anti-spam; relay-dependent |
 | [NIP-23](https://github.com/nostr-protocol/nips/blob/master/23.md) | Long-form content | 🔌 | Articles / blogs |
 | [NIP-40](https://github.com/nostr-protocol/nips/blob/master/40.md) | Expiration timestamp | planned | |
-| [NIP-47](https://github.com/nostr-protocol/nips/blob/master/47.md) | Wallet Connect | 🔌 | NWC; pay invoices in-app |
 | [NIP-50](https://github.com/nostr-protocol/nips/blob/master/50.md) | Search | 🔌 | Relay-dependent full-text search |
 | [NIP-52](https://github.com/nostr-protocol/nips/blob/master/52.md) | Calendar events | 🔌 | |
 | [NIP-53](https://github.com/nostr-protocol/nips/blob/master/53.md) | Live activities | 🔌 | Streams, live audio |
