@@ -15,7 +15,7 @@ object PublishedRelayLists {
     fun blossomServers(event: Event): List<String> {
         if (event.kind != EventKind.BLOSSOM_SERVER_LIST) return emptyList()
         return event.parsedTags.asSequence()
-            .filter { it.name == \"server\" }
+            .filter { it.name == "server" }
             .mapNotNull { it.value()?.let(BlossomServerUrl::normalize) }
             .distinct()
             .take(MAX_BLOSSOM_SERVERS)
@@ -31,7 +31,7 @@ object PublishedRelayLists {
     fun allRelays(event: Event): List<String> {
         if (event.kind != EventKind.RELAY_LIST) return emptyList()
         return event.parsedTags.asSequence()
-            .filter { it.name == \"r\" }
+            .filter { it.name == "r" }
             .mapNotNull { tag -> tag.value()?.let(::normalizeRelayUrl) }
             .distinct()
             .take(MAX_PREFERRED_RELAYS)
@@ -46,8 +46,8 @@ object PublishedRelayLists {
     fun preferredRelays(event: Event): List<String> {
         if (event.kind != EventKind.RELAY_LIST) return emptyList()
         return event.parsedTags.asSequence()
-            .filter { it.name == \"r\" }
-            .filter { tag -> tag.value(2).let { it == null || it == \"read\" } }
+            .filter { it.name == "r" }
+            .filter { tag -> tag.value(2).let { it == null || it == "read" } }
             .mapNotNull { tag -> tag.value()?.let(::normalizeRelayUrl) }
             .distinct()
             .take(MAX_PREFERRED_RELAYS)
@@ -58,10 +58,10 @@ object PublishedRelayLists {
     fun allRelaysWithMarkers(event: Event): List<RelayFileFormat.RelayMarker> {
         if (event.kind != EventKind.RELAY_LIST) return emptyList()
         return event.parsedTags.asSequence()
-            .filter { it.name == \"r\" }
+            .filter { it.name == "r" }
             .mapNotNull { tag ->
                 val url = tag.value()?.let(::normalizeRelayUrl) ?: return@mapNotNull null
-                val marker = tag.value(2)?.lowercase()?.takeIf { it == \"read\" || it == \"write\" }
+                val marker = tag.value(2)?.lowercase()?.takeIf { it == "read" || it == "write" }
                 RelayFileFormat.RelayMarker(url, marker)
             }
             .distinctBy { it.url }
@@ -73,9 +73,9 @@ object PublishedRelayLists {
         val trimmed = raw.trim()
         val uri = runCatching { URI(trimmed) }.getOrNull() ?: return null
         val scheme = uri.scheme?.lowercase() ?: return null
-        if (scheme != \"wss\" && scheme != \"ws\") return null
+        if (scheme != "wss" && scheme != "ws") return null
         if (uri.host.isNullOrBlank() || uri.rawUserInfo != null) return null
         return RelayPool.normalize(trimmed)
-            .replaceFirst(Regex(\"^${Regex.escape(uri.scheme)}://\"), \"$scheme://\")
+            .replaceFirst(Regex("^${Regex.escape(uri.scheme)}://"), "$scheme://")
     }
 }
