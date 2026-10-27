@@ -392,21 +392,21 @@ class FeedViewModel @Inject constructor(
         }
         val oldest = globalOlderCursor ?: synchronized(feedEvents) { feedEvents.lastOrNull()?.createdAt } ?: return
         if (oldest <= 0L) return
-        val account = activeAccount.value ?: return
-        account.relays.ifEmpty { DEFAULT_RELAYS }.forEach { pool.addRelay(it) }
+        val globalRelays = appSettings.globalActiveRelays.value.ifEmpty { appSettings.globalRelays.value }.ifEmpty { social.tbone.settings.AppSettings.GLOBAL_RELAY_DEFAULTS }
+        globalRelays.forEach { pool.addRelay(it) }
 
         val subId = UUID.randomUUID().toString().take(8)
         val request = GlobalPageRequest(
             subId = subId,
             kind = GlobalPageKind.OLDER,
-            expectedRelays = pool.relayUrls().map(RelayPool::normalize).toSet(),
+            expectedRelays = globalRelays.map(RelayPool::normalize).toSet(),
             startOldest = oldest,
         )
         globalOlderRequest = request
         globalOlderSubId = subId
         activeSubIds.add(subId)
         _uiState.update { it.copy(globalOlderLoading = true) }
-        pool.subscribe(
+        pool.subscribeTo(
             listOf(
                 Filter(
                     kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL),
@@ -416,6 +416,7 @@ class FeedViewModel @Inject constructor(
             ),
             id = subId,
             label = "global-older",
+            relays = globalRelays.map(RelayPool::normalize).toSet(),
         )
         scheduleGlobalPageTimeout(request)
     }
@@ -430,14 +431,14 @@ class FeedViewModel @Inject constructor(
         // result must not accidentally reveal prefetched older notes and shift the feed.
         val startKnownIds = synchronized(feedEvents) { feedEvents.mapTo(mutableSetOf()) { it.id } }
         val startVisibleLimit = globalVisibleLimit
-        val account = activeAccount.value ?: return
-        account.relays.ifEmpty { DEFAULT_RELAYS }.forEach { pool.addRelay(it) }
+        val globalRelays = appSettings.globalActiveRelays.value.ifEmpty { appSettings.globalRelays.value }.ifEmpty { social.tbone.settings.AppSettings.GLOBAL_RELAY_DEFAULTS }
+        globalRelays.forEach { pool.addRelay(it) }
 
         val subId = UUID.randomUUID().toString().take(8)
         val request = GlobalPageRequest(
             subId = subId,
             kind = GlobalPageKind.NEWER,
-            expectedRelays = pool.relayUrls().map(RelayPool::normalize).toSet(),
+            expectedRelays = globalRelays.map(RelayPool::normalize).toSet(),
             startNewest = newest,
             startVisibleLimit = startVisibleLimit,
             startKnownIds = startKnownIds,
@@ -446,7 +447,7 @@ class FeedViewModel @Inject constructor(
         globalNewerSubId = subId
         activeSubIds.add(subId)
         _uiState.update { it.copy(globalNewerLoading = true) }
-        pool.subscribe(
+        pool.subscribeTo(
             listOf(
                 Filter(
                     kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL),
@@ -456,6 +457,7 @@ class FeedViewModel @Inject constructor(
             ),
             id = subId,
             label = "global-newer",
+            relays = globalRelays.map(RelayPool::normalize).toSet(),
         )
         scheduleGlobalPageTimeout(request)
     }
@@ -521,7 +523,8 @@ class FeedViewModel @Inject constructor(
                 request.eoseRelays.clear()
                 globalNewerSubId = nextSubId
                 activeSubIds.add(nextSubId)
-                pool.subscribe(
+                val globalRelaysForPage = appSettings.globalActiveRelays.value.ifEmpty { appSettings.globalRelays.value }.ifEmpty { social.tbone.settings.AppSettings.GLOBAL_RELAY_DEFAULTS }
+                pool.subscribeTo(
                     listOf(
                         Filter(
                             kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL),
@@ -532,6 +535,7 @@ class FeedViewModel @Inject constructor(
                     ),
                     id = nextSubId,
                     label = "global-newer",
+                    relays = globalRelaysForPage.map(RelayPool::normalize).toSet(),
                 )
                 scheduleGlobalPageTimeout(request)
                 return
@@ -904,14 +908,21 @@ class FeedViewModel @Inject constructor(
             )
         }
 
-        val relays = account.relays.ifEmpty { DEFAULT_RELAYS }
-        relays.forEach { pool.addRelay(it) }
-        globalInitialExpectedRelays = pool.relayUrls().map(RelayPool::normalize).toSet()
+        // Use dedicated global relay list — not the personal relay list.
+        // Falls back to defaults if somehow empty.
+        val globalRelays = appSettings.globalActiveRelays.value
+            .ifEmpty { appSettings.globalRelays.value }
+            .ifEmpty { social.tbone.settings.AppSettings.GLOBAL_RELAY_DEFAULTS }
+        globalRelays.forEach { pool.addRelay(it) }
+        globalInitialExpectedRelays = globalRelays.map(RelayPool::normalize).toSet()
         globalInitialEoseRelays.clear()
 
-        feedSubId = sub(listOf(
-            Filter(kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL), limit = GLOBAL_PAGE_SIZE)
-        ))
+        feedSubId = sub(
+            listOf(
+                Filter(kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL), limit = GLOBAL_PAGE_SIZE)
+            ),
+            relays = globalInitialExpectedRelays,
+        )
 
         // No follow-list phase — mark followsReceived so EOSE on feedSubId triggers flush
         followsReceived = true
@@ -1215,10 +1226,14 @@ class FeedViewModel @Inject constructor(
     private fun nowSeconds(): Long = System.currentTimeMillis() / 1000L
 
     /** Subscribe and track the ID before sending REQ so fast relays cannot beat registration. */
-    private fun sub(filters: List<Filter>, label: String = "feed"): String {
+    private fun sub(filters: List<Filter>, label: String = "feed", relays: Set<String>? = null): String {
         val id = UUID.randomUUID().toString().take(8)
         activeSubIds.add(id)
-        pool.subscribe(filters, id = id, label = label)
+        if (relays != null) {
+            pool.subscribeTo(filters, id = id, label = label, relays = relays)
+        } else {
+            pool.subscribe(filters, id = id, label = label)
+        }
         return id
     }
 
@@ -1458,26 +1473,19 @@ class FeedViewModel @Inject constructor(
      * Without a publish path, the two lists can diverge; local always wins.
      */
     private fun handleRelayList(event: Event) {
+        // Use full relay list (all markers) — not just read — to avoid truncating user's list.
         val readRelays = event.parsedTags
             .filter { it.name == "r" }
-            .mapNotNull { tag ->
-                val url = tag.value() ?: return@mapNotNull null
-                val marker = tag.value(2)
-                if (marker == null || marker == "read") url else null
-            }
+            .mapNotNull { tag -> tag.value() }
         if (readRelays.isEmpty()) return
 
         unsub(relayListSubId); relayListSubId = null
 
-        // Quick pre-check with the cached StateFlow value — fine here since pubkey is stable
-        // and the transform below re-checks atomically inside the DataStore edit mutex.
         val account = activeAccount.value ?: return
         if (account.relays.isNotEmpty()) return
         val selfPubkey = account.pubkey
-        // Cap on ingest: a NIP-65 list with a dozen+ entries shouldn't translate to a
-        // dozen+ live connections. selectAndApplyRelays caps again on the combined set.
         val normalized = readRelays.map { RelayPool.normalize(it) }.distinct()
-            .take(Tunables.MAX_TOTAL_RELAYS)
+            .take(100)
         viewModelScope.launch {
             var didSeed = false
             accountRepository.updateAccount(selfPubkey) { current ->
@@ -1701,38 +1709,19 @@ class FeedViewModel @Inject constructor(
     }
 
     /**
-     * Applies the greedy relay selection: adds new relays, removes stale ones,
-     * and persists the result to the account.
+     * Applies the greedy relay selection WITHOUT persisting to the account.
+     * FIX: Relay list must stay exactly as the user configured it — never auto-add/remove.
+     * We only temporarily connect to outbox relays for fetching, without touching storage.
+     * This fixes the bug where relays were added/removed without asking.
      */
     private fun selectAndApplyRelays(follows: List<String>) {
-        val selfPubkey = activeAccount.value?.pubkey ?: return
         val outbox = greedyRelaySelection(follows)
-        viewModelScope.launch {
-            // The transform runs inside DataStore's edit mutex, so it always sees the
-            // freshest relay list — no stale-snapshot race with RelayManagementViewModel.
-            var newRelays = emptyList<String>()
-            accountRepository.updateAccount(selfPubkey) { account ->
-                // DEFAULT_RELAYS are a fallback only when the account has no relays at all.
-                val base = account.relays.ifEmpty { DEFAULT_RELAYS }
-                // Preserve all user-configured relays (base), then fill remaining slots
-                // up to MAX_TOTAL_RELAYS with outbox picks. A previous version applied
-                // .take() to (base + outbox), which silently dropped a manually-added
-                // relay (e.g. user adds Citrine as the 9th entry → cap chops it).
-                val baseNorm = base.map { RelayPool.normalize(it) }.distinct()
-                val remaining = (Tunables.MAX_TOTAL_RELAYS - baseNorm.size).coerceAtLeast(0)
-                val outboxFill = outbox
-                    .map { RelayPool.normalize(it) }
-                    .distinct()
-                    .filterNot { it in baseNorm }
-                    .take(remaining)
-                newRelays = baseNorm + outboxFill
-                account.copy(relays = newRelays)
-            }
-            val current = pool.relayUrls()
-            newRelays.forEach { pool.addRelay(it) }
-            (current - newRelays.toSet()).forEach { pool.removeRelay(it) }
-            Timber.d("Applied relay set (${newRelays.size}): $newRelays")
-        }
+        if (outbox.isEmpty()) return
+        // Only connect to outbox relays for this feed session — never persist.
+        // Keep all user-configured relays intact.
+        outbox.forEach { pool.addRelay(it) }
+        Timber.d("Temporarily connected to ${outbox.size} outbox relays for feed (not persisted): $outbox")
+        // Do NOT remove any existing relays, do NOT update account storage.
     }
 
     companion object {
