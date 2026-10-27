@@ -21,6 +21,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import social.tbone.Tunables
+import social.tbone.account.Account
+import social.tbone.account.AccountRepository
 import social.tbone.account.signer.NostrSignerFactory
 import social.tbone.db.EventRepository
 import social.tbone.media.blossom.BlossomUploader
@@ -74,6 +76,7 @@ class ComposeViewModel @Inject constructor(
     private val signerFactory: NostrSignerFactory,
     private val eventRepository: EventRepository,
     private val profileRepository: ProfileRepository,
+    private val accountRepository: AccountRepository,
     private val bookmarksRepository: BookmarksRepository,
     private val appSettings: AppSettings,
     private val blossomUploader: BlossomUploader,
@@ -89,6 +92,37 @@ class ComposeViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(ComposeUiState())
     val uiState: StateFlow<ComposeUiState> = _uiState.asStateFlow()
+
+    // ── Active account (avatar switch + publish) ─────────────────────────────
+    val accounts: StateFlow<List<Account>> = accountRepository.accounts
+        .let { flow -> kotlinx.coroutines.flow.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000), emptyList()) }
+
+    val activeAccount: StateFlow<Account?> = accountRepository.activeAccount
+        .let { flow -> kotlinx.coroutines.flow.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000), null) }
+
+    val profiles: StateFlow<Map<String, social.tbone.nostr.ProfileContent>> = profileRepository.profiles
+
+    fun switchAccount(pubkey: String) {
+        viewModelScope.launch { accountRepository.setActiveAccount(pubkey) }
+    }
+
+    // Preview content builder — mirrors publish() finalContent logic without side effects.
+    fun buildPreviewContent(trimmed: String): String {
+        val explicitQuote = _uiState.value.quoteToEvent
+        val inheritedQuoteId = _uiState.value.replyToEvent?.parsedTags?.quotedEventId
+        val quoteIds = (
+            _uiState.value.quoteFolderEvents.map { it.id } +
+            listOfNotNull(explicitQuote?.id, inheritedQuoteId)
+            ).distinct()
+        val missingRefs = quoteIds
+            .map { id ->
+                val quoted = _uiState.value.quoteFolderEvents.firstOrNull { it.id == id } ?: explicitQuote
+                val reference = if (quoted != null) Nip19.hexToNevent(id, quoted.pubkey, quoted.kind) else Nip19.hexToNevent(id)
+                "nostr:$reference"
+            }
+            .filterNot { trimmed.contains(it) }
+        return if (missingRefs.isNotEmpty()) "$trimmed\n\n${missingRefs.joinToString("\n")}" else trimmed
+    }
 
     private data class MediaUploadRequest(val uri: Uri, val kind: String)
 
