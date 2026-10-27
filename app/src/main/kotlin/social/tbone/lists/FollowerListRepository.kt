@@ -20,6 +20,7 @@ import java.time.Duration
 import javax.inject.Inject
 import javax.inject.Singleton
 import okhttp3.OkHttpClient
+import social.tbone.di.ImageClientProvider
 import okhttp3.Request
 import org.json.JSONObject
 
@@ -37,7 +38,7 @@ import org.json.JSONObject
 @Singleton
 class FollowerListRepository @Inject constructor(
     private val pool: RelayPool,
-    private val okHttp: OkHttpClient,
+    private val okHttp: OkHttpClient, // central: if Tor enabled, ImageClientProvider.client is Tor-aware; injected client should be ImageClientProvider.client (see NetworkModule)
 ) {
     data class FollowersState(
         val followers: List<String>? = null, // null = still loading / unknown

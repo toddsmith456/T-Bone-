@@ -19,11 +19,11 @@ fun createNotificationChannels(context: Context) {
     nm.createNotificationChannels(
         listOf(
             NotificationChannel(CHANNEL_MENTIONS, "Mentions & Replies", NotificationManager.IMPORTANCE_DEFAULT)
-                .apply { description = "Replies and direct mentions" },
+                .apply { description = "Replies and direct mentions"; lockscreenVisibility = android.app.Notification.VISIBILITY_SECRET },
             NotificationChannel(CHANNEL_BOOSTS, "Boosts", NotificationManager.IMPORTANCE_DEFAULT)
-                .apply { description = "When someone boosts your note" },
+                .apply { description = "When someone boosts your note"; lockscreenVisibility = android.app.Notification.VISIBILITY_SECRET },
             NotificationChannel(CHANNEL_REACTIONS, "Reactions", NotificationManager.IMPORTANCE_LOW)
-                .apply { description = "Likes and emoji reactions" },
+                .apply { description = "Likes and emoji reactions"; lockscreenVisibility = android.app.Notification.VISIBILITY_SECRET },
         )
     )
 }
@@ -51,6 +51,7 @@ fun showNotification(
         .setContentText(text)
         .setAutoCancel(true)
         .setContentIntent(pendingIntent)
+        .setVisibility(NotificationCompat.VISIBILITY_SECRET)
         .build()
     context.getSystemService(NotificationManager::class.java)
         .notify(eventId.hashCode(), notification)

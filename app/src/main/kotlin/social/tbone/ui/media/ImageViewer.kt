@@ -96,7 +96,17 @@ fun ImageViewer(
                     val request = Request.Builder().url(imageUrl).build()
                     val bytes = ImageClientProvider.client.newCall(request)
                         .execute().use { it.body?.bytes() } ?: return@runCatching false
-                    writeToGallery(context, bytes, imageUrl)
+                    // Privacy: re-encode to strip EXIF (original bytes may contain location)
+                    val stripped = try {
+                        val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        if (bmp != null) {
+                            val out = java.io.ByteArrayOutputStream()
+                            bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 92, out)
+                            bmp.recycle()
+                            out.toByteArray().takeIf { it.isNotEmpty() } ?: bytes
+                        } else bytes
+                    } catch (_: Exception) { bytes }
+                    writeToGallery(context, stripped, imageUrl)
                 }.getOrDefault(false)
             }
             confirmText = if (saved) "saved to pictures" else "download failed"

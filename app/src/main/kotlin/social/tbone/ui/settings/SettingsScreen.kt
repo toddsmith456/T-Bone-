@@ -1105,6 +1105,22 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
     }
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
+    // Tor kill-switch: block direct traffic when Tor is on but Orbot died (opt-in, off by default so no UX hurt)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("tor kill-switch", style = BonyType.body.copy(color = BonyColors.Text))
+            Text("when Tor is on, block uploads if Orbot disconnects", style = BonyType.meta.copy(color = BonyColors.TextMute))
+        }
+        val killSwitch by viewModel.torKillSwitch.collectAsStateWithLifecycle()
+        BonyToggle(checked = killSwitch, enabled = torEnabled, onCheckedChange = viewModel::setTorKillSwitch)
+    }
+    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+
     Row(
         modifier = Modifier
             .fillMaxWidth()

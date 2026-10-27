@@ -62,7 +62,12 @@ class XdcUpdateStore(private val file: File) {
         out.distinctBy { it.serial }
     }
 
-    /** Appends one update and returns it with its assigned serial. */
+    companion object {
+        const val MAX_UPDATES = 5000
+        const val MAX_BYTES = 5L * 1024 * 1024
+    }
+
+    /** Appends one update and returns it with its assigned serial. Quota: max 5k updates / 5 MB */
     fun append(
         payloadJson: String,
         info: String? = null,
@@ -80,6 +85,8 @@ class XdcUpdateStore(private val file: File) {
             href = href,
             createdAt = System.currentTimeMillis(),
         )
+        if (load().size >= MAX_UPDATES) error("webxdc update limit reached (5k)")
+        if (file.exists() && file.length() > MAX_BYTES) error("webxdc journal full (5 MB)")
         file.parentFile?.mkdirs()
         file.appendText(buildString {
             append(update.serial)

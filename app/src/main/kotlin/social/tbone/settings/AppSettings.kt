@@ -32,6 +32,7 @@ class AppSettings @Inject constructor(
         const val DEFAULT_CLOCK_HOURS = 6
 
         private val TOR_ENABLED = booleanPreferencesKey("tor_enabled")
+        private val TOR_KILL_SWITCH = booleanPreferencesKey("tor_kill_switch")
         // False until the user (or auto-detect) explicitly sets the preference.
         // Lets first-run logic distinguish "never set" from "user chose off".
         private val TOR_EXPLICITLY_SET = booleanPreferencesKey("tor_explicitly_set")
@@ -166,6 +167,9 @@ class AppSettings @Inject constructor(
 
     private val _torEnabled = MutableStateFlow(false)
     val torEnabled = _torEnabled.asStateFlow()
+
+    private val _torKillSwitch = MutableStateFlow(false)
+    val torKillSwitch = _torKillSwitch.asStateFlow()
 
     private val _initialized = MutableStateFlow(false)
     val initialized = _initialized.asStateFlow()
@@ -396,6 +400,7 @@ class AppSettings @Inject constructor(
             dataStore.data.collect { prefs ->
                 _torExplicitlySet.value = prefs[TOR_EXPLICITLY_SET] == true
                 _torEnabled.value = prefs[TOR_ENABLED] ?: false
+                _torKillSwitch.value = prefs[TOR_KILL_SWITCH] ?: false
                 _lastViewedNotificationsAt.value = prefs[LAST_VIEWED_NOTIFICATIONS_AT] ?: 0L
                 _globalAutoLoadEnabled.value = prefs[GLOBAL_AUTO_LOAD_ENABLED] ?: true
                 _globalAutoLoadIntervalMinutes.value = (prefs[GLOBAL_AUTO_LOAD_INTERVAL_MINUTES] ?: 5).coerceIn(1, 20)
@@ -469,6 +474,11 @@ class AppSettings @Inject constructor(
                 _initialized.value = true
             }
         }
+    }
+
+    suspend fun setTorKillSwitch(enabled: Boolean) {
+        _torKillSwitch.value = enabled
+        dataStore.edit { it[TOR_KILL_SWITCH] = enabled }
     }
 
     suspend fun setTorEnabled(enabled: Boolean) {

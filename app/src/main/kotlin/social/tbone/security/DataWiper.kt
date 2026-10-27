@@ -51,6 +51,13 @@ class DataWiper @Inject constructor(
             runCatching {
                 context.filesDir.listFiles()?.forEach { it.deleteRecursively() }
             }
+            // 3b. Cache (duress must not leave image_cache, share_cards, updates).
+            runCatching {
+                context.cacheDir.listFiles()?.forEach { it.deleteRecursively() }
+            }
+            runCatching {
+                context.codeCacheDir.listFiles()?.forEach { it.deleteRecursively() }
+            }
 
             // 4. Keystore keys owned by this app.
             runCatching {

@@ -41,6 +41,7 @@ import androidx.media3.ui.PlayerView
 import android.view.LayoutInflater
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
+import coil.request.CachePolicy
 import coil.size.Precision
 import social.tbone.R
 import social.tbone.nostr.Nip19
@@ -470,9 +471,12 @@ private fun InlineImage(url: String, lowQuality: Boolean, onOpen: () -> Unit) {
     val context = LocalContext.current
     val youniversal = YouniversalTheme.enabled
     var aspectRatio by remember(url, lowQuality) { mutableStateOf<Float?>(null) }
+    val cacheKey = remember(url) { url.substringBefore('?').substringBefore('#') }
     val request = remember(url, lowQuality) {
         ImageRequest.Builder(context)
             .data(url)
+            .memoryCacheKey(cacheKey)
+            .diskCacheKey(cacheKey)
             .crossfade(false)
             .apply {
                 if (lowQuality) {

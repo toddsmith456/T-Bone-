@@ -10,7 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import social.tbone.db.AppDatabase
 import social.tbone.settings.AppSettings
-import java.security.MessageDigest
+import social.tbone.security.PinHasher
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -32,27 +32,37 @@ class ToolboxSecurity @Inject constructor(
 
     suspend fun verifyPin(input: String): Boolean {
         val stored = appSettings.getToolboxPinHash() ?: return false
-        return sha256(input) == stored
+        val ok = PinHasher.verify(input, stored)
+        if (ok && PinHasher.isLegacy(stored)) appSettings.setToolboxPinHash(PinHasher.hash(input))
+        return ok
     }
 
     suspend fun isDuressPin(input: String): Boolean {
         if (!appSettings.getToolboxDuressPinEnabled()) return false
         val stored = appSettings.getToolboxDuressPinHash() ?: return false
-        return sha256(input) == stored
+        val ok = PinHasher.verify(input, stored)
+        if (ok && PinHasher.isLegacy(stored)) appSettings.setToolboxDuressPinHash(PinHasher.hash(input))
+        return ok
     }
 
     /** Sets the toolbox pin; refuses one equal to the duress pin. */
     suspend fun setPin(pin: String): Boolean {
-        if (appSettings.getToolboxDuressPinEnabled() && sha256(pin) == appSettings.getToolboxDuressPinHash()) return false
-        appSettings.setToolboxPinHash(sha256(pin))
+        if (appSettings.getToolboxDuressPinEnabled()) {
+            val duressHash = appSettings.getToolboxDuressPinHash()
+            if (duressHash != null && PinHasher.verify(pin, duressHash)) return false
+        }
+        appSettings.setToolboxPinHash(PinHasher.hash(pin))
         appSettings.setToolboxPinEnabled(true)
         return true
     }
 
     /** Sets the toolbox duress pin; refuses one equal to the normal pin. */
     suspend fun setDuressPin(pin: String): Boolean {
-        if (appSettings.getToolboxPinEnabled() && sha256(pin) == appSettings.getToolboxPinHash()) return false
-        appSettings.setToolboxDuressPinHash(sha256(pin))
+        if (appSettings.getToolboxPinEnabled()) {
+            val pinHash = appSettings.getToolboxPinHash()
+            if (pinHash != null && PinHasher.verify(pin, pinHash)) return false
+        }
+        appSettings.setToolboxDuressPinHash(PinHasher.hash(pin))
         appSettings.setToolboxDuressPinEnabled(true)
         return true
     }
@@ -105,8 +115,5 @@ class ToolboxSecurity @Inject constructor(
         }
     }
 
-    private fun sha256(input: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        return digest.digest(input.toByteArray()).joinToString("") { "%02x".format(it) }
-    }
+
 }

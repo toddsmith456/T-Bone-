@@ -42,7 +42,7 @@ class AmberSigner(
             put("sig", "")
         }.toString()
 
-        Timber.d("sign_event JSON (first 500): ${eventJson.take(500)}")
+        // Redacted: do not log event content in release (privacy)
 
         val intent = Intent(Intent.ACTION_VIEW, "nostrsigner:$eventJson".toUri()).apply {
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)

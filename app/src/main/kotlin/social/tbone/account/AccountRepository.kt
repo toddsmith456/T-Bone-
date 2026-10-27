@@ -68,13 +68,13 @@ class AccountRepository @Inject constructor(
 
     /** Find a hidden account by its PIN (hashed). Null if no match. */
     suspend fun findHiddenByPin(pin: String): Account? {
-        val hash = sha256(pin.trim())
+        val hash = hashPin(pin.trim())
         return allAccounts.first().firstOrNull { it.isHidden && it.hiddenPinHash == hash }
     }
 
     /** Hide / unhide an account. When hiding, [pin] is required and hashed. */
     suspend fun setHidden(pubkey: String, hidden: Boolean, pin: String? = null) {
-        val hash = pin?.takeIf { it.isNotBlank() }?.let { sha256(it.trim()) }
+        val hash = pin?.takeIf { it.isNotBlank() }?.let { hashPin(it.trim()) }
         if (hidden && hash == null) return // need a PIN to hide
         dataStore.edit { prefs ->
             val accounts = prefs[KEY_ACCOUNTS]
@@ -98,10 +98,10 @@ class AccountRepository @Inject constructor(
         return true
     }
 
-    private fun sha256(input: String): String {
-        val d = java.security.MessageDigest.getInstance("SHA-256")
-        return d.digest(input.toByteArray()).joinToString("") { "%02x".format(it) }
-    }
+    private fun hashPin(input: String): String = social.tbone.security.PinHasher.hash(input)
+
+    suspend fun verifyHiddenPin(pin: String, storedHash: String): Boolean = social.tbone.security.PinHasher.verify(pin.trim(), storedHash)
+
 
     suspend fun addAccount(account: Account, encryptedPrivkey: ByteArray? = null) {
         dataStore.edit { prefs ->

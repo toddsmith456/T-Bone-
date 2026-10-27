@@ -285,6 +285,8 @@ fun XdcPlayerScreen(
                         settings.userAgentString = settings.userAgentString + " TBoneWebxdc/1.0"
                         settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                         settings.setGeolocationEnabled(false)
+                        settings.safeBrowsingEnabled = true
+                        settings.textZoom = 100
                         settings.setSaveFormData(false)
                         settings.allowFileAccessFromFileURLs = false
                         settings.allowUniversalAccessFromFileURLs = false

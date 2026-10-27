@@ -84,6 +84,7 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val torEnabled: StateFlow<Boolean> = appSettings.torEnabled
+    val torKillSwitch: StateFlow<Boolean> = appSettings.torKillSwitch
 
     val pinEnabled: StateFlow<Boolean> = lockManager.isPinEnabled
 
@@ -276,12 +277,16 @@ class SettingsViewModel @Inject constructor(
 
     suspend fun verifyParentalPin(input: String): Boolean {
         val stored = appSettings.getParentalPinHash() ?: return false
-        return sha256(input) == stored
+        val ok = social.tbone.security.PinHasher.verify(input, stored)
+        if (ok && social.tbone.security.PinHasher.isLegacy(stored)) {
+            appSettings.setParentalPinHash(social.tbone.security.PinHasher.hash(input))
+        }
+        return ok
     }
 
     fun setParentalPin(pin: String) {
         viewModelScope.launch {
-            appSettings.setParentalPinHash(sha256(pin))
+            appSettings.setParentalPinHash(social.tbone.security.PinHasher.hash(pin))
             appSettings.setParentalPinEnabled(true)
             appSettings.setParentalUnlocked(true)
         }
@@ -295,10 +300,7 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    private fun sha256(input: String): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-        return digest.digest(input.toByteArray()).joinToString("") { "%02x".format(it) }
-    }
+
 
     fun toggleHideNsfw() {
         viewModelScope.launch { appSettings.setHideNsfw(!appSettings.hideNsfw.value) }
@@ -318,6 +320,10 @@ class SettingsViewModel @Inject constructor(
 
     /** True if Orbot is installed — checked once at construction, no async probe needed. */
     val orbotInstalled: Boolean = OrbotHelper.isInstalled(context)
+
+    fun setTorKillSwitch(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setTorKillSwitch(enabled) }
+    }
 
     fun setTorEnabled(enabled: Boolean) {
         viewModelScope.launch { appSettings.setTorEnabled(enabled) }

@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import social.tbone.settings.AppSettings
-import java.security.MessageDigest
+import social.tbone.security.PinHasher
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
@@ -124,17 +124,26 @@ class AppLockManager @Inject constructor(
 
     suspend fun verifyPin(input: String): Boolean {
         val stored = appSettings.getPinHash() ?: return false
-        return sha256(input) == stored
+        val ok = PinHasher.verify(input, stored)
+        // Auto-upgrade legacy hash on successful verify (no extra user step)
+        if (ok && PinHasher.isLegacy(stored)) {
+            appSettings.setPinHash(PinHasher.hash(input))
+        }
+        return ok
     }
 
     suspend fun isDuressPin(input: String): Boolean {
         if (!appSettings.getDuressPinEnabled()) return false
         val stored = appSettings.getDuressPinHash() ?: return false
-        return sha256(input) == stored
+        val ok = PinHasher.verify(input, stored)
+        if (ok && PinHasher.isLegacy(stored)) {
+            appSettings.setDuressPinHash(PinHasher.hash(input))
+        }
+        return ok
     }
 
     suspend fun setPin(pin: String) {
-        appSettings.setPinHash(sha256(pin))
+        appSettings.setPinHash(PinHasher.hash(pin))
         appSettings.setPinEnabled(true)
         appSettings.setPinLastUnlockMillis(System.currentTimeMillis())
         _isLocked.value = false
@@ -144,8 +153,10 @@ class AppLockManager @Inject constructor(
 
     suspend fun setDuressPin(pin: String): Boolean {
         val unlockHash = appSettings.getPinHash()
-        if (unlockHash != null && sha256(pin) == unlockHash) return false
-        appSettings.setDuressPinHash(sha256(pin))
+        // Compare via hashes — prevent duress == unlock (compare normalized): check via verify
+        if (unlockHash != null && PinHasher.verify(pin, unlockHash)) return false
+        // Also prevent legacy collision if unlockHash is legacy sha256 of pin
+        appSettings.setDuressPinHash(PinHasher.hash(pin))
         appSettings.setDuressPinEnabled(true)
         return true
     }
@@ -161,9 +172,5 @@ class AppLockManager @Inject constructor(
         autoLockJob?.cancel()
     }
 
-    private fun sha256(input: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        return digest.digest(input.toByteArray())
-            .joinToString("") { "%02x".format(it) }
-    }
+
 }
