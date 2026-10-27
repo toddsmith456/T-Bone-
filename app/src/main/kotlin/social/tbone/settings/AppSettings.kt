@@ -42,6 +42,8 @@ class AppSettings @Inject constructor(
         private val CLOCK_FEED_HOURS = intPreferencesKey("clock_feed_hours")
         private val PIN_ENABLED = booleanPreferencesKey("pin_enabled")
         private val PIN_HASH = stringPreferencesKey("pin_hash")
+        private val PIN_AUTO_LOCK_MINUTES = intPreferencesKey("pin_auto_lock_minutes")
+        private val PIN_LAST_UNLOCK_MILLIS = longPreferencesKey("pin_last_unlock_millis")
         // Duress pin: entering it on the lock screen wipes all app data instead
         // of unlocking. Default OFF.
         private val DURESS_PIN_ENABLED = booleanPreferencesKey("duress_pin_enabled")
@@ -76,6 +78,8 @@ class AppSettings @Inject constructor(
         private val TOOLBOX_PIN_HASH = stringPreferencesKey("toolbox_pin_hash")
         private val TOOLBOX_DURESS_PIN_ENABLED = booleanPreferencesKey("toolbox_duress_pin_enabled")
         private val TOOLBOX_DURESS_PIN_HASH = stringPreferencesKey("toolbox_duress_pin_hash")
+        private val TOOLBOX_PIN_AUTO_LOCK_MINUTES = intPreferencesKey("toolbox_pin_auto_lock_minutes")
+        private val TOOLBOX_PIN_LAST_UNLOCK_MILLIS = longPreferencesKey("toolbox_pin_last_unlock_millis")
         private val TOOLBOX_TOOL_ORDER = stringPreferencesKey("toolbox_tool_order")
         // Saved webxdc mini apps promoted to toolbox tools (JSON array).
         private val XDC_CUSTOM_TOOLS = stringPreferencesKey("xdc_custom_tools")
@@ -192,6 +196,11 @@ class AppSettings @Inject constructor(
     private val _pinEnabled = MutableStateFlow(false)
     val pinEnabled = _pinEnabled.asStateFlow()
 
+    private val _pinAutoLockMinutes = MutableStateFlow(5)
+    val pinAutoLockMinutes = _pinAutoLockMinutes.asStateFlow()
+    private val _pinLastUnlockMillis = MutableStateFlow(0L)
+    val pinLastUnlockMillis = _pinLastUnlockMillis.asStateFlow()
+
     private val _duressPinEnabled = MutableStateFlow(false)
     val duressPinEnabled = _duressPinEnabled.asStateFlow()
 
@@ -240,6 +249,11 @@ class AppSettings @Inject constructor(
 
     private val _toolboxPinEnabled = MutableStateFlow(false)
     val toolboxPinEnabled = _toolboxPinEnabled.asStateFlow()
+
+    private val _toolboxPinAutoLockMinutes = MutableStateFlow(5)
+    val toolboxPinAutoLockMinutes = _toolboxPinAutoLockMinutes.asStateFlow()
+    private val _toolboxPinLastUnlockMillis = MutableStateFlow(0L)
+    val toolboxPinLastUnlockMillis = _toolboxPinLastUnlockMillis.asStateFlow()
 
     private val _toolboxPinKeypadScrambled = MutableStateFlow(false)
     val toolboxPinKeypadScrambled = _toolboxPinKeypadScrambled.asStateFlow()
@@ -383,6 +397,8 @@ class AppSettings @Inject constructor(
                 _globalAutoLoadIntervalMinutes.value = (prefs[GLOBAL_AUTO_LOAD_INTERVAL_MINUTES] ?: 5).coerceIn(1, 20)
                 _clockFeedHours.value = (prefs[CLOCK_FEED_HOURS] ?: DEFAULT_CLOCK_HOURS).coerceIn(1, 24)
                 _pinEnabled.value = prefs[PIN_ENABLED] ?: false
+                _pinAutoLockMinutes.value = (prefs[PIN_AUTO_LOCK_MINUTES] ?: 5).coerceIn(1,30)
+                _pinLastUnlockMillis.value = prefs[PIN_LAST_UNLOCK_MILLIS] ?: 0L
                 _duressPinEnabled.value = prefs[DURESS_PIN_ENABLED] ?: false
                 _appPinKeypadScrambled.value = prefs[APP_PIN_KEYPAD_SCRAMBLED] ?: false
                 _imageLoadMode.value = ImageLoadMode.fromPref(prefs[IMAGE_LOAD_MODE])
@@ -399,6 +415,8 @@ class AppSettings @Inject constructor(
                 _screenshotBlockEnabled.value = prefs[SCREENSHOT_BLOCK_ENABLED] ?: false
                 _toolboxScreenshotBlockEnabled.value = prefs[TOOLBOX_SCREENSHOT_BLOCK_ENABLED] ?: false
                 _toolboxPinEnabled.value = prefs[TOOLBOX_PIN_ENABLED] ?: false
+                _toolboxPinAutoLockMinutes.value = (prefs[TOOLBOX_PIN_AUTO_LOCK_MINUTES] ?: 5).coerceIn(1,30)
+                _toolboxPinLastUnlockMillis.value = prefs[TOOLBOX_PIN_LAST_UNLOCK_MILLIS] ?: 0L
                 _toolboxPinKeypadScrambled.value = prefs[TOOLBOX_PIN_KEYPAD_SCRAMBLED] ?: false
                 _toolboxDuressPinEnabled.value = prefs[TOOLBOX_DURESS_PIN_ENABLED] ?: false
                 _toolboxToolOrder.value = prefs[TOOLBOX_TOOL_ORDER]
@@ -480,6 +498,20 @@ class AppSettings @Inject constructor(
     suspend fun setPinEnabled(enabled: Boolean) {
         dataStore.edit { it[PIN_ENABLED] = enabled }
     }
+
+    suspend fun setPinAutoLockMinutes(minutes: Int) {
+        val safe = minutes.coerceIn(1,30)
+        _pinAutoLockMinutes.value = safe
+        dataStore.edit { it[PIN_AUTO_LOCK_MINUTES] = safe }
+    }
+
+    suspend fun setPinLastUnlockMillis(millis: Long) {
+        _pinLastUnlockMillis.value = millis
+        dataStore.edit { it[PIN_LAST_UNLOCK_MILLIS] = millis }
+    }
+
+    suspend fun getPinAutoLockMinutes(): Int = dataStore.data.first()[PIN_AUTO_LOCK_MINUTES] ?: 5
+    suspend fun getPinLastUnlockMillis(): Long = dataStore.data.first()[PIN_LAST_UNLOCK_MILLIS] ?: 0L
 
     suspend fun setAppPinKeypadScrambled(enabled: Boolean) {
         _appPinKeypadScrambled.value = enabled
@@ -587,6 +619,20 @@ class AppSettings @Inject constructor(
     suspend fun setToolboxPinEnabled(enabled: Boolean) {
         dataStore.edit { it[TOOLBOX_PIN_ENABLED] = enabled }
     }
+
+    suspend fun setToolboxPinAutoLockMinutes(minutes: Int) {
+        val safe = minutes.coerceIn(1,30)
+        _toolboxPinAutoLockMinutes.value = safe
+        dataStore.edit { it[TOOLBOX_PIN_AUTO_LOCK_MINUTES] = safe }
+    }
+
+    suspend fun setToolboxPinLastUnlockMillis(millis: Long) {
+        _toolboxPinLastUnlockMillis.value = millis
+        dataStore.edit { it[TOOLBOX_PIN_LAST_UNLOCK_MILLIS] = millis }
+    }
+
+    suspend fun getToolboxPinAutoLockMinutes(): Int = dataStore.data.first()[TOOLBOX_PIN_AUTO_LOCK_MINUTES] ?: 5
+    suspend fun getToolboxPinLastUnlockMillis(): Long = dataStore.data.first()[TOOLBOX_PIN_LAST_UNLOCK_MILLIS] ?: 0L
 
     suspend fun setToolboxPinKeypadScrambled(enabled: Boolean) {
         _toolboxPinKeypadScrambled.value = enabled

@@ -1,5 +1,6 @@
 package social.tbone.ui.settings
 
+import social.tbone.ui.components.AutoLockMinutesRow
 import social.tbone.ui.theme.appBorder
 import android.content.Context
 import android.content.Intent
@@ -1102,6 +1103,16 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
         )
     }
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+
+    if (pinEnabled) {
+        val pinAutoLockMinutes by viewModel.pinAutoLockMinutes.collectAsStateWithLifecycle()
+        AutoLockMinutesRow(
+            currentMinutes = pinAutoLockMinutes,
+            onSelect = viewModel::setPinAutoLockMinutes,
+            title = "app auto-lock timeout",
+            description = "require PIN again after this many minutes",
+        )
+    }
 
     SettingsSwitchRow(
         title = "scramble app PIN keypad",

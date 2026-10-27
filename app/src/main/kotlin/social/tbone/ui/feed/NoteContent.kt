@@ -168,13 +168,21 @@ fun NoteMediaContent(mediaItems: List<MediaItem>, modifier: Modifier = Modifier)
     val showVideoThumbnails = LocalVideoThumbnails.current
     var imageViewerUrl by remember { mutableStateOf<String?>(null) }
     var videoViewerUrl by remember { mutableStateOf<String?>(null) }
+    // TAP_TO_LOAD reveal state: first tap loads inline, second tap opens viewer
+    var revealedImages by remember { mutableStateOf(setOf<String>()) }
+    var revealedVideos by remember { mutableStateOf(setOf<String>()) }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         mediaItems.forEach { item ->
             when (item) {
                 is MediaItem.Image -> when (imageMode) {
-                    ImageLoadMode.OFF ->
-                        MediaPlaceholder(label = "[ image · tap to expand ]", url = item.url, onOpen = { imageViewerUrl = item.url })
+                    ImageLoadMode.OFF -> {
+                        if (item.url in revealedImages) {
+                            InlineImage(url = item.url, lowQuality = false, onOpen = { imageViewerUrl = item.url })
+                        } else {
+                            MediaPlaceholder(label = "[ image · tap to show ]", url = item.url, onOpen = { revealedImages = revealedImages + item.url })
+                        }
+                    }
                     ImageLoadMode.ON ->
                         InlineImage(url = item.url, lowQuality = false, onOpen = { imageViewerUrl = item.url })
                     ImageLoadMode.LOW_QUALITY ->
@@ -183,22 +191,42 @@ fun NoteMediaContent(mediaItems: List<MediaItem>, modifier: Modifier = Modifier)
                 is MediaItem.Audio -> InlineAudioPlayer(url = item.url)
                 is MediaItem.Video -> {
                     val open = { videoViewerUrl = item.url }
+                    val revealVideo = { revealedVideos = revealedVideos + item.url }
                     when {
-                        videoQuality == VideoQuality.OFF ->
-                            MediaPlaceholder(
-                                label = "[ video · tap to play ]",
-                                url = item.url,
-                                onOpen = open,
-                            )
-                        playbackMode == VideoPlaybackMode.LOAD_ON_TAP -> {
-                            if (showVideoThumbnails) {
-                                VideoThumbnail(url = item.url, onOpen = open)
-                            } else {
-                                MediaPlaceholder(
-                                    label = "[ video · tap to play ]",
+                        videoQuality == VideoQuality.OFF -> {
+                            if (item.url in revealedVideos) {
+                                InlineVideo(
                                     url = item.url,
+                                    quality = VideoQuality.REGULAR,
+                                    playWhenReady = false,
                                     onOpen = open,
                                 )
+                            } else {
+                                MediaPlaceholder(
+                                    label = "[ video · tap to show ]",
+                                    url = item.url,
+                                    onOpen = revealVideo,
+                                )
+                            }
+                        }
+                        playbackMode == VideoPlaybackMode.LOAD_ON_TAP -> {
+                            if (item.url in revealedVideos) {
+                                InlineVideo(
+                                    url = item.url,
+                                    quality = videoQuality,
+                                    playWhenReady = false,
+                                    onOpen = open,
+                                )
+                            } else {
+                                if (showVideoThumbnails) {
+                                    VideoThumbnail(url = item.url, onOpen = revealVideo)
+                                } else {
+                                    MediaPlaceholder(
+                                        label = "[ video · tap to show ]",
+                                        url = item.url,
+                                        onOpen = revealVideo,
+                                    )
+                                }
                             }
                         }
                         else -> InlineVideo(
@@ -336,9 +364,10 @@ private fun InlineVideo(
                         this.player = player
                         useController = false
                         setShutterBackgroundColor(android.graphics.Color.BLACK)
+                        keepScreenOn = true
                     }
                 },
-                update = { it.player = player },
+                update = { it.player = player; it.keepScreenOn = true },
                 modifier = Modifier.fillMaxSize(),
             )
             // Keep the image-like gesture: the inline surface is a preview, while

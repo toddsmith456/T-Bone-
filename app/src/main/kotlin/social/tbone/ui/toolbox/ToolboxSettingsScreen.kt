@@ -44,6 +44,7 @@ import social.tbone.ui.lock.PinSetupScreen
 import social.tbone.ui.settings.BonyToggle
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
+import social.tbone.ui.components.AutoLockMinutesRow
 import social.tbone.ui.theme.appBorder
 import java.time.LocalDate
 
@@ -182,6 +183,15 @@ fun ToolboxSettingsScreen(
             )
         }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+        if (pinEnabled) {
+            val toolboxAutoLockMinutes by viewModel.toolboxAutoLockMinutes.collectAsStateWithLifecycle()
+            AutoLockMinutesRow(
+                currentMinutes = toolboxAutoLockMinutes,
+                onSelect = viewModel::setToolboxAutoLockMinutes,
+                title = "toolbox auto-lock timeout",
+                description = "require PIN again after this many minutes",
+            )
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()

@@ -20,6 +20,7 @@ import social.tbone.debug.FrameMonitor
 import social.tbone.nostr.relay.RelayAuthManager
 import social.tbone.notifications.DeepLinkHandler
 import social.tbone.security.AppLockManager
+import social.tbone.security.ToolboxLockManager
 import social.tbone.security.ScreenTimeManager
 import social.tbone.settings.AppSettings
 import social.tbone.settings.ContentFilterProvider
@@ -44,6 +45,7 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var relayAuthManager: RelayAuthManager
     @Inject lateinit var deepLinkHandler: DeepLinkHandler
     @Inject lateinit var lockManager: AppLockManager
+    @Inject lateinit var toolboxLockManager: ToolboxLockManager
     @Inject lateinit var screenTimeManager: ScreenTimeManager
     @Inject lateinit var appSettings: AppSettings
     @Inject lateinit var updateManager: UpdateManager
@@ -169,9 +171,16 @@ class MainActivity : FragmentActivity() {
         screenTimeManager.onAppBackground()
     }
 
+    override fun onStart() {
+        super.onStart()
+        lockManager.onAppForegrounded()
+        toolboxLockManager.onAppForegrounded()
+    }
+
     override fun onStop() {
         super.onStop()
-        lockManager.lock()
+        lockManager.onAppBackgrounded()
+        toolboxLockManager.onAppBackgrounded()
     }
 
     override fun onNewIntent(intent: Intent) {

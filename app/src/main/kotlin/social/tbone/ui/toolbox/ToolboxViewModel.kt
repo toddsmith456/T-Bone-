@@ -40,4 +40,11 @@ class ToolboxViewModel @Inject constructor(
     fun setToolOrder(order: List<String>) {
         viewModelScope.launch { appSettings.setToolboxToolOrder(order) }
     }
+
+    fun removeXdcTool(appId: String) {
+        viewModelScope.launch {
+            val filtered = appSettings.xdcCustomTools.value.filterNot { it.appId == appId }
+            appSettings.setXdcCustomTools(filtered)
+        }
+    }
 }

@@ -28,6 +28,8 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Update
 import androidx.compose.material3.Icon
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -35,7 +37,6 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,19 +82,16 @@ fun ToolboxScreen(
     onOpenXdcTool: (String) -> Unit,
     onToolboxSettings: () -> Unit,
     viewModel: ToolboxViewModel = hiltViewModel(),
+    lockViewModel: ToolboxLockViewModel = hiltViewModel(),
 ) {
-    val pinEnabled by viewModel.pinEnabled.collectAsStateWithLifecycle()
     val savedOrder by viewModel.toolOrder.collectAsStateWithLifecycle()
     val xdcTools by viewModel.xdcCustomTools.collectAsStateWithLifecycle()
-    // rememberSaveable survives navigating to sub-screens and back, so the PIN
-    // is only asked once per toolbox visit (it resets when the toolbox back
-    // stack entry is popped, i.e. leaving to the main menu).
-    var unlocked by rememberSaveable { mutableStateOf(false) }
+    val isLocked by lockViewModel.isLocked.collectAsStateWithLifecycle()
 
     val hasUpdate = LocalUpdateAvailable.current
 
-    if (pinEnabled && !unlocked) {
-        ToolboxLockScreen(onUnlocked = { unlocked = true })
+    if (isLocked) {
+        ToolboxLockScreen(onUnlocked = { lockViewModel.unlock() })
         return
     }
 
@@ -125,6 +123,7 @@ fun ToolboxScreen(
                 title = tool.name,
                 subtitle = "webxdc mini app",
                 onClick = { onOpenXdcTool(tool.appId) },
+                onRemove = { viewModel.removeXdcTool(tool.appId) },
             ))
         }
     }
@@ -147,8 +146,20 @@ fun ToolboxScreen(
 
     val tools = currentOrder.mapNotNull { id -> toolsById[id]?.let { id to it } }
 
+    var pendingRemove by remember { mutableStateOf<Pair<String, (() -> Unit)>?>(null) }
+
     fun persist(order: List<String>) {
         viewModel.setToolOrder(order)
+    }
+
+    pendingRemove?.let { (name, action) ->
+        AlertDialog(
+            onDismissRequest = { pendingRemove = null },
+            title = { Text("remove $name?", style = BonyType.body.copy(color = BonyColors.Text)) },
+            text = { Text("This removes it from the toolbox. The saved webxdc app stays in webxdc storage.", style = BonyType.meta.copy(color = BonyColors.TextMute)) },
+            confirmButton = { TextButton(onClick = { action(); pendingRemove = null }) { Text("remove", color = BonyColors.Danger) } },
+            dismissButton = { TextButton(onClick = { pendingRemove = null }) { Text("cancel") } },
+        )
     }
 
     Column(
@@ -245,6 +256,7 @@ fun ToolboxScreen(
                     subtitle = tool.subtitle,
                     onClick = tool.onClick,
                     hasBadge = tool.hasBadge,
+                    onRemove = tool.onRemove?.let { rm -> { pendingRemove = tool.title to rm } },
                 )
             }
             // Drop indicator while dragging.
@@ -278,10 +290,11 @@ private data class ToolEntry(
     val subtitle: String,
     val onClick: () -> Unit,
     val hasBadge: Boolean = false,
+    val onRemove: (() -> Unit)? = null,
 )
 
 @Composable
-internal fun ToolRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit, hasBadge: Boolean = false) {
+internal fun ToolRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit, hasBadge: Boolean = false, onRemove: (() -> Unit)? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -328,6 +341,17 @@ internal fun ToolRow(icon: ImageVector, title: String, subtitle: String, onClick
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+        if (onRemove != null) {
+            Box(
+                modifier = Modifier
+                    .appBorder(1.dp, BonyColors.Rule)
+                    .clickable(onClick = onRemove)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            ) {
+                Text("remove", style = BonyType.meta.copy(color = BonyColors.Danger))
+            }
+            Spacer(Modifier.width(8.dp))
         }
         Text("≡", style = BonyType.body.copy(color = BonyColors.TextMute))
     }

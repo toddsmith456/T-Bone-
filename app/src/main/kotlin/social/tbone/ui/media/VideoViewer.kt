@@ -89,6 +89,13 @@ fun VideoViewer(
         }
     }
 
+    // Keep screen on while watching — prevents dim/timeout during playback.
+    DisposableEffect(Unit) {
+        val window = (context as? android.app.Activity)?.window
+        window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose { window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    }
+
     DisposableEffect(lifecycleOwner, player) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) player?.pause()
@@ -157,6 +164,7 @@ fun VideoViewer(
                         controllerShowTimeoutMs = 3_000
                         setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
                         setShutterBackgroundColor(android.graphics.Color.BLACK)
+                        keepScreenOn = true
                         layoutParams = ViewGroup.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT,

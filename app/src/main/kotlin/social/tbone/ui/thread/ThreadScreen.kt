@@ -303,14 +303,13 @@ private fun ThreadRow(
     }
 }
 
-/** "no more replies" terminator with a rail stub, like the reference app. */
+/** "no more replies" terminator — no rail, text only. */
 @Composable
 private fun ThreadDeadEnd(replyCount: Int, depth: Int) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .threadRail(depth.coerceAtMost(ThreadIndent.MAX_RAIL_DEPTH), highlightLastRail = false)
-            .padding(top = 6.dp, bottom = 18.dp),
+            .padding(start = ThreadIndent.LEFT_INSET + ThreadIndent.RAIL_STEP * depth.coerceAtMost(ThreadIndent.MAX_RAIL_DEPTH), top = 6.dp, bottom = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(

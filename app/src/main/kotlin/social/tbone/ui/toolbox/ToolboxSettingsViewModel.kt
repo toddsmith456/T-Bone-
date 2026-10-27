@@ -24,6 +24,9 @@ class ToolboxSettingsViewModel @Inject constructor(
     val pinEnabled: StateFlow<Boolean> = appSettings.toolboxPinEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    val toolboxAutoLockMinutes: StateFlow<Int> = appSettings.toolboxPinAutoLockMinutes
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 5)
+
     val pinKeypadScrambled: StateFlow<Boolean> = appSettings.toolboxPinKeypadScrambled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
@@ -39,6 +42,10 @@ class ToolboxSettingsViewModel @Inject constructor(
 
     fun setPinKeypadScrambled(enabled: Boolean) {
         viewModelScope.launch { appSettings.setToolboxPinKeypadScrambled(enabled) }
+    }
+
+    fun setToolboxAutoLockMinutes(minutes: Int) {
+        viewModelScope.launch { appSettings.setToolboxPinAutoLockMinutes(minutes) }
     }
 
     fun setPin(pin: String, onDone: () -> Unit) {

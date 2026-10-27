@@ -87,6 +87,9 @@ class SettingsViewModel @Inject constructor(
 
     val pinEnabled: StateFlow<Boolean> = lockManager.isPinEnabled
 
+    val pinAutoLockMinutes: StateFlow<Int> = appSettings.pinAutoLockMinutes
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 5)
+
     val appPinKeypadScrambled: StateFlow<Boolean> = appSettings.appPinKeypadScrambled
 
     val duressPinEnabled: StateFlow<Boolean> = lockManager.isDuressPinEnabled
@@ -359,6 +362,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setAppPinKeypadScrambled(enabled: Boolean) {
         viewModelScope.launch { appSettings.setAppPinKeypadScrambled(enabled) }
+    }
+
+    fun setPinAutoLockMinutes(minutes: Int) {
+        viewModelScope.launch { appSettings.setPinAutoLockMinutes(minutes) }
     }
 
     fun disablePin() {
