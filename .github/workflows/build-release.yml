@@ -101,6 +101,16 @@ jobs:
           # The live-network test is opt-in via -DblossomLive=1.
           ./gradlew :app:testDebugUnitTest --stacktrace
 
+      - name: Dump unit test log (on failure)
+        if: failure()
+        run: |
+          echo "=== unit tests failed ==="
+          find app/build -name "*.html" -o -name "*.xml" | head -n 20 || true
+          cat app/build/reports/tests/debugUnitTest/classes/*.html 2>&1 | head -n 200 || true
+          cat app/build/test-results/debugUnitTest/*.xml 2>&1 | head -n 300 || true
+          ls -R app/build/reports/tests 2>&1 | head -n 100 || true
+          df -h || true
+
       - name: Package release APK and checksum
         run: |
           TAG="${GITHUB_REF_NAME}"
