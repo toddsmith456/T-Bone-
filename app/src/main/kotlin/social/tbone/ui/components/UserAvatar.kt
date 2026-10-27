@@ -66,9 +66,12 @@ fun UserAvatar(
     }
 
     val context = LocalContext.current
+    val avatarCacheKey = remember(picture) { picture.substringBefore('?').substringBefore('#') }
     val request = remember(picture, mode, animated) {
         ImageRequest.Builder(context)
             .data(picture)
+            .memoryCacheKey(avatarCacheKey)
+            .diskCacheKey(avatarCacheKey)
             .crossfade(false)
             .apply {
                 if (mode == AvatarMode.LOW) {

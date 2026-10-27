@@ -14,6 +14,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -168,13 +171,24 @@ fun ComposeScreen(
         return out
     }
 
-    Column(
+    // Restore old UI buffers — top (status bar) + bottom (nav bar + keyboard) so all
+    // buttons are reachable; outer Box keeps background edge-to-edge while inner
+    // Column respects insets. This restores v0.4.7 layout and only adds new
+    // buttons (avatar switcher, preview, server chooser, media pickers) onto it.
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BonyColors.Bg)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .background(BonyColors.Bg),
     ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .imePadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
         // ── Title row (close + title + avatar switch + SEND) ─────────────────
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -224,7 +238,9 @@ fun ComposeScreen(
                         if (trimmed.isBlank()) return@clickable
                         viewModel.publish(
                             content = trimmed.resolveMentions(),
-                            onSuccess = onPublished,
+                            // Restore functional close/pop: post must leave the tab
+                            // Old v0.4.7 used { onBack() }; new must pop back stack
+                            onSuccess = { onClose(); onPublished() },
                         )
                     }
                     .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -682,6 +698,11 @@ fun ComposeScreen(
                     )
                 }
             }
+        }
+            // Bottom buffer — old UI had 24.dp spacer so last buttons are not
+            // clipped by gesture nav; navigationBarsPadding already handles it
+            // but keep explicit spacer for pre-gesture devices
+            Spacer(Modifier.height(12.dp))
         }
     }
 

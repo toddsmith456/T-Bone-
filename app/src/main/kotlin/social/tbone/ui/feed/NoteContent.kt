@@ -384,9 +384,12 @@ private fun VideoThumbnail(url: String, onOpen: () -> Unit) {
     val context = LocalContext.current
     val youniversal = YouniversalTheme.enabled
     var aspectRatio by remember(url) { mutableStateOf<Float?>(null) }
+    val cacheKey = remember(url) { url.substringBefore('?').substringBefore('#') }
     val request = remember(url) {
         ImageRequest.Builder(context)
             .data(url)
+            .memoryCacheKey(cacheKey)
+            .diskCacheKey(cacheKey)
             .size(LOW_QUALITY_MAX_SIZE)
             .crossfade(false)
             .build()

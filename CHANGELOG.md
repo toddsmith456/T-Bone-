@@ -5,6 +5,12 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-10-27
+
+### Fixed
+- **Write tab buffers + Post pop (0.5.1):** restores v0.4.7 `statusBarsPadding()` + `imePadding()` + `navigationBarsPadding()` outer `Box`/`Column` with bottom 12dp spacer so all Write buttons are reachable (top close/SEND and bottom toolbar/media/poll/preview/server chooser); `BonyNavHost` now passes `onPublished = popBackStack` and `ComposeScreen.SEND` uses `onSuccess = { onClose(); onPublished() }` to return to feed — previous 0.5.0 stayed on tab.
+- **Tier-one lightweight/speed audit (no UX break):** `UserAvatar` + `VideoThumbnail` now use `diskCacheKey/memoryCacheKey = url.substringBefore('?').substringBefore('#')` (matches `InlineImage`) to avoid signed Blossom token duplication in Coil `image_cache` — keeps app lightweight and prevents journal bloat.
+
 ## [0.5.0] — 2026-10-27
 
 ### Added

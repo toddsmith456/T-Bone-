@@ -499,7 +499,10 @@ fun BonyNavHost() {
                             navArgument("audioPath") { type = NavType.StringType; defaultValue = "" },
                         ),
                     ) {
-                        ComposeScreen(onClose = { navController.popBackStack() })
+                        ComposeScreen(
+                            onClose = { navController.popBackStack() },
+                            onPublished = { navController.popBackStack() },
+                        )
                     }
                     composable(ROUTE_CONTENT_FILTERS) {
                         ContentFiltersScreen(
