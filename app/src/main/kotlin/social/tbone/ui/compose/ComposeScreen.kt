@@ -115,7 +115,7 @@ fun ComposeScreen(
         blossomUrlQueue.collect { url ->
             val existing = fieldValue.text.trimEnd()
             val separator = if (existing.isEmpty()) "" else "\n"
-            val nextText = if (existing.isEmpty()) url else \"$existing$separator$url\"
+            val nextText = if (existing.isEmpty()) url else "$existing$separator$url"
             fieldValue = TextFieldValue(
                 text = nextText,
                 selection = TextRange(nextText.length),
@@ -135,15 +135,15 @@ fun ComposeScreen(
             val before = fieldValue.getTextBeforeSelection(fieldValue.text.length)
             mentionPattern.find(before)?.let { match ->
                 val name = match.groupValues[1]
-                // Don't trigger for an email-like \"@name.\" that ends with a
-                // dot — e.g. typing \"hi @bob.\" before finishing the word would
-                // re-open the mention sheet for \"bob.\" after every keystroke.
+                // Don't trigger for an email-like "@name." that ends with a
+                // dot — e.g. typing "hi @bob." before finishing the word would
+                // re-open the mention sheet for "bob." after every keystroke.
                 // Only trigger when the @ is at the start of text or preceded by
                 // whitespace/punctuation that actually delimits a mention.
                 val atIndex = match.range.first
                 val prev = before.getOrNull(atIndex - 1)
-                val isolated = atIndex == 0 || prev == null || prev.isWhitespace() || prev in \"(,;:\\\"'([{\\n\"
-                if (!isolated || name.endsWith(\".\")) null else name
+                val isolated = atIndex == 0 || prev == null || prev.isWhitespace() || prev in setOf('"', '(', ',', ';', ':', '\'', '(', '[', '{', '\n')
+                if (!isolated || name.endsWith(".")) null else name
             }
         } else null
     }
@@ -366,7 +366,7 @@ fun ComposeScreen(
                             )
                             Spacer(Modifier.width(8.dp))
                             Text(
-                                text = \"searching \\\"$query\\\"…\",
+                                text = "searching \"$query\"…",
                                 style = BonyType.meta.copy(color = BonyColors.TextMute),
                             )
                         }
@@ -431,7 +431,7 @@ fun ComposeScreen(
                     }
                     if (!mentionSearching && suggestions.isEmpty() && query.isNotEmpty()) {
                         Text(
-                            text = \"no matches for \\\"$query\\\"\",
+                            text = "no matches for \"$query\"",
                             style = BonyType.meta.copy(color = BonyColors.TextMute),
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                         )
