@@ -5,6 +5,25 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-27
+
+### Added
+- **Stealth Notepad front** — launcher alias swaps to `@mipmap/ic_notepad` (`LauncherNotepad`) via `StealthManager.setNotepadFront()`; decoy DB tables `decoy_notes*` fully isolated; `BonyNavHost` shows `DecoyNavHost` until 10× key-storage taps unlock; hidden-account PIN (`AccountRepository` `hiddenPinHash`) keeps accounts out of the list until `unlockHiddenByPin` — verified `e9567b5`.
+- **Follow Lists tool** — `toolbox → follow lists` (replaces Settings entry): browse following/followers/blocked for any pubkey, offline lists, Primal centralized cache with disclaimer (`FollowerListRepository`) — verified `6e7be55`.
+- **Update Center hardening** — dot moved `CONF→TOOLS` + `ToolboxScreen` badge (`LocalUpdateAvailable`), download verified by `SHA256SUMS.txt` + Tor fallback + renameCopy fallback, `Save to Downloads` via `MediaStore`, collapsed hash-certificate + full changelog (`UpdateCenterScreen`) — pushed `ae5f58e`.
+- **Lightweight cache toggle (Option B)** — `Settings → Media → lightweight image cache` (64 MB vs 250 MB) via `AppSettings.imageCacheLightweight` + `BonyApp` `DiskCache.Builder(maxSizeBytes)` + `combine(torEnabled, lightweight)`; keeps app lightweight.
+- **Privacy hardening** — `PinHasher` PBKDF2WithHmacSHA256 120k + 16 B salt (`v1$iter$salt$hash`) replaces plain `sha256(pin)` for app/toolbox/hidden/parental PINs with auto-upgrade; `DataWiper` now wipes `cacheDir`/`codeCacheDir`; `NotificationHelper` `VISIBILITY_SECRET`; `AmberSigner`/`RelayConnection` log redaction; `XdcWebView` `safeBrowsingEnabled` + `textZoom=100`; `XdcUpdateStore` quota 5k/5 MB; Tor kill-switch toggle (`TOR_KILL_SWITCH`) in Privacy.
+- **Cache hygiene (Option A)** — `CacheCleaner` on cold start prunes `share_cards`/`webxdc_share` >7 d and `tbone_*`/`note_voice_*`/`play_*` >6 h and `updates/*.part` >24 h; staging files deleted right after Blossom upload (`ComposeViewModel`, `ProfileEditViewModel`) and voice `play_*.m4a` on completion — fixes 3 GB accumulation — `91401ec`.
+
+### Changed
+- **Lightning presets removed** — mirrors Monero NIP-A3 `payto` handoff only; external wallet `lightning:`/`monero:` intents, copy/QR fallback — `3897dc5`.
+- **Media cache keys** — `NoteContent.InlineImage` `diskCacheKey/memoryCacheKey = url.substringBefore('?')` to stop signed Blossom tokens persisting; gallery save re-encodes JPEG 92 to strip EXIF (`ImageViewer`).
+- **PIN timeout 1–30 m** — `AppSettings` `PIN_AUTO_LOCK_MINUTES`/`TOOLBOX_PIN_AUTO_LOCK_MINUTES` + `AppLockManager`/`ToolboxLockManager` timed `Job` + `MainActivity.onStart/onForegrounded` re-check; compact popup `AutoLockMinutesRow` in `SettingsScreen`/`ToolboxSettingsScreen` — `560426a`.
+- **WebXDC toolbox removal** — `ToolboxViewModel.removeXdcTool()` + `ToolboxScreen` `remove` pill + confirm dialog for `xdc_*` tools (besides `XdcScreen` overflow).
+
+### Fixed
+- **6-fix batch (560426a):** WebXDC tools removable in Toolbox; PIN auto-lock timeout; sensors/proximity audit (only `INTERNET`/`REQUEST_INSTALL_PACKAGES`/`RECORD_AUDIO`/`POST_NOTIFICATIONS`/`SCHEDULE_EXACT_ALARM`/`RECEIVE_BOOT_COMPLETED`/`WRITE_EXTERNAL_STORAGE` remain); TAP_TO_LOAD inline-first-tap (`revealedImages/Videos` → second tap opens viewer); `VideoViewer`/`InlineVideo` `FLAG_KEEP_SCREEN_ON` + `keepScreenOn`; `ThreadScreen.ThreadDeadEnd` no longer draws rail below terminator.
+
 ## [0.4.7] — 2026-10-24
 
 ### Added
@@ -108,7 +127,6 @@ All notable changes to this fork are documented here. Format follows
 - Reply markers no longer clear on ordinary account updates; quoted and
   reposted notes retain clickable reply context.
 
-
 ## [0.4.0] — 2026-10-18
 
 ### Added
@@ -175,7 +193,6 @@ All notable changes to this fork are documented here. Format follows
 - Backup export now captures notes, folders, attachments, and calendar events
   from one consistent database snapshot before encryption.
 
-
 ## [0.3.53] — 2026-10-15
 
 ### Added
@@ -194,7 +211,6 @@ All notable changes to this fork are documented here. Format follows
 - Video uploads now fall back to the original file and detected MIME/extension
   when Media3 cannot transcode a less-common container or codec.
 - Added extra lower-edge spacing to the voice recorder actions.
-
 
 ## [0.3.52] — 2026-10-13
 
@@ -221,7 +237,6 @@ All notable changes to this fork are documented here. Format follows
   parameter as well as the signed zap request, fixing compatible NWC-backed
   Lightning zaps that were rejected by LNURL services.
 
-
 ## [0.3.50] — 2026-10-09
 
 ### Fixed
@@ -237,7 +252,6 @@ All notable changes to this fork are documented here. Format follows
 - Home tab: tapping the "t-bone" wordmark opens Settings.
 - Home tab: tapping the avatar and name opens your profile. The account
   switch symbol (↕) is now a small button on the right.
-
 
 ## [0.3.49] — 2026-10-06
 
@@ -455,7 +469,6 @@ Threads, feeds and profiles.
 - The bottom bar is now a single shared component (`BonyBottomBar`) used by the
   feed, toolbox and notifications destinations, so the three cannot drift apart.
 
-
 ## [0.3.39] — 2026-10-02
 
 ### Fixed
@@ -505,7 +518,6 @@ Threads, feeds and profiles.
   (`-DblossomLive=1`). See `docs/BLOSSOM.md`.
 - The release workflow now runs the unit tests before building APKs, so a
   broken upload path cannot be released.
-
 
 ## [0.3.38] — 2026-10-02
 
