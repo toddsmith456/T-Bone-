@@ -125,6 +125,13 @@ private const val ROUTE_SEARCH            = "search?query={query}&autoOpen={auto
 private const val ROUTE_HASHTAG           = "hashtag/{tag}"
 private const val ROUTE_PIN_SETUP         = "pin_setup?duress={duress}"
 
+// ── Decoy Notepad routes ─────────────────────────────────────────────────────
+private const val ROUTE_DECOY_NOTES            = "decoy_notes"
+private const val ROUTE_DECOY_NOTE_EDITOR      = "decoy_note_editor?id={id}&folder={folder}"
+private const val ROUTE_DECOY_CHECKLIST_EDITOR = "decoy_checklist_editor?id={id}&folder={folder}"
+private const val ROUTE_DECOY_FOLDER           = "decoy_folder/{id}?name={name}"
+private const val ROUTE_DECOY_NOTES_INFO       = "decoy_notes_info"
+
 @Composable
 fun BonyNavHost() {
     val context = LocalContext.current
@@ -132,6 +139,16 @@ fun BonyNavHost() {
     val lockViewModel: LockViewModel = hiltViewModel()
     val mediaSettings: MediaSettingsViewModel = hiltViewModel()
     val chromeSettings: ThemeViewModel = hiltViewModel()
+    val stealthGate: StealthGateViewModel = hiltViewModel()
+    val notepadFrontEnabled by stealthGate.notepadFrontEnabled.collectAsStateWithLifecycle()
+    val decoyUnlocked by stealthGate.decoyUnlocked.collectAsStateWithLifecycle()
+    val isStealthLocked = notepadFrontEnabled && !decoyUnlocked
+
+    // Stealth: show only the decoy Notepad — no feed, no toolbox, no settings.
+    if (isStealthLocked) {
+        DecoyNavHost(onUnlock = { stealthGate.unlock() })
+        return
+    }
     val uiDeclutter by chromeSettings.uiDeclutterEnabled.collectAsStateWithLifecycle()
     val startupState by viewModel.startupState.collectAsStateWithLifecycle()
     val isLocked by lockViewModel.isLocked.collectAsStateWithLifecycle()
@@ -601,6 +618,125 @@ fun BonyNavHost() {
         }
     }
 
+}
+
+// ── Decoy NavHost (shown when Notepad front is locked) ──────────────────────
+
+@Composable
+private fun DecoyNavHost(onUnlock: () -> Unit) {
+    val navController = rememberNavController()
+    val context = LocalContext.current
+    NavHost(navController = navController, startDestination = ROUTE_DECOY_NOTES) {
+        composable(ROUTE_DECOY_NOTES) {
+            // Decoy notes — no bottom bar, no way back to T-Bone except the secret tap.
+            social.tbone.ui.decoy.DecoyNotesScreen(
+                onBack = { /* in decoy, back does nothing — it's the root */ },
+                onNewNote = { navController.navigate("decoy_note_editor?id=") },
+                onOpenNote = { id -> navController.navigate("decoy_note_editor?id=" + Uri.encode(id)) },
+                onNewChecklist = { navController.navigate("decoy_checklist_editor?id=&folder=") },
+                onOpenChecklist = { id -> navController.navigate("decoy_checklist_editor?id=" + Uri.encode(id) + "&folder=") },
+                onOpenFolder = { folderId, name ->
+                    navController.navigate("decoy_folder/" + Uri.encode(folderId) + "?name=" + Uri.encode(name))
+                },
+                onInfo = { navController.navigate(ROUTE_DECOY_NOTES_INFO) },
+                onShare = { text ->
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, text)
+                    }
+                    context.startActivity(Intent.createChooser(intent, "Share note"))
+                },
+                onPublish = { _ -> },
+            )
+        }
+        composable(
+            ROUTE_DECOY_NOTE_EDITOR,
+            arguments = listOf(
+                navArgument("id") { type = NavType.StringType; defaultValue = "" },
+                navArgument("folder") { type = NavType.StringType; defaultValue = "" },
+            ),
+        ) { entry ->
+            val id = entry.arguments?.getString("id") ?: ""
+            val folder = entry.arguments?.getString("folder")?.takeIf { it.isNotBlank() }
+            social.tbone.ui.decoy.DecoyNoteEditorScreen(
+                id = id,
+                folderId = folder,
+                onBack = { navController.popBackStack() },
+                onShare = { text ->
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, text)
+                    }
+                    context.startActivity(Intent.createChooser(intent, "Share note"))
+                },
+                onPublish = { _ -> },
+            )
+        }
+        composable(
+            ROUTE_DECOY_CHECKLIST_EDITOR,
+            arguments = listOf(
+                navArgument("id") { type = NavType.StringType; defaultValue = "" },
+                navArgument("folder") { type = NavType.StringType; defaultValue = "" },
+            ),
+        ) { entry ->
+            val id = entry.arguments?.getString("id") ?: ""
+            val folder = entry.arguments?.getString("folder")?.takeIf { it.isNotBlank() }
+            social.tbone.ui.decoy.DecoyChecklistEditorScreen(
+                id = id,
+                folderId = folder,
+                onBack = { navController.popBackStack() },
+                onShare = { text ->
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, text)
+                    }
+                    context.startActivity(Intent.createChooser(intent, "Share checklist"))
+                },
+                onPublish = { _ -> },
+            )
+        }
+        composable(
+            ROUTE_DECOY_FOLDER,
+            arguments = listOf(
+                navArgument("id") { type = NavType.StringType },
+                navArgument("name") { type = NavType.StringType; defaultValue = "folder" },
+            ),
+        ) { entry ->
+            val folderId = entry.arguments?.getString("id") ?: ""
+            val folderName = entry.arguments?.getString("name") ?: "folder"
+            social.tbone.ui.decoy.DecoyFolderContentsScreen(
+                folderId = folderId,
+                folderName = folderName,
+                onBack = { navController.popBackStack() },
+                onNewNote = { navController.navigate("decoy_note_editor?id=&folder=" + Uri.encode(folderId)) },
+                onOpenNote = { id -> navController.navigate("decoy_note_editor?id=" + Uri.encode(id) + "&folder=" + Uri.encode(folderId)) },
+                onNewChecklist = { navController.navigate("decoy_checklist_editor?id=&folder=" + Uri.encode(folderId)) },
+                onOpenChecklist = { id -> navController.navigate("decoy_checklist_editor?id=" + Uri.encode(id) + "&folder=" + Uri.encode(folderId)) },
+                onShare = { text ->
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, text)
+                    }
+                    context.startActivity(Intent.createChooser(intent, "Share"))
+                },
+            )
+        }
+        composable(ROUTE_DECOY_NOTES_INFO) {
+            social.tbone.ui.decoy.DecoyNotesInfoScreen(
+                onBack = { navController.popBackStack() },
+                onUnlock = onUnlock,
+            )
+        }
+    }
+}
+
+@HiltViewModel
+class StealthGateViewModel @Inject constructor(
+    private val appSettings: social.tbone.settings.AppSettings,
+) : ViewModel() {
+    val notepadFrontEnabled: StateFlow<Boolean> = appSettings.notepadFrontEnabled
+    val decoyUnlocked: StateFlow<Boolean> = appSettings.decoyUnlocked
+    fun unlock() { appSettings.setDecoyUnlocked(true) }
 }
 
 // ── Bottom-bar tab navigation ────────────────────────────────────────────────

@@ -24,6 +24,9 @@ data class Account(
     val relays: List<String> = emptyList(),      // NIP-65 outbox relays
     val follows: List<String> = emptyList(),     // pubkey-only list for fast lookups (legacy / compat)
     val followEntries: List<FollowEntry> = emptyList(), // full NIP-02 entries with relay hints + petnames
+    // ── Stealth: hidden account ────────────────────────────────────────────
+    val isHidden: Boolean = false,
+    val hiddenPinHash: String? = null,
 ) {
     /** True if [pubkey] is in the follow list. */
     fun isFollowing(pubkey: String): Boolean =

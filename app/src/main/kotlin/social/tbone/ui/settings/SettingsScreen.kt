@@ -100,6 +100,7 @@ fun SettingsScreen(
     val activeAccount by viewModel.activeAccount.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
     var showAccentSheet by remember { mutableStateOf(false) }
+    var showNotepadPopup by remember { mutableStateOf(false) }
     val themeViewModel: ThemeViewModel = hiltViewModel()
     val youniversalState = themeViewModel.youniversalState
     val declutterEnabled by themeViewModel.uiDeclutterEnabled.collectAsStateWithLifecycle()
@@ -201,6 +202,12 @@ fun SettingsScreen(
             expanded = sectionExpanded("privacy"),
             onToggle = { toggleSection("privacy") },
         )
+        SettingsStealthSection(
+            viewModel = viewModel,
+            compact = declutterMode, expanded = sectionExpanded("stealth"),
+            onToggle = { toggleSection("stealth") },
+            onShowPopup = { showNotepadPopup = true },
+        )
         SettingsDebugSection(
             viewModel, context, accounts, activeAccount,
             compact = declutterMode, expanded = sectionExpanded("debug"),
@@ -212,9 +219,7 @@ fun SettingsScreen(
     if (showAccentSheet) {
         AccentColorSheet(
             initial = parseHexColor(accentColor) ?: BonyColors.DefaultAccent,
-            // Live preview while dragging — in-memory only, no disk writes.
             onPick = { color -> BonyColors.setAccent(color) },
-            // Persist once when the sheet closes ("done" or swipe-away).
             onCommit = { color -> viewModel.setAccentColor(colorToHex(color)) },
             onReset = {
                 BonyColors.setAccent(null)
@@ -222,6 +227,40 @@ fun SettingsScreen(
             },
             onDismiss = { showAccentSheet = false },
         )
+    }
+    if (showNotepadPopup) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(BonyColors.Bg.copy(alpha = 0.85f))
+                .clickable { showNotepadPopup = false },
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 32.dp)
+                    .appBorder(1.dp, BonyColors.RuleStrong)
+                    .background(BonyColors.Surface)
+                    .padding(16.dp),
+            ) {
+                Text("Notepad disguise ON", style = BonyType.body.copy(color = BonyColors.Text))
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Launcher now shows \u201CNotepad\u201D. Opening it shows only the decoy notes \u2014 real notes are invisible.\n\nTo get back to T-Bone: open Notepad \u2192 tap \u24D8 encryption \u2192 tap \u201Ckey storage\u201D 10 times quickly.\n\nNext launch will start in Notepad until you unlock. Turn this off in Settings to restore T-Bone icon.",
+                    style = BonyType.meta.copy(color = BonyColors.TextDim),
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "GOT IT",
+                    style = BonyType.tag.copy(color = BonyColors.Accent),
+                    modifier = Modifier
+                        .appBorder(1.dp, BonyColors.AccentDim)
+                        .clickable { showNotepadPopup = false }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                )
+            }
+        }
     }
 }
 @Composable
@@ -1124,6 +1163,43 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
         )
     }
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+}
+
+@Composable
+private fun SettingsStealthSection(viewModel: SettingsViewModel, compact: Boolean, expanded: Boolean, onToggle: () -> Unit, onShowPopup: () -> Unit) {
+    SettingsCategoryHeader("STEALTH", compact, expanded, onToggle)
+    if (compact && !expanded) return
+
+    val notepadEnabled by viewModel.notepadFrontEnabled.collectAsStateWithLifecycle()
+
+    SettingsSwitchRow(
+        title = "Notepad front",
+        description = "Disguise app as Notepad on launcher · decoy notes only · tap key storage 10× in encryption screen to unlock full app",
+        checked = notepadEnabled,
+        onCheckedChange = { enabled ->
+            viewModel.setNotepadFrontEnabled(enabled)
+            if (enabled) onShowPopup()
+        },
+    )
+    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+
+    if (notepadEnabled) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Decoy vault active", style = BonyType.body.copy(color = BonyColors.Text))
+                Text(
+                    "Real notes are hidden while Notepad icon is on · unlock via key storage taps",
+                    style = BonyType.meta.copy(color = BonyColors.TextMute),
+                )
+            }
+        }
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+    }
 }
 
 @Composable

@@ -29,6 +29,7 @@ import social.tbone.settings.VideoQuality
 import social.tbone.settings.OrbotHelper
 import social.tbone.settings.ThemeMode
 import social.tbone.settings.UiTheme
+import social.tbone.stealth.StealthManager
 import social.tbone.updates.UpdateInstallResult
 import social.tbone.updates.UpdateManager
 import social.tbone.updates.UpdateState
@@ -43,6 +44,7 @@ class SettingsViewModel @Inject constructor(
     private val lockManager: AppLockManager,
     private val offlineLists: social.tbone.lists.OfflineListRepository,
     private val updateManager: UpdateManager,
+    private val stealthManager: StealthManager,
     @ApplicationContext context: Context,
 ) : ViewModel() {
 
@@ -368,4 +370,49 @@ class SettingsViewModel @Inject constructor(
     fun removeAccount(pubkey: String) {
         viewModelScope.launch { accountRepository.removeAccount(pubkey) }
     }
+
+    // ── Stealth: notepad front ───────────────────────────────────────────────
+    val notepadFrontEnabled: StateFlow<Boolean> = appSettings.notepadFrontEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun setNotepadFrontEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            appSettings.setNotepadFrontEnabled(enabled)
+            stealthManager.setNotepadFront(enabled)
+        }
+    }
+
+    suspend fun markNotepadDisclaimerShown() {
+        appSettings.setNotepadFrontDisclaimerShown(true)
+    }
+
+    // ── Stealth: hidden accounts ─────────────────────────────────────────────
+    private val _hiddenUnlockMessage = MutableStateFlow<String?>(null)
+    val hiddenUnlockMessage: StateFlow<String?> = _hiddenUnlockMessage.asStateFlow()
+
+    fun hideAccount(pubkey: String, pin: String) {
+        viewModelScope.launch {
+            accountRepository.setHidden(pubkey, true, pin)
+            _hiddenUnlockMessage.value = "Account hidden — only your PIN will bring it back"
+            kotlinx.coroutines.delay(2500)
+            _hiddenUnlockMessage.value = null
+        }
+    }
+
+    fun unhideAccount(pubkey: String) {
+        viewModelScope.launch {
+            accountRepository.setHidden(pubkey, false)
+        }
+    }
+
+    fun unlockHiddenAccount(pin: String) {
+        viewModelScope.launch {
+            val ok = accountRepository.unlockHiddenByPin(pin)
+            _hiddenUnlockMessage.value = if (ok) "Hidden account unlocked" else "Wrong PIN"
+            kotlinx.coroutines.delay(2000)
+            _hiddenUnlockMessage.value = null
+        }
+    }
+
+    fun clearHiddenMessage() { _hiddenUnlockMessage.value = null }
 }

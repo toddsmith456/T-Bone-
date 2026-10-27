@@ -138,6 +138,10 @@ class AppSettings @Inject constructor(
         private val FOLLOWERS_ENABLED = booleanPreferencesKey("followers_enabled")
         private val FOLLOWERS_DISCLAIMER_SHOWN = booleanPreferencesKey("followers_disclaimer_shown")
 
+        // ── Stealth: Notepad front ──────────────────────────────────────────────
+        private val NOTEPAD_FRONT_ENABLED = booleanPreferencesKey("notepad_front_enabled")
+        private val NOTEPAD_FRONT_DISCLAIMER_SHOWN = booleanPreferencesKey("notepad_front_disclaimer_shown")
+
         /** The three default Blossom servers, always available unless disabled. */
         val BLOSSOM_DEFAULTS = setOf(
             "https://nostr.download",
@@ -354,6 +358,25 @@ class AppSettings @Inject constructor(
     private val _followersDisclaimerShown = MutableStateFlow(false)
     val followersDisclaimerShown = _followersDisclaimerShown.asStateFlow()
 
+    // ── Stealth: notepad front (persisted) + session unlock (in-memory) ───────
+    private val _notepadFrontEnabled = MutableStateFlow(false)
+    val notepadFrontEnabled = _notepadFrontEnabled.asStateFlow()
+
+    private val _notepadFrontDisclaimerShown = MutableStateFlow(false)
+    val notepadFrontDisclaimerShown = _notepadFrontDisclaimerShown.asStateFlow()
+
+    /** Session-only: true after the user taps key storage 10× in decoy info. */
+    private val _decoyUnlocked = MutableStateFlow(false)
+    val decoyUnlocked = _decoyUnlocked.asStateFlow()
+    fun setDecoyUnlocked(unlocked: Boolean) { _decoyUnlocked.value = unlocked }
+
+    /** Session-only set of hidden pubkeys that have been unlocked via PIN. */
+    private val _hiddenUnlockedPubkeys = MutableStateFlow<Set<String>>(emptySet())
+    val hiddenUnlockedPubkeys = _hiddenUnlockedPubkeys.asStateFlow()
+    fun addHiddenUnlocked(pubkey: String) { _hiddenUnlockedPubkeys.value += pubkey }
+    fun removeHiddenUnlocked(pubkey: String) { _hiddenUnlockedPubkeys.value -= pubkey }
+    fun clearHiddenUnlocked() { _hiddenUnlockedPubkeys.value = emptySet() }
+
     init {
         scope.launch {
             migrateRemovedNwcPreferences()
@@ -396,6 +419,8 @@ class AppSettings @Inject constructor(
                 _hideWords.value = prefs[HIDE_WORDS] ?: emptySet()
                 _followersEnabled.value = prefs[FOLLOWERS_ENABLED] ?: false
                 _followersDisclaimerShown.value = prefs[FOLLOWERS_DISCLAIMER_SHOWN] ?: false
+                _notepadFrontEnabled.value = prefs[NOTEPAD_FRONT_ENABLED] ?: false
+                _notepadFrontDisclaimerShown.value = prefs[NOTEPAD_FRONT_DISCLAIMER_SHOWN] ?: false
                 _parentalPinEnabled.value = prefs[PARENTAL_PIN_ENABLED] ?: false
                 _multiReactionsEnabled.value = prefs[MULTI_REACTIONS_ENABLED] ?: false
                 _reactionEmojis.value = prefs[REACTION_EMOJIS]
@@ -829,6 +854,21 @@ class AppSettings @Inject constructor(
     suspend fun setFollowersDisclaimerShown(shown: Boolean) {
         _followersDisclaimerShown.value = shown
         dataStore.edit { it[FOLLOWERS_DISCLAIMER_SHOWN] = shown }
+    }
+
+    // ── Stealth: notepad front ────────────────────────────────────────────────
+
+    suspend fun setNotepadFrontEnabled(enabled: Boolean) {
+        _notepadFrontEnabled.value = enabled
+        dataStore.edit { it[NOTEPAD_FRONT_ENABLED] = enabled }
+        // Keep current session unlocked so enabling doesn't immediately hide
+        // the full app — stealth only takes effect after the process restarts.
+        if (enabled) _decoyUnlocked.value = true else _decoyUnlocked.value = false
+    }
+
+    suspend fun setNotepadFrontDisclaimerShown(shown: Boolean) {
+        _notepadFrontDisclaimerShown.value = shown
+        dataStore.edit { it[NOTEPAD_FRONT_DISCLAIMER_SHOWN] = shown }
     }
 
     /**

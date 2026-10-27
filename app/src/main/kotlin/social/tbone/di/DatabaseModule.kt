@@ -42,6 +42,7 @@ object DatabaseModule {
                 AppDatabase.MIGRATION_12_13,
                 AppDatabase.MIGRATION_13_14,
                 AppDatabase.MIGRATION_14_15,
+                AppDatabase.MIGRATION_15_16,
             )
             .build()
 
@@ -71,4 +72,13 @@ object DatabaseModule {
 
     @Provides
     fun provideBookmarkDao(db: AppDatabase): BookmarkDao = db.bookmarkDao()
+
+    @Provides
+    fun provideDecoyNoteDao(db: AppDatabase): social.tbone.db.DecoyNoteDao = db.decoyNoteDao()
+
+    @Provides
+    fun provideDecoyNoteFolderDao(db: AppDatabase): social.tbone.db.DecoyNoteFolderDao = db.decoyNoteFolderDao()
+
+    @Provides
+    fun provideDecoyNoteAttachmentDao(db: AppDatabase): social.tbone.db.DecoyNoteAttachmentDao = db.decoyNoteAttachmentDao()
 }

@@ -18,8 +18,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         GeohashMessageEntity::class,
         BookmarkFolderEntity::class,
         BookmarkEntity::class,
+        DecoyNoteEntity::class,
+        DecoyNoteFolderEntity::class,
+        DecoyNoteAttachmentEntity::class,
     ],
-    version = 15,
+    version = 16,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun eventDao(): EventDao
@@ -31,6 +34,9 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun noteFolderDao(): NoteFolderDao
     abstract fun noteAttachmentDao(): NoteAttachmentDao
     abstract fun bookmarkDao(): BookmarkDao
+    abstract fun decoyNoteDao(): DecoyNoteDao
+    abstract fun decoyNoteFolderDao(): DecoyNoteFolderDao
+    abstract fun decoyNoteAttachmentDao(): DecoyNoteAttachmentDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -192,6 +198,37 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS index_calendar_events_startMillis " +
                         "ON calendar_events (startMillis)"
+                )
+            }
+        }
+
+        val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Decoy Notepad front — fully isolated storage so the decoy
+                // never leaks real notes and vice-versa.
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `decoy_notes` (" +
+                        "`id` TEXT NOT NULL, `ciphertext` BLOB NOT NULL, `iv` BLOB NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, " +
+                        "`kind` TEXT NOT NULL DEFAULT 'note', `pinned` INTEGER NOT NULL DEFAULT 0, " +
+                        "`folderPinned` INTEGER NOT NULL DEFAULT 0, `sortOrder` REAL NOT NULL DEFAULT 0, " +
+                        "`folderId` TEXT, `titleCiphertext` BLOB, `titleIv` BLOB, PRIMARY KEY(`id`))"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `decoy_note_folders` (" +
+                        "`id` TEXT NOT NULL, `name` TEXT NOT NULL, " +
+                        "`pinned` INTEGER NOT NULL DEFAULT 0, `sortOrder` REAL NOT NULL DEFAULT 0, " +
+                        "`createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `decoy_note_attachments` (" +
+                        "`id` TEXT NOT NULL, `noteId` TEXT NOT NULL, `kind` TEXT NOT NULL, " +
+                        "`mime` TEXT NOT NULL, `ciphertext` BLOB NOT NULL, `iv` BLOB NOT NULL, " +
+                        "`size` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_decoy_note_attachments_noteId " +
+                        "ON decoy_note_attachments (noteId)"
                 )
             }
         }

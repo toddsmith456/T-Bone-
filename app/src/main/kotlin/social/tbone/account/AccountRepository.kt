@@ -5,10 +5,13 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.encodeToString
 import social.tbone.nostr.NostrJson
 import social.tbone.Tunables
+import social.tbone.settings.AppSettings
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -28,18 +31,76 @@ private val KEY_ENCRYPTED_KEYS = stringPreferencesKey("encrypted_keys") // pubke
 @Singleton
 class AccountRepository @Inject constructor(
     private val dataStore: DataStore<Preferences>,
+    private val appSettings: AppSettings,
 ) {
-    val accounts: Flow<List<Account>> = dataStore.data.map { prefs ->
+    // Raw, unfiltered — used internally for hidden PIN lookup and migration.
+    private val allAccounts: Flow<List<Account>> = dataStore.data.map { prefs ->
         prefs[KEY_ACCOUNTS]
-            ?.let { NostrJson.decodeFromString<List<Account>>(it) }
+            ?.let { runCatching { NostrJson.decodeFromString<List<Account>>(it) }.getOrDefault(emptyList()) }
             ?: emptyList()
+    }
+
+    // Visible accounts: hidden accounts are filtered unless the session has
+    // unlocked them via PIN or they are the current active account.
+    val accounts: Flow<List<Account>> = combine(
+        allAccounts,
+        appSettings.hiddenUnlockedPubkeys,
+        dataStore.data.map { it[KEY_ACTIVE_PUBKEY] },
+    ) { all, unlocked, activePubkey ->
+        all.filter { account ->
+            if (!account.isHidden) true
+            else account.pubkey == activePubkey || account.pubkey in unlocked
+        }
     }
 
     val activeAccount: Flow<Account?> = dataStore.data.map { prefs ->
         val pubkey = prefs[KEY_ACTIVE_PUBKEY] ?: return@map null
         prefs[KEY_ACCOUNTS]
-            ?.let { NostrJson.decodeFromString<List<Account>>(it) }
+            ?.let { runCatching { NostrJson.decodeFromString<List<Account>>(it) }.getOrDefault(emptyList()) }
             ?.find { it.pubkey == pubkey }
+    }
+
+    // ── Hidden helpers ──────────────────────────────────────────────────────
+
+    /** Returns true if any account is hidden. */
+    suspend fun hasHiddenAccounts(): Boolean =
+        allAccounts.first().any { it.isHidden }
+
+    /** Find a hidden account by its PIN (hashed). Null if no match. */
+    suspend fun findHiddenByPin(pin: String): Account? {
+        val hash = sha256(pin.trim())
+        return allAccounts.first().firstOrNull { it.isHidden && it.hiddenPinHash == hash }
+    }
+
+    /** Hide / unhide an account. When hiding, [pin] is required and hashed. */
+    suspend fun setHidden(pubkey: String, hidden: Boolean, pin: String? = null) {
+        val hash = pin?.takeIf { it.isNotBlank() }?.let { sha256(it.trim()) }
+        if (hidden && hash == null) return // need a PIN to hide
+        dataStore.edit { prefs ->
+            val accounts = prefs[KEY_ACCOUNTS]
+                ?.let { runCatching { NostrJson.decodeFromString<List<Account>>(it) }.getOrDefault(emptyList()) }
+                ?: return@edit
+            val updated = accounts.map {
+                if (it.pubkey == pubkey) it.copy(isHidden = hidden, hiddenPinHash = if (hidden) hash else null)
+                else it
+            }
+            prefs[KEY_ACCOUNTS] = NostrJson.encodeToString(updated)
+        }
+        // If we just hid the active account, keep it active for now — it
+        // will vanish from the list once the user switches away.
+    }
+
+    /** Unlock a hidden account via PIN: reveals it for this session and switches to it. */
+    suspend fun unlockHiddenByPin(pin: String): Boolean {
+        val account = findHiddenByPin(pin) ?: return false
+        appSettings.addHiddenUnlocked(account.pubkey)
+        setActiveAccount(account.pubkey)
+        return true
+    }
+
+    private fun sha256(input: String): String {
+        val d = java.security.MessageDigest.getInstance("SHA-256")
+        return d.digest(input.toByteArray()).joinToString("") { "%02x".format(it) }
     }
 
     suspend fun addAccount(account: Account, encryptedPrivkey: ByteArray? = null) {
@@ -103,6 +164,23 @@ class AccountRepository @Inject constructor(
     }
 
     suspend fun setActiveAccount(pubkey: String) {
+        // Leaving a hidden account behind should re-hide it. We detect the
+        // previous active: if it was hidden and we're switching away, drop
+        // its session unlock so it disappears again.
+        val previous = dataStore.data.first()[KEY_ACTIVE_PUBKEY]
+        if (previous != null && previous != pubkey) {
+            val all = allAccounts.first()
+            val prevAccount = all.find { it.pubkey == previous }
+            if (prevAccount?.isHidden == true) {
+                appSettings.removeHiddenUnlocked(previous)
+            }
+        }
+        // Entering an account always unlocks it for the session so it stays
+        // visible while it is active (even if hidden).
+        val all = allAccounts.first()
+        if (all.any { it.pubkey == pubkey && it.isHidden }) {
+            appSettings.addHiddenUnlocked(pubkey)
+        }
         dataStore.edit { prefs ->
             prefs[KEY_ACTIVE_PUBKEY] = pubkey
         }
