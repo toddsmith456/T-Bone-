@@ -96,9 +96,9 @@ class ComposeViewModel @Inject constructor(
     val uiState: StateFlow<ComposeUiState> = _uiState.asStateFlow()
 
     // ── Active account (avatar switch + publish) ─────────────────────────────
-    val accounts: StateFlow<List<Account>> = accountRepository.accounts
+    val accounts: StateFlow<List<Account>> = accountRepository.accounts.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val activeAccount: StateFlow<Account?> = accountRepository.activeAccount
+    val activeAccount: StateFlow<Account?> = accountRepository.activeAccount.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val profiles: StateFlow<Map<String, social.tbone.nostr.ProfileContent>> = profileRepository.profiles
 
