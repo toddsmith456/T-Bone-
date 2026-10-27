@@ -13,9 +13,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import social.tbone.account.AccountRepository
 import social.tbone.nostr.Event
-import social.tbone.nostr.ProfileContent
 import social.tbone.settings.AppSettings
-import social.tbone.settings.ZapAmounts
 import javax.inject.Inject
 
 @HiltViewModel
@@ -27,8 +25,6 @@ class WalletViewModel @Inject constructor(
 ) : ViewModel() {
     val lightningZapsEnabled: StateFlow<Boolean> = appSettings.lightningZapsEnabled
     val moneroXapsEnabled: StateFlow<Boolean> = appSettings.moneroXapsEnabled
-    val zapAmountSats: StateFlow<Long> = appSettings.lightningZapAmountSats
-    val zapAmounts: StateFlow<List<Long>> = appSettings.lightningZapAmounts
 
     val activePubkey: StateFlow<String?> = accountRepository.activeAccount
         .map { it?.pubkey }
@@ -38,6 +34,8 @@ class WalletViewModel @Inject constructor(
     val message: StateFlow<String?> = _message.asStateFlow()
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
+
+    // ── Monero (existing) ──────────────────────────────────────────────────
     private val _ownMoneroAddress = MutableStateFlow("")
     val ownMoneroAddress: StateFlow<String> = _ownMoneroAddress.asStateFlow()
     private val _hasOwnMoneroTarget = MutableStateFlow(false)
@@ -48,6 +46,18 @@ class WalletViewModel @Inject constructor(
     val loadingOwnAddress: StateFlow<Boolean> = _loadingOwnAddress.asStateFlow()
     private var loadingOwnPubkey: String? = null
     private var displayedOwnPubkey: String? = null
+
+    // ── Lightning (mirrors Monero exactly) ─────────────────────────────────
+    private val _ownLightningAddress = MutableStateFlow("")
+    val ownLightningAddress: StateFlow<String> = _ownLightningAddress.asStateFlow()
+    private val _hasOwnLightningTarget = MutableStateFlow(false)
+    val hasOwnLightningTarget: StateFlow<Boolean> = _hasOwnLightningTarget.asStateFlow()
+    private val _ownLightningStatus = MutableStateFlow("Load the current payment target from your relays.")
+    val ownLightningStatus: StateFlow<String> = _ownLightningStatus.asStateFlow()
+    private val _loadingOwnLightning = MutableStateFlow(false)
+    val loadingOwnLightning: StateFlow<Boolean> = _loadingOwnLightning.asStateFlow()
+    private var loadingOwnLightningPubkey: String? = null
+    private var displayedOwnLightningPubkey: String? = null
 
     fun setLightningZapsEnabled(enabled: Boolean) {
         viewModelScope.launch {
@@ -63,70 +73,17 @@ class WalletViewModel @Inject constructor(
         }
     }
 
-    fun saveZapAmount(raw: String) {
-        val amount = raw.trim().toLongOrNull()
-        if (amount == null || amount !in ZapAmounts.MIN_SATS..ZapAmounts.MAX_SATS) {
-            _message.value = "zap amount must be between ${ZapAmounts.MIN_SATS} and ${ZapAmounts.MAX_SATS} sats"
-            return
-        }
-        viewModelScope.launch {
-            runCatching {
-                appSettings.setLightningZapAmountSats(amount)
-                appSettings.addLightningZapAmount(amount)
-            }.onSuccess {
-                _message.value = "default zap amount saved · $amount sats"
-            }.onFailure { _message.value = it.message ?: "could not save zap amount" }
-        }
-    }
-
-    fun savePreset(index: Int, raw: String) {
-        val amount = raw.trim().toLongOrNull()
-        val current = zapAmounts.value.toMutableList()
-        if (index !in current.indices || amount == null || amount !in ZapAmounts.MIN_SATS..ZapAmounts.MAX_SATS) {
-            _message.value = "preset must be between ${ZapAmounts.MIN_SATS} and ${ZapAmounts.MAX_SATS} sats"
-            return
-        }
-        current[index] = amount
-        viewModelScope.launch {
-            appSettings.setLightningZapAmounts(current)
-            _message.value = "zap preset saved"
-        }
-    }
-
-    fun addPreset(raw: String) {
-        val amount = raw.trim().toLongOrNull()
-        if (amount == null || amount !in ZapAmounts.MIN_SATS..ZapAmounts.MAX_SATS) {
-            _message.value = "preset must be between ${ZapAmounts.MIN_SATS} and ${ZapAmounts.MAX_SATS} sats"
-            return
-        }
-        viewModelScope.launch {
-            appSettings.addLightningZapAmount(amount)
-            _message.value = "zap preset added"
-        }
-    }
-
-    fun removePreset(amount: Long) {
-        if (zapAmounts.value.size <= 1) {
-            _message.value = "keep at least one zap preset"
-            return
-        }
-        viewModelScope.launch {
-            appSettings.removeLightningZapAmount(amount)
-            _message.value = "zap preset removed"
-        }
-    }
-
-    fun movePreset(from: Int, to: Int) {
-        viewModelScope.launch { appSettings.moveLightningZapAmount(from, to) }
-    }
-
-    /** Returns a verified BOLT-11 invoice; the UI hands it to the wallet app. */
-    suspend fun createZapInvoice(event: Event, profile: ProfileContent, amountSats: Long): Result<String> =
-        zapService.createInvoice(event, profile, amountSats)
+    /** Lightning invoice via NIP-57 — mirrors Monero's address lookup hand-off, but returns BOLT-11. */
+    suspend fun createZapInvoice(event: Event, lightningAddress: String, amountSats: Long = 21L): Result<String> =
+        zapService.createInvoiceForAddress(event, lightningAddress, amountSats)
 
     suspend fun lookupMoneroTarget(pubkey: String): MoneroTargetLookup =
         paymentTargetsRepository.lookupMoneroTarget(pubkey)
 
+    suspend fun lookupLightningTarget(pubkey: String): LightningTargetLookup =
+        paymentTargetsRepository.lookupLightningTarget(pubkey)
+
+    // ── Monero address publish (unchanged) ─────────────────────────────────
     fun setOwnMoneroAddress(value: String) {
         _ownMoneroAddress.value = value
         _message.value = null
@@ -228,6 +185,115 @@ class WalletViewModel @Inject constructor(
                     .onFailure { error ->
                         _ownAddressStatus.value = error.message ?: "Could not publish the payment target"
                         _message.value = _ownAddressStatus.value
+                    }
+            } finally {
+                _busy.value = false
+            }
+        }
+    }
+
+    // ── Lightning address publish (mirrors Monero 1:1) ───────────────────────
+    fun setOwnLightningAddress(value: String) {
+        _ownLightningAddress.value = value
+        _message.value = null
+    }
+
+    fun clearOwnLightningTarget() {
+        displayedOwnLightningPubkey = null
+        _ownLightningAddress.value = ""
+        _hasOwnLightningTarget.value = false
+        _message.value = null
+        _ownLightningStatus.value = "Sign in to load the current payment target."
+    }
+
+    fun loadOwnLightningTarget(pubkey: String) {
+        if (displayedOwnLightningPubkey != pubkey) {
+            displayedOwnLightningPubkey = pubkey
+            _ownLightningAddress.value = ""
+            _hasOwnLightningTarget.value = false
+            _message.value = null
+            _ownLightningStatus.value = "Checking connected relays…"
+        }
+        if (loadingOwnLightningPubkey == pubkey) return
+        loadingOwnLightningPubkey = pubkey
+        _loadingOwnLightning.value = true
+        viewModelScope.launch {
+            _ownLightningStatus.value = "Checking connected relays…"
+            try {
+                val result = paymentTargetsRepository.lookupLightningTarget(pubkey, forceRefresh = true)
+                if (activePubkey.value != pubkey) return@launch
+                val address = result.lightningAddress.orEmpty()
+                _ownLightningAddress.value = address
+                _hasOwnLightningTarget.value = result.hasLightningTag
+                _ownLightningStatus.value = when {
+                    result.usedLocalCache && address.isNotEmpty() ->
+                        "Showing the last saved address; connected relays did not confirm it"
+                    result.usedLocalCache -> "Last saved Lightning tag could not be confirmed by connected relays"
+                    result.fullySynced && address.isNotEmpty() -> "Current public Lightning target loaded"
+                    result.fullySynced && result.event != null -> "Latest payment-target event has no usable Lightning address"
+                    result.fullySynced -> "No Lightning target is currently published"
+                    address.isNotEmpty() -> "Showing the last saved address; relays could not all be checked"
+                    else -> "Could not reach connected relays. Try again before publishing."
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (activePubkey.value == pubkey) {
+                    _ownLightningStatus.value = error.message ?: "Could not load the current payment target"
+                }
+            } finally {
+                if (loadingOwnLightningPubkey == pubkey) {
+                    loadingOwnLightningPubkey = null
+                    _loadingOwnLightning.value = false
+                }
+            }
+        }
+    }
+
+    fun publishOwnLightningAddress() {
+        val normalized = LightningAddressPolicy.normalizeOrNull(_ownLightningAddress.value)
+        if (normalized == null) {
+            _message.value = "Enter a valid Lightning address (user@domain or lnurl1...)"
+            return
+        }
+        saveOwnLightningAddress(normalized)
+    }
+
+    fun removeOwnLightningAddress() = saveOwnLightningAddress(null)
+
+    private fun saveOwnLightningAddress(address: String?) {
+        val pubkey = activePubkey.value
+        if (pubkey == null) {
+            _message.value = "Sign in to publish a Lightning address"
+            return
+        }
+        viewModelScope.launch {
+            _busy.value = true
+            _message.value = null
+            _ownLightningStatus.value = "Publishing kind-10133 payment target…"
+            try {
+                paymentTargetsRepository.publishOwnLightningAddress(pubkey, address)
+                    .onSuccess { receipt ->
+                        val stillActive = activePubkey.value == pubkey
+                        if (stillActive) {
+                            _ownLightningAddress.value = address.orEmpty()
+                            _hasOwnLightningTarget.value = !address.isNullOrBlank()
+                            _ownLightningStatus.value = if (address.isNullOrBlank()) {
+                                "Lightning target removed; other payment targets were preserved"
+                            } else {
+                                "Published to ${receipt.acceptedRelays} relay(s)"
+                            }
+                        }
+                        _message.value = when {
+                            !stillActive -> "Lightning payment target published for the previous account"
+                            receipt.attemptedRelays > receipt.acceptedRelays ->
+                                "Address accepted by ${receipt.acceptedRelays} of ${receipt.attemptedRelays} relays"
+                            else -> "Lightning payment target published"
+                        }
+                    }
+                    .onFailure { error ->
+                        _ownLightningStatus.value = error.message ?: "Could not publish the payment target"
+                        _message.value = _ownLightningStatus.value
                     }
             } finally {
                 _busy.value = false

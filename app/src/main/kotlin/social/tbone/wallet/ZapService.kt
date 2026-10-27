@@ -89,12 +89,23 @@ class ZapService @Inject constructor(
         profile: ProfileContent,
         amountSats: Long,
     ): Result<String> {
+        val lightningAddress = profile.lightningAddress
+            ?: return Result.failure(IllegalArgumentException("This profile has no Lightning address"))
+        return createInvoiceForAddress(event, lightningAddress, amountSats)
+    }
+
+    /** New path: invoice from a NIP-A3 Lightning address (mirrors Monero flow). */
+    suspend fun createInvoiceForAddress(
+        event: Event,
+        lightningAddress: String,
+        amountSats: Long,
+    ): Result<String> {
         val accepted = activeZapMutex.withLock { activeZapEventIds.add(event.id) }
         if (!accepted) {
             return Result.failure(IllegalStateException("An invoice for this note is already being prepared"))
         }
         return try {
-            createInvoiceOnce(event, profile, amountSats)
+            createInvoiceOnce(event, lightningAddress, amountSats)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
@@ -106,11 +117,10 @@ class ZapService @Inject constructor(
 
     private suspend fun createInvoiceOnce(
         event: Event,
-        profile: ProfileContent,
+        lightningAddress: String,
         amountSats: Long,
     ): Result<String> {
-        val lightningAddress = profile.lightningAddress
-            ?: return Result.failure(IllegalArgumentException("This profile has no Lightning address"))
+        require(lightningAddress.isNotBlank()) { "Lightning address is empty" }
         require(amountSats in 1..1_000_000) { "zap amount must be between 1 and 1,000,000 sats" }
         val amountMsats = Math.multiplyExact(amountSats, 1_000L)
 

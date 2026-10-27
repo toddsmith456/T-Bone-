@@ -721,16 +721,9 @@ private fun NoteEngagementRow(
     val context = LocalContext.current
     val lightningZapsEnabled by walletViewModel.lightningZapsEnabled.collectAsStateWithLifecycle()
     val moneroXapsEnabled by walletViewModel.moneroXapsEnabled.collectAsStateWithLifecycle()
-    val zapAmountSats by walletViewModel.zapAmountSats.collectAsStateWithLifecycle()
-    val zapAmounts by walletViewModel.zapAmounts.collectAsStateWithLifecycle()
-    var zapPickerOpen by remember(event.id) { mutableStateOf(false) }
     var zapPending by remember(event.id) { mutableStateOf(false) }
     var xapPending by remember(event.id) { mutableStateOf(false) }
     var handoffRequest by remember(event.id) { mutableStateOf<WalletHandoffRequest?>(null) }
-    val zapChoices = remember(zapAmountSats, zapAmounts) {
-        listOf(zapAmountSats) + zapAmounts.filterNot { it == zapAmountSats }
-    }
-    val lightningAddress = profile?.lightningAddress
     val hasReacted = activePubkey != null && reactors?.contains(activePubkey) == true
     val likeCount = reactors?.size ?: 0
     val replyCount = replies[event.id] ?: 0
@@ -786,82 +779,82 @@ private fun NoteEngagementRow(
             )
         }
         if (lightningZapsEnabled) {
-            Box {
-                EngagementButton(
-                    icon = Icons.Outlined.Bolt,
-                    contentDescription = if (zapPending) "Preparing Lightning invoice" else "Choose zap amount",
-                    count = 0,
-                    tint = if (zapPending) BonyColors.Warn else BonyColors.TextMute,
-                    onClick = {
-                        if (!zapPending) {
-                            when {
-                                profile == null -> Toast.makeText(context, "Author profile is still loading", Toast.LENGTH_SHORT).show()
-                                lightningAddress.isNullOrBlank() -> Toast.makeText(context, "This author has no Lightning address", Toast.LENGTH_LONG).show()
-                                else -> zapPickerOpen = true
+            EngagementButton(
+                icon = Icons.Outlined.Bolt,
+                contentDescription = if (zapPending) "Preparing Lightning invoice" else "Zap 21 sats",
+                count = 0,
+                tint = if (zapPending) BonyColors.Warn else BonyColors.TextMute,
+                onClick = {
+                    if (!zapPending) {
+                        scope.launch {
+                            zapPending = true
+                            try {
+                                val lookup = walletViewModel.lookupLightningTarget(event.pubkey)
+                                val address = lookup.lightningAddress
+                                when {
+                                    address == null && lookup.fullySynced && !lookup.usedLocalCache -> Toast.makeText(
+                                        context,
+                                        if (lookup.event == null) {
+                                            "This author has not published a Lightning payment address"
+                                        } else {
+                                            "This author's latest payment-target event has no usable Lightning address"
+                                        },
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                    address == null -> Toast.makeText(
+                                        context,
+                                        "Could not load this author's Lightning address from connected relays",
+                                        Toast.LENGTH_LONG,
+                                    ).show()
+                                    else -> {
+                                        if (!lookup.fullySynced || lookup.usedLocalCache) {
+                                            Toast.makeText(
+                                                context,
+                                                "Using the last saved Lightning target. Verify it in your wallet before sending.",
+                                                Toast.LENGTH_LONG,
+                                            ).show()
+                                        }
+                                        walletViewModel.createZapInvoice(event, address, 21L).fold(
+                                            onSuccess = { invoice ->
+                                                val launched = ExternalWalletHandoff.openLightningWallet(context, invoice)
+                                                if (launched) {
+                                                    Toast.makeText(
+                                                        context,
+                                                        "Invoice handed off. Review and confirm 21 sats in your wallet.",
+                                                        Toast.LENGTH_LONG,
+                                                    ).show()
+                                                } else {
+                                                    handoffRequest = WalletHandoffRequest(
+                                                        WalletHandoffRail.LIGHTNING,
+                                                        invoice,
+                                                    )
+                                                }
+                                            },
+                                            onFailure = { error ->
+                                                Toast.makeText(
+                                                    context,
+                                                    error.message ?: "Could not prepare a Lightning invoice",
+                                                    Toast.LENGTH_LONG,
+                                                ).show()
+                                            },
+                                        )
+                                    }
+                                }
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Exception) {
+                                Toast.makeText(
+                                    context,
+                                    error.message ?: "Could not look up this Lightning target",
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            } finally {
+                                zapPending = false
                             }
                         }
-                    },
-                )
-                val menuScheme = androidx.compose.material3.MaterialTheme.colorScheme.copy(
-                    surfaceContainer = BonyColors.Surface,
-                    surfaceContainerHigh = BonyColors.Surface,
-                    surfaceContainerLow = BonyColors.Surface,
-                )
-                androidx.compose.material3.MaterialTheme(colorScheme = menuScheme) {
-                    DropdownMenu(
-                        expanded = zapPickerOpen,
-                        onDismissRequest = { zapPickerOpen = false },
-                    ) {
-                        zapChoices.forEachIndexed { index, amount ->
-                            DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        if (index == 0) "$amount sats · default" else "$amount sats",
-                                        color = BonyColors.Text,
-                                    )
-                                },
-                                onClick = {
-                                    zapPickerOpen = false
-                                    val recipient = profile
-                                    if (!zapPending && recipient != null && !lightningAddress.isNullOrBlank()) {
-                                        scope.launch {
-                                            zapPending = true
-                                            try {
-                                                walletViewModel.createZapInvoice(event, recipient, amount).fold(
-                                                    onSuccess = { invoice ->
-                                                        val launched = ExternalWalletHandoff.openLightningWallet(context, invoice)
-                                                        if (launched) {
-                                                            Toast.makeText(
-                                                                context,
-                                                                "Invoice handed off. Review and confirm payment in your wallet.",
-                                                                Toast.LENGTH_LONG,
-                                                            ).show()
-                                                        } else {
-                                                            handoffRequest = WalletHandoffRequest(
-                                                                WalletHandoffRail.LIGHTNING,
-                                                                invoice,
-                                                            )
-                                                        }
-                                                    },
-                                                    onFailure = { error ->
-                                                        Toast.makeText(
-                                                            context,
-                                                            error.message ?: "Could not prepare a Lightning invoice",
-                                                            Toast.LENGTH_LONG,
-                                                        ).show()
-                                                    },
-                                                )
-                                            } finally {
-                                                zapPending = false
-                                            }
-                                        }
-                                    }
-                                },
-                            )
-                        }
                     }
-                }
-            }
+                },
+            )
         }
         if (moneroXapsEnabled) {
             EngagementButton(

@@ -14,22 +14,17 @@ import social.tbone.nostr.Nip44
 import social.tbone.nostr.ProfileContent
 import social.tbone.nostr.hexToBytes
 import social.tbone.nostr.toHex
-import social.tbone.settings.ZapAmounts
-
 class ZapProtocolTest {
     @Test
-    fun normalizesEditableZapPresetsWithoutAcceptingUnsafeValues() {
-        assertEquals(listOf(21L, 100L, 500L), ZapAmounts.parse(null))
-        assertEquals(
-            listOf(1L, 21L, 1_000_000L),
-            ZapAmounts.normalize(listOf(1L, 21L, 21L, 0L, -5L, 1_000_000L)),
-        )
-        assertFalse(ZapAmounts.normalize(listOf(0L, -1L)).contains(0L))
-        assertTrue(runCatching { ZapAmounts.requireValid(1_000_001L) }.isFailure)
-        assertEquals(listOf(100L, 500L, 21L), ZapAmounts.move(listOf(21L, 100L, 500L), 0, 2))
-        assertEquals(listOf(21L, 100L, 500L), ZapAmounts.move(listOf(21L, 100L, 500L), -1, 2))
-        assertEquals(listOf(21L), ZapAmounts.remove(listOf(21L), 21L))
-        assertEquals(listOf(100L), ZapAmounts.remove(listOf(21L, 100L), 21L))
+    fun validatesLightningAddressShapesAndNormalizes() {
+        assertEquals("alice@example.com", LightningAddressPolicy.normalize(" alice@example.com "))
+        assertEquals("alice@example.com", LightningAddressPolicy.normalize("ALICE@EXAMPLE.COM"))
+        assertNull(LightningAddressPolicy.normalizeOrNull("not-an-address"))
+        assertNull(LightningAddressPolicy.normalizeOrNull("missing-at.example.com"))
+        assertNull(LightningAddressPolicy.normalizeOrNull("a@b"))
+        assertEquals("lnurl1dp68gurn8ghj7mrww4exctnxd9shg6npvchxxmmd9w", LightningAddressPolicy.normalizeOrNull("lnurl1dp68gurn8ghj7mrww4exctnxd9shg6npvchxxmmd9w".lowercase()))
+        // lightning: prefix
+        assertEquals("bob@domain.org", LightningAddressPolicy.normalize("lightning:bob@domain.org"))
     }
 
     @Test
@@ -151,6 +146,39 @@ class ZapProtocolTest {
             listOf("payto", "monero", "8" + "2".repeat(94)),
             updated.tags.last().map { it.toString().trim('"') },
         )
+    }
+
+    @Test
+    fun parsesLightningPaymentTargetsAndIgnoresInvalid() {
+        val lightning = event(
+            buildJsonArray { add("payto"); add("lightning"); add("alice@example.com") },
+            buildJsonArray { add("payto"); add("monero"); add(validMoneroAddress()) },
+        )
+        assertEquals("alice@example.com", NipA3PaymentTargets.lightningAddress(lightning))
+        val lud16 = event(buildJsonArray { add("payto"); add("lud16"); add("bob@getalby.com") })
+        assertEquals("bob@getalby.com", NipA3PaymentTargets.lightningAddress(lud16))
+        val otherKind = event(buildJsonArray { add("payto"); add("lightning"); add("alice@example.com") }, kind = 1)
+        assertNull(NipA3PaymentTargets.lightningAddress(otherKind))
+        val malformed = event(buildJsonArray { add("payto"); add("lightning"); add("not-an-address") })
+        assertNull(NipA3PaymentTargets.lightningAddress(malformed))
+        assertTrue(NipA3PaymentTargets.hasLightningTag(malformed))
+    }
+
+    @Test
+    fun updatesLightningTargetWithoutDroppingOtherOrUnknownTags() {
+        val pubkey = "ef".repeat(32)
+        val monero = buildJsonArray { add("payto"); add("monero"); add(validMoneroAddress()) }
+        val unknown = buildJsonArray { add("future-tag"); add("one") }
+        val oldLightning = buildJsonArray { add("payto"); add("lud16"); add("old@example.com") }
+        val existing = event(monero, unknown, oldLightning, pubkey = pubkey)
+        val updated = NipA3PaymentTargets.updateLightningAddress(pubkey, existing, "new@example.com", existing.createdAt + 1)
+        assertEquals(EventKind.PAYMENT_TARGETS, updated.kind)
+        assertEquals(pubkey, updated.pubkey)
+        assertEquals(listOf(monero, unknown), updated.tags.take(2))
+        assertEquals(listOf("payto", "lightning", "new@example.com"), updated.tags.last().map { it.toString().trim('"') })
+        // Removal preserves others
+        val removed = NipA3PaymentTargets.updateLightningAddress(pubkey, existing, null, existing.createdAt + 1)
+        assertEquals(listOf(monero, unknown), removed.tags)
     }
 
     @Test

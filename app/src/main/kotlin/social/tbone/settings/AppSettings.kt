@@ -110,9 +110,10 @@ class AppSettings @Inject constructor(
         private val BLOSSOM_AUDIO_COMPRESS = booleanPreferencesKey("blossom_audio_compress")
         // External-wallet Lightning zaps and optional Monero xaps.
         private val LIGHTNING_ZAPS_ENABLED = booleanPreferencesKey("lightning_zaps_enabled")
+        private val MONERO_XAPS_ENABLED = booleanPreferencesKey("monero_xaps_enabled")
+        // Legacy preset keys — removed from UI but wiped on migration.
         private val LIGHTNING_ZAP_AMOUNT_SATS = longPreferencesKey("lightning_zap_amount_sats")
         private val LIGHTNING_ZAP_AMOUNTS = stringPreferencesKey("lightning_zap_amounts")
-        private val MONERO_XAPS_ENABLED = booleanPreferencesKey("monero_xaps_enabled")
 
         // One-time migration sources from the removed NWC wallet feature. The
         // old connection and payment outcome data is deleted during migration.
@@ -326,12 +327,6 @@ class AppSettings @Inject constructor(
     private val _moneroXapsEnabled = MutableStateFlow(false)
     val moneroXapsEnabled = _moneroXapsEnabled.asStateFlow()
 
-    private val _lightningZapAmountSats = MutableStateFlow(21L)
-    val lightningZapAmountSats = _lightningZapAmountSats.asStateFlow()
-
-    private val _lightningZapAmounts = MutableStateFlow(ZapAmounts.DEFAULT)
-    val lightningZapAmounts = _lightningZapAmounts.asStateFlow()
-
     /** Parental screen time: enabled / daily minutes / rollover tracking. */
     private val _screenTimeEnabled = MutableStateFlow(false)
     val screenTimeEnabled = _screenTimeEnabled.asStateFlow()
@@ -440,8 +435,6 @@ class AppSettings @Inject constructor(
                 _blossomAudioCompress.value = prefs[BLOSSOM_AUDIO_COMPRESS] ?: false
                 _lightningZapsEnabled.value = prefs[LIGHTNING_ZAPS_ENABLED] ?: false
                 _moneroXapsEnabled.value = prefs[MONERO_XAPS_ENABLED] ?: false
-                _lightningZapAmountSats.value = ZapAmounts.validOrDefault(prefs[LIGHTNING_ZAP_AMOUNT_SATS])
-                _lightningZapAmounts.value = ZapAmounts.parse(prefs[LIGHTNING_ZAP_AMOUNTS])
                 _screenTimeEnabled.value = prefs[SCREEN_TIME_ENABLED] ?: false
                 _screenTimeMinutes.value = prefs[SCREEN_TIME_MINUTES] ?: 120
                 // Global relays: if nothing stored, seed with defaults. Normalize stored values.
@@ -704,49 +697,11 @@ class AppSettings @Inject constructor(
         dataStore.edit { it[MONERO_XAPS_ENABLED] = enabled }
     }
 
-    /**
-     * The default Lightning zap amount is separate from the editable preset
-     * list, so users may set any valid value without keeping it as a preset.
-     */
-    suspend fun setLightningZapAmountSats(amount: Long) {
-        val valid = ZapAmounts.requireValid(amount)
-        _lightningZapAmountSats.value = valid
-        dataStore.edit { it[LIGHTNING_ZAP_AMOUNT_SATS] = valid }
-    }
-
-    suspend fun setLightningZapAmounts(amounts: List<Long>) {
-        val clean = ZapAmounts.normalize(amounts)
-        _lightningZapAmounts.value = clean
-        dataStore.edit { it[LIGHTNING_ZAP_AMOUNTS] = clean.joinToString(",") }
-    }
-
-    suspend fun addLightningZapAmount(amount: Long) {
-        setLightningZapAmounts(_lightningZapAmounts.value + ZapAmounts.requireValid(amount))
-    }
-
-    suspend fun removeLightningZapAmount(amount: Long) {
-        val next = ZapAmounts.remove(_lightningZapAmounts.value, amount)
-        if (next == _lightningZapAmounts.value) return
-        setLightningZapAmounts(next)
-    }
-
-    suspend fun moveLightningZapAmount(from: Int, to: Int) {
-        val next = ZapAmounts.move(_lightningZapAmounts.value, from, to)
-        if (next == _lightningZapAmounts.value) return
-        setLightningZapAmounts(next)
-    }
-
-    /** Copies only the reusable zap preferences, then removes NWC secrets and outcomes. */
+    /** Wipes old NWC wallet data — all Lightning handling is now via NIP-A3 payment targets. */
     private suspend fun migrateRemovedNwcPreferences() {
         dataStore.edit { prefs ->
             if (prefs[LIGHTNING_ZAPS_ENABLED] == null) {
                 prefs[LEGACY_NWC_ZAPS_ENABLED]?.let { prefs[LIGHTNING_ZAPS_ENABLED] = it }
-            }
-            if (prefs[LIGHTNING_ZAP_AMOUNT_SATS] == null) {
-                prefs[LEGACY_NWC_ZAP_AMOUNT_SATS]?.let { prefs[LIGHTNING_ZAP_AMOUNT_SATS] = it }
-            }
-            if (prefs[LIGHTNING_ZAP_AMOUNTS] == null) {
-                prefs[LEGACY_NWC_ZAP_AMOUNTS]?.let { prefs[LIGHTNING_ZAP_AMOUNTS] = it }
             }
             prefs.remove(LEGACY_NWC_ZAPS_ENABLED)
             prefs.remove(LEGACY_NWC_ZAP_AMOUNT_SATS)
@@ -759,6 +714,10 @@ class AppSettings @Inject constructor(
             prefs.remove(LEGACY_NWC_LUD16)
             prefs.remove(LEGACY_NWC_PAID_ZAP_IDS)
             prefs.remove(LEGACY_NWC_UNCERTAIN_ZAP_IDS)
+            // Wipe old preset keys (now handled via NIP-A3)
+            prefs.remove(LIGHTNING_ZAP_AMOUNT_SATS)
+            prefs.remove(LIGHTNING_ZAP_AMOUNTS)
+            prefs.remove(LEGACY_NWC_ZAPS_ENABLED)
         }
     }
 
@@ -1011,44 +970,5 @@ class AppSettings @Inject constructor(
             it[GLOBAL_RELAYS] = GLOBAL_RELAY_DEFAULTS
             it[GLOBAL_ACTIVE_RELAYS] = GLOBAL_RELAY_DEFAULTS
         }
-    }
-}
-
-
-/** Validation and persistence helpers for user-editable zap quick choices. */
-object ZapAmounts {
-    const val MIN_SATS = 1L
-    const val MAX_SATS = 1_000_000L
-    const val MAX_PRESETS = 12
-    val DEFAULT = listOf(21L, 100L, 500L)
-
-    fun requireValid(amount: Long): Long = amount.also {
-        require(it in MIN_SATS..MAX_SATS) { "zap amount must be between $MIN_SATS and $MAX_SATS sats" }
-    }
-
-    fun validOrDefault(amount: Long?): Long = amount?.takeIf { it in MIN_SATS..MAX_SATS } ?: DEFAULT.first()
-
-    fun normalize(amounts: List<Long>): List<Long> {
-        val clean = amounts.filter { it in MIN_SATS..MAX_SATS }.distinct().take(MAX_PRESETS)
-        return clean.ifEmpty { DEFAULT }
-    }
-
-    fun parse(raw: String?): List<Long> = normalize(
-        raw.orEmpty().split(',').mapNotNull { it.trim().toLongOrNull() },
-    )
-
-    /**
-     * Removes one preset without ever leaving the user with zero choices.
-     * An empty preset list is normalized to defaults when loading older data,
-     * but an explicit delete of the final visible preset must be a no-op.
-     */
-    fun remove(amounts: List<Long>, amount: Long): List<Long> =
-        if (amounts.size <= 1) amounts else amounts.filterNot { it == amount }
-
-    fun move(amounts: List<Long>, from: Int, to: Int): List<Long> {
-        if (from !in amounts.indices || to !in amounts.indices) return amounts
-        val next = amounts.toMutableList()
-        next.add(to, next.removeAt(from))
-        return next
     }
 }
