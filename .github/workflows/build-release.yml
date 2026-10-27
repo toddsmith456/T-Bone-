@@ -74,6 +74,10 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
         run: |
+          echo "=== verify checkout for dd06372 fixes ==="
+          sed -n '195,205p' app/src/main/kotlin/social/tbone/lists/RelayFileFormat.kt || true
+          sed -n '98,105p' app/src/main/kotlin/social/tbone/ui/compose/ComposeViewModel.kt || true
+          echo "=== end verify ==="
           chmod +x gradlew
           ./gradlew :app:assembleRelease --stacktrace --no-configuration-cache --info 2>&1 | tee /tmp/assemble.log; test ${PIPESTATUS[0]} -eq 0
 
