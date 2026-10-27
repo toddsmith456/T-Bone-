@@ -77,6 +77,7 @@ import social.tbone.ui.settings.RelayManagementScreen
 import social.tbone.ui.settings.ContentFiltersScreen
 import social.tbone.ui.settings.BlossomSettingsScreen
 import social.tbone.ui.settings.OfflineListScreen
+import social.tbone.ui.lists.FollowListsScreen
 import social.tbone.ui.settings.ScreenTimeSettingsScreen
 import social.tbone.ui.settings.SettingsScreen
 import social.tbone.ui.profile.ProfileEditScreen
@@ -93,6 +94,7 @@ private const val ROUTE_SETTINGS          = "settings"
 private const val ROUTE_CONTENT_FILTERS   = "content_filters"
 private const val ROUTE_BLOSSOM           = "blossom_settings"
 private const val ROUTE_OFFLINE_LIST      = "offline_list/{type}"
+private const val ROUTE_FOLLOW_LISTS        = "follow_lists"
 private const val ROUTE_SCREEN_TIME       = "screen_time_settings"
 private const val ROUTE_PROFILE_EDIT      = "profile_edit"
 private const val ROUTE_PROFILE           = "profile/{pubkey}"
@@ -219,6 +221,7 @@ fun BonyNavHost() {
                             onWallet = { navController.navigate(ROUTE_WALLET) },
                             onUpdateCenter = { navController.navigate(ROUTE_UPDATE_CENTER) },
                             onWebxdc = { navController.navigate(ROUTE_XDC) },
+                            onFollowLists = { navController.navigate(ROUTE_FOLLOW_LISTS) },
                             onOpenXdcTool = { appId ->
                                 navController.navigate("webxdc_player/" + Uri.encode(appId))
                             },
@@ -502,6 +505,12 @@ fun BonyNavHost() {
                     composable(ROUTE_PROFILE_EDIT) {
                         ProfileEditScreen(onBack = { navController.popBackStack() })
                     }
+                    composable(ROUTE_FOLLOW_LISTS) {
+                        FollowListsScreen(
+                            onBack = { navController.popBackStack() },
+                            onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
+                        )
+                    }
                     composable(ROUTE_SETTINGS) {
                         SettingsScreen(
                             onBack = { navController.popBackStack() },
@@ -510,6 +519,7 @@ fun BonyNavHost() {
                             onRelayManagement = { navController.navigate(ROUTE_RELAY_MANAGEMENT) },
                             onBlossom = { navController.navigate(ROUTE_BLOSSOM) },
                             onOfflineList = { type -> navController.navigate("offline_list/$type") },
+                            onFollowLists = { navController.navigate(ROUTE_FOLLOW_LISTS) },
                             onProfileEdit = { navController.navigate(ROUTE_PROFILE_EDIT) },
                             onContentFilters = { navController.navigate(ROUTE_CONTENT_FILTERS) },
                             onPinSetup = { navController.navigate("pin_setup?duress=false") },

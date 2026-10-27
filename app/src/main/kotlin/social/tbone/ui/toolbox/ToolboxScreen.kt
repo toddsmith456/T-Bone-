@@ -25,6 +25,7 @@ import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Widgets
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Update
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -75,6 +76,7 @@ fun ToolboxScreen(
     onWallet: () -> Unit,
     onUpdateCenter: () -> Unit,
     onWebxdc: () -> Unit,
+    onFollowLists: () -> Unit,
     onOpenXdcTool: (String) -> Unit,
     onToolboxSettings: () -> Unit,
     viewModel: ToolboxViewModel = hiltViewModel(),
@@ -112,6 +114,8 @@ fun ToolboxScreen(
             "Lightning zaps & Monero xaps", onWallet))
         put("updates", ToolEntry(Icons.Outlined.Update, "update center",
             "check, download & install app updates", onUpdateCenter))
+        put("followlists", ToolEntry(Icons.Outlined.Groups, "follow lists",
+            "following · followers · blocked — online or offline", onFollowLists))
         xdcTools.forEach { tool ->
             put("xdc_${tool.appId}", ToolEntry(
                 icon = XdcToolIcons.byId(tool.iconId),

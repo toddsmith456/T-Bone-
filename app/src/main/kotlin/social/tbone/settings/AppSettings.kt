@@ -134,6 +134,10 @@ class AppSettings @Inject constructor(
         private val SCREEN_TIME_USED_SECONDS = longPreferencesKey("screen_time_used_seconds")
         private val SCREEN_TIME_GRACE_UNTIL = longPreferencesKey("screen_time_grace_until")
 
+        // Follow lists tool: follower list is off by default, disclaimer shown once
+        private val FOLLOWERS_ENABLED = booleanPreferencesKey("followers_enabled")
+        private val FOLLOWERS_DISCLAIMER_SHOWN = booleanPreferencesKey("followers_disclaimer_shown")
+
         /** The three default Blossom servers, always available unless disabled. */
         val BLOSSOM_DEFAULTS = setOf(
             "https://nostr.download",
@@ -343,6 +347,13 @@ class AppSettings @Inject constructor(
     private val _hideWords = MutableStateFlow<Set<String>>(emptySet())
     val hideWords = _hideWords.asStateFlow()
 
+    // Followers (centralized via Primal) — off by default, opt-in with one switch
+    private val _followersEnabled = MutableStateFlow(false)
+    val followersEnabled = _followersEnabled.asStateFlow()
+
+    private val _followersDisclaimerShown = MutableStateFlow(false)
+    val followersDisclaimerShown = _followersDisclaimerShown.asStateFlow()
+
     init {
         scope.launch {
             migrateRemovedNwcPreferences()
@@ -383,6 +394,8 @@ class AppSettings @Inject constructor(
                 _hideNsfw.value = prefs[HIDE_NSFW] ?: false
                 _bleepWords.value = prefs[BLEEP_WORDS] ?: emptySet()
                 _hideWords.value = prefs[HIDE_WORDS] ?: emptySet()
+                _followersEnabled.value = prefs[FOLLOWERS_ENABLED] ?: false
+                _followersDisclaimerShown.value = prefs[FOLLOWERS_DISCLAIMER_SHOWN] ?: false
                 _parentalPinEnabled.value = prefs[PARENTAL_PIN_ENABLED] ?: false
                 _multiReactionsEnabled.value = prefs[MULTI_REACTIONS_ENABLED] ?: false
                 _reactionEmojis.value = prefs[REACTION_EMOJIS]
@@ -806,6 +819,16 @@ class AppSettings @Inject constructor(
         val next = _hideWords.value - word
         _hideWords.value = next
         dataStore.edit { it[HIDE_WORDS] = next }
+    }
+
+    suspend fun setFollowersEnabled(enabled: Boolean) {
+        _followersEnabled.value = enabled
+        dataStore.edit { it[FOLLOWERS_ENABLED] = enabled }
+    }
+
+    suspend fun setFollowersDisclaimerShown(shown: Boolean) {
+        _followersDisclaimerShown.value = shown
+        dataStore.edit { it[FOLLOWERS_DISCLAIMER_SHOWN] = shown }
     }
 
     /**
