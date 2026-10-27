@@ -75,32 +75,7 @@ jobs:
           GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleRelease --stacktrace --no-configuration-cache --info 2>&1 | tee /tmp/assemble.log; test ${PIPESTATUS[0]} -eq 0
-          echo "=== assembleRelease finished with exit $?"
-          cat /tmp/assemble.log | tail -n 500
-          ls -lh app/build/outputs/apk/release/ || true
-
-      - name: Dump failure log (on failure)
-        if: failure()
-        run: |
-          echo "=== BUILD FAILED — dumping log ==="
-          cat /tmp/assemble.log | tail -n 2000 || true
-          df -h || true
-          free -h || true
-          ps aux | head -n 30 || true
-          # Push log to repo so we can read via raw URL without auth
-          mkdir -p /tmp/ci-log
-          cp /tmp/assemble.log /tmp/ci-log/build.log || true
-          echo "${{ github.sha }}" > /tmp/ci-log/sha.txt
-          cd /tmp/ci-log
-          git init
-          git config user.email "ci@tbone.local"
-          git config user.name "CI Logger"
-          git add build.log sha.txt
-          git commit -m "CI log for ${{ github.sha }}" || true
-          # Push to a dedicated branch via GITHUB_TOKEN (has contents:write)
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:ci-log --force || true
-          echo "Pushed log to ci-log branch"
+          ./gradlew :app:assembleRelease --stacktrace --no-configuration-cache
 
       - name: Unit tests (release aborts on failure)
         run: |

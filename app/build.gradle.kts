@@ -130,13 +130,6 @@ android {
         unitTests.isReturnDefaultValues = true
     }
 
-    // Reduce memory pressure on CI (7GB runner was OOM at kspReleaseKotlin
-    // after 0.5.0 added 3 Room entities + 5 Decoy screens): disable PNG
-    // crunching for release — PNGs are already optimized (155K foreground).
-    aaptOptions {
-        cruncherEnabled = false
-    }
-
     packaging {
         resources {
             // BouncyCastle ships multi-release OSGi manifests under
