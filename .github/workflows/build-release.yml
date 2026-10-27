@@ -75,7 +75,19 @@ jobs:
           GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleRelease --stacktrace --no-configuration-cache
+          ./gradlew :app:assembleRelease --stacktrace --no-configuration-cache --info 2>&1 | tee /tmp/assemble.log; test ${PIPESTATUS[0]} -eq 0
+          echo "=== assembleRelease finished with exit $?"
+          cat /tmp/assemble.log | tail -n 500
+          ls -lh app/build/outputs/apk/release/ || true
+
+      - name: Dump failure log (on failure)
+        if: failure()
+        run: |
+          echo "=== BUILD FAILED — dumping log ==="
+          cat /tmp/assemble.log | tail -n 2000 || true
+          df -h || true
+          free -h || true
+          ps aux | head -n 30 || true
 
       - name: Unit tests (release aborts on failure)
         run: |
