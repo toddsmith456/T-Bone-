@@ -150,7 +150,7 @@ fun ComposeScreen(
     LaunchedEffect(mentionMatch) { viewModel.setMentionQuery(mentionMatch) }
 
     fun String.resolveMentions(): String {
-        val allMentions = Regex(\"\"\"@(npub1[a-z0-9]{58,})\"\"\").findAll(fieldValue.text).map { it.groupValues[1] }.toList()
+        val allMentions = Regex("""@(npub1[a-z0-9]{58,})""").findAll(fieldValue.text).map { it.groupValues[1] }.toList()
         val mentionMap = mutableMapOf<String, String>()
         allMentions.forEach { npub ->
             val hex = Nip19.npubToHex(npub) ?: return@forEach
@@ -159,10 +159,10 @@ fun ComposeScreen(
         }
         var out = fieldValue.text
         mentionMap.forEach { (npub, label) ->
-            out = out.replace(\"@$npub\", \"@$label\")
+            out = out.replace("@$npub", "@$label")
         }
         // Strip tracking params from links so the relay text is canonical
-        out = out.replace(Regex(\"\"\"https?://\\S+\"\"\")) { m ->
+        out = out.replace(Regex("""https?://\S+""")) { m ->
             social.tbone.util.LinkCleaner.stripTrackingParams(m.value)
         }
         return out
@@ -181,17 +181,17 @@ fun ComposeScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = \"×\",
+                text = "×",
                 style = BonyType.title.copy(color = BonyColors.TextMute),
                 modifier = Modifier
                     .clickable { onClose() }
                     .padding(8.dp),
             )
             val title = when {
-                uiState.quoteFolderEvents.isNotEmpty() -> \"Quote folder\"
-                uiState.quoteToEvent != null -> \"Quote note\"
-                uiState.replyToEvent != null -> \"Reply\"
-                else -> \"New note\"
+                uiState.quoteFolderEvents.isNotEmpty() -> "Quote folder"
+                uiState.quoteToEvent != null -> "Quote note"
+                uiState.replyToEvent != null -> "Reply"
+                else -> "New note"
             }
             Text(
                 text = title,
@@ -238,7 +238,7 @@ fun ComposeScreen(
                     )
                 } else {
                     Text(
-                        text = \"SEND\",
+                        text = "SEND",
                         style = BonyType.button.copy(
                             color = if (canSend) BonyColors.Bg else BonyColors.TextMute,
                         ),
@@ -250,14 +250,14 @@ fun ComposeScreen(
         // ── Quote / Reply Context Card (expandable) ──────────────────────────
         uiState.replyToEvent?.let { event ->
             ComposeContextCard(
-                label = \"Replying to\",
+                label = "Replying to",
                 event = event,
                 profiles = profiles,
             )
         }
         uiState.quoteToEvent?.let { event ->
             ComposeContextCard(
-                label = \"Quoting\",
+                label = "Quoting",
                 event = event,
                 profiles = profiles,
             )
@@ -273,12 +273,12 @@ fun ComposeScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    text = \"Quoting ${uiState.quoteFolderEvents.size} notes from folder\",
+                    text = "Quoting ${uiState.quoteFolderEvents.size} notes from folder",
                     style = BonyType.tag.copy(color = BonyColors.Accent),
                 )
                 uiState.quoteFolderEvents.take(3).forEach { event ->
                     ComposeContextCard(
-                        label = \"·\",
+                        label = "·",
                         event = event,
                         profiles = profiles,
                         compact = true,
@@ -286,7 +286,7 @@ fun ComposeScreen(
                 }
                 if (uiState.quoteFolderEvents.size > 3) {
                     Text(
-                        text = \"+${uiState.quoteFolderEvents.size - 3} more\",
+                        text = "+${uiState.quoteFolderEvents.size - 3} more",
                         style = BonyType.meta.copy(color = BonyColors.TextMute),
                     )
                 }
@@ -332,7 +332,7 @@ fun ComposeScreen(
                     Box(modifier = Modifier.fillMaxWidth()) {
                         if (fieldValue.text.isEmpty()) {
                             Text(
-                                text = \"What's happening? @ to mention, # for topics\",
+                                text = "What's happening? @ to mention, # for topics",
                                 style = BonyType.body.copy(color = BonyColors.TextMute),
                             )
                         }
@@ -377,12 +377,12 @@ fun ComposeScreen(
                                 .fillMaxWidth()
                                 .clickable {
                                     val before = fieldValue.getTextBeforeSelection(fieldValue.text.length)
-                                    val atIndex = before.lastIndexOf(\"@$query\")
+                                    val atIndex = before.lastIndexOf("@$query")
                                     if (atIndex >= 0) {
                                         val npub = Nip19.hexToNpub(match.pubkey)
                                         val beforeAt = fieldValue.text.substring(0, atIndex)
                                         val after = fieldValue.text.substring(atIndex + 1 + query.length)
-                                        val inserted = \"@$npub \"
+                                        val inserted = "@$npub "
                                         val nextText = beforeAt + inserted + after
                                         val nextCursor = beforeAt.length + inserted.length
                                         fieldValue = TextFieldValue(
@@ -409,7 +409,7 @@ fun ComposeScreen(
                                     maxLines = 1,
                                 )
                                 val phrase = remember(match.pubkey) {
-                                    Phrase.wordsFor(match.pubkey, 2).joinToString(\"·\")
+                                    Phrase.wordsFor(match.pubkey, 2).joinToString("·")
                                 }
                                 Text(
                                     text = phrase,
@@ -418,7 +418,7 @@ fun ComposeScreen(
                                 )
                             }
                             Text(
-                                text = \"↗\",
+                                text = "↗",
                                 style = BonyType.meta.copy(color = BonyColors.TextMute),
                             )
                         }
@@ -456,7 +456,7 @@ fun ComposeScreen(
                             val cursor = fieldValue.selection.start.coerceAtLeast(0)
                             val before = fieldValue.text.substring(0, cursor.coerceAtMost(fieldValue.text.length))
                             val after = fieldValue.text.substring(cursor.coerceAtMost(fieldValue.text.length))
-                            val nextText = before + \"@\" + after
+                            val nextText = before + "@" + after
                             fieldValue = TextFieldValue(
                                 text = nextText,
                                 selection = TextRange(cursor + 1),
@@ -465,7 +465,7 @@ fun ComposeScreen(
                         .padding(horizontal = 10.dp, vertical = 6.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(\"+@\", style = BonyType.tag.copy(color = BonyColors.TextMute))
+                    Text("+@", style = BonyType.tag.copy(color = BonyColors.TextMute))
                 }
                 // Poll toggle
                 Box(
@@ -478,7 +478,7 @@ fun ComposeScreen(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = if (uiState.pollEnabled) \"poll ✓\" else \"poll\",
+                        text = if (uiState.pollEnabled) "poll ✓" else "poll",
                         style = BonyType.tag.copy(
                             color = if (uiState.pollEnabled) BonyColors.Accent else BonyColors.TextMute,
                         ),
@@ -494,22 +494,22 @@ fun ComposeScreen(
                         .padding(horizontal = 10.dp, vertical = 6.dp),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(\"◎ preview\", style = BonyType.tag.copy(color = BonyColors.TextDim))
+                    Text("◎ preview", style = BonyType.tag.copy(color = BonyColors.TextDim))
                 }
                 Spacer(Modifier.weight(1f))
                 // Media pickers: image / video / audio
                 val uploading = uiState.isUploading
-                MediaPickerButton(label = \"🖼\", enabled = !uploading) {
-                    pickKind = \"image\"
-                    pickMediaLauncher.launch(\"image/*\")
+                MediaPickerButton(label = "🖼", enabled = !uploading) {
+                    pickKind = "image"
+                    pickMediaLauncher.launch("image/*")
                 }
-                MediaPickerButton(label = \"▶\", enabled = !uploading) {
-                    pickKind = \"video\"
-                    pickMediaLauncher.launch(\"video/*\")
+                MediaPickerButton(label = "▶", enabled = !uploading) {
+                    pickKind = "video"
+                    pickMediaLauncher.launch("video/*")
                 }
-                MediaPickerButton(label = \"♫\", enabled = !uploading) {
-                    pickKind = \"audio\"
-                    pickMediaLauncher.launch(\"audio/*\")
+                MediaPickerButton(label = "♫", enabled = !uploading) {
+                    pickKind = "audio"
+                    pickMediaLauncher.launch("audio/*")
                 }
                 if (uploading) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -521,9 +521,9 @@ fun ComposeScreen(
                         Spacer(Modifier.width(4.dp))
                         Text(
                             text = when (uiState.uploadingKind) {
-                                \"video\" -> \"video…\"
-                                \"audio\" -> \"audio…\"
-                                else -> \"image…\"
+                                "video" -> "video…"
+                                "audio" -> "audio…"
+                                else -> "image…"
                             },
                             style = BonyType.meta.copy(color = BonyColors.TextMute),
                         )
@@ -539,7 +539,7 @@ fun ComposeScreen(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(
-                    text = \"via ${uiState.blossomServer ?: \"default\"}\",
+                    text = "via ${uiState.blossomServer ?: "default"}",
                     style = BonyType.meta.copy(color = BonyColors.TextMute),
                     modifier = Modifier.weight(1f),
                     maxLines = 1,
@@ -555,7 +555,7 @@ fun ComposeScreen(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = if (showBlossomChooser) \"close\" else \"server ▾\",
+                        text = if (showBlossomChooser) "close" else "server ▾",
                         style = BonyType.tag.copy(color = BonyColors.TextMute),
                     )
                 }
@@ -570,7 +570,7 @@ fun ComposeScreen(
                         .appBorder(1.dp, BonyColors.Rule),
                 ) {
                     BlossomServerRow(
-                        label = \"default (random from pool)\",
+                        label = "default (random from pool)",
                         selected = uiState.blossomServer == null,
                         onClick = {
                             viewModel.setBlossomServer(null)
@@ -607,12 +607,12 @@ fun ComposeScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = \"Poll options\",
+                        text = "Poll options",
                         style = BonyType.tag.copy(color = BonyColors.TextDim),
                         modifier = Modifier.weight(1f),
                     )
                     Text(
-                        text = if (uiState.pollMultiple) \"multiple\" else \"single\",
+                        text = if (uiState.pollMultiple) "multiple" else "single",
                         style = BonyType.tag.copy(color = BonyColors.Accent),
                         modifier = Modifier
                             .clip(appCornerShape(MaterialTheme.shapes.small))
@@ -628,7 +628,7 @@ fun ComposeScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = \"${index + 1}.\",
+                            text = "${index + 1}.",
                             style = BonyType.meta.copy(color = BonyColors.TextMute),
                             modifier = Modifier.width(20.dp),
                         )
@@ -650,7 +650,7 @@ fun ComposeScreen(
                                 ) {
                                     if (option.isEmpty()) {
                                         Text(
-                                            text = \"Option ${index + 1}\",
+                                            text = "Option ${index + 1}",
                                             style = BonyType.bodyDim.copy(color = BonyColors.TextMute),
                                         )
                                     }
@@ -660,7 +660,7 @@ fun ComposeScreen(
                         )
                         if (uiState.pollOptions.size > 2) {
                             Text(
-                                text = \" ×\",
+                                text = " ×",
                                 style = BonyType.bodyDim.copy(color = BonyColors.Danger),
                                 modifier = Modifier
                                     .clickable { viewModel.removePollOption(index) }
@@ -671,7 +671,7 @@ fun ComposeScreen(
                 }
                 if (uiState.pollOptions.size < Tunables.MAX_POLL_OPTIONS) {
                     Text(
-                        text = \"+ add option\",
+                        text = "+ add option",
                         style = BonyType.tag.copy(color = BonyColors.Accent),
                         modifier = Modifier
                             .clip(appCornerShape(MaterialTheme.shapes.small))
@@ -691,7 +691,7 @@ fun ComposeScreen(
         val resolved = trimmed.resolveMentions()
         val finalContent = viewModel.buildPreviewContent(resolved.trim())
         NotePreviewDialog(
-            content = finalContent.ifBlank { resolved.ifBlank { \"(empty note)\" } },
+            content = finalContent.ifBlank { resolved.ifBlank { "(empty note)" } },
             pollEnabled = uiState.pollEnabled,
             pollOptions = uiState.pollOptions,
             pollMultiple = uiState.pollMultiple,
@@ -766,13 +766,13 @@ private fun ComposeAvatarSwitcher(
                     )
                     if (accounts.size > 1) {
                         Text(
-                            text = \"switch ▾\",
+                            text = "switch ▾",
                             style = BonyType.caption.copy(color = BonyColors.TextMute),
                         )
                     }
                 }
             } else {
-                Text(\"no account\", style = BonyType.tag.copy(color = BonyColors.TextMute))
+                Text("no account", style = BonyType.tag.copy(color = BonyColors.TextMute))
             }
         }
         DropdownMenu(
@@ -798,14 +798,14 @@ private fun ComposeAvatarSwitcher(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 Text(
-                                    text = remember(acct.pubkey) { Phrase.wordsFor(acct.pubkey, 2).joinToString(\"·\") },
+                                    text = remember(acct.pubkey) { Phrase.wordsFor(acct.pubkey, 2).joinToString("·") },
                                     style = BonyType.caption.copy(color = BonyColors.TextMute),
                                     maxLines = 1,
                                 )
                             }
                             if (isActive) {
                                 Spacer(Modifier.width(8.dp))
-                                Text(\"●\", style = BonyType.tag.copy(color = BonyColors.Accent))
+                                Text("●", style = BonyType.tag.copy(color = BonyColors.Accent))
                             }
                         }
                     },
@@ -829,7 +829,7 @@ private fun ComposeContextCard(
 ) {
     var expanded by remember(event.id) { mutableStateOf(false) }
     val isLong = event.content.length > 180 || event.content.lines().size > 4 || event.content.length > 220
-    val displayText = if (expanded || !isLong) event.content else event.content.take(200).trimEnd() + \"…\"
+    val displayText = if (expanded || !isLong) event.content else event.content.take(200).trimEnd() + "…"
 
     Column(
         modifier = Modifier
@@ -873,7 +873,7 @@ private fun ComposeContextCard(
         )
         if (isLong) {
             Text(
-                text = if (expanded) \"Show less\" else \"Read more →\",
+                text = if (expanded) "Show less" else "Read more →",
                 style = BonyType.tag.copy(color = BonyColors.Accent),
                 modifier = Modifier
                     .clip(appCornerShape(MaterialTheme.shapes.small))
@@ -888,10 +888,10 @@ private fun timeAgo(epochSeconds: Long): String {
     val now = System.currentTimeMillis() / 1000
     val d = now - epochSeconds
     return when {
-        d < 60 -> \"now\"
-        d < 3600 -> \"${d / 60}m ago\"
-        d < 86400 -> \"${d / 3600}h ago\"
-        else -> \"${d / 86400}d ago\"
+        d < 60 -> "now"
+        d < 3600 -> "${d / 60}m ago"
+        d < 86400 -> "${d / 3600}h ago"
+        else -> "${d / 86400}d ago"
     }
 }
 
@@ -937,12 +937,12 @@ private fun NotePreviewDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = \"◎ PREVIEW\",
+                        text = "◎ PREVIEW",
                         style = BonyType.tag.copy(color = BonyColors.Accent),
                         modifier = Modifier.weight(1f),
                     )
                     Text(
-                        text = \"exactly as it will post\",
+                        text = "exactly as it will post",
                         style = BonyType.caption.copy(color = BonyColors.TextMute),
                     )
                     Spacer(Modifier.width(10.dp))
@@ -955,7 +955,7 @@ private fun NotePreviewDialog(
                             .padding(horizontal = 10.dp, vertical = 6.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(\"✕ close\", style = BonyType.tag.copy(color = BonyColors.TextMute))
+                        Text("✕ close", style = BonyType.tag.copy(color = BonyColors.TextMute))
                     }
                 }
                 Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
@@ -989,7 +989,7 @@ private fun NotePreviewDialog(
                         Spacer(Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                val name = activeProfile?.bestName ?: activeAccount?.displayName ?: \"You\"
+                                val name = activeProfile?.bestName ?: activeAccount?.displayName ?: "You"
                                 Text(
                                     text = name,
                                     style = BonyType.bodyDim.copy(color = BonyColors.Text),
@@ -997,10 +997,10 @@ private fun NotePreviewDialog(
                                     overflow = TextOverflow.Ellipsis,
                                 )
                                 if (activeAccount != null) {
-                                    Text(\" · \", style = BonyType.metaDim.copy(color = BonyColors.TextMute))
+                                    Text(" · ", style = BonyType.metaDim.copy(color = BonyColors.TextMute))
                                     Text(
                                         text = remember(activeAccount.pubkey) {
-                                            Phrase.wordsFor(activeAccount.pubkey, 2).joinToString(\"·\")
+                                            Phrase.wordsFor(activeAccount.pubkey, 2).joinToString("·")
                                         },
                                         style = BonyType.metaDim.copy(color = BonyColors.TextMute),
                                         maxLines = 1,
@@ -1009,7 +1009,7 @@ private fun NotePreviewDialog(
                                 }
                             }
                             Text(
-                                text = \"now · preview\",
+                                text = "now · preview",
                                 style = BonyType.caption.copy(color = BonyColors.TextMute),
                             )
                         }
@@ -1017,7 +1017,7 @@ private fun NotePreviewDialog(
 
                     if (isReply) {
                         Text(
-                            text = \"↳ replying to ${quoteEvents.firstOrNull()?.let { profiles[it.pubkey]?.bestName ?: it.pubkey.take(8) } ?: \"thread\"}\",
+                            text = "↳ replying to ${quoteEvents.firstOrNull()?.let { profiles[it.pubkey]?.bestName ?: it.pubkey.take(8) } ?: "thread"}",
                             style = BonyType.metaDim.copy(color = BonyColors.TextMute),
                         )
                     }
@@ -1051,10 +1051,10 @@ private fun NotePreviewDialog(
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(\"▭ poll\", style = BonyType.tag.copy(color = BonyColors.Accent))
+                                    Text("▭ poll", style = BonyType.tag.copy(color = BonyColors.Accent))
                                     Spacer(Modifier.width(8.dp))
                                     Text(
-                                        text = if (pollMultiple) \"multiple choice\" else \"single choice\",
+                                        text = if (pollMultiple) "multiple choice" else "single choice",
                                         style = BonyType.caption.copy(color = BonyColors.TextMute),
                                     )
                                 }
@@ -1077,7 +1077,7 @@ private fun NotePreviewDialog(
                                         )
                                         Spacer(Modifier.width(8.dp))
                                         Text(
-                                            text = \"${idx + 1}. $label\",
+                                            text = "${idx + 1}. $label",
                                             style = BonyType.bodyDim.copy(color = BonyColors.TextDim),
                                             modifier = Modifier.weight(1f),
                                         )
@@ -1106,7 +1106,7 @@ private fun NotePreviewDialog(
 
                 Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
                 Text(
-                    text = \"Tip: mentions like @npub… render as @name, links are cleaned, and quoted notes appear as cards. Poll options appear as shown above.\",
+                    text = "Tip: mentions like @npub… render as @name, links are cleaned, and quoted notes appear as cards. Poll options appear as shown above.",
                     style = BonyType.caption.copy(color = BonyColors.TextMute),
                 )
             }
@@ -1125,10 +1125,10 @@ private fun BlossomServerRow(label: String, selected: Boolean, onClick: () -> Un
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (selected) {
-            Text(\"●\", style = BonyType.meta.copy(color = BonyColors.Accent))
+            Text("●", style = BonyType.meta.copy(color = BonyColors.Accent))
             Spacer(Modifier.width(8.dp))
         } else {
-            Text(\"○\", style = BonyType.meta.copy(color = BonyColors.TextMute))
+            Text("○", style = BonyType.meta.copy(color = BonyColors.TextMute))
             Spacer(Modifier.width(8.dp))
         }
         Text(
@@ -1147,7 +1147,7 @@ private fun buildMentionTransformation(
     text: String,
     profiles: Map<String, ProfileContent>,
 ): VisualTransformation {
-    val npubRegex = Regex(\"\"\"npub1[a-z0-9]{58,}\"\"\")
+    val npubRegex = Regex("""npub1[a-z0-9]{58,}""")
     val spans = mutableListOf<SpanRange>()
     npubRegex.findAll(text).forEach { match ->
         val npub = match.value
