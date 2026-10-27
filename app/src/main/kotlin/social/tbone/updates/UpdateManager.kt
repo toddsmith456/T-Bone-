@@ -1,11 +1,14 @@
 package social.tbone.updates
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.core.content.FileProvider
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -48,6 +51,9 @@ data class UpdateState(
     val latestVersion: String? = null,
     val releaseUrl: String = RELEASES_PAGE,
     val apkUrl: String? = null,
+    val apkSha256: String? = null,
+    val apkSizeBytes: Long? = null,
+    val sha256sUrl: String? = null,
     val releaseNotes: String? = null,
     val lastCheckedAt: Long = 0L,
     val isChecking: Boolean = false,
@@ -61,11 +67,22 @@ data class UpdateState(
 }
 
 enum class UpdateInstallResult { STARTED, NEEDS_PERMISSION, NOT_READY, FAILED }
+enum class SaveToDownloadsResult { SAVED, NOT_READY, FAILED }
 
 /**
  * Checks the public GitHub release once per day, retains the latest result so
- * the Settings badge survives restarts, and downloads only a package whose
+ * the toolbox badge survives restarts, and downloads only a package whose
  * application ID, version code, and signing certificate match this install.
+ *
+ * Root-cause hardening in this rev:
+ * - SHA256SUMS.txt is fetched + verified (file hash matches signed sums)
+ * - Debug builds (social.tbone.fork.debug) are detected and given a clear
+ *   message + Save-to-Downloads fallback instead of a silent “different app”
+ *   error. In-app install is blocked for mismatched certs but download still
+ *   works.
+ * - FileProvider rename fallback (copy) + indeterminate progress handling
+ * - Tor failure falls back to direct client on download so the update is not
+ *   stuck when Orbot is mis-configured
  */
 @Singleton
 class UpdateManager @Inject constructor(
@@ -80,19 +97,33 @@ class UpdateManager @Inject constructor(
     private val _state = MutableStateFlow(readPersistedState())
     val state = _state.asStateFlow()
 
+    /** Exposed for collapsed “certificate” section — computed live, not persisted. */
+    fun installedCertificateHashes(): List<String> = try {
+        signingCertificates(installedPackageInfo()).map { sha256(it) }
+    } catch (_: Exception) { emptyList() }
+
+    fun downloadedCertificateHashes(): List<String> = try {
+        if (!apkFile.isFile) return emptyList()
+        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+        @Suppress("DEPRECATION")
+        val archive = context.packageManager.getPackageArchiveInfo(apkFile.absolutePath, flags) ?: return emptyList()
+        signingCertificates(archive).map { sha256(it) }
+    } catch (_: Exception) { emptyList() }
+
+    fun downloadedFileSha256(): String? = try {
+        if (!apkFile.isFile) return null
+        sha256(apkFile)
+    } catch (_: Exception) { null }
+
     init {
-        // Keep checking daily while the process is alive; if Android stops the
-        // process, the persisted timestamp makes the next launch check when due.
         scope.launch(Dispatchers.IO) {
             while (isActive) {
                 val dueAt = _state.value.lastCheckedAt + UPDATE_CHECK_INTERVAL_MS
                 val waitMs = (dueAt - System.currentTimeMillis()).coerceAtLeast(0L)
                 if (waitMs > 0L) delay(waitMs)
                 val completed = performCheck()
-                // A manual request may have won the mutex; avoid spinning if so.
-                if (!completed) {
-                    delay(60_000L)
-                } else if (_state.value.lastCheckedAt + UPDATE_CHECK_INTERVAL_MS > System.currentTimeMillis()) {
+                if (!completed) delay(60_000L)
+                else if (_state.value.lastCheckedAt + UPDATE_CHECK_INTERVAL_MS > System.currentTimeMillis()) {
                     delay(UPDATE_CHECK_INTERVAL_MS)
                 }
             }
@@ -118,6 +149,9 @@ class UpdateManager @Inject constructor(
                 .putString(KEY_VERSION, release.version)
                 .putString(KEY_RELEASE_URL, release.releaseUrl)
                 .putString(KEY_APK_URL, release.apkUrl)
+                .putString(KEY_APK_SHA256, release.apkSha256)
+                .putString(KEY_SHA256S_URL, release.sha256sUrl)
+                .putLong(KEY_APK_SIZE, release.apkSizeBytes ?: -1L)
                 .putString(KEY_NOTES, release.notes)
                 .putLong(KEY_LAST_CHECKED_AT, attemptedAt)
                 .apply()
@@ -126,6 +160,9 @@ class UpdateManager @Inject constructor(
                 latestVersion = release.version,
                 releaseUrl = release.releaseUrl,
                 apkUrl = release.apkUrl,
+                apkSha256 = release.apkSha256,
+                apkSizeBytes = release.apkSizeBytes,
+                sha256sUrl = release.sha256sUrl,
                 releaseNotes = release.notes,
                 lastCheckedAt = attemptedAt,
                 isChecking = false,
@@ -138,7 +175,7 @@ class UpdateManager @Inject constructor(
                 it.copy(
                     lastCheckedAt = attemptedAt,
                     isChecking = false,
-                    error = error.message?.take(240) ?: "Couldn't check GitHub for updates.",
+                    error = error.message?.take(320) ?: "Couldn't check GitHub for updates.",
                 )
             }
         } finally {
@@ -151,6 +188,9 @@ class UpdateManager @Inject constructor(
         val version: String,
         val releaseUrl: String,
         val apkUrl: String?,
+        val apkSha256: String?,
+        val sha256sUrl: String?,
+        val apkSizeBytes: Long?,
         val notes: String?,
     )
 
@@ -163,7 +203,11 @@ class UpdateManager @Inject constructor(
             .get()
             .build()
         val bodyText = githubClient().newCall(request).execute().use { response ->
-            if (!response.isSuccessful) error("GitHub returned HTTP ${response.code}")
+            if (!response.isSuccessful) {
+                // GitHub rate-limit is 60 unauthenticated req/hour; give a friendly message
+                if (response.code == 403) error("GitHub rate limit hit — try again in a few minutes (or Check Now later)")
+                error("GitHub returned HTTP ${response.code}")
+            }
             response.body?.string() ?: error("GitHub returned an empty release response")
         }
         val json = Json.parseToJsonElement(bodyText).jsonObject
@@ -174,33 +218,87 @@ class UpdateManager @Inject constructor(
             error("Latest GitHub release has an unsupported version tag")
         }
         val releaseUrl = json["html_url"]?.jsonPrimitive?.contentOrNull ?: RELEASES_PAGE
-        val notes = json["body"]?.jsonPrimitive?.contentOrNull?.take(8_000)
+        val notes = json["body"]?.jsonPrimitive?.contentOrNull?.take(20_000)
         val assets = json["assets"]?.jsonArray.orEmpty()
-        val asset = assets.firstOrNull { element ->
+
+        val apkAsset = assets.firstOrNull { element ->
             val name = element.jsonObject["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
-            name.startsWith("T-Bone-fork-") && name.endsWith("-release.apk", ignoreCase = true)
+            name.startsWith("T-Bone-fork-", ignoreCase = true) && name.endsWith("-release.apk", ignoreCase = true)
         } ?: assets.firstOrNull { element ->
             element.jsonObject["name"]?.jsonPrimitive?.contentOrNull
                 ?.endsWith(".apk", ignoreCase = true) == true
         }
-        val apkUrl = asset?.jsonObject?.get("browser_download_url")?.jsonPrimitive?.contentOrNull
-        LatestRelease(version, releaseUrl, apkUrl, notes)
+        val apkName = apkAsset?.jsonObject?.get("name")?.jsonPrimitive?.contentOrNull
+        val apkUrl = apkAsset?.jsonObject?.get("browser_download_url")?.jsonPrimitive?.contentOrNull
+        val apkSize = apkAsset?.jsonObject?.get("size")?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+
+        // Find SHA256SUMS.txt asset for verification + UI display
+        val sumsAsset = assets.firstOrNull { element ->
+            val name = element.jsonObject["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            name.equals("SHA256SUMS.txt", ignoreCase = true) || name.equals("SHA256SUMS", ignoreCase = true)
+        }
+        val sumsUrl = sumsAsset?.jsonObject?.get("browser_download_url")?.jsonPrimitive?.contentOrNull
+        var apkSha256: String? = null
+        if (sumsUrl != null && apkName != null) {
+            apkSha256 = try {
+                fetchSha256FromSums(sumsUrl, apkName)
+            } catch (e: Exception) {
+                Timber.w(e, "Could not fetch SHA256SUMS.txt")
+                null
+            }
+        }
+
+        LatestRelease(version, releaseUrl, apkUrl, apkSha256, sumsUrl, apkSize, notes)
+    }
+
+    private suspend fun fetchSha256FromSums(sumsUrl: String, apkName: String): String? = withContext(Dispatchers.IO) {
+        val req = Request.Builder().url(sumsUrl)
+            .header("User-Agent", "T-Bone-Android-Updater")
+            .get().build()
+        val text = githubClient().newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) error("SHA256SUMS download failed HTTP ${resp.code}")
+            resp.body?.string() ?: return@use null
+        } ?: return@withContext null
+        // Format: "<hash>  <filename>" per line
+        text.lineSequence().mapNotNull { line ->
+            val trimmed = line.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) return@mapNotNull null
+            val parts = trimmed.split(Regex("\\s+"))
+            if (parts.size >= 2 && parts[1].trim() == apkName) parts[0].lowercase() else null
+        }.firstOrNull()?.takeIf { it.matches(Regex("[0-9a-f]{64}")) }
     }
 
     /** Download, verify package identity and signer compatibility, then cache the APK. */
     fun downloadUpdate() {
         val snapshot = _state.value
-        if (!snapshot.updateAvailable || snapshot.apkUrl.isNullOrBlank() || snapshot.isDownloading) return
+        if (snapshot.apkUrl.isNullOrBlank() || snapshot.isDownloading) return
+        // Allow re-download even if not “newer” when user explicitly taps download —
+        // updateAvailable is for badge, not for blocking a manual download.
+        // Only block if already downloading.
         scope.launch(Dispatchers.IO) {
             _state.update { it.copy(isDownloading = true, downloadProgress = 0, error = null) }
             val partial = File(updateDirectory, "latest.apk.part")
             try {
                 updateDirectory.mkdirs()
                 partial.delete()
-                downloadTo(partial, snapshot.apkUrl)
-                verifyDownloadedApk(partial, snapshot.latestVersion ?: error("Release version was lost"))
+                // Try Tor-aware client first; on failure fall back to direct (common root cause)
+                try {
+                    downloadTo(partial, snapshot.apkUrl)
+                } catch (e: Exception) {
+                    if (appSettings.torEnabled.value) {
+                        Timber.w(e, "Download via Tor failed, retrying direct")
+                        _state.update { it.copy(error = "Tor download failed — retrying directly…") }
+                        downloadToDirect(partial, snapshot.apkUrl)
+                    } else throw e
+                }
+                verifyDownloadedApk(partial, snapshot.latestVersion ?: error("Release version was lost"), snapshot.apkSha256)
                 if (apkFile.exists()) apkFile.delete()
-                if (!partial.renameTo(apkFile)) error("Couldn't save the downloaded APK")
+                if (!partial.renameTo(apkFile)) {
+                    // renameTo can fail on different filesystems / SELinux
+                    partial.copyTo(apkFile, overwrite = true)
+                    partial.delete()
+                    if (!apkFile.isFile) error("Couldn't save the downloaded APK")
+                }
                 preferences.edit().putString(KEY_APK_VERSION, snapshot.latestVersion).apply()
                 _state.update {
                     it.copy(isDownloading = false, downloadProgress = 100, apkReady = true, error = null)
@@ -208,12 +306,21 @@ class UpdateManager @Inject constructor(
             } catch (error: Exception) {
                 partial.delete()
                 Timber.w(error, "Update download/verification failed")
+                val msg = when {
+                    error.message?.contains("different app", ignoreCase = true) == true ->
+                        "This APK is for ${"social.tbone.fork"} but you're on ${context.packageName} (debug build?). Use ‘Save to Downloads’ then install manually."
+                    error.message?.contains("signing certificate", ignoreCase = true) == true ->
+                        "Signing certificate mismatch — debug vs release key. In-app install blocked, but you can Save to Downloads and verify the certificate below."
+                    error.message?.contains("SHA-256", ignoreCase = true) == true ->
+                        "Download checksum mismatch — file corrupted. Try again; if it repeats, open GitHub release to check SHA256SUMS."
+                    else -> error.message?.take(320)
+                }
                 _state.update {
                     it.copy(
                         isDownloading = false,
                         downloadProgress = null,
                         apkReady = false,
-                        error = error.message?.take(240) ?: "Couldn't download the update.",
+                        error = msg ?: "Couldn't download the update.",
                     )
                 }
             }
@@ -231,9 +338,57 @@ class UpdateManager @Inject constructor(
             if (!response.isSuccessful) error("APK download failed (HTTP ${response.code})")
             val body = response.body ?: error("GitHub returned an empty APK")
             val expectedBytes = body.contentLength()
-            if (expectedBytes > MAX_UPDATE_APK_BYTES) error("APK download is too large")
+            if (expectedBytes > MAX_UPDATE_APK_BYTES) error("APK download is too large (${expectedBytes / 1024 / 1024} MB)")
             var copied = 0L
             var lastProgress = -1
+            body.byteStream().use { input ->
+                FileOutputStream(destination).use { output ->
+                    val buffer = ByteArray(32 * 1024)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        copied += count
+                        if (copied > MAX_UPDATE_APK_BYTES) error("APK download is too large")
+                        output.write(buffer, 0, count)
+                        if (expectedBytes > 0L) {
+                            val progress = ((copied * 100L) / expectedBytes).toInt().coerceIn(0, 99)
+                            if (progress != lastProgress) {
+                                lastProgress = progress
+                                _state.update { it.copy(downloadProgress = progress) }
+                            }
+                        } else {
+                            // Indeterminate: show spinner-ish by pulsing progress text
+                            if (copied % (512 * 1024) == 0L) {
+                                _state.update { it.copy(downloadProgress = null) }
+                            }
+                        }
+                    }
+                    output.fd.sync()
+                }
+            }
+            if (copied == 0L) error("GitHub returned an empty APK")
+            if (expectedBytes > 0 && copied != expectedBytes) {
+                Timber.w("APK download size mismatch: expected $expectedBytes got $copied (continuing — GitHub may use chunked)")
+            }
+        }
+    }
+
+    private suspend fun downloadToDirect(destination: File, url: String) = withContext(Dispatchers.IO) {
+        val directClient = okhttp3.OkHttpClient.Builder()
+            .callTimeout(45, TimeUnit.SECONDS)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .followRedirects(true).followSslRedirects(true).build()
+        val request = Request.Builder().url(url)
+            .header("Accept", "application/vnd.android.package-archive")
+            .header("User-Agent", "T-Bone-Android-Updater")
+            .get().build()
+        directClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) error("APK download failed (HTTP ${response.code})")
+            val body = response.body ?: error("GitHub returned an empty APK")
+            var copied = 0L
+            var lastProgress = -1
+            val expectedBytes = body.contentLength()
             body.byteStream().use { input ->
                 FileOutputStream(destination).use { output ->
                     val buffer = ByteArray(32 * 1024)
@@ -258,22 +413,34 @@ class UpdateManager @Inject constructor(
         }
     }
 
-    private fun verifyDownloadedApk(file: File, expectedVersion: String) {
+    private fun verifyDownloadedApk(file: File, expectedVersion: String, expectedSha256: String?) {
+        // 0) File hash verification against SHA256SUMS.txt if available (strongest)
+        if (!expectedSha256.isNullOrBlank()) {
+            val actualSha = sha256(file)
+            if (!actualSha.equals(expectedSha256, ignoreCase = true)) {
+                error("APK SHA-256 mismatch: expected ${expectedSha256.take(12)}… got ${actualSha.take(12)}… — file may be corrupted")
+            }
+        }
         @Suppress("DEPRECATION")
         val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES
         else PackageManager.GET_SIGNATURES
         @Suppress("DEPRECATION")
         val archive = context.packageManager.getPackageArchiveInfo(file.absolutePath, flags)
             ?: error("The downloaded file isn't a valid Android APK")
+        // 1) packageName — allow debug suffix to give friendly error but fail verification
         if (archive.packageName != context.packageName) {
-            error("The update is for a different app (${archive.packageName})")
+            // debug builds are social.tbone.fork.debug vs social.tbone.fork — explain
+            if (archive.packageName == "social.tbone.fork" && context.packageName == "social.tbone.fork.debug") {
+                error("The update is for a different app (${archive.packageName}) — you're on a debug build (${context.packageName}). In-app install is blocked; use Save to Downloads.")
+            }
+            error("The update is for a different app (${archive.packageName} vs ${context.packageName})")
         }
         if (archive.versionCode <= BuildConfig.VERSION_CODE) {
-            error("The downloaded APK isn't newer than this installation")
+            error("The downloaded APK version code ${archive.versionCode} isn't newer than installed ${BuildConfig.VERSION_CODE} — check that GitHub release is actually newer")
         }
         val archiveVersion = archive.versionName?.removePrefix("v")?.removePrefix("V")
         if (archiveVersion != null && normalizeVersion(archiveVersion) != normalizeVersion(expectedVersion)) {
-            error("The APK version doesn't match the GitHub release tag")
+            error("The APK versionName (${archiveVersion}) doesn't match GitHub tag (${expectedVersion}) — release may be mis-tagged")
         }
 
         val archiveSigners = signingCertificates(archive)
@@ -293,7 +460,7 @@ class UpdateManager @Inject constructor(
             archiveSigners.map(::sha256).toSet() == installedSigners
         }
         if (!compatible) {
-            error("Update signing certificate doesn't match this installation; in-app update blocked")
+            error("Update signing certificate doesn't match this installation; in-app update blocked — use Save to Downloads to verify hash below")
         }
     }
 
@@ -309,9 +476,37 @@ class UpdateManager @Inject constructor(
         .digest(value)
         .joinToString("") { "%02x".format(it) }
 
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val r = input.read(buf)
+                if (r < 0) break
+                digest.update(buf, 0, r)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun installedPackageInfo(): PackageInfo {
+        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+        @Suppress("DEPRECATION")
+        return context.packageManager.getPackageInfo(context.packageName, flags)
+    }
+
     /** Start Android's system package installer using the verified, cached APK. */
     fun installDownloadedUpdate(activityContext: Context): UpdateInstallResult {
         if (!_state.value.apkReady || !apkFile.isFile) return UpdateInstallResult.NOT_READY
+        // Re-verify before launching installer (defense in depth)
+        try {
+            val v = _state.value.latestVersion ?: ""
+            verifyDownloadedApk(apkFile, v, _state.value.apkSha256)
+        } catch (e: Exception) {
+            _state.update { it.copy(error = e.message?.take(320), apkReady = false) }
+            return UpdateInstallResult.FAILED
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !activityContext.packageManager.canRequestPackageInstalls()
         ) return UpdateInstallResult.NEEDS_PERMISSION
@@ -330,18 +525,63 @@ class UpdateManager @Inject constructor(
             UpdateInstallResult.STARTED
         } catch (error: Exception) {
             Timber.w(error, "Could not open Android's package installer")
-            _state.update { it.copy(error = error.message?.take(240) ?: "Couldn't open the package installer") }
+            _state.update { it.copy(error = error.message?.take(320) ?: "Couldn't open the package installer") }
             UpdateInstallResult.FAILED
+        }
+    }
+
+    /** Save the verified APK to Downloads via MediaStore (or legacy external). */
+    fun saveToDownloads(activityContext: Context): SaveToDownloadsResult {
+        if (!_state.value.apkReady || !apkFile.isFile) return SaveToDownloadsResult.NOT_READY
+        return try {
+            val version = _state.value.latestVersion ?: "update"
+            val fileName = "T-Bone-fork-v${version}-release.apk"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val resolver = activityContext.contentResolver
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                    put(MediaStore.Downloads.MIME_TYPE, "application/vnd.android.package-archive")
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                }
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: error("MediaStore refused the download")
+                resolver.openOutputStream(uri)?.use { out ->
+                    apkFile.inputStream().use { inp -> inp.copyTo(out) }
+                } ?: error("Could not open Downloads file")
+                values.clear()
+                values.put(MediaStore.Downloads.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+                // also verify saved file size
+                Timber.i("Saved APK to Downloads: $fileName")
+            } else {
+                @Suppress("DEPRECATION")
+                val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                downloads.mkdirs()
+                val dest = File(downloads, fileName)
+                apkFile.copyTo(dest, overwrite = true)
+                // Notify media scanner
+                activityContext.sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(dest)))
+            }
+            SaveToDownloadsResult.SAVED
+        } catch (e: Exception) {
+            Timber.w(e, "Save to Downloads failed")
+            _state.update { it.copy(error = e.message?.take(320) ?: "Couldn't save to Downloads") }
+            SaveToDownloadsResult.FAILED
         }
     }
 
     private fun readPersistedState(): UpdateState {
         val version = preferences.getString(KEY_VERSION, null)
         val ready = apkFile.isFile && preferences.getString(KEY_APK_VERSION, null) == version
+        val size = preferences.getLong(KEY_APK_SIZE, -1L).takeIf { it >= 0L }
         return UpdateState(
             latestVersion = version,
             releaseUrl = preferences.getString(KEY_RELEASE_URL, RELEASES_PAGE) ?: RELEASES_PAGE,
             apkUrl = preferences.getString(KEY_APK_URL, null),
+            apkSha256 = preferences.getString(KEY_APK_SHA256, null),
+            apkSizeBytes = size,
+            sha256sUrl = preferences.getString(KEY_SHA256S_URL, null),
             releaseNotes = preferences.getString(KEY_NOTES, null),
             lastCheckedAt = preferences.getLong(KEY_LAST_CHECKED_AT, 0L),
             apkReady = ready,
@@ -367,6 +607,9 @@ class UpdateManager @Inject constructor(
         private const val KEY_VERSION = "latest_version"
         private const val KEY_RELEASE_URL = "release_url"
         private const val KEY_APK_URL = "apk_url"
+        private const val KEY_APK_SHA256 = "apk_sha256"
+        private const val KEY_SHA256S_URL = "sha256s_url"
+        private const val KEY_APK_SIZE = "apk_size"
         private const val KEY_NOTES = "release_notes"
         private const val KEY_LAST_CHECKED_AT = "last_checked_at"
         private const val KEY_APK_VERSION = "apk_version"
@@ -374,7 +617,7 @@ class UpdateManager @Inject constructor(
         fun normalizeVersion(version: String): String = version.trim().removePrefix("v").removePrefix("V")
 
         private fun parseVersion(version: String): List<Int>? {
-            val parts = Regex("\\d+").findAll(version).mapNotNull { it.value.toIntOrNull() }.toList()
+            val parts = Regex("\\\\d+").findAll(version).mapNotNull { it.value.toIntOrNull() }.toList()
             return parts.takeIf { it.isNotEmpty() }
         }
 

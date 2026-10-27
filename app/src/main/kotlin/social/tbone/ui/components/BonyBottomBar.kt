@@ -111,7 +111,8 @@ fun BonyBottomBar(
                             modifier = Modifier.size(18.dp),
                         )
                         // Bell tab shows a dot when there are unread notifications.
-                        if ((hasNotifications && tab == BottomTab.NOTIF) || (appUpdateAvailable && tab == BottomTab.CONF)) {
+                        // Updates dot now lives on toolbox (TOOLS) and update-center, not on CONF.
+                        if ((hasNotifications && tab == BottomTab.NOTIF) || (appUpdateAvailable && tab == BottomTab.TOOLS)) {
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)

@@ -61,6 +61,12 @@ class SettingsViewModel @Inject constructor(
     fun installDownloadedUpdate(context: Context): UpdateInstallResult =
         updateManager.installDownloadedUpdate(context)
 
+    fun saveToDownloads(context: Context) = updateManager.saveToDownloads(context)
+
+    fun installedCertHashes(): List<String> = updateManager.installedCertificateHashes()
+    fun downloadedCertHashes(): List<String> = updateManager.downloadedCertificateHashes()
+    fun downloadedFileSha256(): String? = updateManager.downloadedFileSha256()
+
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private fun offlineEnabledFlow(type: social.tbone.lists.ListType): StateFlow<Boolean> =
         accountRepository.activeAccount

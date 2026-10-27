@@ -54,6 +54,7 @@ import kotlin.math.roundToInt
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.ui.toolbox.webxdc.XdcToolIcons
+import social.tbone.updates.LocalUpdateAvailable
 
 /** Uniform tool row height in dp — used for drag math. */
 private val TOOL_ROW_HEIGHT = 68.dp
@@ -89,6 +90,8 @@ fun ToolboxScreen(
     // stack entry is popped, i.e. leaving to the main menu).
     var unlocked by rememberSaveable { mutableStateOf(false) }
 
+    val hasUpdate = LocalUpdateAvailable.current
+
     if (pinEnabled && !unlocked) {
         ToolboxLockScreen(onUnlocked = { unlocked = true })
         return
@@ -113,7 +116,7 @@ fun ToolboxScreen(
         put("wallet", ToolEntry(Icons.Outlined.Bolt, "wallet tool",
             "Lightning zaps & Monero xaps", onWallet))
         put("updates", ToolEntry(Icons.Outlined.Update, "update center",
-            "check, download & install app updates", onUpdateCenter))
+            "check, download & install app updates", onUpdateCenter, hasBadge = hasUpdate))
         put("followlists", ToolEntry(Icons.Outlined.Groups, "follow lists",
             "following · followers · blocked — online or offline", onFollowLists))
         xdcTools.forEach { tool ->
@@ -241,6 +244,7 @@ fun ToolboxScreen(
                     title = tool.title,
                     subtitle = tool.subtitle,
                     onClick = tool.onClick,
+                    hasBadge = tool.hasBadge,
                 )
             }
             // Drop indicator while dragging.
@@ -273,10 +277,11 @@ private data class ToolEntry(
     val title: String,
     val subtitle: String,
     val onClick: () -> Unit,
+    val hasBadge: Boolean = false,
 )
 
 @Composable
-internal fun ToolRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
+internal fun ToolRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit, hasBadge: Boolean = false) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -297,6 +302,14 @@ internal fun ToolRow(icon: ImageVector, title: String, subtitle: String, onClick
                 tint = BonyColors.Accent,
                 modifier = Modifier.size(22.dp),
             )
+            if (hasBadge) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(8.dp)
+                        .background(BonyColors.Accent, androidx.compose.foundation.shape.CircleShape)
+                )
+            }
         }
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
