@@ -75,7 +75,25 @@ jobs:
           GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleRelease --stacktrace --no-configuration-cache
+          ./gradlew :app:assembleRelease --stacktrace --no-configuration-cache --info 2>&1 | tee /tmp/assemble.log; test ${PIPESTATUS[0]} -eq 0
+
+      - name: Dump failure log (on failure)
+        if: failure()
+        run: |
+          cat /tmp/assemble.log | tail -n 500 || true
+          echo "--- grep errors ---"
+          grep -n "e: file" /tmp/assemble.log | head -n 50 || true
+          grep -n "FAILURE" /tmp/assemble.log | head || true
+          mkdir -p /tmp/ci-log
+          cp /tmp/assemble.log /tmp/ci-log/build.log || true
+          echo "${{ github.sha }}" > /tmp/ci-log/sha.txt
+          cd /tmp/ci-log
+          git init
+          git config user.email "ci@tbone.local"
+          git config user.name "CI Logger"
+          git add build.log sha.txt
+          git commit -m "CI log for ${{ github.sha }}" || true
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:ci-log --force || true
 
       - name: Unit tests (release aborts on failure)
         run: |
