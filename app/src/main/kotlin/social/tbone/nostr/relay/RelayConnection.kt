@@ -73,7 +73,7 @@ class RelayConnection(
      */
     fun send(message: ClientMessage): Boolean {
         val json = message.toJson()
-        Timber.d("→ ${url.hostOrRedacted()} [${message::class.simpleName}]")
+        Timber.d("→ ${url.substringAfter("://").substringBefore("/")} [${message::class.simpleName}]")
         return webSocket.get()?.send(json) ?: false
     }
 

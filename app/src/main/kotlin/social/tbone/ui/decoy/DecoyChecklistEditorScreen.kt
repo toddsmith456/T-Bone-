@@ -1,4 +1,7 @@
 package social.tbone.ui.decoy
+
+import androidx.compose.ui.text.TextLayoutResult
+import social.tbone.ui.notes.LinkSegmentedText
 import social.tbone.notes.DecoyNotesViewModel
 
 import social.tbone.ui.theme.appBorder

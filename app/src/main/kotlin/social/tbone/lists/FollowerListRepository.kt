@@ -69,8 +69,8 @@ class FollowerListRepository @Inject constructor(
                 try {
                     val req = Request.Builder().url(url).get().header("Accept", "application/json").build()
                     okHttp.newCall(req).execute().use { resp ->
-                        if (!resp.isSuccessful) continue
-                        val body = resp.body?.string() ?: continue
+                        if (!resp.isSuccessful) return@use
+                        val body = resp.body?.string() ?: return@use
                         val list = parsePrimalBody(body)
                         if (list != null && list.isNotEmpty()) return list
                     }
@@ -154,11 +154,11 @@ class FollowerListRepository @Inject constructor(
                         }
                     }
                     if (msg is RelayMessage.EndOfStoredEvents && msg.subscriptionId == subId) {
-                        // Don't break immediately — keep listening for delayed relays
+                        // Don't return@collect immediately — keep listening for delayed relays
                     }
                 }
             }
-        } catch (_: CancellationException) { throw _ as CancellationException } catch (_: Exception) {}
+        } catch (e: CancellationException) { throw e } catch (_: Exception) {}
         finally {
             pool.unsubscribe(subId)
             relays.forEach { pool.releaseRelay(it) }

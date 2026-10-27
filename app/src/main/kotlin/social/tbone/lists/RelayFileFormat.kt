@@ -8,6 +8,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
@@ -51,9 +52,9 @@ object RelayFileFormat {
         createdAtSeconds: Long = System.currentTimeMillis() / 1000,
     ): String {
         val obj = buildJsonObject {
-            put("kind", RELAY_KIND)
-            put("created_at", createdAtSeconds)
-            put("pubkey", ownerPubkey)
+            put("kind", JsonPrimitive(RELAY_KIND))
+            put("created_at", JsonPrimitive(createdAtSeconds))
+            put("pubkey", JsonPrimitive(ownerPubkey))
             put("tags", buildJsonArray {
                 relays.forEach { url ->
                     add(buildJsonArray {
@@ -62,7 +63,7 @@ object RelayFileFormat {
                     })
                 }
             })
-            put("content", "")
+            put("content", JsonPrimitive(""))
         }
         return pretty.encodeToString(JsonObject.serializer(), obj) + "\n"
     }
@@ -74,9 +75,9 @@ object RelayFileFormat {
         createdAtSeconds: Long = System.currentTimeMillis() / 1000,
     ): String {
         val obj = buildJsonObject {
-            put("kind", RELAY_KIND)
-            put("created_at", createdAtSeconds)
-            put("pubkey", ownerPubkey)
+            put("kind", JsonPrimitive(RELAY_KIND))
+            put("created_at", JsonPrimitive(createdAtSeconds))
+            put("pubkey", JsonPrimitive(ownerPubkey))
             put("tags", buildJsonArray {
                 relaysWithMarkers.forEach { rm ->
                     add(buildJsonArray {
@@ -86,7 +87,7 @@ object RelayFileFormat {
                     })
                 }
             })
-            put("content", "")
+            put("content", JsonPrimitive(""))
         }
         return pretty.encodeToString(JsonObject.serializer(), obj) + "\n"
     }

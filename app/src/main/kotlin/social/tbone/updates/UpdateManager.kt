@@ -102,18 +102,22 @@ class UpdateManager @Inject constructor(
         signingCertificates(installedPackageInfo()).map { sha256(it) }
     } catch (_: Exception) { emptyList() }
 
-    fun downloadedCertificateHashes(): List<String> = try {
-        if (!apkFile.isFile) return emptyList()
+    fun downloadedCertificateHashes(): List<String> {
+        return try {
+            if (!apkFile.isFile) return emptyList()
         val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
         @Suppress("DEPRECATION")
         val archive = context.packageManager.getPackageArchiveInfo(apkFile.absolutePath, flags) ?: return emptyList()
-        signingCertificates(archive).map { sha256(it) }
-    } catch (_: Exception) { emptyList() }
+            signingCertificates(archive).map { sha256(it) }
+        } catch (_: Exception) { emptyList() }
+    }
 
-    fun downloadedFileSha256(): String? = try {
-        if (!apkFile.isFile) return null
-        sha256(apkFile)
-    } catch (_: Exception) { null }
+    fun downloadedFileSha256(): String? {
+        return try {
+            if (!apkFile.isFile) return null
+            sha256(apkFile)
+        } catch (_: Exception) { null }
+    }
 
     init {
         scope.launch(Dispatchers.IO) {
