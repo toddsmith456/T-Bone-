@@ -197,7 +197,9 @@ object RelayFileFormat {
             val arr = t as? JsonArray ?: continue
             val name = (arr.getOrNull(0) as? JsonPrimitive)?.contentOrNull ?: continue
             if (name != "r") continue
-            val url = (arr.getOrNull(1) as? JsonPrimitive)?.contentOrNull ?: run { out.skip(); continue }
+            val urlRaw = (arr.getOrNull(1) as? JsonPrimitive)?.contentOrNull
+            if (urlRaw == null) { out.skip(); continue }
+            val url = urlRaw
             val marker = (arr.getOrNull(2) as? JsonPrimitive)?.contentOrNull
             out.add(url, marker)
         }

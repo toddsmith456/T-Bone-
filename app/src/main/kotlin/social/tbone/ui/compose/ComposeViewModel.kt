@@ -97,10 +97,8 @@ class ComposeViewModel @Inject constructor(
 
     // ── Active account (avatar switch + publish) ─────────────────────────────
     val accounts: StateFlow<List<Account>> = accountRepository.accounts
-        .let { flow -> kotlinx.coroutines.flow.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000), emptyList()) }
 
     val activeAccount: StateFlow<Account?> = accountRepository.activeAccount
-        .let { flow -> kotlinx.coroutines.flow.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000), null) }
 
     val profiles: StateFlow<Map<String, social.tbone.nostr.ProfileContent>> = profileRepository.profiles
 
