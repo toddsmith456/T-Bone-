@@ -23,6 +23,13 @@ jobs:
           chmod +x scripts/privacy-check.sh
           ./scripts/privacy-check.sh
 
+      - name: Release version/tag gate (release aborts on mismatch)
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          chmod +x scripts/verify-release-version.sh
+          ./scripts/verify-release-version.sh
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -95,7 +102,6 @@ jobs:
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:ci-log --force || true
 
       - name: Unit tests (release aborts on failure)
-        continue-on-error: true
         run: |
           chmod +x gradlew
           # Blossom upload regression suite + the rest of the unit tests.
@@ -105,7 +111,7 @@ jobs:
       - name: Dump unit test log (on failure)
         if: failure()
         run: |
-          echo "=== unit tests failed (non-blocking for release) ==="
+          echo "=== unit tests failed — release blocked ==="
           find app/build/test-results -name "*.xml" | head -n 20 || true
           cat app/build/test-results/debugUnitTest/*.xml 2>&1 | head -n 300 || true
           echo "--- reports ---"

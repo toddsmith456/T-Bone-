@@ -22,6 +22,7 @@ import social.tbone.account.AccountRepository
 import social.tbone.account.SignerType
 import social.tbone.nostr.Nip19
 import social.tbone.nostr.relay.RelayPool
+import social.tbone.settings.AppSettings
 import java.io.File
 
 class OfflineListRepositoryTest {
@@ -167,7 +168,7 @@ class OfflineListRepositoryTest {
     }
 
     @Test fun removingAnAccountWipesItsLists() = runBlocking {
-        val accounts = AccountRepository(store)
+        val accounts = AccountRepository(store, AppSettings(store, scope))
         accounts.addAccount(Account(pubkey = alice, signerType = SignerType.AMBER))
         accounts.addAccount(Account(pubkey = bob, signerType = SignerType.AMBER))
         repo.replaceFromSync(ListType.FOLLOWS, alice, listOf(ListEntry(pk(1))), enable = true)

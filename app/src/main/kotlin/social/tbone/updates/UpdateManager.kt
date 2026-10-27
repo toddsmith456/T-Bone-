@@ -621,7 +621,9 @@ class UpdateManager @Inject constructor(
         fun normalizeVersion(version: String): String = version.trim().removePrefix("v").removePrefix("V")
 
         private fun parseVersion(version: String): List<Int>? {
-            val parts = Regex("\\\\d+").findAll(version).mapNotNull { it.value.toIntOrNull() }.toList()
+            // Raw string avoids accidentally double-escaping \d: a literal
+            // backslash regex silently disabled update checks for every tag.
+            val parts = Regex("""\d+""").findAll(version).mapNotNull { it.value.toIntOrNull() }.toList()
             return parts.takeIf { it.isNotEmpty() }
         }
 

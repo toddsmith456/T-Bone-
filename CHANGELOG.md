@@ -5,7 +5,21 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-10-27
+
+### Fixed
+- **Write tab no longer blanks or crashes after posting:** v0.5.1 called two separate `popBackStack()` callbacks (`onClose()` + `onPublished()`) after every successful note/reply. The composer now has exactly one exit action, delivered as a buffered one-shot `Published` effect and protected by a once-only gate. `BonyNavHost` performs a single pop and falls back to the start destination if the composer is ever the only entry, so the graph can never be left with no visible screen.
+- **Publishing is failure-safe and cannot fire twice:** `ComposeViewModel.publish()` now rejects rapid double SEND taps, emits navigation on the UI's main-thread collector rather than invoking a captured callback from a ViewModel coroutine, and catches signer, relay, encoding, and database exceptions into the visible error state instead of letting them become uncaught crashes. Draft text is saved across activity recreation.
+- **Mention editing crash fixed:** the Write tab's `@npub1… → @name` visual transformation changed text length while using `OffsetMapping.Identity`, which allowed out-of-range cursor/selection offsets. It now builds a monotonic, bounds-safe two-way offset mapping for every replacement; `@npub` mentions also produce NIP-08 `p` tags again.
+- **Signer overlay no longer sticks or disappears early:** concurrent Amber/nsecBunker requests are reference-counted, so a background AUTH request completing cannot clear the overlay for an in-flight post (or leave it stuck when completions interleave).
+- **Version identity and update checks:** `version.properties` is now the single source of truth for `0.5.2` / `versionCode 68`; `app/build.gradle.kts` feeds it to `BuildConfig`, which Settings, Update Center, and APK verification already use. A release gate checks the tag, Gradle wiring, changelog, and absence of hardcoded runtime versions on PRs and tagged builds. The update version parser's double-escaped digit regex was fixed, so `v0.5.2` is correctly recognized as newer than both mislabeled `0.5.0` and `0.5.1` installs.
+
+### Changed
+- `scripts/make-release.sh` bumps `versionCode` and `versionName` together, stages an annotated `v<version>` tag, and verifies the release identity before commit. Tagged CI unit tests are blocking again; the temporary non-blocking workaround from 0.5.0 has been removed.
+
 ## [0.5.1] — 2026-10-27
+
+> **Known release-identity issue:** the `v0.5.1` tag shipped an APK whose `versionName` remained `0.5.0` / `versionCode 67`. Release `0.5.2` corrects the identity and adds automated tag/version gates.
 
 ### Fixed
 - **Write tab buffers + Post pop (0.5.1):** restores v0.4.7 `statusBarsPadding()` + `imePadding()` + `navigationBarsPadding()` outer `Box`/`Column` with bottom 12dp spacer so all Write buttons are reachable (top close/SEND and bottom toolbar/media/poll/preview/server chooser); `BonyNavHost` now passes `onPublished = popBackStack` and `ComposeScreen.SEND` uses `onSuccess = { onClose(); onPublished() }` to return to feed — previous 0.5.0 stayed on tab.

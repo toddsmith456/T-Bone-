@@ -499,10 +499,9 @@ fun BonyNavHost() {
                             navArgument("audioPath") { type = NavType.StringType; defaultValue = "" },
                         ),
                     ) {
-                        ComposeScreen(
-                            onClose = { navController.popBackStack() },
-                            onPublished = { navController.popBackStack() },
-                        )
+                        // One exit action for SEND and ×. Two popBackStack()
+                        // calls in 0.5.1 could empty the graph and show black.
+                        ComposeScreen(onExit = { navController.exitCompose() })
                     }
                     composable(ROUTE_CONTENT_FILTERS) {
                         ContentFiltersScreen(
@@ -762,6 +761,23 @@ private fun NavHostController.switchToTab(tab: BottomTab) {
         popUpTo(graph.findStartDestination().id) { saveState = true }
         launchSingleTop = true
         restoreState = true
+    }
+}
+
+/**
+ * Leaves the composer exactly once. If a restored/deep-linked graph ever has
+ * compose as its only destination, fall back to the graph's start route rather
+ * than leaving the NavHost with nothing to draw (a black screen).
+ */
+private fun NavHostController.exitCompose() {
+    if (popBackStack()) return
+    val startDestination = graph.findStartDestination()
+    val fallbackRoute = startDestination.route
+        ?.takeIf { it.isNotBlank() && !it.startsWith("compose") }
+        ?: ROUTE_FEED
+    navigate(fallbackRoute) {
+        popUpTo(startDestination.id) { inclusive = false }
+        launchSingleTop = true
     }
 }
 

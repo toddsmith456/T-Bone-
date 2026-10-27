@@ -38,6 +38,10 @@ cd T-Bone-
 
 The debug variant is for local development; it is not published with GitHub releases. Minimum supported Android version: 8.0 (API 26).
 
+## Versioning
+
+`version.properties` is the single source of truth for `versionName` and `versionCode`. `app/build.gradle.kts` reads it, and Android exposes the same values through `BuildConfig` to the Settings screen, Update Center, and APK verification. Bump releases with `./scripts/make-release.sh <version>`; CI rejects a `v<version>` tag that does not match.
+
 ## Project links
 
 - [Privacy rules and enforcement](docs/PRIVACY.md)

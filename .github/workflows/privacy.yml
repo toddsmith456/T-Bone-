@@ -20,3 +20,8 @@ jobs:
         run: |
           chmod +x scripts/privacy-check.sh
           ./scripts/privacy-check.sh
+
+      - name: Check release version wiring
+        run: |
+          chmod +x scripts/verify-release-version.sh
+          ./scripts/verify-release-version.sh

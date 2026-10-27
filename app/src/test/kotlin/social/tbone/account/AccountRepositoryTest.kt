@@ -16,6 +16,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import social.tbone.Tunables
+import social.tbone.settings.AppSettings
 
 class AccountRepositoryTest {
     private lateinit var scope: CoroutineScope
@@ -28,7 +29,7 @@ class AccountRepositoryTest {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         file = File.createTempFile("accounts", ".preferences_pb").also { it.delete() }
         dataStore = PreferenceDataStoreFactory.create(scope = scope) { file }
-        repository = AccountRepository(dataStore)
+        repository = AccountRepository(dataStore, AppSettings(dataStore, scope))
     }
 
     @After

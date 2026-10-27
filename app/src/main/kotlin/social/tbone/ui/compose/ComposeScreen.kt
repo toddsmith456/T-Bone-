@@ -30,24 +30,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -74,11 +68,16 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalContext
 
 private const val MENTION_PICKER_LIMIT = 10
+private val MENTION_NPUB_REGEX = Regex("""@(npub1[a-z0-9]{58,})""")
 
+/**
+ * The composer has exactly one exit action. v0.5.1 had both `onClose` and
+ * `onPublished` wired to `popBackStack()` and invoked both after SEND, which
+ * could pop the graph twice and leave a blank destination.
+ */
 @Composable
 fun ComposeScreen(
-    onClose: () -> Unit = {},
-    onPublished: () -> Unit = {},
+    onExit: () -> Unit,
     viewModel: ComposeViewModel = androidx.hilt.navigation.compose.hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -88,12 +87,11 @@ fun ComposeScreen(
     val mentionSuggestions by viewModel.mentionSuggestions.collectAsStateWithLifecycle()
     val mentionSearching by viewModel.mentionSearching.collectAsStateWithLifecycle()
     val mentionQuery by viewModel.mentionQuery.collectAsStateWithLifecycle()
-    var fieldValue by remember(uiState.initialText) {
+    var fieldValue by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(text = uiState.initialText))
     }
     val context = LocalContext.current
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
-    var pickKind by remember { mutableStateOf<String?>(null) }
+    var pickKind by rememberSaveable { mutableStateOf<String?>(null) }
     val pickMediaLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent(),
     ) { uri: Uri? ->
@@ -102,8 +100,22 @@ fun ComposeScreen(
             pickKind = null
         }
     }
-    var showBlossomChooser by remember { mutableStateOf(false) }
-    var showPreview by remember { mutableStateOf(false) }
+    var showBlossomChooser by rememberSaveable { mutableStateOf(false) }
+    var showPreview by rememberSaveable { mutableStateOf(false) }
+
+    // Publish and close share ONE exit. The UI owns navigation and consumes the
+    // ViewModel's buffered one-shot effect on the main thread, so a late signer
+    // result cannot call a stale callback or pop the graph twice.
+    val currentOnExit by rememberUpdatedState(onExit)
+    val exitGate = remember(viewModel) { ComposeExitGate() }
+    fun exitComposeOnce() = exitGate.runOnce { currentOnExit() }
+    LaunchedEffect(viewModel) {
+        viewModel.effects.collect { effect ->
+            when (effect) {
+                ComposeEffect.Published -> exitComposeOnce()
+            }
+        }
+    }
 
     // Keep local text in sync when the viewModel pre-fills the field
     // (e.g. a quote reference) after an async fetch.
@@ -153,22 +165,19 @@ fun ComposeScreen(
     LaunchedEffect(mentionMatch) { viewModel.setMentionQuery(mentionMatch) }
 
     fun String.resolveMentions(): String {
-        val allMentions = Regex("""@(npub1[a-z0-9]{58,})""").findAll(fieldValue.text).map { it.groupValues[1] }.toList()
         val mentionMap = mutableMapOf<String, String>()
-        allMentions.forEach { npub ->
+        MENTION_NPUB_REGEX.findAll(this).forEach { match ->
+            val npub = match.groupValues[1]
             val hex = Nip19.npubToHex(npub) ?: return@forEach
             val label = profiles[hex]?.bestName ?: npub.take(12)
             mentionMap[npub] = label
         }
-        var out = fieldValue.text
+        var out: String = this
         mentionMap.forEach { (npub, label) ->
             out = out.replace("@$npub", "@$label")
         }
-        // Strip tracking params from links so the relay text is canonical
-        out = out.replace(Regex("""https?://\S+""")) { m ->
-            social.tbone.util.LinkCleaner.stripTrackingParams(m.value)
-        }
-        return out
+        // Strip tracking params from links so the relay text is canonical.
+        return social.tbone.util.LinkCleaner.cleanUrlsInText(out)
     }
 
     // Restore old UI buffers — top (status bar) + bottom (nav bar + keyboard) so all
@@ -198,7 +207,7 @@ fun ComposeScreen(
                 text = "×",
                 style = BonyType.title.copy(color = BonyColors.TextMute),
                 modifier = Modifier
-                    .clickable { onClose() }
+                    .clickable(enabled = !uiState.isPublishing) { exitComposeOnce() }
                     .padding(8.dp),
             )
             val title = when {
@@ -236,11 +245,12 @@ fun ComposeScreen(
                     .clickable(enabled = canSend) {
                         val trimmed = fieldValue.text.trim()
                         if (trimmed.isBlank()) return@clickable
+                        val mentionNpubs = MENTION_NPUB_REGEX.findAll(trimmed)
+                            .map { it.groupValues[1] }
+                            .toList()
                         viewModel.publish(
                             content = trimmed.resolveMentions(),
-                            // Restore functional close/pop: post must leave the tab
-                            // Old v0.4.7 used { onBack() }; new must pop back stack
-                            onSuccess = { onClose(); onPublished() },
+                            tagNpubs = mentionNpubs,
                         )
                     }
                     .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -323,8 +333,13 @@ fun ComposeScreen(
         }
 
         // ── Text editor ──────────────────────────────────────────────────────
-        val mentionVisual = remember(fieldValue.text, profiles) {
-            buildMentionTransformation(fieldValue.text, profiles)
+        val mentionAccent = BonyColors.Accent
+        val mentionVisual = remember(profiles, mentionAccent) {
+            VisualTransformation { source ->
+                // Transform the actual TextFieldValue text and map BOTH offset
+                // directions; the old identity mapping crashed on shorter labels.
+                buildMentionTransformedText(source.text, profiles, mentionAccent)
+            }
         }
         Column(
             modifier = Modifier
@@ -1163,37 +1178,6 @@ private fun BlossomServerRow(label: String, selected: Boolean, onClick: () -> Un
     }
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 }
-
-private fun buildMentionTransformation(
-    text: String,
-    profiles: Map<String, ProfileContent>,
-): VisualTransformation {
-    val npubRegex = Regex("""npub1[a-z0-9]{58,}""")
-    val spans = mutableListOf<SpanRange>()
-    npubRegex.findAll(text).forEach { match ->
-        val npub = match.value
-        val hex = Nip19.npubToHex(npub) ?: return@forEach
-        val label = profiles[hex]?.bestName ?: npub.take(10)
-        spans.add(SpanRange(match.range.first, match.range.last + 1, label))
-    }
-    if (spans.isEmpty()) return VisualTransformation.None
-    return VisualTransformation { _ ->
-        val out = buildAnnotatedString {
-            var cursor = 0
-            spans.sortedBy { it.start }.forEach { span ->
-                append(text.substring(cursor, span.start))
-                val start = length
-                append(span.label)
-                addStyle(SpanStyle(color = BonyColors.Accent), start, length)
-                cursor = span.end
-            }
-            append(text.substring(cursor))
-        }
-        TransformedText(out, OffsetMapping.Identity)
-    }
-}
-
-private data class SpanRange(val start: Int, val end: Int, val label: String)
 
 private fun String.getTextBeforeSelection(length: Int): String {
     // Used only to extract text before cursor; TextFieldValue handles selection

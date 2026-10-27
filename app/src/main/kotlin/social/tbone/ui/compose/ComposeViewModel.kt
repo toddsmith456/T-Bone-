@@ -9,6 +9,7 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import social.tbone.Tunables
@@ -70,6 +72,15 @@ data class ComposeUiState(
     /** Enabled Blossom servers (defaults + custom). */
     val blossomServers: List<String> = emptyList(),
 )
+
+/**
+ * One-shot composer effects. Navigation belongs to the UI, not a callback
+ * captured inside a ViewModel coroutine; the buffered channel also survives a
+ * short period with no collector (e.g. an external signer or a rotation).
+ */
+sealed interface ComposeEffect {
+    data object Published : ComposeEffect
+}
 
 @OptIn(FlowPreview::class)
 @HiltViewModel
@@ -133,6 +144,10 @@ class ComposeViewModel @Inject constructor(
     val uploadErrors = uploadErrorQueue.receiveAsFlow()
     private val uploadQueueLock = Any()
     private var pendingUploads = 0
+
+    private val publishEffectQueue = Channel<ComposeEffect>(Channel.BUFFERED)
+    val effects: Flow<ComposeEffect> = publishEffectQueue.receiveAsFlow()
+    private val publishInFlight = AtomicBoolean(false)
 
     // ── @ mention autocomplete ────────────────────────────────────────────────
     /** The text currently being typed after "@" (null when no mention in progress). */
@@ -362,6 +377,7 @@ class ComposeViewModel @Inject constructor(
         mediaUploadQueue.close()
         uploadedUrlQueue.close()
         uploadErrorQueue.close()
+        publishEffectQueue.close()
         if (mentionSearchRelayAdded) {
             pool.releaseRelay(Tunables.SEARCH_RELAY)
             mentionSearchRelayAdded = false
@@ -404,146 +420,173 @@ class ComposeViewModel @Inject constructor(
         _uiState.update { it.copy(pollMultiple = !it.pollMultiple) }
     }
 
+    /**
+     * Signs and publishes exactly one note. Navigation is delivered as a
+     * one-shot [ComposeEffect.Published] event; no UI callback is held by this
+     * coroutine, and every signing/relay/database failure is surfaced in state
+     * instead of escaping as an uncaught exception.
+     */
     fun publish(
         content: String,
-        onSuccess: () -> Unit,
         tagNpubs: List<String> = emptyList(),
         tagHashtags: List<String> = emptyList(),
     ) {
         val trimmed = content.trim()
         if (trimmed.isBlank()) return
+        // A fast double-tap on SEND must not create two publish jobs before
+        // isPublishing recomposes. This is independent of the Compose flag.
+        if (!publishInFlight.compareAndSet(false, true)) return
+        _uiState.update { it.copy(isPublishing = true, error = null) }
 
         viewModelScope.launch {
-            _uiState.update { it.copy(isPublishing = true, error = null) }
-
-            val signer = signerFactory.forActiveAccount()
-            if (signer == null) {
-                _uiState.update { it.copy(isPublishing = false, error = "No active account") }
-                return@launch
-            }
-
-            val replyTo = _uiState.value.replyToEvent
-            val explicitQuote = _uiState.value.quoteToEvent
-            // A reply opened from a quote-note still carries the quote's
-            // relationship. This prevents the composer from silently dropping
-            // the q reference while it correctly adds the new reply target.
-            val inheritedQuoteId = replyTo?.parsedTags?.quotedEventId
-            val inheritedQuote = if (explicitQuote == null && inheritedQuoteId != null) {
-                eventRepository.getById(inheritedQuoteId)
-            } else null
-            val quoteEvents = (
-                _uiState.value.quoteFolderEvents + listOfNotNull(explicitQuote, inheritedQuote)
-            ).distinctBy { it.id }
-            val quoteIds = (quoteEvents.map { it.id } + listOfNotNull(inheritedQuoteId)).distinct()
-
-            val tags = buildList {
-                if (replyTo != null) {
-                    // NIP-10: retain the root and mark the actual parent as
-                    // reply. Do not let a q-tag or a mention become the reply
-                    // target, and do not emit the same event twice when replying
-                    // directly to a root note.
-                    val rootId = replyTo.parsedTags.rootEventId
-                    if (rootId != null && rootId != replyTo.id) {
-                        add(buildJsonArray {
-                            add(JsonPrimitive("e")); add(JsonPrimitive(rootId))
-                            add(JsonPrimitive("")); add(JsonPrimitive("root"))
-                        })
-                    }
-                    add(buildJsonArray {
-                        add(JsonPrimitive("e")); add(JsonPrimitive(replyTo.id))
-                        add(JsonPrimitive("")); add(JsonPrimitive("reply"))
-                    })
-
-                    // p tags: author of the actual reply target + existing
-                    // NIP-10 participants. The quote's author is added below
-                    // separately, so both relationships survive publishing.
-                    val mentions = (listOf(replyTo.pubkey) + replyTo.parsedTags.replyToPubkeys).distinct()
-                    mentions.forEach { pubkey ->
-                        add(buildJsonArray { add(JsonPrimitive("p")); add(JsonPrimitive(pubkey)) })
-                    }
-                }
-                // NIP-18 quote references remain separate from NIP-10 reply
-                // e-tags. Folder quotes emit one q-tag (and author p-tag) per
-                // saved event, preserving the folder's displayed order.
-                quoteIds.forEach { quoteId ->
-                    add(buildJsonArray { add(JsonPrimitive("q")); add(JsonPrimitive(quoteId)) })
-                    quoteEvents.firstOrNull { it.id == quoteId }?.let { quoted ->
-                        add(buildJsonArray { add(JsonPrimitive("p")); add(JsonPrimitive(quoted.pubkey)) })
-                    }
-                }
-                // User-added @mentions (npubs → p-tags) and #hashtags (t-tags).
-                tagNpubs.distinct().forEach { npub ->
-                    val hex = Nip19.npubToHex(npub.trim().removePrefix("nostr:"))
-                    if (hex != null) {
-                        add(buildJsonArray { add(JsonPrimitive("p")); add(JsonPrimitive(hex)) })
-                    }
-                }
-                tagHashtags.distinct().forEach { tag ->
-                    val clean = tag.trim().removePrefix("#").lowercase()
-                        .filter { it.isLetterOrDigit() || it in "_" }
-                    if (clean.isNotEmpty()) {
-                        add(buildJsonArray { add(JsonPrimitive("t")); add(JsonPrimitive(clean)) })
-                    }
-                }
-            }
-
-            // Keep every quoted event visible to NIP-27 clients. Links are
-            // grouped below the writing line, in the same order as the folder.
-            val missingRefs = quoteIds
-                .map { id ->
-                    val quoted = quoteEvents.firstOrNull { it.id == id }
-                    val reference = if (quoted != null) {
-                        Nip19.hexToNevent(id, quoted.pubkey, quoted.kind)
-                    } else {
-                        Nip19.hexToNevent(id)
-                    }
-                    "nostr:$reference"
-                }
-                .filterNot { trimmed.contains(it) }
-            val finalContent = if (missingRefs.isNotEmpty()) {
-                "$trimmed\n\n${missingRefs.joinToString("\n")}"
-            } else {
-                trimmed
-            }
-
-            val isPoll = _uiState.value.pollEnabled
-            val pollKindTags = if (isPoll) {
-                val nonBlank = _uiState.value.pollOptions.map { it.trim() }
-                    .filter { it.isNotEmpty() }
-                    .take(Tunables.MAX_POLL_OPTIONS)
-                if (nonBlank.size < 2) {
-                    _uiState.update { it.copy(isPublishing = false, error = "Poll needs at least 2 options") }
+            try {
+                val signer = signerFactory.forActiveAccount()
+                if (signer == null) {
+                    _uiState.update { it.copy(isPublishing = false, error = "No active account") }
                     return@launch
                 }
-                Nip88.buildPollTags(
-                    options = nonBlank.map { label -> Nip88.PollOption(Nip88.generateOptionId(), label) },
-                    pollType = if (_uiState.value.pollMultiple) Nip88.PollType.MULTIPLECHOICE else Nip88.PollType.SINGLECHOICE,
-                )
-            } else null
 
-            val unsigned = UnsignedEvent(
-                pubkey = signer.pubkey,
-                kind = if (isPoll) EventKind.POLL else EventKind.TEXT_NOTE,
-                content = finalContent,
-                tags = if (pollKindTags != null) {
-                    tags + pollKindTags.map { tag ->
-                        kotlinx.serialization.json.buildJsonArray {
-                            tag.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }
+                val replyTo = _uiState.value.replyToEvent
+                val explicitQuote = _uiState.value.quoteToEvent
+                // A reply opened from a quote-note still carries the quote's
+                // relationship. This prevents the composer from silently dropping
+                // the q reference while it correctly adds the new reply target.
+                val inheritedQuoteId = replyTo?.parsedTags?.quotedEventId
+                val inheritedQuote = if (explicitQuote == null && inheritedQuoteId != null) {
+                    eventRepository.getById(inheritedQuoteId)
+                } else null
+                val quoteEvents = (
+                    _uiState.value.quoteFolderEvents + listOfNotNull(explicitQuote, inheritedQuote)
+                ).distinctBy { it.id }
+                val quoteIds = (quoteEvents.map { it.id } + listOfNotNull(inheritedQuoteId)).distinct()
+
+                val tags = buildList {
+                    if (replyTo != null) {
+                        // NIP-10: retain the root and mark the actual parent as
+                        // reply. Do not let a q-tag or a mention become the reply
+                        // target, and do not emit the same event twice when replying
+                        // directly to a root note.
+                        val rootId = replyTo.parsedTags.rootEventId
+                        if (rootId != null && rootId != replyTo.id) {
+                            add(buildJsonArray {
+                                add(JsonPrimitive("e")); add(JsonPrimitive(rootId))
+                                add(JsonPrimitive("")); add(JsonPrimitive("root"))
+                            })
+                        }
+                        add(buildJsonArray {
+                            add(JsonPrimitive("e")); add(JsonPrimitive(replyTo.id))
+                            add(JsonPrimitive("")); add(JsonPrimitive("reply"))
+                        })
+
+                        // p tags: author of the actual reply target + existing
+                        // NIP-10 participants. The quote's author is added below
+                        // separately, so both relationships survive publishing.
+                        val mentions = (listOf(replyTo.pubkey) + replyTo.parsedTags.replyToPubkeys).distinct()
+                        mentions.forEach { pubkey ->
+                            add(buildJsonArray { add(JsonPrimitive("p")); add(JsonPrimitive(pubkey)) })
                         }
                     }
-                } else tags,
-            )
+                    // NIP-18 quote references remain separate from NIP-10 reply
+                    // e-tags. Folder quotes emit one q-tag (and author p-tag) per
+                    // saved event, preserving the folder's displayed order.
+                    quoteIds.forEach { quoteId ->
+                        add(buildJsonArray { add(JsonPrimitive("q")); add(JsonPrimitive(quoteId)) })
+                        quoteEvents.firstOrNull { it.id == quoteId }?.let { quoted ->
+                            add(buildJsonArray { add(JsonPrimitive("p")); add(JsonPrimitive(quoted.pubkey)) })
+                        }
+                    }
+                    // User-added @mentions (npubs → p-tags) and #hashtags (t-tags).
+                    tagNpubs.distinct().forEach { npub ->
+                        val hex = Nip19.npubToHex(npub.trim().removePrefix("nostr:"))
+                        if (hex != null) {
+                            add(buildJsonArray { add(JsonPrimitive("p")); add(JsonPrimitive(hex)) })
+                        }
+                    }
+                    tagHashtags.distinct().forEach { tag ->
+                        val clean = tag.trim().removePrefix("#").lowercase()
+                            .filter { it.isLetterOrDigit() || it in "_" }
+                        if (clean.isNotEmpty()) {
+                            add(buildJsonArray { add(JsonPrimitive("t")); add(JsonPrimitive(clean)) })
+                        }
+                    }
+                }
 
-            signer.signEvent(unsigned)
-                .onSuccess { event ->
-                    pool.publish(event)
-                    eventRepository.save(event, signer.pubkey)
-                    _uiState.update { it.copy(isPublishing = false) }
-                    onSuccess()
+                // Keep every quoted event visible to NIP-27 clients. Links are
+                // grouped below the writing line, in the same order as the folder.
+                val missingRefs = quoteIds
+                    .map { id ->
+                        val quoted = quoteEvents.firstOrNull { it.id == id }
+                        val reference = if (quoted != null) {
+                            Nip19.hexToNevent(id, quoted.pubkey, quoted.kind)
+                        } else {
+                            Nip19.hexToNevent(id)
+                        }
+                        "nostr:$reference"
+                    }
+                    .filterNot { trimmed.contains(it) }
+                val finalContent = if (missingRefs.isNotEmpty()) {
+                    "$trimmed\n\n${missingRefs.joinToString("\n")}"
+                } else {
+                    trimmed
                 }
-                .onFailure { e ->
-                    _uiState.update { it.copy(isPublishing = false, error = e.message) }
+
+                val isPoll = _uiState.value.pollEnabled
+                val pollKindTags = if (isPoll) {
+                    val nonBlank = _uiState.value.pollOptions.map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                        .take(Tunables.MAX_POLL_OPTIONS)
+                    if (nonBlank.size < 2) {
+                        _uiState.update { it.copy(isPublishing = false, error = "Poll needs at least 2 options") }
+                        return@launch
+                    }
+                    Nip88.buildPollTags(
+                        options = nonBlank.map { label -> Nip88.PollOption(Nip88.generateOptionId(), label) },
+                        pollType = if (_uiState.value.pollMultiple) Nip88.PollType.MULTIPLECHOICE else Nip88.PollType.SINGLECHOICE,
+                    )
+                } else null
+
+                val unsigned = UnsignedEvent(
+                    pubkey = signer.pubkey,
+                    kind = if (isPoll) EventKind.POLL else EventKind.TEXT_NOTE,
+                    content = finalContent,
+                    tags = if (pollKindTags != null) {
+                        tags + pollKindTags.map { tag ->
+                            kotlinx.serialization.json.buildJsonArray {
+                                tag.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }
+                            }
+                        }
+                    } else tags,
+                )
+
+                // getOrElse keeps signer failures in the error state. The outer
+                // catch also covers relays/Room/encoding failures that used to
+                // escape from Result.onSuccess and kill the app.
+                val event = signer.signEvent(unsigned).getOrElse { signError ->
+                    _uiState.update {
+                        it.copy(
+                            isPublishing = false,
+                            error = signError.message?.takeIf { it.isNotBlank() } ?: "Couldn't sign note",
+                        )
+                    }
+                    return@launch
                 }
+                pool.publish(event)
+                eventRepository.save(event, signer.pubkey)
+                _uiState.update { it.copy(isPublishing = false) }
+                publishEffectQueue.trySend(ComposeEffect.Published)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isPublishing = false,
+                        error = error.message?.take(240)?.takeIf { it.isNotBlank() }
+                            ?: "Couldn't publish note",
+                    )
+                }
+            } finally {
+                publishInFlight.set(false)
+            }
         }
     }
 

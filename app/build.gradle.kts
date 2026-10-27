@@ -4,6 +4,17 @@ val localProps = Properties()
 val localPropsFile = rootProject.file("local.properties")
 if (localPropsFile.exists()) localProps.load(localPropsFile.inputStream())
 
+// Release identity lives in version.properties so the APK, BuildConfig,
+// Settings UI, Update Center, tag gate, and release docs cannot drift apart.
+// scripts/make-release.sh is the only supported way to bump these values.
+val releaseProps = Properties().apply {
+    rootProject.file("version.properties").inputStream().use(::load)
+}
+val appVersionCode = releaseProps.getProperty("versionCode")?.trim()?.toIntOrNull()
+    ?: error("version.properties must define a numeric versionCode")
+val appVersionName = releaseProps.getProperty("versionName")?.trim()?.takeIf { it.isNotEmpty() }
+    ?: error("version.properties must define versionName")
+
 // Release keystore resolution order (first hit wins):
 //   1. Environment variables (used by GitHub Actions CI):
 //        KEYSTORE_PATH, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD
@@ -56,8 +67,8 @@ android {
         applicationId = "social.tbone.fork"
         minSdk = 26
         targetSdk = 34
-        versionCode = 67
-        versionName = "0.5.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
     }
 
     signingConfigs {
