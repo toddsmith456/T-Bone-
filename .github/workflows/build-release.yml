@@ -106,10 +106,22 @@ jobs:
         run: |
           echo "=== unit tests failed ==="
           find app/build -name "*.html" -o -name "*.xml" | head -n 20 || true
-          cat app/build/reports/tests/debugUnitTest/classes/*.html 2>&1 | head -n 200 || true
-          cat app/build/test-results/debugUnitTest/*.xml 2>&1 | head -n 300 || true
-          ls -R app/build/reports/tests 2>&1 | head -n 100 || true
-          df -h || true
+          cat app/build/reports/tests/debugUnitTest/classes/social.tbone.*.html 2>&1 | head -n 300 || true
+          cat app/build/test-results/debugUnitTest/*.xml 2>&1 | head -n 500 || true
+          ls app/build/test-results/debugUnitTest/ 2>&1 | head -n 30 || true
+          # Push to ci-log for retrieval
+          mkdir -p /tmp/ci-log
+          find app/build -name "*.xml" -exec cp {} /tmp/ci-log/ \; 2>&1 | head || true
+          find app/build -name "*.html" -exec cp {} /tmp/ci-log/ \; 2>&1 | head || true
+          cp /tmp/assemble.log /tmp/ci-log/build.log 2>&1 | head || true
+          echo "${{ github.sha }}" > /tmp/ci-log/sha.txt
+          cd /tmp/ci-log
+          git init
+          git config user.email "ci@tbone.local"
+          git config user.name "CI Logger"
+          git add . 2>&1 | head || true
+          git commit -m "CI log for ${{ github.sha }}" || true
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:ci-log --force || true
 
       - name: Package release APK and checksum
         run: |
