@@ -72,9 +72,10 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          GRADLE_OPTS: -Xmx4g -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx2g"
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleRelease --stacktrace
+          ./gradlew :app:assembleRelease --stacktrace --no-configuration-cache
 
       - name: Unit tests (release aborts on failure)
         run: |
