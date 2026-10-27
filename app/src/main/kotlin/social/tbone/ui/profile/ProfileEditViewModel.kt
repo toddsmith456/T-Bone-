@@ -64,6 +64,7 @@ class ProfileEditViewModel @Inject constructor(
     fun setImage(uri: Uri, banner: Boolean) {
         viewModelScope.launch {
             _uiState.update { it.copy(uploading = true, error = null, done = false) }
+            var preparedFile: java.io.File? = null
             try {
                 val signer = signerFactory.forActiveAccount()
                     ?: error("no active account")
@@ -73,6 +74,7 @@ class ProfileEditViewModel @Inject constructor(
                     maxBytes = MediaProcessor.AVATAR_MAX_BYTES,
                     compress = true,
                 ) ?: error("could not read image")
+                preparedFile = prepared.file
                 val url = blossomUploader.upload(
                     file = prepared.file,
                     mime = prepared.mime,
@@ -102,6 +104,8 @@ class ProfileEditViewModel @Inject constructor(
                     }
             } catch (e: Exception) {
                 _uiState.update { it.copy(uploading = false, error = e.message ?: "upload failed") }
+            } finally {
+                try { preparedFile?.delete() } catch (_: Exception) {}
             }
         }
     }

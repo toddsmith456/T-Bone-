@@ -351,10 +351,10 @@ fun DecoyNoteEditorScreen(
                     recorderRef[0]?.stop()
                     recorderRef[0]?.release()
                     recorderRef[0] = null
-                    file.readBytes()
+                    file.readBytes().also { try { file.delete() } catch (_: Exception) {} }
                 }.getOrNull()
             }
-            if (bytes != null && bytes.isNotEmpty()) attach("voice", "audio/mp4", bytes)
+            if (bytes != null && bytes.isNotEmpty()) attach("voice", "audio/mp4", bytes) else try { file.delete() } catch (_: Exception) {}
         }
     }
 
@@ -679,9 +679,16 @@ private fun playAttachment(context: Context, att: NoteAttachmentUi, onDone: () -
         val file = File(context.cacheDir, "play_${att.id}.m4a")
         file.writeBytes(att.data)
         stopPlayback()
+        // Delete any stale play file after 6h grace is handled by CacheCleaner;
+        // we also clear the current file on completion to avoid accumulation.
         player = MediaPlayer().apply {
             setDataSource(file.absolutePath)
-            setOnCompletionListener { stopPlayback(); onDone() }
+            setOnCompletionListener {
+                stopPlayback()
+                try { file.delete() } catch (_: Exception) {}
+                onDone()
+            }
+            setOnErrorListener { _, _, _ -> try { file.delete() } catch (_: Exception) {}; false }
             prepare()
             start()
         }

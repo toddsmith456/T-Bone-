@@ -93,6 +93,7 @@ fun SettingsScreen(
     val videoQuality by viewModel.videoQuality.collectAsStateWithLifecycle()
     val videoPlaybackMode by viewModel.videoPlaybackMode.collectAsStateWithLifecycle()
     val videoThumbnails by viewModel.videoThumbnails.collectAsStateWithLifecycle()
+    val imageCacheLightweight by viewModel.imageCacheLightweight.collectAsStateWithLifecycle()
     val avatarMode by viewModel.avatarMode.collectAsStateWithLifecycle()
     val avatarAnimated by viewModel.avatarAnimated.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
@@ -164,6 +165,7 @@ fun SettingsScreen(
             videoQuality = videoQuality,
             videoPlaybackMode = videoPlaybackMode,
             videoThumbnails = videoThumbnails,
+            imageCacheLightweight = imageCacheLightweight,
             compact = declutterMode,
             expanded = sectionExpanded("media"),
             onToggle = { toggleSection("media") },
@@ -451,7 +453,7 @@ private fun SettingsNoteActionsSection(noteMenuModerationEnabled: Boolean, clien
 }
 
 @Composable
-private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: () -> Unit, onBlossom: () -> Unit, imageLoadMode: ImageLoadMode, videoQuality: VideoQuality, videoPlaybackMode: VideoPlaybackMode, videoThumbnails: Boolean, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
+private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: () -> Unit, onBlossom: () -> Unit, imageLoadMode: ImageLoadMode, videoQuality: VideoQuality, videoPlaybackMode: VideoPlaybackMode, videoThumbnails: Boolean, imageCacheLightweight: Boolean, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
     // ── Media section ─────────────────────────────────────────────────────
     SettingsCategoryHeader("MEDIA", compact, expanded, onToggle)
     if (compact && !expanded) return
@@ -606,6 +608,31 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
                 checked = videoThumbnails,
                 enabled = videoQuality != VideoQuality.OFF && videoPlaybackMode == VideoPlaybackMode.LOAD_ON_TAP,
                 onCheckedChange = { viewModel.setVideoThumbnails(it) },
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("lightweight image cache", style = BonyType.body.copy(color = BonyColors.TextDim))
+                Text(
+                    "64 MB cap · evicts old images sooner · keeps the app lightweight",
+                    style = BonyType.meta.copy(color = BonyColors.TextMute),
+                )
+            }
+            BonyToggle(
+                checked = imageCacheLightweight,
+                enabled = true,
+                onCheckedChange = { viewModel.setImageCacheLightweight(it) },
+            )
+        }
+        if (imageCacheLightweight) {
+            Text(
+                "lightweight is on — next launch trims the image cache to 64 MB",
+                style = BonyType.meta.copy(color = BonyColors.TextMute),
+                modifier = Modifier.padding(top = 6.dp),
             )
         }
     }

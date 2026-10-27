@@ -52,6 +52,7 @@ class AppSettings @Inject constructor(
         private val VIDEO_QUALITY = stringPreferencesKey("video_quality")
         private val VIDEO_PLAYBACK_MODE = stringPreferencesKey("video_playback_mode")
         private val VIDEO_THUMBNAILS = booleanPreferencesKey("video_thumbnails")
+        private val IMAGE_CACHE_LIGHTWEIGHT = booleanPreferencesKey("image_cache_lightweight")
         private val AVATAR_MODE = stringPreferencesKey("avatar_mode")
         private val AVATAR_ANIMATED = booleanPreferencesKey("avatar_animated")
         // Enabled notification-type filters (names of NotifFilter). Empty set = all on.
@@ -218,6 +219,9 @@ class AppSettings @Inject constructor(
 
     private val _videoThumbnails = MutableStateFlow(true)
     val videoThumbnails = _videoThumbnails.asStateFlow()
+
+    private val _imageCacheLightweight = MutableStateFlow(false)
+    val imageCacheLightweight = _imageCacheLightweight.asStateFlow()
 
     private val _avatarMode = MutableStateFlow(AvatarMode.REGULAR)
     val avatarMode = _avatarMode.asStateFlow()
@@ -405,6 +409,7 @@ class AppSettings @Inject constructor(
                 _videoQuality.value = VideoQuality.fromPref(prefs[VIDEO_QUALITY])
                 _videoPlaybackMode.value = VideoPlaybackMode.fromPref(prefs[VIDEO_PLAYBACK_MODE])
                 _videoThumbnails.value = prefs[VIDEO_THUMBNAILS] ?: true
+                _imageCacheLightweight.value = prefs[IMAGE_CACHE_LIGHTWEIGHT] ?: false
                 _avatarMode.value = AvatarMode.fromPref(prefs[AVATAR_MODE])
                 _avatarAnimated.value = prefs[AVATAR_ANIMATED] ?: true
                 _notificationEnabledTypes.value = prefs[NOTIFICATION_ENABLED_TYPES] ?: emptySet()
@@ -556,6 +561,11 @@ class AppSettings @Inject constructor(
 
     suspend fun setVideoThumbnails(enabled: Boolean) {
         dataStore.edit { it[VIDEO_THUMBNAILS] = enabled }
+    }
+
+    suspend fun setImageCacheLightweight(enabled: Boolean) {
+        _imageCacheLightweight.value = enabled
+        dataStore.edit { it[IMAGE_CACHE_LIGHTWEIGHT] = enabled }
     }
 
     suspend fun setAvatarMode(mode: AvatarMode) {

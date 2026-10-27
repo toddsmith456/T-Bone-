@@ -112,6 +112,9 @@ class SettingsViewModel @Inject constructor(
     val videoThumbnails: StateFlow<Boolean> = appSettings.videoThumbnails
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
+    val imageCacheLightweight: StateFlow<Boolean> = appSettings.imageCacheLightweight
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
     val avatarMode: StateFlow<AvatarMode> = appSettings.avatarMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AvatarMode.REGULAR)
 
@@ -334,6 +337,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setVideoThumbnails(enabled: Boolean) {
         viewModelScope.launch { appSettings.setVideoThumbnails(enabled) }
+    }
+
+    fun setImageCacheLightweight(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setImageCacheLightweight(enabled) }
     }
 
     fun setAvatarMode(mode: AvatarMode) {

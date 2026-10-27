@@ -4,6 +4,7 @@ import android.app.Application
 import coil.Coil
 import coil.ImageLoader
 import coil.decode.VideoFrameDecoder
+import coil.disk.DiskCache
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.combine
@@ -71,11 +72,21 @@ class BonyApp : Application() {
                 }
         }
 
-        // Keep Coil's image loader in sync with the Tor toggle so avatar/banner/image
-        // fetches are routed through the same proxy as relay WebSockets. The same
-        // client is shared with the image viewer's download path (ImageClientProvider).
+        // One-time cache hygiene on every cold start (Option A): prune
+        // leaked transients older than 7 days + stale .part files. This is
+        // I/O-light and idempotent; users see the "3 GB cache" shrink after
+        // the next launch without any data loss.
+        applicationScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                social.tbone.util.CacheCleaner.cleanup(this@BonyApp)
+            } catch (_: Exception) { }
+        }
+
+        // Keep Coil's image loader in sync with Tor + lightweight cache toggle.
+        // Lightweight = 64 MB cap; otherwise Coil default (~250 MB).
         applicationScope.launch {
-            appSettings.torEnabled.collect { useTor ->
+            combine(appSettings.torEnabled, appSettings.imageCacheLightweight) { tor, lightweight -> tor to lightweight }
+                .collect { (useTor, lightweight) ->
                 val status = if (useTor) OrbotHelper.getStatus(this@BonyApp) else null
                 val connected = status as? OrbotStatus.InstalledAndConnected
                 val client = RelayConnection.buildClient(
@@ -88,6 +99,12 @@ class BonyApp : Application() {
                     ImageLoader.Builder(this@BonyApp)
                         .okHttpClient(client)
                         .components { add(VideoFrameDecoder.Factory()) }
+                        .diskCache {
+                            DiskCache.Builder()
+                                .directory(this@BonyApp.cacheDir.resolve("image_cache"))
+                                .maxSizeBytes(if (lightweight) 64L * 1024 * 1024 else 250L * 1024 * 1024)
+                                .build()
+                        }
                         .build()
                 )
             }

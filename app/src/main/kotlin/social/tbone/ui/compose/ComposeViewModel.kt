@@ -239,6 +239,7 @@ class ComposeViewModel @Inject constructor(
         _uiState.update {
             it.copy(uploadingKind = request.kind)
         }
+        var preparedFile: java.io.File? = null
         try {
             val signer = signerFactory.forActiveAccount()
                 ?: error("no active account")
@@ -253,6 +254,7 @@ class ComposeViewModel @Inject constructor(
                 )
                 else -> null
             } ?: error("could not read ${request.kind} media")
+            preparedFile = prepared.file
             val label = when (request.kind) {
                 "image" -> "Uploading image"
                 "video" -> "Uploading video"
@@ -273,6 +275,9 @@ class ComposeViewModel @Inject constructor(
             val message = error.message ?: "upload failed"
             uploadErrorQueue.trySend(message)
         } finally {
+            // Option A hygiene: staging file lives in cacheDir — remove after upload
+            try { preparedFile?.delete() } catch (_: Exception) {}
+
             synchronized(uploadQueueLock) {
                 pendingUploads = (pendingUploads - 1).coerceAtLeast(0)
                 _uiState.update {
