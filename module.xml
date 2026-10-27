@@ -1,0 +1,18 @@
+<lint-module
+    format="1"
+    dir="/home/runner/work/T-Bone-/T-Bone-/app"
+    name=":app"
+    type="APP"
+    maven="bony:app:"
+    agpVersion="8.3.2"
+    buildFolder="build"
+    bootClassPath="/usr/local/lib/android/sdk/platforms/android-34/android.jar:/usr/local/lib/android/sdk/build-tools/34.0.0/core-lambda-stubs.jar"
+    javaSourceLevel="17"
+    compileTarget="android-34">
+  <lintOptions
+      abortOnError="true"
+      absolutePaths="true"
+      checkReleaseBuilds="true"
+      explainIssues="true"/>
+  <variant name="release"/>
+</lint-module>

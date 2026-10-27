@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">T-bone</string>
+    <string name="notepad_name">Notepad</string>
+    <style name="Theme.Tbone" parent="android:Theme.DeviceDefault.NoActionBar"/>
+</resources>

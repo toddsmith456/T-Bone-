@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext is permitted for legacy HTTP media and local Nostr relay access.
+  Public relay connections should use WSS; Citrine is commonly available on
+  the device loopback at ws://localhost:4869. When Tor is enabled, only this
+  local relay traffic bypasses Orbot; public traffic continues through Tor.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Exposes filesDir/logs/ for log file sharing via FileProvider -->
+    <files-path name="logs" path="logs/" />
+    <!-- Exposes filesDir/recordings/ for voice-note sharing via FileProvider -->
+    <files-path name="recordings" path="recordings/" />
+    <!-- Short-lived PNG/MP4 share cards exported through a read-only URI. -->
+    <cache-path name="share_cards" path="share_cards/" />
+    <!-- Files a webxdc mini app produced with sendToChat(), shared via the system sheet. -->
+    <cache-path name="webxdc_share" path="webxdc_share/" />
+    <!-- Verified release APK passed to Android's system package installer. -->
+    <cache-path name="updates" path="updates/" />
+</paths>
