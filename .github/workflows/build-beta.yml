@@ -1,0 +1,69 @@
+name: Beta APK
+
+# A push to beta with [build beta] in its commit message requests a build.
+# Manual dispatch becomes available once this workflow is on the default branch.
+on:
+  push:
+    branches: [beta]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/beta' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build beta]'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Privacy gate
+        run: ./scripts/privacy-check.sh
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: ''
+      - name: Require and decode stable signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing $name Actions secret. See docs/RELEASE.md. Beta builds never use fallback debug signing."
+              exit 1
+            fi
+          done
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/beta.keystore"
+          chmod 600 "$RUNNER_TEMP/beta.keystore"
+      - name: Build signed beta APK
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/beta.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
+        run: ./gradlew :app:assembleBeta --stacktrace --no-configuration-cache
+      - name: Verify identity, signature and checksum
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/beta/app-beta.apk
+          test -f "$APK"
+          TOOLS=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          AAPT="$(dirname "$TOOLS")/aapt"
+          "$TOOLS" verify --verbose --print-certs "$APK"
+          "$AAPT" dump badging "$APK" | grep "package: name='social.tbone.fork.beta'"
+          mkdir -p beta-artifact
+          cp "$APK" "beta-artifact/T-Bone-beta-${GITHUB_SHA:0:12}.apk"
+          (cd beta-artifact && sha256sum *.apk > SHA256SUMS.txt)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: T-Bone-beta-${{ github.run_number }}
+          path: beta-artifact/
+          if-no-files-found: error
+          retention-days: 90

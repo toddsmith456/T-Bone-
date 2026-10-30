@@ -69,6 +69,7 @@ android {
         targetSdk = 34
         versionCode = appVersionCode
         versionName = appVersionName
+        buildConfigField("boolean", "IS_BETA", "false")
     }
 
     signingConfigs {
@@ -119,6 +120,13 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+        }
+        create("beta") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".beta"
+            versionNameSuffix = "-beta"
+            buildConfigField("boolean", "IS_BETA", "true")
+            matchingFallbacks += listOf("release")
         }
     }
 

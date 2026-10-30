@@ -120,7 +120,7 @@ class UpdateManager @Inject constructor(
     }
 
     init {
-        scope.launch(Dispatchers.IO) {
+        if (!BuildConfig.IS_BETA) scope.launch(Dispatchers.IO) {
             while (isActive) {
                 val dueAt = _state.value.lastCheckedAt + UPDATE_CHECK_INTERVAL_MS
                 val waitMs = (dueAt - System.currentTimeMillis()).coerceAtLeast(0L)
@@ -135,6 +135,7 @@ class UpdateManager @Inject constructor(
     }
 
     fun checkNow() {
+        if (BuildConfig.IS_BETA) return
         scope.launch(Dispatchers.IO) { performCheck() }
     }
 
@@ -274,6 +275,7 @@ class UpdateManager @Inject constructor(
 
     /** Download, verify package identity and signer compatibility, then cache the APK. */
     fun downloadUpdate() {
+        if (BuildConfig.IS_BETA) return
         val snapshot = _state.value
         if (snapshot.apkUrl.isNullOrBlank() || snapshot.isDownloading) return
         // Allow re-download even if not “newer” when user explicitly taps download —

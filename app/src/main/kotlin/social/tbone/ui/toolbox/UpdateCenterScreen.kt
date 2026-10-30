@@ -89,11 +89,19 @@ fun UpdateCenterScreen(
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
-        UpdateCenterContent(
-            state = state,
-            viewModel = viewModel,
-            context = context,
-        )
+        if (BuildConfig.IS_BETA) {
+            Text(
+                "Beta builds do not check for or install main releases. Download a new beta APK from GitHub Actions.",
+                modifier = Modifier.padding(14.dp),
+                style = BonyType.body.copy(color = BonyColors.Text),
+            )
+        } else {
+            UpdateCenterContent(
+                state = state,
+                viewModel = viewModel,
+                context = context,
+            )
+        }
         Spacer(Modifier.height(32.dp))
     }
 }
