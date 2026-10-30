@@ -456,6 +456,13 @@ fun ComposeScreen(
                 }
             }
 
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                Text("◎ preview", style = BonyType.tag.copy(color = BonyColors.TextMute),
+                    modifier = Modifier.clickable { showPreview = true }.padding(4.dp))
+            }
             // ── Toolbar ───────────────────────────────────────────────────────
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
             Row(
@@ -508,9 +515,6 @@ fun ComposeScreen(
                     ),
                     modifier = Modifier.clickable { viewModel.togglePoll() },
                 )
-                Spacer(Modifier.width(10.dp))
-                Text("◎ preview", style = BonyType.tag.copy(color = BonyColors.TextMute),
-                    modifier = Modifier.clickable { showPreview = true })
                 Spacer(Modifier.weight(1f))
                 Text(
                     text = "${fieldValue.text.length} / ∞",
@@ -769,6 +773,8 @@ private fun ComposeContextCard(event: Event, label: String) {
         modifier = Modifier
             .fillMaxWidth()
             .background(BonyColors.SurfaceAlt)
+            .heightIn(max = 240.dp)
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
         Text(
