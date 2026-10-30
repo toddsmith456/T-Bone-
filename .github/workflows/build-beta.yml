@@ -49,6 +49,8 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
         run: ./gradlew :app:assembleBeta --stacktrace --no-configuration-cache
+      - name: Run unit tests
+        run: ./gradlew :app:testBetaUnitTest --stacktrace --no-configuration-cache
       - name: Verify identity, signature and checksum
         run: |
           set -euo pipefail

@@ -16,32 +16,6 @@ import social.tbone.nostr.hexToBytes
 import social.tbone.nostr.toHex
 class ZapProtocolTest {
     @Test
-    fun validatesLightningAddressShapesAndNormalizes() {
-        assertEquals("alice@example.com", LightningAddressPolicy.normalize(" alice@example.com "))
-        assertEquals("alice@example.com", LightningAddressPolicy.normalize("ALICE@EXAMPLE.COM"))
-        assertNull(LightningAddressPolicy.normalizeOrNull("not-an-address"))
-        assertNull(LightningAddressPolicy.normalizeOrNull("missing-at.example.com"))
-        assertNull(LightningAddressPolicy.normalizeOrNull("a@b"))
-        assertEquals("lnurl1dp68gurn8ghj7mrww4exctnxd9shg6npvchxxmmd9w", LightningAddressPolicy.normalizeOrNull("lnurl1dp68gurn8ghj7mrww4exctnxd9shg6npvchxxmmd9w".lowercase()))
-        // lightning: prefix
-        assertEquals("bob@domain.org", LightningAddressPolicy.normalize("lightning:bob@domain.org"))
-    }
-
-    @Test
-    fun profileLightningAddressPrefersLud16AndSupportsLnurlFallback() {
-        assertEquals(
-            "alice@example.com",
-            ProfileContent(lud16 = " alice@example.com ", lud06 = "LNURL1fallback").lightningAddress,
-        )
-        assertEquals("LNURL1fallback", ProfileContent(lud06 = " LNURL1fallback ").lightningAddress)
-        assertEquals(
-            "https://pay.example/.well-known/lnurlp/alice",
-            Nip19.lnurlToUrl("https://pay.example/.well-known/lnurlp/alice"),
-        )
-        assertNull(Nip19.lnurlToUrl("not-a-lightning-address"))
-    }
-
-    @Test
     fun nip44ConversationKeyMatchesAmethystVector() {
         val key = Nip44.conversationKey(
             "315e59ff51cb9209768cf7da80791ddcaae56ac9775eb25b6dee1234bc5d2268".hexToBytes(),
@@ -71,29 +45,9 @@ class ZapProtocolTest {
     }
 
     @Test
-    fun encodesLnurlTagAsBech32AndRoundTrips() {
-        val endpoint = "https://pay.example/.well-known/lnurlp/alice"
-        val encoded = Nip19.lnurlToBech32(endpoint)
-        assertTrue(encoded?.startsWith("lnurl1") == true)
-        assertEquals(endpoint, Nip19.lnurlToUrl(encoded!!))
-    }
-
-    @Test
-    fun rejectsInvalidOrAmountlessBolt11BeforePayment() {
-        assertNull(LightningInvoice.amountMsats("not-an-invoice"))
-        assertNull(LightningInvoice.amountMsats(fakeInvoice("lnbc")))
-        assertEquals(250_000_000L, LightningInvoice.amountMsats(fakeInvoice("lnbc2500u")))
-        assertEquals(100_000L, LightningInvoice.amountMsats(fakeInvoice("lnbc1u")))
-        assertNull(LightningInvoice.amountMsats(fakeInvoice("lnbc1p")))
-    }
-
-    @Test
-    fun createsLightningAndMoneroWalletUris() {
-        val invoice = "lnbc2500u1qqqqqq"
-        assertEquals("lightning:$invoice", WalletPaymentUris.lightningInvoice(invoice))
+    fun createsMoneroWalletUris() {
         val address = validMoneroAddress()
         assertEquals("monero:$address", WalletPaymentUris.moneroAddress(address))
-        assertTrue(runCatching { WalletPaymentUris.lightningInvoice(" ") }.isFailure)
     }
 
     @Test
@@ -149,39 +103,6 @@ class ZapProtocolTest {
     }
 
     @Test
-    fun parsesLightningPaymentTargetsAndIgnoresInvalid() {
-        val lightning = event(
-            buildJsonArray { add("payto"); add("lightning"); add("alice@example.com") },
-            buildJsonArray { add("payto"); add("monero"); add(validMoneroAddress()) },
-        )
-        assertEquals("alice@example.com", NipA3PaymentTargets.lightningAddress(lightning))
-        val lud16 = event(buildJsonArray { add("payto"); add("lud16"); add("bob@getalby.com") })
-        assertEquals("bob@getalby.com", NipA3PaymentTargets.lightningAddress(lud16))
-        val otherKind = event(buildJsonArray { add("payto"); add("lightning"); add("alice@example.com") }, kind = 1)
-        assertNull(NipA3PaymentTargets.lightningAddress(otherKind))
-        val malformed = event(buildJsonArray { add("payto"); add("lightning"); add("not-an-address") })
-        assertNull(NipA3PaymentTargets.lightningAddress(malformed))
-        assertTrue(NipA3PaymentTargets.hasLightningTag(malformed))
-    }
-
-    @Test
-    fun updatesLightningTargetWithoutDroppingOtherOrUnknownTags() {
-        val pubkey = "ef".repeat(32)
-        val monero = buildJsonArray { add("payto"); add("monero"); add(validMoneroAddress()) }
-        val unknown = buildJsonArray { add("future-tag"); add("one") }
-        val oldLightning = buildJsonArray { add("payto"); add("lud16"); add("old@example.com") }
-        val existing = event(monero, unknown, oldLightning, pubkey = pubkey)
-        val updated = NipA3PaymentTargets.updateLightningAddress(pubkey, existing, "new@example.com", existing.createdAt + 1)
-        assertEquals(EventKind.PAYMENT_TARGETS, updated.kind)
-        assertEquals(pubkey, updated.pubkey)
-        assertEquals(listOf(monero, unknown), updated.tags.take(2))
-        assertEquals(listOf("payto", "lightning", "new@example.com"), updated.tags.last().map { it.toString().trim('"') })
-        // Removal preserves others
-        val removed = NipA3PaymentTargets.updateLightningAddress(pubkey, existing, null, existing.createdAt + 1)
-        assertEquals(listOf(monero, unknown), removed.tags)
-    }
-
-    @Test
     fun removingMoneroTargetPreservesAllNonMoneroTags() {
         val pubkey = "cd".repeat(32)
         val bitcoin = buildJsonArray { add("payto"); add("bitcoin"); add("bc1qother") }
@@ -210,22 +131,4 @@ class ZapProtocolTest {
 
     private fun validMoneroAddress() = "4" + "1".repeat(94)
 
-    private fun fakeInvoice(hrp: String): String {
-        val charset = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
-        val data = listOf(0, 1, 2, 3, 4, 5)
-        fun polymod(values: List<Int>): Int {
-            val generator = intArrayOf(0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b)
-            var checksum = 1
-            for (value in values) {
-                val top = checksum ushr 25
-                checksum = ((checksum and 0x1ffffff) shl 5) xor value
-                for (i in generator.indices) if (((top ushr i) and 1) != 0) checksum = checksum xor generator[i]
-            }
-            return checksum
-        }
-        val expanded = hrp.map { it.code ushr 5 } + listOf(0) + hrp.map { it.code and 31 }
-        val checksum = polymod(expanded + data + List(6) { 0 }) xor 1
-        val check = (0 until 6).map { (checksum ushr (5 * (5 - it))) and 31 }
-        return hrp + "1" + (data + check).joinToString("") { charset[it].toString() }
-    }
 }

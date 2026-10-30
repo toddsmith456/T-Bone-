@@ -38,17 +38,6 @@ data class MoneroTargetLookup(
     val hasMoneroTag: Boolean get() = NipA3PaymentTargets.hasMoneroTag(event)
 }
 
-/** Lightning counterpart — mirrors [MoneroTargetLookup] exactly. */
-data class LightningTargetLookup(
-    val event: Event?,
-    val fullySynced: Boolean,
-    val usedLocalCache: Boolean,
-    val queriedRelays: Int,
-    val respondingRelays: Int,
-) {
-    val lightningAddress: String? get() = NipA3PaymentTargets.lightningAddress(event)
-    val hasLightningTag: Boolean get() = NipA3PaymentTargets.hasLightningTag(event)
-}
 
 data class PaymentTargetPublishReceipt(
     val acceptedRelays: Int,
@@ -310,118 +299,6 @@ class PaymentTargetsRepository @Inject constructor(
         }
     }
 
-    // ── Lightning (mirrors Monero) ────────────────────────────────────────────
-
-    private data class CachedLightningLookup(val value: LightningTargetLookup, val cachedAtMs: Long)
-    private val lightningLookupCache = LinkedHashMap<String, CachedLightningLookup>(16, 0.75f, true)
-
-    suspend fun lookupLightningTarget(
-        pubkey: String,
-        forceRefresh: Boolean = false,
-    ): LightningTargetLookup = withContext(Dispatchers.IO) {
-        require(pubkey.matches(Regex("^[0-9a-fA-F]{64}$"))) { "invalid Nostr public key" }
-        val authorPubkey = pubkey.lowercase()
-        val now = System.currentTimeMillis()
-        if (!forceRefresh) lightningCached(authorPubkey, now)?.let { return@withContext it }
-
-        lookupMutex.withLock {
-            val insideNow = System.currentTimeMillis()
-            if (!forceRefresh) lightningCached(authorPubkey, insideNow)?.let { return@withLock it }
-
-            val local = eventRepository.getLatestByAuthorAndKind(authorPubkey, NipA3PaymentTargets.KIND)
-                ?.takeIf { it.pubkey.equals(authorPubkey, ignoreCase = true) && it.verify() }
-            val network = fetchLatestFromConnectedRelays(authorPubkey)
-            val newestRelayEvent = network.events.maxWithOrNull(EVENT_ORDER)
-            val newest = listOfNotNull(local, newestRelayEvent).maxWithOrNull(EVENT_ORDER)
-
-            if (newestRelayEvent != null &&
-                (local == null || EVENT_ORDER.compare(newestRelayEvent, local) > 0)
-            ) {
-                eventRepository.save(newestRelayEvent, "")
-            }
-
-            val usedLocalCache = newest != null && newestRelayEvent?.id != newest.id
-            val value = LightningTargetLookup(
-                event = newest,
-                fullySynced = network.complete && !usedLocalCache,
-                usedLocalCache = usedLocalCache,
-                queriedRelays = network.queriedRelayCount,
-                respondingRelays = network.respondingRelayCount,
-            )
-            if (value.fullySynced) lightningCache(authorPubkey, value, System.currentTimeMillis())
-            value
-        }
-    }
-
-    suspend fun publishOwnLightningAddress(
-        pubkey: String,
-        rawAddress: String?,
-    ): Result<PaymentTargetPublishReceipt> {
-        return try {
-            val receipt = withContext(Dispatchers.IO) {
-                require(pubkey.matches(Regex("^[0-9a-fA-F]{64}$"))) { "invalid Nostr public key" }
-                val authorPubkey = pubkey.lowercase()
-                val address = rawAddress?.takeIf { it.isNotBlank() }?.let(LightningAddressPolicy::normalize)
-                val latest = lookupLightningTarget(authorPubkey, forceRefresh = true)
-                require(latest.fullySynced) {
-                    "Could not confirm the latest payment-target event from connected relays. Try again when relays are online; nothing was changed."
-                }
-
-                val account = accountRepository.activeAccount.first()
-                    ?: error("No active Nostr account")
-                require(account.pubkey.equals(authorPubkey, ignoreCase = true)) {
-                    "The active account changed. Reload the wallet tool and try again."
-                }
-                val signer = signerFactory.forActiveAccount()
-                    ?: error("No Nostr signer is available for this account")
-                require(signer.pubkey.equals(authorPubkey, ignoreCase = true)) {
-                    "The active signer does not match this account"
-                }
-
-                val createdAt = maxOf(
-                    System.currentTimeMillis() / 1000,
-                    (latest.event?.createdAt ?: 0L) + 1L,
-                )
-                val unsigned = NipA3PaymentTargets.updateLightningAddress(
-                    pubkey = authorPubkey,
-                    existing = latest.event,
-                    address = address,
-                    createdAt = createdAt,
-                )
-                val signed = signer.signEvent(unsigned).getOrElse { throw it }
-                require(
-                    signed.kind == NipA3PaymentTargets.KIND &&
-                        signed.pubkey.equals(authorPubkey, ignoreCase = true) &&
-                        signed.verify()
-                ) { "The signed payment-target event could not be verified" }
-
-                val connectedRelays = relayPool.relayStatuses.value
-                    .filterValues { it == social.tbone.nostr.relay.RelayStatus.CONNECTED }
-                    .keys
-                require(connectedRelays.isNotEmpty()) { "No connected Nostr relays are available" }
-                val published = publishAndAwaitAcceptance(signed, connectedRelays)
-                eventRepository.save(signed, "")
-                lightningCache(
-                    authorPubkey,
-                    LightningTargetLookup(
-                        event = signed,
-                        fullySynced = true,
-                        usedLocalCache = false,
-                        queriedRelays = published.attemptedRelays,
-                        respondingRelays = published.acknowledgedRelays,
-                    ),
-                    System.currentTimeMillis(),
-                )
-                published
-            }
-            Result.success(receipt)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            Result.failure(error)
-        }
-    }
-
     private fun cached(pubkey: String, now: Long): MoneroTargetLookup? = synchronized(cacheMutex) {
         val entry = lookupCache[pubkey] ?: return@synchronized null
         if (now - entry.cachedAtMs > CACHE_TTL_MS) {
@@ -437,24 +314,6 @@ class PaymentTargetsRepository @Inject constructor(
         while (lookupCache.size > MAX_CACHE_ENTRIES) {
             val oldestKey = lookupCache.entries.iterator().next().key
             lookupCache.remove(oldestKey)
-        }
-    }
-
-    private fun lightningCached(pubkey: String, now: Long): LightningTargetLookup? = synchronized(cacheMutex) {
-        val entry = lightningLookupCache[pubkey] ?: return@synchronized null
-        if (now - entry.cachedAtMs > CACHE_TTL_MS) {
-            lightningLookupCache.remove(pubkey)
-            null
-        } else {
-            entry.value
-        }
-    }
-
-    private fun lightningCache(pubkey: String, value: LightningTargetLookup, now: Long) = synchronized(cacheMutex) {
-        lightningLookupCache[pubkey] = CachedLightningLookup(value, now)
-        while (lightningLookupCache.size > MAX_CACHE_ENTRIES) {
-            val oldestKey = lightningLookupCache.entries.iterator().next().key
-            lightningLookupCache.remove(oldestKey)
         }
     }
 

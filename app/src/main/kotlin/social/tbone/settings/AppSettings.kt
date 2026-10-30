@@ -114,7 +114,7 @@ class AppSettings @Inject constructor(
         private val BLOSSOM_DEFAULT_SERVER = stringPreferencesKey("blossom_default_server")
         private val BLOSSOM_COMPRESS = booleanPreferencesKey("blossom_compress")
         private val BLOSSOM_AUDIO_COMPRESS = booleanPreferencesKey("blossom_audio_compress")
-        // External-wallet Lightning zaps and optional Monero xaps.
+        // Monero xaps.
         private val LIGHTNING_ZAPS_ENABLED = booleanPreferencesKey("lightning_zaps_enabled")
         private val MONERO_XAPS_ENABLED = booleanPreferencesKey("monero_xaps_enabled")
         // Legacy preset keys — removed from UI but wiped on migration.
@@ -343,8 +343,6 @@ class AppSettings @Inject constructor(
     private val _blossomAudioCompress = MutableStateFlow(false)
     val blossomAudioCompress = _blossomAudioCompress.asStateFlow()
 
-    private val _lightningZapsEnabled = MutableStateFlow(false)
-    val lightningZapsEnabled = _lightningZapsEnabled.asStateFlow()
 
     private val _moneroXapsEnabled = MutableStateFlow(false)
     val moneroXapsEnabled = _moneroXapsEnabled.asStateFlow()
@@ -461,7 +459,6 @@ class AppSettings @Inject constructor(
                         ?.takeIf { it in storedServers }
                 _blossomCompress.value = prefs[BLOSSOM_COMPRESS] ?: true
                 _blossomAudioCompress.value = prefs[BLOSSOM_AUDIO_COMPRESS] ?: false
-                _lightningZapsEnabled.value = prefs[LIGHTNING_ZAPS_ENABLED] ?: false
                 _moneroXapsEnabled.value = prefs[MONERO_XAPS_ENABLED] ?: false
                 _screenTimeEnabled.value = prefs[SCREEN_TIME_ENABLED] ?: false
                 _screenTimeMinutes.value = prefs[SCREEN_TIME_MINUTES] ?: 120
@@ -753,22 +750,15 @@ class AppSettings @Inject constructor(
 
     // ── External-wallet payments ────────────────────────────────────────────
 
-    suspend fun setLightningZapsEnabled(enabled: Boolean) {
-        _lightningZapsEnabled.value = enabled
-        dataStore.edit { it[LIGHTNING_ZAPS_ENABLED] = enabled }
-    }
-
     suspend fun setMoneroXapsEnabled(enabled: Boolean) {
         _moneroXapsEnabled.value = enabled
         dataStore.edit { it[MONERO_XAPS_ENABLED] = enabled }
     }
 
-    /** Wipes old NWC wallet data — all Lightning handling is now via NIP-A3 payment targets. */
+    /** Wipes removed wallet connection and payment preferences on upgrade. */
     private suspend fun migrateRemovedNwcPreferences() {
         dataStore.edit { prefs ->
-            if (prefs[LIGHTNING_ZAPS_ENABLED] == null) {
-                prefs[LEGACY_NWC_ZAPS_ENABLED]?.let { prefs[LIGHTNING_ZAPS_ENABLED] = it }
-            }
+            prefs.remove(LIGHTNING_ZAPS_ENABLED)
             prefs.remove(LEGACY_NWC_ZAPS_ENABLED)
             prefs.remove(LEGACY_NWC_ZAP_AMOUNT_SATS)
             prefs.remove(LEGACY_NWC_ZAP_AMOUNTS)

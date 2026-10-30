@@ -58,8 +58,6 @@ fun ProfileEditScreen(
     val pubkey by viewModel.activePubkey.collectAsStateWithLifecycle()
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     var showNotice by remember { mutableStateOf(false) }
-    var lud16Text by remember(profile?.lud16) { mutableStateOf(profile?.lud16.orEmpty()) }
-    var lud06Text by remember(profile?.lud06) { mutableStateOf(profile?.lud06.orEmpty()) }
 
     val avatarPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
@@ -144,64 +142,6 @@ fun ProfileEditScreen(
             )
 
             Spacer(Modifier.height(24.dp))
-
-            // ── NIP-57 zap recipient fields ───────────────────────────────────
-            Text("lightning / zap address", style = BonyType.caption.copy(color = BonyColors.Accent))
-            Text(
-                "Publish at least one field so other Nostr clients can route zaps to you. Lightning Address is preferred; LNURL is supported as a fallback.",
-                style = BonyType.metaDim.copy(color = BonyColors.TextMute),
-                modifier = Modifier.padding(top = 5.dp, bottom = 8.dp),
-            )
-            OutlinedTextField(
-                value = lud16Text,
-                onValueChange = { lud16Text = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Lightning Address · lud16") },
-                placeholder = { Text("you@example.com") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = BonyColors.Accent,
-                    unfocusedBorderColor = BonyColors.Rule,
-                    focusedLabelColor = BonyColors.Accent,
-                    unfocusedLabelColor = BonyColors.TextMute,
-                    focusedTextColor = BonyColors.Text,
-                    unfocusedTextColor = BonyColors.Text,
-                    cursorColor = BonyColors.Accent,
-                ),
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = lud06Text,
-                onValueChange = { lud06Text = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("LNURL · lud06") },
-                placeholder = { Text("LNURL1…") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = BonyColors.Accent,
-                    unfocusedBorderColor = BonyColors.Rule,
-                    focusedLabelColor = BonyColors.Accent,
-                    unfocusedLabelColor = BonyColors.TextMute,
-                    focusedTextColor = BonyColors.Text,
-                    unfocusedTextColor = BonyColors.Text,
-                    cursorColor = BonyColors.Accent,
-                ),
-            )
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = { viewModel.saveLightningAddresses(lud16Text, lud06Text) },
-                enabled = !uiState.uploading,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = BonyColors.Accent,
-                    contentColor = BonyColors.Bg,
-                ),
-            ) {
-                Text(if (uiState.uploading) "saving…" else "save zap address")
-            }
-
-            Spacer(Modifier.height(20.dp))
 
             if (showNotice) {
                 Text(

@@ -140,7 +140,7 @@ class BlossomClientTest {
     @Test
     fun `a 402 is reported as payment required`() = runBlocking {
         server.enqueue(
-            MockResponse().setResponseCode(402).setHeader(BlossomServerUrl.X_LIGHTNING_HEADER, "lnbc1..."),
+            MockResponse().setResponseCode(402).setHeader("X-Lightning", "lnbc1..."),
         )
         try {
             client.upload(file, "image/jpeg", baseUrl(), "Nostr TOKEN", hash)

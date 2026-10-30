@@ -38,7 +38,6 @@ object BlossomServerUrl {
 
     /** BUD-07 payment headers. */
     const val X_CASHU_HEADER = "X-Cashu"
-    const val X_LIGHTNING_HEADER = "X-Lightning"
 
     /** `<server>/upload`. */
     fun upload(serverBaseUrl: String): String = base(serverBaseUrl) + UPLOAD_PATH

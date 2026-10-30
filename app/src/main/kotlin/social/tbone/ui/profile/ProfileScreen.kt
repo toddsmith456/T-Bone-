@@ -256,16 +256,6 @@ fun ProfileScreen(
                         )
                         Spacer(Modifier.height(6.dp))
                     }
-                    profile?.lightningAddress?.let { address ->
-                        SelectionContainer {
-                            Text(
-                                text = "⚡ $address",
-                                style = BonyType.meta.copy(color = BonyColors.Accent),
-                            )
-                        }
-                        Spacer(Modifier.height(10.dp))
-                    }
-
                     // Fingerprint pill
                     Box(
                         modifier = Modifier

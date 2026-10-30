@@ -719,9 +719,7 @@ private fun NoteEngagementRow(
     val walletViewModel: WalletViewModel = hiltViewModel()
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val lightningZapsEnabled by walletViewModel.lightningZapsEnabled.collectAsStateWithLifecycle()
     val moneroXapsEnabled by walletViewModel.moneroXapsEnabled.collectAsStateWithLifecycle()
-    var zapPending by remember(event.id) { mutableStateOf(false) }
     var xapPending by remember(event.id) { mutableStateOf(false) }
     var handoffRequest by remember(event.id) { mutableStateOf<WalletHandoffRequest?>(null) }
     val hasReacted = activePubkey != null && reactors?.contains(activePubkey) == true
@@ -776,84 +774,6 @@ private fun NoteEngagementRow(
                 likeCount = likeCount,
                 activePubkey = activePubkey,
                 onLike = onLike,
-            )
-        }
-        if (lightningZapsEnabled) {
-            EngagementButton(
-                icon = Icons.Outlined.Bolt,
-                contentDescription = if (zapPending) "Preparing Lightning invoice" else "Zap 21 sats",
-                count = 0,
-                tint = if (zapPending) BonyColors.Warn else BonyColors.TextMute,
-                onClick = {
-                    if (!zapPending) {
-                        scope.launch {
-                            zapPending = true
-                            try {
-                                val lookup = walletViewModel.lookupLightningTarget(event.pubkey)
-                                val address = lookup.lightningAddress
-                                when {
-                                    address == null && lookup.fullySynced && !lookup.usedLocalCache -> Toast.makeText(
-                                        context,
-                                        if (lookup.event == null) {
-                                            "This author has not published a Lightning payment address"
-                                        } else {
-                                            "This author's latest payment-target event has no usable Lightning address"
-                                        },
-                                        Toast.LENGTH_LONG,
-                                    ).show()
-                                    address == null -> Toast.makeText(
-                                        context,
-                                        "Could not load this author's Lightning address from connected relays",
-                                        Toast.LENGTH_LONG,
-                                    ).show()
-                                    else -> {
-                                        if (!lookup.fullySynced || lookup.usedLocalCache) {
-                                            Toast.makeText(
-                                                context,
-                                                "Using the last saved Lightning target. Verify it in your wallet before sending.",
-                                                Toast.LENGTH_LONG,
-                                            ).show()
-                                        }
-                                        walletViewModel.createZapInvoice(event, address, 21L).fold(
-                                            onSuccess = { invoice ->
-                                                val launched = ExternalWalletHandoff.openLightningWallet(context, invoice)
-                                                if (launched) {
-                                                    Toast.makeText(
-                                                        context,
-                                                        "Invoice handed off. Review and confirm 21 sats in your wallet.",
-                                                        Toast.LENGTH_LONG,
-                                                    ).show()
-                                                } else {
-                                                    handoffRequest = WalletHandoffRequest(
-                                                        WalletHandoffRail.LIGHTNING,
-                                                        invoice,
-                                                    )
-                                                }
-                                            },
-                                            onFailure = { error ->
-                                                Toast.makeText(
-                                                    context,
-                                                    error.message ?: "Could not prepare a Lightning invoice",
-                                                    Toast.LENGTH_LONG,
-                                                ).show()
-                                            },
-                                        )
-                                    }
-                                }
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (error: Exception) {
-                                Toast.makeText(
-                                    context,
-                                    error.message ?: "Could not look up this Lightning target",
-                                    Toast.LENGTH_LONG,
-                                ).show()
-                            } finally {
-                                zapPending = false
-                            }
-                        }
-                    }
-                },
             )
         }
         if (moneroXapsEnabled) {
