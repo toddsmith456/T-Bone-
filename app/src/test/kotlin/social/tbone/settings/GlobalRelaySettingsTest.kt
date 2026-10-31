@@ -46,5 +46,6 @@ class GlobalRelaySettingsTest {
         settings.resetGlobalRelays()
         settings.globalRelays.first { it == AppSettings.GLOBAL_RELAY_DEFAULTS }
         settings.globalActiveRelays.first { it == AppSettings.GLOBAL_RELAY_DEFAULTS }
+        Unit
     }
 }
