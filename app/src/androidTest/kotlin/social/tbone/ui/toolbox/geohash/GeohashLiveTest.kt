@@ -104,10 +104,11 @@ class GeohashLiveTest {
             withTimeout(10_000) { while (pool.relayUrls().isNotEmpty()) delay(50) }
         } finally {
             scope.coroutineContext[Job]?.cancelAndJoin()
-            sockets.forEach { it.cancel() }
+            sockets.forEach { runCatching { it.close(1000, "test complete") } }
             client.dispatcher.cancelAll()
             client.connectionPool.evictAll()
-            server.shutdown()
+            // Do not mask an assertion failure if a mock socket is still closing.
+            runCatching { server.shutdown() }
             client.dispatcher.executorService.shutdownNow()
             database.close()
             file.delete()
