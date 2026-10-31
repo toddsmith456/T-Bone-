@@ -70,7 +70,7 @@ object GeohashKeyDerivation {
         val n = domain.n
         val d = BigInteger(1, privkey)
         val P = G.multiply(d).normalize()
-        val dScalar = if (P.affineYCoord.toBigInteger().mod(BigInteger.TWO) != BigInteger.ZERO)
+        val dScalar = if (P.affineYCoord.toBigInteger().mod(BigInteger.valueOf(2L)) != BigInteger.ZERO)
             n.subtract(d) else d
 
         val randA = ByteArray(32).also { auxRand.get().nextBytes(it) }
@@ -80,7 +80,7 @@ object GeohashKeyDerivation {
         check(k0 != BigInteger.ZERO) { "Generated nonce is zero — retry" }
 
         val R = G.multiply(k0).normalize()
-        val k = if (R.affineYCoord.toBigInteger().mod(BigInteger.TWO) != BigInteger.ZERO)
+        val k = if (R.affineYCoord.toBigInteger().mod(BigInteger.valueOf(2L)) != BigInteger.ZERO)
             n.subtract(k0) else k0
 
         val rx = R.affineXCoord.encoded

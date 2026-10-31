@@ -54,7 +54,7 @@ object Crypto {
             val R = G.multiply(s).subtract(P.multiply(eBig)).normalize()
 
             if (R.isInfinity) return false
-            if (R.affineYCoord.toBigInteger().mod(BigInteger.TWO) != BigInteger.ZERO) return false
+            if (R.affineYCoord.toBigInteger().mod(BigInteger.valueOf(2L)) != BigInteger.ZERO) return false
             if (R.affineXCoord.toBigInteger() != r) return false
 
             true
@@ -68,8 +68,8 @@ object Crypto {
         if (x >= p) return null
         val y2 = x.modPow(BigInteger.valueOf(3), p).add(BigInteger.valueOf(7)).mod(p)
         val y = y2.modPow(p.add(BigInteger.ONE).divide(BigInteger.valueOf(4)), p)
-        if (y.modPow(BigInteger.TWO, p) != y2) return null
-        val yEven = if (y.mod(BigInteger.TWO) == BigInteger.ZERO) y else p.subtract(y)
+        if (y.modPow(BigInteger.valueOf(2L), p) != y2) return null
+        val yEven = if (y.mod(BigInteger.valueOf(2L)) == BigInteger.ZERO) y else p.subtract(y)
         return curve.createPoint(x, yEven)
     }
 

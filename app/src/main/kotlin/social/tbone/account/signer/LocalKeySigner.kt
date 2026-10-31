@@ -104,7 +104,7 @@ class LocalKeySigner(
         val d = BigInteger(1, privkey)
         // BIP-340: negate privkey if P.y is odd
         val P = G.multiply(d).normalize()
-        val dScalar = if (P.affineYCoord.toBigInteger().mod(BigInteger.TWO) != BigInteger.ZERO)
+        val dScalar = if (P.affineYCoord.toBigInteger().mod(BigInteger.valueOf(2L)) != BigInteger.ZERO)
             n.subtract(d) else d
 
         // Deterministic nonce per BIP-340 (RFC 6979 variant with tagged hash)
@@ -115,7 +115,7 @@ class LocalKeySigner(
         check(k0 != BigInteger.ZERO) { "Generated nonce is zero — retry" }
 
         val R = G.multiply(k0).normalize()
-        val k = if (R.affineYCoord.toBigInteger().mod(BigInteger.TWO) != BigInteger.ZERO)
+        val k = if (R.affineYCoord.toBigInteger().mod(BigInteger.valueOf(2L)) != BigInteger.ZERO)
             n.subtract(k0) else k0
 
         val rx = R.affineXCoord.encoded
