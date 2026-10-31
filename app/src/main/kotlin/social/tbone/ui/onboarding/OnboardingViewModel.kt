@@ -21,7 +21,6 @@ import social.tbone.account.signer.NsecBunkerSigner
 import social.tbone.account.signer.SigningIndicator
 import social.tbone.nostr.Nip19
 import social.tbone.updates.AmberInstallManager
-import social.tbone.updates.AmberInstallResult
 import social.tbone.updates.AmberInstallState
 import social.tbone.nostr.relay.RelayPool
 import javax.inject.Inject
@@ -46,14 +45,7 @@ class OnboardingViewModel @Inject constructor(
     val uiState: StateFlow<OnboardingUiState> = _uiState.asStateFlow()
     val amberInstallState: StateFlow<AmberInstallState> = amberInstallManager.state
 
-    fun downloadAmber() = amberInstallManager.downloadLatestAmber()
-
-    fun installAmber(activityContext: Context): AmberInstallResult =
-        amberInstallManager.installDownloadedAmber(activityContext)
-
     fun refreshAmberInstallState() = amberInstallManager.refreshInstalled()
-
-    fun noteAmberInstallPermissionMissing() = amberInstallManager.noteInstallPermissionStillMissing()
 
     /** NIP-55: ask Amber for the user's public key. */
     fun addAccountWithAmber(callerPackage: String) {

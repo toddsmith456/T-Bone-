@@ -3,10 +3,7 @@ package social.tbone.ui.onboarding
 import social.tbone.ui.theme.appBorder
 import android.content.Intent
 import android.net.Uri
-import android.provider.Settings
 import androidx.activity.compose.BackHandler
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -53,7 +50,6 @@ import androidx.compose.ui.platform.LocalContext
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.ui.theme.appCornerShape
-import social.tbone.updates.AmberInstallResult
 import social.tbone.updates.AmberInstallState
 
 @Composable
@@ -67,41 +63,9 @@ fun OnboardingScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    val installPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) {
-        val result = viewModel.installAmber(context)
-        if (result == AmberInstallResult.NEEDS_PERMISSION) {
-            viewModel.noteAmberInstallPermissionMissing()
-        }
-        viewModel.refreshAmberInstallState()
-    }
-    val requestInstallPermission: () -> Unit = {
-        val settingsIntent = Intent(
-            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-            Uri.parse("package:${context.packageName}"),
-        )
-        runCatching { installPermissionLauncher.launch(settingsIntent) }
-            .onFailure { viewModel.noteAmberInstallPermissionMissing() }
-    }
-
     LaunchedEffect(uiState.success) { if (uiState.success) onAccountAdded() }
     LaunchedEffect(uiState.error) {
         uiState.error?.let { snackbarHostState.showSnackbar(it); viewModel.clearError() }
-    }
-    LaunchedEffect(
-        amberInstallState.apkReady,
-        amberInstallState.installLaunched,
-        amberInstallState.needsInstallPermission,
-        amberInstallState.isInstalled,
-    ) {
-        if (amberInstallState.apkReady && !amberInstallState.installLaunched &&
-            !amberInstallState.needsInstallPermission && !amberInstallState.isInstalled
-        ) {
-            if (viewModel.installAmber(context) == AmberInstallResult.NEEDS_PERMISSION) {
-                requestInstallPermission()
-            }
-        }
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -138,13 +102,12 @@ fun OnboardingScreen(
                 MethodPicker(
                     amberInstallState = amberInstallState,
                     onAmberClick = { viewModel.addAccountWithAmber(context.packageName) },
-                    onGetAmber = viewModel::downloadAmber,
-                    onInstallAmber = {
-                        if (viewModel.installAmber(context) == AmberInstallResult.NEEDS_PERMISSION) {
-                            requestInstallPermission()
+                    onGetAmber = {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/greenart7c3/Amber/releases"))
+                        runCatching { context.startActivity(intent) }.onFailure {
+                            android.widget.Toast.makeText(context, "No browser available. Visit github.com/greenart7c3/Amber/releases", android.widget.Toast.LENGTH_LONG).show()
                         }
                     },
-                    onRequestInstallPermission = requestInstallPermission,
                     onNsecBunkerClick = viewModel::showNsecBunkerForm,
                     onLocalKeyClick = viewModel::addLocalKeyAccount,
                 )
@@ -165,8 +128,6 @@ private fun MethodPicker(
     amberInstallState: AmberInstallState,
     onAmberClick: () -> Unit,
     onGetAmber: () -> Unit,
-    onInstallAmber: () -> Unit,
-    onRequestInstallPermission: () -> Unit,
     onNsecBunkerClick: () -> Unit,
     onLocalKeyClick: () -> Unit,
 ) {
@@ -211,37 +172,16 @@ private fun MethodPicker(
 
     if (!amberInstallState.isInstalled) {
         Spacer(Modifier.height(8.dp))
-        val amberButtonLabel = when {
-            amberInstallState.isDownloading -> "DOWNLOADING AMBER · ${amberInstallState.downloadProgress ?: 0}%"
-            amberInstallState.needsInstallPermission -> "ALLOW INSTALL"
-            amberInstallState.apkReady -> "INSTALL AMBER${amberInstallState.version?.let { " · $it" } ?: ""}"
-            amberInstallState.error != null -> "RETRY GET AMBER"
-            else -> "GET AMBER"
-        }
-        val amberButtonClick = when {
-            amberInstallState.isDownloading -> ({})
-            amberInstallState.needsInstallPermission -> onRequestInstallPermission
-            amberInstallState.apkReady -> onInstallAmber
-            else -> onGetAmber
-        }
         BonyButton(
-            label = amberButtonLabel,
+            label = "GET AMBER",
             primary = true,
-            enabled = !amberInstallState.isDownloading,
-            onClick = amberButtonClick,
+            onClick = onGetAmber,
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(6.dp))
         Text(
-            text = amberInstallState.error
-                ?: if (amberInstallState.apkReady) {
-                    "Amber ${amberInstallState.version.orEmpty()} is verified. Android will ask you to approve the install."
-                } else {
-                    "Get the latest signed Amber APK from Zapstore. Android will ask before installing."
-                },
-            style = BonyType.caption.copy(
-                color = if (amberInstallState.error != null) BonyColors.Warn else BonyColors.TextMute,
-            ),
+            text = "Opens Amber's official GitHub releases in your browser. Download and install Amber there, then return here.",
+            style = BonyType.caption.copy(color = BonyColors.TextMute),
         )
     }
 

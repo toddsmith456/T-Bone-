@@ -51,6 +51,18 @@ jobs:
         run: ./gradlew :app:assembleBeta --stacktrace --no-configuration-cache
       - name: Run unit tests
         run: ./gradlew :app:testBetaUnitTest --stacktrace --no-configuration-cache
+      - name: Build and test production release variant
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/beta.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
+        run: |
+          ./gradlew :app:assembleRelease :app:testReleaseUnitTest --stacktrace --no-configuration-cache
+          TOOLS=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          "$TOOLS" verify --verbose --print-certs app/build/outputs/apk/release/app-release.apk
+          "$(dirname "$TOOLS")/aapt" dump badging app/build/outputs/apk/release/app-release.apk | grep "package: name='social.tbone.fork'"
       - name: Verify identity, signature and checksum
         run: |
           set -euo pipefail

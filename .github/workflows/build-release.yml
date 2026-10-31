@@ -41,37 +41,25 @@ jobs:
         with:
           packages: ''
 
-      - name: Decode release keystore (if secrets configured)
+      - name: Require and decode release signing key
         id: keystore
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ -n "$KEYSTORE_BASE64" ]; then
-            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
-            echo "path=$RUNNER_TEMP/release.keystore" >> "$GITHUB_OUTPUT"
-            echo "present=true" >> "$GITHUB_OUTPUT"
-            echo "Release keystore decoded from secrets."
-          else
-            echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "No KEYSTORE_BASE64 secret — release APK will use the debug signing key (not a debug build)."
-          fi
-
-      - name: Ensure debug signing key exists (fallback signing)
-        if: steps.keystore.outputs.present != 'true'
-        run: |
-          KS="$HOME/.android/debug.keystore"
-          if [ ! -f "$KS" ]; then
-            mkdir -p "$HOME/.android"
-            keytool -genkeypair -v \
-              -keystore "$KS" \
-              -storepass android -keypass android \
-              -alias androiddebugkey \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -dname "CN=Android Debug,O=Android,C=US"
-            echo "Created fallback signing key at $KS"
-          else
-            echo "Runner already has a signing key at $KS"
-          fi
+          set -euo pipefail
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing $name; refusing to publish an incompatible release APK."
+              exit 1
+            fi
+          done
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+          chmod 600 "$RUNNER_TEMP/release.keystore"
+          echo "path=$RUNNER_TEMP/release.keystore" >> "$GITHUB_OUTPUT"
+          echo "present=true" >> "$GITHUB_OUTPUT"
 
       - name: Build release APK
         env:
@@ -83,6 +71,15 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew :app:assembleRelease --stacktrace --no-configuration-cache --info 2>&1 | tee /tmp/assemble.log; test ${PIPESTATUS[0]} -eq 0
+
+      - name: Verify production signing identity
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          TOOLS=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          "$TOOLS" verify --verbose --print-certs "$APK" | tee "$RUNNER_TEMP/release-signature.txt"
+          grep -i 'Signer #1 certificate SHA-256 digest: 0e37601f5716b1476b26a0aed023df97ca8c2ab0c1500cb2d3a7237337f65678' "$RUNNER_TEMP/release-signature.txt"
+          "$(dirname "$TOOLS")/aapt" dump badging "$APK" | grep "package: name='social.tbone.fork'"
 
       - name: Dump failure log (on failure)
         if: failure()

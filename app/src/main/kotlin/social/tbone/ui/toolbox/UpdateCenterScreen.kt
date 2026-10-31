@@ -7,6 +7,8 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.Settings as AndroidSettings
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -114,6 +116,13 @@ private fun UpdateCenterContent(
 ) {
     var changelogExpanded by rememberSaveable { mutableStateOf(false) }
     var certExpanded by rememberSaveable { mutableStateOf(false) }
+    val installPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        when (viewModel.installDownloadedUpdate(context)) {
+            UpdateInstallResult.NEEDS_PERMISSION -> Toast.makeText(context, "Allow installs from T-Bone, then tap install again.", Toast.LENGTH_LONG).show()
+            UpdateInstallResult.NOT_READY -> Toast.makeText(context, "Download the update again before installing.", Toast.LENGTH_LONG).show()
+            else -> Unit
+        }
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
@@ -125,7 +134,7 @@ private fun UpdateCenterContent(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
-                text = "installed v${BuildConfig.VERSION_NAME} · ${if (state.updateAvailable) "update available" else "up to date"}",
+                text = "installed v${BuildConfig.VERSION_NAME}",
                 style = BonyType.body.copy(color = if (state.updateAvailable) BonyColors.Accent else BonyColors.Text),
             )
             Text(
@@ -146,10 +155,10 @@ private fun UpdateCenterContent(
             }
             // status line
             val status = when {
-                state.isChecking && state.latestVersion == null -> "checking for releases…"
-                state.updateAvailable -> "update available · v${state.latestVersion}"
-                state.latestVersion != null -> "up to date · latest is v${state.latestVersion}"
                 state.isChecking -> "checking GitHub…"
+                state.error != null -> "check or download failed · information may be out of date"
+                state.updateAvailable -> "update available · v${state.latestVersion}"
+                state.latestVersion != null -> "last successful check · v${state.latestVersion}"
                 else -> "release status not checked yet"
             }
             Text(
@@ -167,13 +176,13 @@ private fun UpdateCenterContent(
                 Text("⚠ ${error}", style = BonyType.meta.copy(color = BonyColors.Warn))
                 if (error.contains("debug", ignoreCase = true) || error.contains("different app", ignoreCase = true)) {
                     Text(
-                        "Debug builds can't install release APKs in-app due to package name (social.tbone.fork.debug vs social.tbone.fork). Use “Save to Downloads” then install from your file manager.",
+                        "Android cannot update an app with a different package ID. Open the GitHub release for details.",
                         style = BonyType.caption.copy(color = BonyColors.TextMute),
                     )
                 }
                 if (error.contains("signing certificate", ignoreCase = true)) {
                     Text(
-                        "Certificate mismatch usually means the installed build was signed with a different key (debug key vs release key). Save to Downloads lets you verify the hash manually.",
+                        "Android requires a compatible signing certificate. An incompatible APK cannot update this installation.",
                         style = BonyType.caption.copy(color = BonyColors.TextMute),
                     )
                 }
@@ -218,7 +227,6 @@ private fun UpdateCenterContent(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                val signingMismatch = state.error?.contains("signing certificate", ignoreCase = true) == true
                 // Show download unless already ready — even with signing mismatch we allow retry;
                 // the error banner explains why install is blocked.
                 if (state.apkReady) {
@@ -229,13 +237,10 @@ private fun UpdateCenterContent(
                         onClick = {
                             when (viewModel.installDownloadedUpdate(context)) {
                                 UpdateInstallResult.NEEDS_PERMISSION -> runCatching {
-                                    context.startActivity(
-                                        Intent(
-                                            AndroidSettings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                                            Uri.parse("package:${context.packageName}"),
-                                        ),
+                                    installPermissionLauncher.launch(
+                                        Intent(AndroidSettings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")),
                                     )
-                                }
+                                }.onFailure { Toast.makeText(context, "Open Android settings and allow installs from T-Bone, then try again.", Toast.LENGTH_LONG).show() }
                                 UpdateInstallResult.FAILED,
                                 UpdateInstallResult.NOT_READY,
                                 UpdateInstallResult.STARTED -> Unit
@@ -246,7 +251,7 @@ private fun UpdateCenterContent(
                     BonyButton(
                         label = if (state.isDownloading) "downloading…" else "download update",
                         primary = true,
-                        enabled = !state.isDownloading,
+                        enabled = !state.isDownloading && !state.isChecking,
                         modifier = Modifier.weight(1f),
                         onClick = viewModel::downloadUpdate,
                     )
@@ -265,8 +270,8 @@ private fun UpdateCenterContent(
                             }
                         },
                     )
-                } else if (!state.apkUrl.isNullOrBlank()) {
-                    // Offer direct GitHub download as fallback
+                } else {
+                    // Offer the official release page even if discovery failed.
                     BonyButton(
                         label = "GitHub release",
                         primary = false,
@@ -307,7 +312,7 @@ private fun UpdateCenterContent(
                 )
             } else if (state.updateAvailable) {
                 Text(
-                    text = "Downloads the release APK that matches this install's package name and signing certificate, then verifies SHA-256 from SHA256SUMS.txt.",
+                    text = "Downloads the release APK that matches this install's package name and signing certificate, then checks SHA-256 when SHA256SUMS.txt is available.",
                     style = BonyType.caption.copy(color = BonyColors.TextMute),
                 )
             }
@@ -489,7 +494,7 @@ private fun UpdateCenterContent(
             }
             ClickableMonoRow(label = "release page", value = state.releaseUrl, context = context)
             Text(
-                "If download stalls, check Tor toggle (Settings → Privacy). Direct retry is automatic after Tor failure.",
+                "If checking or downloading fails, check your connection and Tor settings. T-Bone will not bypass Tor automatically.",
                 style = BonyType.caption.copy(color = BonyColors.TextMute),
             )
         }
