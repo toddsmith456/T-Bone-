@@ -89,12 +89,8 @@ fun VideoViewer(
         }
     }
 
-    // Keep screen on while watching — prevents dim/timeout during playback.
-    DisposableEffect(Unit) {
-        val window = (context as? android.app.Activity)?.window
-        window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        onDispose { window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
-    }
+    // Keep only the attached video view awake, and only during active playback.
+    var isPlaying by remember(player) { mutableStateOf(player?.isPlaying == true) }
 
     DisposableEffect(lifecycleOwner, player) {
         val observer = LifecycleEventObserver { _, event ->
@@ -106,11 +102,13 @@ fun VideoViewer(
 
     DisposableEffect(player) {
         val listener = if (player == null) null else object : Player.Listener {
+            override fun onIsPlayingChanged(playing: Boolean) { isPlaying = playing }
             override fun onPlayerError(error: PlaybackException) {
                 playerError = "couldn't play this video; check the link or try another format"
             }
         }
         listener?.let { player?.addListener(it) }
+        isPlaying = player?.isPlaying == true
         onDispose { if (listener != null) player?.removeListener(listener) }
     }
 
@@ -164,14 +162,14 @@ fun VideoViewer(
                         controllerShowTimeoutMs = 3_000
                         setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
                         setShutterBackgroundColor(android.graphics.Color.BLACK)
-                        keepScreenOn = true
+                        keepScreenOn = player.isPlaying
                         layoutParams = ViewGroup.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT,
                         )
                     }
                 },
-                update = { it.player = player },
+                update = { it.player = player; it.keepScreenOn = isPlaying },
                 modifier = Modifier.fillMaxSize(),
             )
         }

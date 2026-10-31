@@ -41,6 +41,12 @@ import androidx.media3.ui.PlayerView
 import android.view.LayoutInflater
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
+import coil.decode.Decoder
+import coil.decode.VideoFrameDecoder
+import coil.ImageLoader
+import coil.fetch.SourceResult
+import coil.request.Options
+import coil.request.videoFrameMillis
 import coil.request.CachePolicy
 import coil.size.Precision
 import social.tbone.R
@@ -57,6 +63,10 @@ import social.tbone.ui.media.LocalVideoQuality
 import social.tbone.ui.media.LocalVideoThumbnails
 import social.tbone.ui.media.VideoViewerDialog
 import social.tbone.ui.media.rememberVideoPlayer
+import social.tbone.ui.media.shouldPlayInlineVideo
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.ui.theme.appCornerShape
@@ -172,6 +182,7 @@ fun NoteMediaContent(mediaItems: List<MediaItem>, modifier: Modifier = Modifier)
     // TAP_TO_LOAD reveal state: first tap loads inline, second tap opens viewer
     var revealedImages by remember { mutableStateOf(setOf<String>()) }
     var revealedVideos by remember { mutableStateOf(setOf<String>()) }
+    var startedVideos by remember { mutableStateOf(setOf<String>()) }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         mediaItems.forEach { item ->
@@ -203,11 +214,7 @@ fun NoteMediaContent(mediaItems: List<MediaItem>, modifier: Modifier = Modifier)
                                     onOpen = open,
                                 )
                             } else {
-                                MediaPlaceholder(
-                                    label = "[ video · tap to show ]",
-                                    url = item.url,
-                                    onOpen = revealVideo,
-                                )
+                                VideoPlaceholder(onOpen = revealVideo)
                             }
                         }
                         playbackMode == VideoPlaybackMode.LOAD_ON_TAP -> {
@@ -215,26 +222,26 @@ fun NoteMediaContent(mediaItems: List<MediaItem>, modifier: Modifier = Modifier)
                                 InlineVideo(
                                     url = item.url,
                                     quality = videoQuality,
-                                    playWhenReady = false,
+                                    playWhenReady = shouldPlayInlineVideo(playbackMode, revealed = true, started = false, viewerOpen = videoViewerUrl != null),
                                     onOpen = open,
                                 )
                             } else {
                                 if (showVideoThumbnails) {
                                     VideoThumbnail(url = item.url, onOpen = revealVideo)
                                 } else {
-                                    MediaPlaceholder(
-                                        label = "[ video · tap to show ]",
-                                        url = item.url,
-                                        onOpen = revealVideo,
-                                    )
+                                    VideoPlaceholder(onOpen = revealVideo)
                                 }
                             }
                         }
                         else -> InlineVideo(
                             url = item.url,
                             quality = videoQuality,
-                            playWhenReady = playbackMode == VideoPlaybackMode.PLAY_IMMEDIATELY && videoViewerUrl == null,
-                            onOpen = open,
+                            playWhenReady = shouldPlayInlineVideo(playbackMode, revealed = true, started = item.url in startedVideos, viewerOpen = videoViewerUrl != null),
+                            onOpen = {
+                                if (playbackMode == VideoPlaybackMode.PLAY_ON_TAP && item.url !in startedVideos) {
+                                    startedVideos = startedVideos + item.url
+                                } else open()
+                            },
                         )
                     }
                 }
@@ -289,7 +296,14 @@ private fun InlineVideo(
         }
         return
     }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, player) {
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) player.pause() }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     val playbackFailed = remember(player) { mutableStateOf(false) }
+    val isPlaying = remember(player) { mutableStateOf(player.isPlaying) }
     val videoAspectRatio = remember(player) { mutableStateOf<Float?>(null) }
 
     // PlayerView reports the actual display dimensions after track selection.
@@ -308,11 +322,13 @@ private fun InlineVideo(
 
         val listener = object : androidx.media3.common.Player.Listener {
             override fun onVideoSizeChanged(videoSize: VideoSize) = updateRatio(videoSize)
+            override fun onIsPlayingChanged(playing: Boolean) { isPlaying.value = playing }
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 playbackFailed.value = true
             }
         }
         player.addListener(listener)
+        isPlaying.value = player.isPlaying
         updateRatio(player.videoSize)
         onDispose { player.removeListener(listener) }
     }
@@ -365,15 +381,17 @@ private fun InlineVideo(
                         this.player = player
                         useController = false
                         setShutterBackgroundColor(android.graphics.Color.BLACK)
-                        keepScreenOn = true
+                        keepScreenOn = player.isPlaying
                     }
                 },
-                update = { it.player = player; it.keepScreenOn = true },
+                update = { it.player = player; it.keepScreenOn = isPlaying.value },
                 modifier = Modifier.fillMaxSize(),
             )
             // Keep the image-like gesture: the inline surface is a preview, while
             // all real controls are in the full-screen T-Bone player.
-            Box(Modifier.fillMaxSize().clickable(onClick = onOpen))
+            Box(Modifier.fillMaxSize().clickable(onClick = onOpen), contentAlignment = Alignment.Center) {
+                if (!isPlaying.value) VideoPlayBadge()
+            }
         }
     }
 }
@@ -384,12 +402,20 @@ private fun VideoThumbnail(url: String, onOpen: () -> Unit) {
     val context = LocalContext.current
     val youniversal = YouniversalTheme.enabled
     var aspectRatio by remember(url) { mutableStateOf<Float?>(null) }
-    val cacheKey = remember(url) { url.substringBefore('?').substringBefore('#') }
+    // Keep the complete URL: query parameters can identify different media.
+    val cacheKey = remember(url) { "video-frame:$url" }
     val request = remember(url) {
         ImageRequest.Builder(context)
             .data(url)
             .memoryCacheKey(cacheKey)
             .diskCacheKey(cacheKey)
+            // Some video hosts return application/octet-stream; this request is
+            // known to be a video even when its HTTP MIME type is incorrect.
+            .decoderFactory(object : Decoder.Factory {
+                override fun create(result: SourceResult, options: Options, imageLoader: ImageLoader): Decoder =
+                    VideoFrameDecoder(result.source, options)
+            })
+            .videoFrameMillis(1000)
             .size(LOW_QUALITY_MAX_SIZE)
             .crossfade(false)
             .build()
@@ -442,24 +468,28 @@ private fun VideoThumbnail(url: String, onOpen: () -> Unit) {
                     )
                 },
             )
-            // Classic tap-to-play affordance, centered over the thumbnail.
-            Box(
-                modifier = Modifier
-                    .size(54.dp)
-                    .background(Color.Black.copy(alpha = 0.62f), CircleShape)
-                    .border(1.dp, Color.White.copy(alpha = 0.9f), CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Canvas(modifier = Modifier.size(23.dp)) {
-                    val play = Path().apply {
-                        moveTo(size.width * 0.24f, size.height * 0.10f)
-                        lineTo(size.width * 0.84f, size.height * 0.50f)
-                        lineTo(size.width * 0.24f, size.height * 0.90f)
-                        close()
-                    }
-                    drawPath(play, Color.White)
-                }
+            VideoPlayBadge()
+        }
+    }
+}
+
+/** All video previews remain visually distinct from still images. */
+@Composable
+private fun VideoPlayBadge() {
+    Box(
+        modifier = Modifier.size(54.dp)
+            .background(Color.Black.copy(alpha = 0.62f), CircleShape)
+            .border(1.dp, Color.White.copy(alpha = 0.9f), CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(modifier = Modifier.size(23.dp)) {
+            val play = Path().apply {
+                moveTo(size.width * 0.24f, size.height * 0.10f)
+                lineTo(size.width * 0.84f, size.height * 0.50f)
+                lineTo(size.width * 0.24f, size.height * 0.90f)
+                close()
             }
+            drawPath(play, Color.White)
         }
     }
 }
@@ -474,7 +504,8 @@ private fun InlineImage(url: String, lowQuality: Boolean, onOpen: () -> Unit) {
     val context = LocalContext.current
     val youniversal = YouniversalTheme.enabled
     var aspectRatio by remember(url, lowQuality) { mutableStateOf<Float?>(null) }
-    val cacheKey = remember(url) { url.substringBefore('?').substringBefore('#') }
+    // Keep the complete URL: query parameters can identify different media.
+    val cacheKey = remember(url) { "video-frame:$url" }
     val request = remember(url, lowQuality) {
         ImageRequest.Builder(context)
             .data(url)
@@ -541,6 +572,20 @@ private fun InlineImage(url: String, lowQuality: Boolean, onOpen: () -> Unit) {
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun VideoPlaceholder(onOpen: () -> Unit) {
+    val shape = appCornerShape(MaterialTheme.shapes.medium)
+    Box(
+        modifier = Modifier.fillMaxWidth().height(PLACEHOLDER_HEIGHT).clip(shape)
+            .background(BonyColors.SurfaceAlt, shape).border(1.dp, BonyColors.Rule, shape)
+            .clickable(onClick = onOpen),
+        contentAlignment = Alignment.Center,
+    ) {
+        MediaStripes(Modifier.matchParentSize())
+        VideoPlayBadge()
     }
 }
 

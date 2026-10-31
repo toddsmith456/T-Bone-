@@ -600,7 +600,7 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
             Column(modifier = Modifier.weight(1f)) {
                 Text("video thumbnails", style = BonyType.body.copy(color = BonyColors.TextDim))
                 Text(
-                    "show a preview for videos that wait for a tap to load",
+                    "load a preview frame (may download video data)",
                     style = BonyType.meta.copy(color = BonyColors.TextMute),
                 )
             }

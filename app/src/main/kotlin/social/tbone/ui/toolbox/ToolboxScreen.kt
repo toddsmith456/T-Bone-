@@ -3,6 +3,8 @@ package social.tbone.ui.toolbox
 import social.tbone.ui.theme.appBorder
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,7 +60,7 @@ import social.tbone.ui.toolbox.webxdc.XdcToolIcons
 import social.tbone.updates.LocalUpdateAvailable
 
 /** Uniform tool row height in dp — used for drag math. */
-private val TOOL_ROW_HEIGHT = 68.dp
+private val TOOL_ROW_HEIGHT = 78.dp
 
 /**
  * The Toolbox tab. Tools can be reordered by LONG-PRESSING a tool and
@@ -98,25 +100,25 @@ fun ToolboxScreen(
     // Tools keyed by id, built here so the click handlers are in scope.
     // Custom webxdc apps promoted to tools use the "xdc_<appId>" id namespace.
     val toolsById: Map<String, ToolEntry> = buildMap {
-        // Subtitle is kept to one line: the row is a fixed 68.dp.
+        // Short descriptions fit the available row width in both themes.
         put("webxdc", ToolEntry(Icons.Outlined.Widgets, "webxdc",
-            "single-player · local, store & nostr", onWebxdc))
+            "local, store & nostr apps", onWebxdc))
         put("notes", ToolEntry(Icons.Outlined.EditNote, "encrypted notes",
-            "notes, checklists, folders & inline attachments", onNotes))
+            "notes, lists & attachments", onNotes))
         put("bookmarks", ToolEntry(Icons.Outlined.BookmarkBorder, "bookmarks",
-            "encrypted local bookmarks, folders & quotes", onBookmarks))
+            "encrypted saves & quotes", onBookmarks))
         put("voice", ToolEntry(Icons.Outlined.Mic, "voice recorder",
-            "record, anonymize, save or share a voice note", onVoiceRecorder))
+            "record & share voice notes", onVoiceRecorder))
         put("geohash", ToolEntry(Icons.Outlined.Place, "geohash channels",
-            "location channels with an anonymous per-area npub", onGeohashChannels))
+            "anonymous local channels", onGeohashChannels))
         put("calendar", ToolEntry(Icons.Outlined.CalendarMonth, "calendar",
-            "fully local encrypted calendar", onCalendar))
+            "private local calendar", onCalendar))
         put("wallet", ToolEntry(Icons.Outlined.Bolt, "wallet tool",
             "Lightning zaps & Monero xaps", onWallet))
         put("updates", ToolEntry(Icons.Outlined.Update, "update center",
-            "check, download & install app updates", onUpdateCenter, hasBadge = hasUpdate))
+            "check & install updates", onUpdateCenter, hasBadge = hasUpdate))
         put("followlists", ToolEntry(Icons.Outlined.Groups, "follow lists",
-            "following · followers · blocked — online or offline", onFollowLists))
+            "following, followers & blocks", onFollowLists))
         xdcTools.forEach { tool ->
             put("xdc_${tool.appId}", ToolEntry(
                 icon = XdcToolIcons.byId(tool.iconId),
@@ -142,7 +144,8 @@ fun ToolboxScreen(
     var dragOffsetPx by remember { mutableFloatStateOf(0f) }
     var containerTopPx by remember { mutableIntStateOf(0) }
     val density = LocalDensity.current
-    val rowHeightPx = with(density) { TOOL_ROW_HEIGHT.toPx() }
+    val rowHeight = TOOL_ROW_HEIGHT * density.fontScale.coerceAtLeast(1f)
+    val rowHeightPx = with(density) { rowHeight.toPx() }
 
     val tools = currentOrder.mapNotNull { id -> toolsById[id]?.let { id to it } }
 
@@ -167,6 +170,7 @@ fun ToolboxScreen(
             .fillMaxSize()
             .background(BonyColors.Bg)
             .statusBarsPadding()
+            .verticalScroll(rememberScrollState())
             .onGloballyPositioned { containerTopPx = it.positionInWindow().y.roundToInt() },
     ) {
         // ── Top bar with gear (toolbox settings) ──────────────────────────────
@@ -215,7 +219,7 @@ fun ToolboxScreen(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(TOOL_ROW_HEIGHT)
+                    .height(rowHeight)
                     .zIndex(if (isDragging) 1f else 0f)
                     .offset { IntOffset(0, if (isDragging) dragOffsetPx.roundToInt() else 0) }
                     .pointerInput(toolId, index) {
@@ -333,8 +337,7 @@ internal fun ToolRow(icon: ImageVector, title: String, subtitle: String, onClick
                 overflow = TextOverflow.Ellipsis,
             )
             Spacer(Modifier.height(2.dp))
-            // The row is a fixed 68.dp; keep long subtitles on one line instead
-            // of clipping them mid-glyph.
+            // Reserve enough vertical room for the Youniversal font's glyphs.
             Text(
                 subtitle,
                 style = BonyType.meta.copy(color = BonyColors.TextMute),

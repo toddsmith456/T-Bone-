@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -70,7 +73,7 @@ import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.ui.theme.appBorder
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun RelayManagementScreen(
     onBack: () -> Unit,
@@ -196,19 +199,12 @@ fun RelayManagementScreen(
 
             // ── Personal relays ───────────────────────────────────────────
             item(key = "personal_header") {
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    Text(
-                        "Your relays (${relayStatuses.size})",
-                        style = MaterialTheme.typography.titleMedium.copy(color = BonyColors.Text),
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text(
-                        "Stay exactly as you set them — never auto-changed.",
-                        style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
-                    )
+                    Text("Your relays (${relayStatuses.size})", style = MaterialTheme.typography.titleMedium.copy(color = BonyColors.Text))
+                    Text("Only you change this list.", style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant))
                 }
             }
             if (relayStatuses.isEmpty()) {
@@ -314,14 +310,13 @@ fun RelayManagementScreen(
                         }
                     }
                     Spacer(Modifier.height(10.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(
                             onClick = { showGlobalPopup = true },
-                            modifier = Modifier.weight(1f).border(1.dp, BonyColors.AccentDim, RoundedCornerShape(6.dp)),
+                            modifier = Modifier.border(1.dp, BonyColors.AccentDim, RoundedCornerShape(6.dp)),
                         ) { Text("Manage Global") }
                         TextButton(
                             onClick = { globalViewModel.enableAll() },
-                            modifier = Modifier.weight(1f),
                         ) { Text("Enable all") }
                     }
                     Spacer(Modifier.height(4.dp))
@@ -487,6 +482,7 @@ private fun AddRelayDialog(onDismiss: () -> Unit, onAdd: (String) -> Boolean) {
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun GlobalRelayPopup(
     globalRelays: Set<String>,
@@ -500,96 +496,53 @@ private fun GlobalRelayPopup(
     onEnableAll: () -> Unit,
     onReset: () -> Unit,
 ) {
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        Box(
-            modifier = Modifier.fillMaxWidth(0.95f)
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth(0.95f).fillMaxHeight(0.85f)
                 .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.surface)
                 .border(1.dp, BonyColors.Rule, RoundedCornerShape(12.dp))
-                .padding(16.dp),
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item(key = "header") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Global relays", style = MaterialTheme.typography.titleMedium.copy(color = BonyColors.Text), modifier = Modifier.weight(1f))
                     TextButton(onClick = onDismiss) { Text("Done") }
                 }
-                Text(
-                    "Compact control for Global feed. Tap toggle to enable/disable, SOLO to view only one, or add/remove freely.",
-                    style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
-                )
-                // Quick actions row
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "Enable all",
-                        style = BonyType.tag.copy(color = BonyColors.Accent),
-                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).border(1.dp, BonyColors.AccentDim, RoundedCornerShape(6.dp)).clickable { onEnableAll() }.padding(horizontal = 10.dp, vertical = 6.dp),
-                    )
-                    Text(
-                        "Reset defaults",
-                        style = BonyType.tag.copy(color = BonyColors.TextMute),
-                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).border(1.dp, BonyColors.Rule, RoundedCornerShape(6.dp)).clickable { onReset() }.padding(horizontal = 10.dp, vertical = 6.dp),
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        "+ Add",
-                        style = BonyType.tag.copy(color = Color.White),
-                        modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(BonyColors.Accent).clickable { onAdd() }.padding(horizontal = 12.dp, vertical = 6.dp),
-                    )
+            }
+            item(key = "description") {
+                Text("Tap a relay to toggle it, or use SOLO to view only one.", style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant))
+            }
+            item(key = "actions") {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = onEnableAll) { Text("Enable all") }
+                    TextButton(onClick = onReset) { Text("Reset") }
+                    TextButton(onClick = onAdd) { Text("+ Add") }
                 }
-                // List — scrollable, height capped
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().height(280.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+            }
+            items(globalRelays.sorted(), key = { "relay:$it" }) { url ->
+                val isActive = url in globalActive
+                val status = statuses[url] ?: RelayStatus.DISCONNECTED
+                Column(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                        .background(if (isActive) BonyColors.SurfaceAlt else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                        .border(1.dp, if (isActive) BonyColors.AccentDim else BonyColors.Rule, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
                 ) {
-                    items(globalRelays.sorted(), key = { it }) { url ->
-                        val isActive = url in globalActive
-                        val status = statuses[url] ?: RelayStatus.DISCONNECTED
-                        Row(
-                            modifier = Modifier.fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (isActive) BonyColors.SurfaceAlt else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-                                .border(1.dp, if (isActive) BonyColors.AccentDim else BonyColors.Rule, RoundedCornerShape(8.dp))
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RelayStatusDot(status, modifier = Modifier.size(8.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Column(modifier = Modifier.weight(1f).clickable { onToggle(url) }) {
-                                Text(url, style = MaterialTheme.typography.bodySmall.copy(color = if (isActive) BonyColors.Text else BonyColors.TextMute))
-                                Text(
-                                    if (isActive) "active — tap to disable" else "inactive — tap to enable",
-                                    style = MaterialTheme.typography.labelSmall.copy(color = BonyColors.TextMute),
-                                )
-                            }
-                            // Solo
-                            Box(
-                                modifier = Modifier.clip(RoundedCornerShape(4.dp))
-                                    .background(if (globalActive.size == 1 && isActive) BonyColors.Accent else BonyColors.Surface)
-                                    .border(1.dp, BonyColors.Rule, RoundedCornerShape(4.dp))
-                                    .clickable { onSolo(url) }
-                                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(12.dp), tint = BonyColors.TextMute)
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("SOLO", style = MaterialTheme.typography.labelSmall.copy(color = BonyColors.TextMute))
-                                }
-                            }
-                            Spacer(Modifier.width(6.dp))
-                            IconButton(onClick = { onRemove(url) }, modifier = Modifier.size(28.dp)) {
-                                Icon(Icons.Default.Delete, contentDescription = "Remove", modifier = Modifier.size(16.dp), tint = BonyColors.TextMute)
-                            }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onToggle(url) }) {
+                        RelayStatusDot(status)
+                        Spacer(Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(url, style = MaterialTheme.typography.bodySmall.copy(color = if (isActive) BonyColors.Text else BonyColors.TextMute))
+                            Text(if (isActive) "active · tap to disable" else "inactive · tap to enable", style = MaterialTheme.typography.labelSmall.copy(color = BonyColors.TextMute))
                         }
                     }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { onSolo(url) }) { Text("SOLO") }
+                        TextButton(onClick = { onRemove(url) }) { Text("Remove") }
+                    }
                 }
-                Text(
-                    "SOLO views only that relay — perfect for checking one feed. Toggle lets you mix 1–2 relays easily.",
-                    style = MaterialTheme.typography.bodySmall.copy(color = BonyColors.TextMute),
-                )
             }
         }
     }
