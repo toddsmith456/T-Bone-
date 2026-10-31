@@ -60,6 +60,10 @@ jobs:
           AAPT="$(dirname "$TOOLS")/aapt"
           "$TOOLS" verify --verbose --print-certs "$APK"
           "$AAPT" dump badging "$APK" | grep "package: name='social.tbone.fork.beta'"
+          if "$AAPT" dump permissions "$APK" | grep -E 'android.permission.(BLUETOOTH_SCAN|BLUETOOTH_CONNECT|BLUETOOTH_ADVERTISE|NEARBY_WIFI_DEVICES|UWB_RANGING)'; then
+            echo '::error::Nearby-device permission present in APK'
+            exit 1
+          fi
           mkdir -p beta-artifact
           cp "$APK" "beta-artifact/T-Bone-beta-${GITHUB_SHA:0:12}.apk"
           (cd beta-artifact && sha256sum *.apk > SHA256SUMS.txt)

@@ -21,6 +21,8 @@ class WalletViewModel @Inject constructor(
     private val appSettings: AppSettings,
     private val accountRepository: AccountRepository,
     private val paymentTargetsRepository: PaymentTargetsRepository,
+    private val zapService: ZapService,
+    private val profileRepository: social.tbone.profile.ProfileRepository,
 ) : ViewModel() {
     val moneroXapsEnabled: StateFlow<Boolean> = appSettings.moneroXapsEnabled
 
@@ -50,6 +52,12 @@ class WalletViewModel @Inject constructor(
             appSettings.setMoneroXapsEnabled(enabled)
             _message.value = if (enabled) "Monero xap buttons enabled" else "Monero xap buttons hidden"
         }
+    }
+
+    suspend fun createLightningInvoice(event: Event, profile: social.tbone.nostr.ProfileContent?, sats: Long): Result<String> {
+        val recipient = profile?.takeIf { it.lightningAddress != null } ?: profileRepository.getProfile(event.pubkey)
+            ?: return Result.failure(IllegalStateException("This profile has no Lightning address"))
+        return zapService.createInvoice(event, recipient, sats)
     }
 
     suspend fun lookupMoneroTarget(pubkey: String): MoneroTargetLookup =

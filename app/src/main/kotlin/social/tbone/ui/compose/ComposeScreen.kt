@@ -110,6 +110,7 @@ fun ComposeScreen(
     viewModel: ComposeViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val switchingAccount by viewModel.switchingAccount.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
     val activeAccount by viewModel.activeAccount.collectAsStateWithLifecycle()
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
@@ -298,9 +299,9 @@ fun ComposeScreen(
                     modifier = Modifier.weight(1f),
                 )
 
-                ComposeAvatarSwitcher(activeAccount, accounts, profiles, viewModel::switchAccount)
+                ComposeAvatarSwitcher(activeAccount, accounts, profiles, viewModel::switchAccount, enabled = !switchingAccount && !uiState.isPublishing)
                 Spacer(Modifier.width(8.dp))
-                if (uiState.isPublishing) {
+                if (uiState.isPublishing || switchingAccount) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(16.dp),
                         color = BonyColors.Accent,
@@ -431,6 +432,13 @@ fun ComposeScreen(
                     }
                 }
             }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                Text("◎ preview", style = BonyType.tag.copy(color = BonyColors.TextMute),
+                    modifier = Modifier.clickable { showPreview = true }.padding(4.dp))
+            }
             // ── Blossom server chooser ────────────────────────────────────────
             if (uiState.blossomServers.isNotEmpty()) {
                 LazyRow(
@@ -456,13 +464,6 @@ fun ComposeScreen(
                 }
             }
 
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                Text("◎ preview", style = BonyType.tag.copy(color = BonyColors.TextMute),
-                    modifier = Modifier.clickable { showPreview = true }.padding(4.dp))
-            }
             // ── Toolbar ───────────────────────────────────────────────────────
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
             Row(
@@ -914,89 +915,53 @@ private fun ComposeAvatarSwitcher(
     accounts: List<social.tbone.account.Account>,
     profiles: Map<String, ProfileContent>,
     onSwitch: (String) -> Unit,
+    enabled: Boolean,
 ) {
     var showMenu by remember { mutableStateOf(false) }
-    val activeProfile = activeAccount?.let { profiles[it.pubkey] }
-
-    Box {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .clip(appCornerShape(MaterialTheme.shapes.small))
-                .background(BonyColors.SurfaceAlt)
-                .appBorder(1.dp, BonyColors.Rule)
-                .clickable { if (accounts.size > 1) showMenu = true }
-                .padding(horizontal = 8.dp, vertical = 5.dp),
-        ) {
-            if (activeAccount != null) {
-                UserAvatar(
-                    pubkeyHex = activeAccount.pubkey,
-                    profile = activeProfile,
-                    size = 22.dp,
-                )
-                Spacer(Modifier.width(6.dp))
-                Column {
-                    val name = activeProfile?.bestName ?: activeAccount.pubkey.take(8)
-                    Text(
-                        text = name,
-                        style = BonyType.tag.copy(color = BonyColors.TextDim),
-                        maxLines = 1,
-                    )
-                    if (accounts.size > 1) {
-                        Text(
-                            text = "switch ▾",
-                            style = BonyType.caption.copy(color = BonyColors.TextMute),
-                        )
+    Text(
+        text = "switch account",
+        style = BonyType.tag.copy(color = BonyColors.Accent),
+        modifier = Modifier.clickable(enabled = enabled) { showMenu = true }.padding(horizontal = 6.dp, vertical = 8.dp),
+        maxLines = 1,
+    )
+    if (showMenu) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showMenu = false },
+            containerColor = BonyColors.Surface,
+            title = { Text("Switch account", style = BonyType.body.copy(color = BonyColors.Text)) },
+            text = {
+                Column(modifier = Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) {
+                    if (accounts.isEmpty()) Text("No available accounts", style = BonyType.body.copy(color = BonyColors.TextMute))
+                    accounts.forEach { acct ->
+                        val selected = acct.pubkey == activeAccount?.pubkey
+                        val profile = profiles[acct.pubkey]
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                onSwitch(acct.pubkey)
+                                showMenu = false
+                            }.padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            UserAvatar(pubkeyHex = acct.pubkey, profile = profile, size = 32.dp)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(profile?.bestName ?: acct.displayName ?: acct.pubkey.take(12),
+                                    style = BonyType.body.copy(color = if (selected) BonyColors.Accent else BonyColors.Text),
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(remember(acct.pubkey) { Phrase.wordsFor(acct.pubkey, 2).joinToString("·") },
+                                    style = BonyType.caption.copy(color = BonyColors.TextMute))
+                            }
+                            if (selected) Text("current", style = BonyType.caption.copy(color = BonyColors.Accent))
+                        }
                     }
                 }
-            } else {
-                Text("no account", style = BonyType.tag.copy(color = BonyColors.TextMute))
-            }
-        }
-        DropdownMenu(
-            expanded = showMenu,
-            onDismissRequest = { showMenu = false },
-            modifier = Modifier.background(BonyColors.Surface),
-        ) {
-            accounts.forEach { acct ->
-                val isActive = acct.pubkey == activeAccount?.pubkey
-                val p = profiles[acct.pubkey]
-                DropdownMenuItem(
-                    text = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            UserAvatar(pubkeyHex = acct.pubkey, profile = p, size = 24.dp)
-                            Spacer(Modifier.width(8.dp))
-                            Column(modifier = Modifier.widthIn(max = 160.dp)) {
-                                Text(
-                                    text = p?.bestName ?: acct.displayName ?: acct.pubkey.take(10),
-                                    style = BonyType.bodyDim.copy(
-                                        color = if (isActive) BonyColors.Accent else BonyColors.Text,
-                                    ),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    text = remember(acct.pubkey) { Phrase.wordsFor(acct.pubkey, 2).joinToString("·") },
-                                    style = BonyType.caption.copy(color = BonyColors.TextMute),
-                                    maxLines = 1,
-                                )
-                            }
-                            if (isActive) {
-                                Spacer(Modifier.width(8.dp))
-                                Text("●", style = BonyType.tag.copy(color = BonyColors.Accent))
-                            }
-                        }
-                    },
-                    onClick = {
-                        onSwitch(acct.pubkey)
-                        showMenu = false
-                    },
-                )
-            }
-        }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { showMenu = false }) { Text("close") }
+            },
+        )
     }
 }
-
 
 // ── Note preview dialog ───────────────────────────────────────────────────
 @Composable

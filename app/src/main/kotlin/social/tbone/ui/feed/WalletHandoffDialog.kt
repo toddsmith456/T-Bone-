@@ -38,7 +38,7 @@ import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.wallet.ExternalWalletHandoff
 
-internal enum class WalletHandoffRail { MONERO }
+internal enum class WalletHandoffRail { LIGHTNING, MONERO }
 
 internal data class WalletHandoffRequest(
     val rail: WalletHandoffRail,
@@ -51,8 +51,9 @@ internal fun WalletHandoffDialog(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    val title = "Monero address"
-    val kindName = "Monero"
+    val isLightning = request.rail == WalletHandoffRail.LIGHTNING
+    val title = if (isLightning) "Lightning invoice" else "Monero address"
+    val kindName = if (isLightning) "Lightning" else "Monero"
     val qrBitmap = remember(request.value) { makeQrBitmap(request.value) }
 
     AlertDialog(
@@ -103,7 +104,7 @@ internal fun WalletHandoffDialog(
                 ) { Text("copy") }
                 TextButton(
                     onClick = {
-                        val opened = ExternalWalletHandoff.openMoneroWallet(context, request.value)
+                        val opened = if (isLightning) ExternalWalletHandoff.openLightningWallet(context, request.value) else ExternalWalletHandoff.openMoneroWallet(context, request.value)
                         if (opened) onDismiss()
                         else Toast.makeText(context, "No compatible wallet app is available", Toast.LENGTH_LONG).show()
                     },

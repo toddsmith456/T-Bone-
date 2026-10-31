@@ -9,6 +9,9 @@ import android.os.Build
 
 /** Android intent hand-off for an invoice/address; it never sends a payment. */
 object ExternalWalletHandoff {
+    fun openLightningWallet(context: Context, invoice: String): Boolean =
+        openUri(context, "lightning:${invoice.trim()}", "Choose a Lightning wallet")
+
     fun openMoneroWallet(context: Context, address: String): Boolean =
         openUri(context, WalletPaymentUris.moneroAddress(address), "Choose a Monero wallet")
 

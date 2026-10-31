@@ -23,6 +23,10 @@ data class ProfileContent(
     val bestName: String? get() = displayName?.trim()?.takeIf { it.isNotBlank() }
         ?: name?.trim()?.takeIf { it.isNotBlank() }
 
+    val lightningAddress: String?
+        get() = lud16?.trim()?.takeIf { it.isNotEmpty() }
+            ?: lud06?.trim()?.takeIf { it.isNotEmpty() }
+
     companion object {
         fun parse(content: String): ProfileContent? =
             runCatching { NostrJson.decodeFromString<ProfileContent>(content) }.getOrNull()

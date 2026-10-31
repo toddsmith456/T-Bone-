@@ -721,6 +721,9 @@ private fun NoteEngagementRow(
     val context = LocalContext.current
     val moneroXapsEnabled by walletViewModel.moneroXapsEnabled.collectAsStateWithLifecycle()
     var xapPending by remember(event.id) { mutableStateOf(false) }
+    var zapPending by remember(event.id) { mutableStateOf(false) }
+    var showZapDialog by remember(event.id) { mutableStateOf(false) }
+    var zapAmount by remember(event.id) { mutableStateOf("21") }
     var handoffRequest by remember(event.id) { mutableStateOf<WalletHandoffRequest?>(null) }
     val hasReacted = activePubkey != null && reactors?.contains(activePubkey) == true
     val likeCount = reactors?.size ?: 0
@@ -776,6 +779,13 @@ private fun NoteEngagementRow(
                 onLike = onLike,
             )
         }
+        EngagementButton(
+            icon = Icons.Outlined.Bolt,
+            contentDescription = if (zapPending) "Preparing Lightning invoice" else "Zap with Lightning",
+            count = 0,
+            tint = if (zapPending) BonyColors.Warn else BonyColors.TextMute,
+            onClick = { if (!zapPending) showZapDialog = true },
+        )
         if (moneroXapsEnabled) {
             EngagementButton(
                 customIcon = { tint -> MoneroGlyph(tint) },
@@ -843,6 +853,52 @@ private fun NoteEngagementRow(
             )
         }
         NoteActionsMenu(event = event, authorName = profile?.bestName, authorPictureUrl = profile?.picture)
+    }
+    if (showZapDialog) {
+        val sats = zapAmount.toLongOrNull()
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { showZapDialog = false },
+            containerColor = BonyColors.Surface,
+            title = { Text("Lightning zap", color = BonyColors.Text) },
+            text = {
+                Column {
+                    Text("Choose an amount in sats. Your wallet will open with the invoice; review and confirm payment there.", color = BonyColors.TextDim)
+                    androidx.compose.material3.OutlinedTextField(
+                        value = zapAmount,
+                        onValueChange = { value -> if (value.length <= 7 && value.all(Char::isDigit)) zapAmount = value },
+                        label = { Text("Amount (sats)") },
+                        singleLine = true,
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
+                    )
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(enabled = sats != null && sats in 1L..1_000_000L && !zapPending, onClick = {
+                    val amount = sats ?: return@TextButton
+                    showZapDialog = false
+                    scope.launch {
+                        zapPending = true
+                        try {
+                            walletViewModel.createLightningInvoice(event, profile, amount).fold(
+                                onSuccess = { invoice ->
+                                    if (ExternalWalletHandoff.openLightningWallet(context, invoice)) {
+                                        Toast.makeText(context, "Invoice handed to your wallet. Confirm payment there.", Toast.LENGTH_LONG).show()
+                                    } else {
+                                        handoffRequest = WalletHandoffRequest(WalletHandoffRail.LIGHTNING, invoice)
+                                    }
+                                },
+                                onFailure = { error -> Toast.makeText(context, error.message ?: "Could not prepare invoice", Toast.LENGTH_LONG).show() },
+                            )
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: Exception) {
+                            Toast.makeText(context, error.message ?: "Could not prepare invoice", Toast.LENGTH_LONG).show()
+                        } finally { zapPending = false }
+                    }
+                }) { Text("open wallet") }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { showZapDialog = false }) { Text("cancel") } },
+        )
     }
     handoffRequest?.let { request ->
         WalletHandoffDialog(request = request, onDismiss = { handoffRequest = null })

@@ -113,8 +113,23 @@ class ComposeViewModel @Inject constructor(
 
     val profiles: StateFlow<Map<String, social.tbone.nostr.ProfileContent>> = profileRepository.profiles
 
+    private val _switchingAccount = MutableStateFlow(false)
+    val switchingAccount = _switchingAccount.asStateFlow()
+
     fun switchAccount(pubkey: String) {
-        viewModelScope.launch { accountRepository.setActiveAccount(pubkey) }
+        if (_switchingAccount.value) return
+        _switchingAccount.value = true
+        viewModelScope.launch {
+            try {
+                accountRepository.setActiveAccount(pubkey)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _uiState.update { it.copy(error = error.message ?: "Could not switch account") }
+            } finally {
+                _switchingAccount.value = false
+            }
+        }
     }
 
     // Preview content builder — mirrors publish() finalContent logic without side effects.
