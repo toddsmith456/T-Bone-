@@ -53,7 +53,7 @@ class RelayListFetcher @Inject constructor(
         timeoutMs: Long = DEFAULT_TIMEOUT_MS,
     ): Result = coroutineScope {
         // Scope this one-shot request to its chosen relays and release all leases.
-        val targets = seedRelays.ifEmpty { pool.relayUrls().toList().ifEmpty { Tunables.DEFAULT_RELAYS } }
+        val targets = seedRelays.ifEmpty { Tunables.DEFAULT_RELAYS }
             .map(RelayPool::normalize).filter(RelayPool::isValidRelayUrl).toSet()
         targets.forEach(pool::acquireRelay)
 

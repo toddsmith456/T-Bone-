@@ -233,8 +233,14 @@ class FeedViewModel @Inject constructor(
     val activeAccount: StateFlow<Account?> = accountRepository.activeAccount
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    val relayStatuses: StateFlow<Map<String, RelayStatus>> = pool.relayStatuses
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+    val relayStatuses: StateFlow<Map<String, RelayStatus>> = combine(
+        accountRepository.activeAccount, pool.relayStatuses, globalPool.relayStatuses,
+        _currentFeed, appSettings.globalActiveRelays,
+    ) { account, personalStatus, globalStatus, tab, globalEnabled ->
+        val urls = if (tab == FeedTab.GLOBAL) globalEnabled.toList() else account?.effectiveRelays().orEmpty()
+        val statuses = if (tab == FeedTab.GLOBAL) globalStatus else personalStatus
+        urls.map(RelayPool::normalize).distinct().associateWith { statuses[it] ?: RelayStatus.DISCONNECTED }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val accounts = accountRepository.accounts
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
