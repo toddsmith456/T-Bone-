@@ -118,7 +118,9 @@ class ZapService @Inject constructor(
         } catch (error: Exception) {
             Result.failure(error)
         } finally {
-            activeZapMutex.withLock { activeZapEventIds.remove(event.id) }
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                activeZapMutex.withLock { activeZapEventIds.remove(event.id) }
+            }
         }
     }
 
@@ -271,11 +273,7 @@ class ZapService @Inject constructor(
             }
             val invoice = obj["pr"]?.jsonPrimitive?.contentOrNull?.trim()
                 ?: error("recipient returned no invoice")
-            val invoiceAmount = LightningInvoice.amountMsats(invoice)
-                ?: error("recipient returned an invalid or amountless invoice")
-            require(invoiceAmount == amountMsats) {
-                "invoice amount mismatch: got $invoiceAmount msats, expected $amountMsats msats"
-            }
+            LightningInvoice.validateZap(invoice, amountMsats, Json.encodeToString(Event.serializer(), zapRequest))
             Result.success(invoice)
         } catch (cancelled: CancellationException) {
             throw cancelled

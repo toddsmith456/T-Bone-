@@ -219,6 +219,11 @@ dependencies {
 
     // Crypto
     implementation(libs.bouncycastle.prov)
+    // Apache-2.0 BOLT-11 parser; reuse the app's existing Bouncy Castle provider.
+    implementation("app.cash.lninvoice:ln-invoice:0.0.6") {
+        exclude(group = "org.bouncycastle", module = "bcprov-jdk15to18")
+    }
+    implementation("io.arrow-kt:arrow-core:2.0.1")
 
     // Images
     implementation(libs.coil.compose)
