@@ -6,6 +6,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
+import social.tbone.account.AccountRepository
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.booleanOrNull
@@ -17,6 +19,9 @@ import kotlinx.serialization.json.longOrNull
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
+import okhttp3.Dns
+import java.net.InetAddress
+import java.net.Proxy
 import okhttp3.ResponseBody
 import okio.Buffer
 import social.tbone.Tunables
@@ -85,34 +90,25 @@ internal fun validateZapProvider(allowsNostr: Boolean, providerKey: String, mini
 class ZapService @Inject constructor(
     private val signerFactory: NostrSignerFactory,
     private val pool: RelayPool,
+    private val accountRepository: AccountRepository,
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val activeZapMutex = Mutex()
     private val activeZapEventIds = ConcurrentHashMap.newKeySet<String>()
-
-    /** Serializes duplicate invoice requests for a note across all screens. */
-    suspend fun createInvoice(
-        event: Event,
-        profile: ProfileContent,
-        amountSats: Long,
-    ): Result<String> {
-        val lightningAddress = profile.lightningAddress
-            ?: return Result.failure(IllegalArgumentException("This profile has no Lightning address"))
-        return createInvoiceForAddress(event, lightningAddress, amountSats)
-    }
 
     /** New path: invoice from a NIP-A3 Lightning address (mirrors Monero flow). */
     suspend fun createInvoiceForAddress(
         event: Event,
         lightningAddress: String,
         amountSats: Long,
+        expectedSender: String,
     ): Result<String> {
         val accepted = activeZapMutex.withLock { activeZapEventIds.add(event.id) }
         if (!accepted) {
             return Result.failure(IllegalStateException("An invoice for this note is already being prepared"))
         }
         return try {
-            createInvoiceOnce(event, lightningAddress, amountSats)
+            createInvoiceOnce(event, lightningAddress, amountSats, expectedSender)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
@@ -128,6 +124,7 @@ class ZapService @Inject constructor(
         event: Event,
         lightningAddress: String,
         amountSats: Long,
+        expectedSender: String,
     ): Result<String> {
         require(lightningAddress.isNotBlank()) { "Lightning address is empty" }
         require(event.tags.none { it.firstOrNull()?.toString()?.trim('"') == "zap" }) {
@@ -139,8 +136,10 @@ class ZapService @Inject constructor(
         val payInfo = resolveLightningAddress(lightningAddress).getOrElse { return Result.failure(it) }
         validateZapProvider(payInfo.allowsNostr, payInfo.nostrPubkey, payInfo.minSendable, payInfo.maxSendable, amountMsats)
 
+        require(accountRepository.activeAccount.first()?.pubkey == expectedSender) { "Active account changed; start the zap again" }
         val signer = signerFactory.forActiveAccount()
             ?: return Result.failure(IllegalStateException("No active Nostr signer"))
+        require(signer.pubkey == expectedSender) { "Signer does not match the selected account" }
         val relayHints = pool.relayUrls()
             .take(5)
             .ifEmpty { Tunables.DEFAULT_RELAYS.take(3) }
@@ -164,7 +163,11 @@ class ZapService @Inject constructor(
             tags = zapTags,
         )
         val zapRequest = signer.signEvent(unsigned).getOrElse { return Result.failure(it) }
-        require(zapRequest.kind == 9734 && zapRequest.pubkey.equals(signer.pubkey, ignoreCase = true) && zapRequest.verify()) {
+        require(accountRepository.activeAccount.first()?.pubkey == expectedSender) { "Active account changed; start the zap again" }
+        val sentTags = zapRequest.tags.filterNot { it.firstOrNull()?.jsonPrimitive?.contentOrNull == "client" }
+        require(zapRequest.kind == 9734 && zapRequest.pubkey.equals(signer.pubkey, ignoreCase = true) &&
+            zapRequest.createdAt == unsigned.createdAt && zapRequest.content == unsigned.content &&
+            sentTags == unsigned.tags && zapRequest.verify()) {
             "The signed zap request could not be verified"
         }
         return requestInvoice(payInfo.callback, amountMsats, zapRequest)
@@ -202,12 +205,7 @@ class ZapService @Inject constructor(
             require(metadataUrl.scheme == "https" && metadataUrl.username.isEmpty() && metadataUrl.password.isEmpty()) {
                 "Lightning address metadata must use HTTPS"
             }
-            val response = httpClient().newCall(Request.Builder().url(metadataUrl).get().build())
-                .execute().use { r ->
-                    require(r.isSuccessful) { "Lightning address lookup failed (${r.code})" }
-                    r.body?.readUtf8Limited(MAX_JSON_BYTES)
-                        ?: error("Lightning address returned no metadata")
-                }
+            val response = fetchJson(metadataUrl, "Lightning address lookup")
             val obj = json.parseToJsonElement(response).jsonObject
             require(obj["status"]?.jsonPrimitive?.contentOrNull?.equals("ERROR", ignoreCase = true) != true) {
                 obj["reason"]?.jsonPrimitive?.contentOrNull
@@ -259,12 +257,7 @@ class ZapService @Inject constructor(
                 amountMsats = amountMsats,
                 zapRequest = zapRequest,
             )
-            val body = httpClient().newCall(Request.Builder().url(url).get().build())
-                .execute().use { response ->
-                    require(response.isSuccessful) { "invoice request failed (${response.code})" }
-                    response.body?.readUtf8Limited(MAX_JSON_BYTES)
-                        ?: error("invoice response was empty")
-                }
+            val body = fetchJson(url, "Invoice request")
             val obj = json.parseToJsonElement(body).jsonObject
             require(obj["status"]?.jsonPrimitive?.contentOrNull?.equals("ERROR", ignoreCase = true) != true) {
                 obj["reason"]?.jsonPrimitive?.contentOrNull
@@ -282,14 +275,47 @@ class ZapService @Inject constructor(
         }
     }
 
-    /** Reuse the app's Tor-aware client with finite timeouts and no insecure redirects. */
-    private fun httpClient() = ImageClientProvider.client.newBuilder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(12, TimeUnit.SECONDS)
-        .callTimeout(20, TimeUnit.SECONDS)
-        .followRedirects(false)
-        .followSslRedirects(false)
-        .build()
+    /** Follow at most three same-host HTTPS redirects, checking every hop. */
+    private fun fetchJson(initial: HttpUrl, stage: String): String {
+        val client = httpClient()
+        var url = initial
+        repeat(4) { hop ->
+            requireSafeLightningUrl(url)
+            client.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
+                if (response.code in listOf(301, 302, 303, 307, 308)) {
+                    require(hop < 3) { "$stage: too many redirects" }
+                    val location = response.header("Location") ?: error("$stage: redirect has no destination")
+                    val next = url.resolve(location) ?: error("$stage: invalid redirect")
+                    requireSafeLightningUrl(next)
+                    require(next.host == url.host && next.port == url.port) { "$stage: cross-host redirect blocked" }
+                    url = next
+                } else {
+                    require(response.isSuccessful) { "$stage failed (HTTP ${response.code})" }
+                    return response.body?.readUtf8Limited(MAX_JSON_BYTES) ?: error("$stage returned no response")
+                }
+            }
+        }
+        error("$stage: redirect limit exceeded")
+    }
+
+    /** Use the Tor-aware client; never perform local DNS for a proxy/Tor request. */
+    private fun httpClient(): okhttp3.OkHttpClient {
+        val base = ImageClientProvider.client
+        return base.newBuilder()
+            .connectTimeout(10, TimeUnit.SECONDS).readTimeout(15, TimeUnit.SECONDS)
+            .callTimeout(30, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false)
+            .apply {
+                if (base.proxy == null || base.proxy?.type() == Proxy.Type.DIRECT) {
+                    dns(Dns { hostname ->
+                        Dns.SYSTEM.lookup(hostname).also { addresses ->
+                            require(addresses.isNotEmpty() && addresses.all(::isPublicLightningAddress)) {
+                                "Lightning endpoint resolves to a private or local address"
+                            }
+                        }
+                    })
+                }
+            }.build()
+    }
 
     private fun ResponseBody.readUtf8Limited(maxBytes: Int): String {
         val buffer = Buffer()
@@ -307,5 +333,33 @@ class ZapService @Inject constructor(
 
     companion object {
         private const val MAX_JSON_BYTES = 128 * 1024
+    }
+}
+
+/** Reject local/reserved endpoints, including mapped IPv4 and carrier NAT. */
+internal fun isPublicLightningAddress(address: InetAddress): Boolean {
+    if (address.isAnyLocalAddress || address.isLoopbackAddress || address.isLinkLocalAddress ||
+        address.isSiteLocalAddress || address.isMulticastAddress) return false
+    val bytes = address.address.map { it.toInt() and 255 }
+    if (bytes.size == 4) {
+        val a = bytes[0]; val b = bytes[1]
+        if (a == 0 || a == 10 || a == 127 || a >= 224 ||
+            (a == 100 && b in 64..127) || (a == 169 && b == 254) ||
+            (a == 172 && b in 16..31) || (a == 192 && b == 168) ||
+            (a == 198 && b in 18..19)) return false
+    } else if (bytes.size == 16) {
+        if ((bytes[0] and 0xfe) == 0xfc) return false
+    }
+    return true
+}
+
+internal fun requireSafeLightningUrl(url: HttpUrl) {
+    require(url.scheme == "https" && url.username.isEmpty() && url.password.isEmpty() && url.fragment == null) { "Lightning endpoint must use HTTPS without credentials" }
+    val host = url.host.lowercase()
+    require(host != "localhost" && !host.endsWith(".localhost") && !host.endsWith(".local")) { "Local Lightning endpoints are blocked" }
+    if (host.contains(':') || host.all { it.isDigit() || it == '.' }) {
+        val ip = runCatching { InetAddress.getByName(host) }.getOrNull()
+            ?: throw IllegalArgumentException("Invalid Lightning endpoint")
+        require(isPublicLightningAddress(ip)) { "Private Lightning endpoints are blocked" }
     }
 }

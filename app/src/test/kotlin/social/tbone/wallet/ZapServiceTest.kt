@@ -10,10 +10,24 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import social.tbone.nostr.Event
 import social.tbone.nostr.Nip19
 
 class ZapServiceTest {
+    @Test
+    fun rejectsPrivateNetworkAddressesAndUnsafeUrls() {
+        fun ip(text: String) = java.net.InetAddress.getByName(text)
+        assertTrue(!isPublicLightningAddress(ip("127.0.0.1")))
+        assertTrue(!isPublicLightningAddress(ip("10.1.2.3")))
+        assertTrue(!isPublicLightningAddress(ip("100.64.0.1")))
+        assertTrue(!isPublicLightningAddress(ip("::1")))
+        assertTrue(!isPublicLightningAddress(ip("fc00::1")))
+        assertTrue(isPublicLightningAddress(ip("8.8.8.8")))
+        assertTrue(runCatching { requireSafeLightningUrl("http://example.org/".toHttpUrl()) }.isFailure)
+        assertTrue(runCatching { requireSafeLightningUrl("https://127.0.0.1/".toHttpUrl()) }.isFailure)
+    }
+
     @Test
     fun providerReceiptKeyIsNotRequiredToEqualRecipientKey() {
         validateZapProvider(true, "ab".repeat(32), 1000, 100_000, 21_000)

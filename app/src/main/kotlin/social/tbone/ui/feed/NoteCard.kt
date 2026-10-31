@@ -28,6 +28,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateOf
@@ -725,6 +726,25 @@ private fun NoteEngagementRow(
     var zapPending by remember(event.id) { mutableStateOf(false) }
     var showZapDialog by remember(event.id) { mutableStateOf(false) }
     var zapAmount by remember(event.id) { mutableStateOf("21") }
+    var zapRecipient by remember(event.id) { mutableStateOf<WalletViewModel.LightningRecipient?>(null) }
+    var zapLookupDone by remember(event.id) { mutableStateOf(false) }
+    var zapLookupError by remember(event.id) { mutableStateOf<String?>(null) }
+    var zapSender by remember(event.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(showZapDialog, event.id) {
+        if (showZapDialog) {
+            zapLookupDone = false
+            zapRecipient = null
+            zapLookupError = null
+            zapSender = activePubkey
+            try {
+                zapRecipient = walletViewModel.resolveLightningRecipient(event.pubkey, profile)
+                if (zapRecipient == null) zapLookupError = "No Lightning address found on the recipient's profile."
+                if (zapSender == null) zapLookupError = "Sign in to send a zap."
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { zapLookupError = "Could not load the recipient's profile. Check relay connection." }
+            finally { zapLookupDone = true }
+        }
+    }
     var handoffRequest by remember(event.id) { mutableStateOf<WalletHandoffRequest?>(null) }
     val hasReacted = activePubkey != null && reactors?.contains(activePubkey) == true
     val likeCount = reactors?.size ?: 0
@@ -863,7 +883,13 @@ private fun NoteEngagementRow(
             title = { Text("Lightning zap", color = BonyColors.Text) },
             text = {
                 Column {
-                    Text("Choose an amount in sats. Your wallet will open with the invoice; review and confirm payment there.", color = BonyColors.TextDim)
+                    Text("Choose an amount in sats. Confirm the recipient, then review and pay in your wallet.", color = BonyColors.TextDim)
+                    Text(when {
+                        !zapLookupDone -> "Checking recipient profile on relays…"
+                        zapLookupError != null -> zapLookupError!!
+                        zapRecipient?.relayConfirmed == true -> "Recipient: ${zapRecipient!!.address}"
+                        else -> "Unconfirmed cached recipient: ${zapRecipient?.address}. Verify the address before proceeding."
+                    }, color = if (zapRecipient?.relayConfirmed == true) BonyColors.Text else BonyColors.Warn)
                     androidx.compose.material3.OutlinedTextField(
                         value = zapAmount,
                         onValueChange = { value -> if (value.length <= 7 && value.all(Char::isDigit)) zapAmount = value },
@@ -874,13 +900,15 @@ private fun NoteEngagementRow(
                 }
             },
             confirmButton = {
-                androidx.compose.material3.TextButton(enabled = sats != null && sats in 1L..1_000_000L && !zapPending, onClick = {
+                androidx.compose.material3.TextButton(enabled = sats != null && sats in 1L..1_000_000L && !zapPending && zapLookupDone && zapRecipient != null && zapSender != null && activePubkey == zapSender, onClick = {
                     val amount = sats ?: return@TextButton
+                    val address = zapRecipient?.address ?: return@TextButton
+                    val sender = zapSender ?: return@TextButton
                     showZapDialog = false
                     scope.launch {
                         zapPending = true
                         try {
-                            walletViewModel.createLightningInvoice(event, profile, amount).fold(
+                            walletViewModel.createLightningInvoice(event, address, amount, sender).fold(
                                 onSuccess = { invoice ->
                                     if (ExternalWalletHandoff.openLightningWallet(context, invoice)) {
                                         Toast.makeText(context, "Invoice handed to your wallet. Confirm payment there.", Toast.LENGTH_LONG).show()

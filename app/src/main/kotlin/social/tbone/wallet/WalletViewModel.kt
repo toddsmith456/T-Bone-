@@ -104,11 +104,18 @@ class WalletViewModel @Inject constructor(
         }
     }
 
-    suspend fun createLightningInvoice(event: Event, profile: social.tbone.nostr.ProfileContent?, sats: Long): Result<String> {
-        val recipient = profile?.takeIf { it.lightningAddress != null } ?: profileRepository.getProfile(event.pubkey)
-            ?: return Result.failure(IllegalStateException("This profile has no Lightning address"))
-        return zapService.createInvoice(event, recipient, sats)
+    data class LightningRecipient(val address: String, val relayConfirmed: Boolean)
+
+    suspend fun resolveLightningRecipient(pubkey: String, displayed: social.tbone.nostr.ProfileContent?): LightningRecipient? {
+        val (event, synced) = paymentTargetsRepository.lookupLightningProfile(pubkey)
+        val profile = event?.let { social.tbone.nostr.ProfileContent.parse(it.content) }
+        // If all relays confirmed no profile, do not silently use stale data.
+        val candidate = profile ?: if (!synced) (profileRepository.getProfile(pubkey) ?: displayed) else null
+        return candidate?.lightningAddress?.let { LightningRecipient(it, synced) }
     }
+
+    suspend fun createLightningInvoice(event: Event, address: String, sats: Long, sender: String): Result<String> =
+        zapService.createInvoiceForAddress(event, address, sats, sender)
 
     suspend fun lookupMoneroTarget(pubkey: String): MoneroTargetLookup =
         paymentTargetsRepository.lookupMoneroTarget(pubkey)

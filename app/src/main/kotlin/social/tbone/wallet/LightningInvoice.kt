@@ -78,8 +78,10 @@ object LightningInvoice {
         require(!parsed.timestamp.isAfter(now.plusSeconds(300))) { "Lightning invoice timestamp is in the future" }
         require(parsed.timestamp.plus(parsed.expiry).isAfter(now)) { "The Lightning invoice has expired" }
         val fields = parsed.taggedFields
-        require(fields.count { it.tag == FieldTags.PAYMENT_HASH.tag && it.size == 52 } == 1) { "Invoice has an invalid payment hash" }
-        require(fields.count { it.tag == FieldTags.DESCRIPTION_HASH.tag && it.size == 52 } == 1 &&
+        val paymentHashes = fields.filter { it.tag == FieldTags.PAYMENT_HASH.tag }
+        require(paymentHashes.size == 1 && paymentHashes.single().size == 52) { "Invoice has an invalid payment hash" }
+        val descriptionHashes = fields.filter { it.tag == FieldTags.DESCRIPTION_HASH.tag }
+        require(descriptionHashes.size == 1 && descriptionHashes.single().size == 52 &&
             fields.none { it.tag == FieldTags.DESCRIPTION.tag }) { "Provider invoice is not bound to a zap request" }
         val expectedHash = MessageDigest.getInstance("SHA-256").digest(signedZapJson.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it.toInt() and 255) }
