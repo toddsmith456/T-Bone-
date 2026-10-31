@@ -19,6 +19,9 @@ class XdcArchiveTest {
             for ((name, bytes) in entries) {
                 val entry = ZipEntry(name).apply {
                     this.method = method
+                    // ZIP entry timestamps are otherwise assigned from the current clock,
+                    // making identical fixture content differ across two-second boundaries.
+                    time = 315532800000L // 1980-01-01, representable in ZIP's DOS timestamp
                     if (method == ZipEntry.STORED) {
                         size = bytes.size.toLong()
                         compressedSize = bytes.size.toLong()
