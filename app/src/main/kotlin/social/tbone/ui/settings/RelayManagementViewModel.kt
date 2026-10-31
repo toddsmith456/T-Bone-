@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -35,6 +36,9 @@ sealed interface RelayImportDialog {
     data class ImportChoice(
         val parsed: RelayFileFormat.Parsed,
         val currentCount: Int,
+        val accountPubkey: String,
+        val previousRelays: List<String>,
+        val previouslyConfigured: Boolean,
     ) : RelayImportDialog
 }
 
@@ -52,8 +56,11 @@ class RelayManagementViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
-    val relayStatuses: StateFlow<Map<String, RelayStatus>> = pool.relayStatuses
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+    // Show the saved personal list, never the shared pool's temporary connections.
+    val relayStatuses: StateFlow<Map<String, RelayStatus>> = combine(accountRepository.activeAccount, pool.relayStatuses) { account, statuses ->
+        account?.effectiveRelays().orEmpty().map(RelayPool::normalize).distinct()
+            .associateWith { statuses[it] ?: RelayStatus.DISCONNECTED }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val activeAccount = accountRepository.activeAccount
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -87,7 +94,7 @@ class RelayManagementViewModel @Inject constructor(
                 val result = relayListFetcher.fetchLatest(
                     pubkey = account.pubkey,
                     kind = EventKind.RELAY_LIST,
-                    seedRelays = account.relays,
+                    seedRelays = account.effectiveRelays(),
                 )
                 val event = result.event ?: run {
                     _syncState.value = PublishedListSyncState(
@@ -106,12 +113,15 @@ class RelayManagementViewModel @Inject constructor(
                     )
                     return@launch
                 }
-                // Atomically replace relays in storage
-                accountRepository.updateAccount(account.pubkey) { it.copy(relays = imported) }
-                // Sync pool to match — add new, remove old, but never clobber user edits after.
-                val previous = pool.relayUrls()
-                imported.forEach(pool::addRelay)
-                (previous - imported.toSet()).forEach(pool::removeRelay)
+                // Do not overwrite edits made while the network request was in flight.
+                var applied = false
+                accountRepository.updateAccount(account.pubkey) { current ->
+                    if (current.relays == account.relays && current.relayListConfigured == account.relayListConfigured) {
+                        applied = true
+                        current.copy(relays = imported, relayListConfigured = true)
+                    } else current
+                }
+                if (!applied) error("Relay list changed while syncing; your edits were kept. Try again.")
                 _syncState.value = PublishedListSyncState(
                     message = "Synced ${imported.size} relay${if (imported.size == 1) "" else "s"} from your published list.",
                 )
@@ -129,15 +139,13 @@ class RelayManagementViewModel @Inject constructor(
     fun addRelay(url: String): Boolean {
         val normalized = RelayPool.normalize(url)
         if (!RelayPool.isValidRelayUrl(normalized)) return false
-        // Optimistically add to pool for immediate UI feedback
-        pool.addRelay(normalized)
         // Persist atomically — fetch pubkey at call time, not from stale StateFlow
         viewModelScope.launch {
             val account = accountRepository.activeAccount.first() ?: return@launch
             accountRepository.updateAccount(account.pubkey) { current ->
-                val normalizedExisting = current.relays.map { RelayPool.normalize(it) }
+                val normalizedExisting = current.effectiveRelays().map { RelayPool.normalize(it) }
                 if (normalized in normalizedExisting) current
-                else current.copy(relays = (current.relays + normalized).distinct())
+                else current.copy(relays = (normalizedExisting + normalized).distinct(), relayListConfigured = true)
             }
         }
         return true
@@ -145,14 +153,13 @@ class RelayManagementViewModel @Inject constructor(
 
     fun removeRelay(url: String) {
         val normalized = RelayPool.normalize(url)
-        pool.removeRelay(normalized)
         viewModelScope.launch {
             val account = accountRepository.activeAccount.first() ?: return@launch
             accountRepository.updateAccount(account.pubkey) { current ->
-                val filtered = current.relays.map { RelayPool.normalize(it) }.filter { it != normalized }
+                val filtered = current.effectiveRelays().map { RelayPool.normalize(it) }.filter { it != normalized }
                 // Keep distinct normalized URLs but preserve original casing where possible?
                 // We store normalized anyway.
-                current.copy(relays = filtered.distinct())
+                current.copy(relays = filtered.distinct(), relayListConfigured = true)
             }
         }
     }
@@ -171,7 +178,7 @@ class RelayManagementViewModel @Inject constructor(
             try {
                 val account = accountRepository.activeAccount.first()
                     ?: error("No active account")
-                val relays = account.relays
+                val relays = account.effectiveRelays()
                 val text = RelayFileFormat.export(account.pubkey, relays)
                 withContext(Dispatchers.IO) {
                     context.contentResolver.openOutputStream(uri, "wt")?.use { it.write(text.toByteArray(Charsets.UTF_8)) }
@@ -213,10 +220,12 @@ class RelayManagementViewModel @Inject constructor(
                     say(parsed.error)
                     _syncState.value = PublishedListSyncState(message = parsed.error, isError = true)
                 } else {
-                    val account = accountRepository.activeAccount.first()
-                    val cur = account?.relays?.size ?: 0
+                    val account = accountRepository.activeAccount.first() ?: error("No active account")
                     _ui.value = _ui.value.copy(
-                        importDialog = RelayImportDialog.ImportChoice(parsed, cur)
+                        importDialog = RelayImportDialog.ImportChoice(
+                            parsed, account.effectiveRelays().size, account.pubkey,
+                            account.relays, account.relayListConfigured,
+                        )
                     )
                 }
             } catch (t: Throwable) {
@@ -233,27 +242,37 @@ class RelayManagementViewModel @Inject constructor(
         dismissImportDialog()
         viewModelScope.launch {
             val account = accountRepository.activeAccount.first() ?: return@launch
+            if (account.pubkey != dialog.accountPubkey) {
+                say("Account changed; import canceled. Start the import again.")
+                return@launch
+            }
             val incoming = dialog.parsed.relays
             val skippedMsg = if (dialog.parsed.skipped > 0) " (${dialog.parsed.skipped} skipped)" else ""
             if (replace) {
-                accountRepository.updateAccount(account.pubkey) { it.copy(relays = incoming) }
-                val previous = pool.relayUrls()
-                incoming.forEach(pool::addRelay)
-                (previous - incoming.toSet()).forEach(pool::removeRelay)
+                var applied = false
+                accountRepository.updateAccount(account.pubkey) { current ->
+                    if (current.relays == dialog.previousRelays && current.relayListConfigured == dialog.previouslyConfigured) {
+                        applied = true
+                        current.copy(relays = incoming, relayListConfigured = true)
+                    } else current
+                }
+                if (!applied) {
+                    say("Relay list changed; import canceled. Start the import again.")
+                    return@launch
+                }
                 say("Imported — relay list replaced with ${incoming.size} relays$skippedMsg.")
                 _syncState.value = PublishedListSyncState(message = "Imported — replaced with ${incoming.size} relays$skippedMsg.")
             } else {
                 // Merge: add only new ones
-                val toAdd = incoming.filterNot { it in account.relays.map { r -> RelayPool.normalize(r) } }
+                val toAdd = incoming.filterNot { it in account.effectiveRelays().map { r -> RelayPool.normalize(r) } }
                 if (toAdd.isEmpty()) {
                     say("Import — no new relays to add$skippedMsg.")
                     _syncState.value = PublishedListSyncState(message = "Import — no new relays to add$skippedMsg.")
                     return@launch
                 }
                 accountRepository.updateAccount(account.pubkey) { cur ->
-                    cur.copy(relays = (cur.relays + toAdd).distinct())
+                    cur.copy(relays = (cur.effectiveRelays() + toAdd).distinct(), relayListConfigured = true)
                 }
-                toAdd.forEach(pool::addRelay)
                 say("Imported — ${toAdd.size} new relay${if (toAdd.size == 1) "" else "s"} added$skippedMsg.")
                 _syncState.value = PublishedListSyncState(message = "Imported — ${toAdd.size} new relays added$skippedMsg.")
             }

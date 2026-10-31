@@ -17,6 +17,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
+import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -182,7 +187,6 @@ fun NoteMediaContent(mediaItems: List<MediaItem>, modifier: Modifier = Modifier)
     // TAP_TO_LOAD reveal state: first tap loads inline, second tap opens viewer
     var revealedImages by remember { mutableStateOf(setOf<String>()) }
     var revealedVideos by remember { mutableStateOf(setOf<String>()) }
-    var startedVideos by remember { mutableStateOf(setOf<String>()) }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         mediaItems.forEach { item ->
@@ -214,7 +218,7 @@ fun NoteMediaContent(mediaItems: List<MediaItem>, modifier: Modifier = Modifier)
                                     onOpen = open,
                                 )
                             } else {
-                                VideoPlaceholder(onOpen = revealVideo)
+                                VideoPlaceholder(onOpen = revealVideo, onFullscreen = open)
                             }
                         }
                         playbackMode == VideoPlaybackMode.LOAD_ON_TAP -> {
@@ -227,21 +231,17 @@ fun NoteMediaContent(mediaItems: List<MediaItem>, modifier: Modifier = Modifier)
                                 )
                             } else {
                                 if (showVideoThumbnails) {
-                                    VideoThumbnail(url = item.url, onOpen = revealVideo)
+                                    VideoThumbnail(url = item.url, onOpen = revealVideo, onFullscreen = open)
                                 } else {
-                                    VideoPlaceholder(onOpen = revealVideo)
+                                    VideoPlaceholder(onOpen = revealVideo, onFullscreen = open)
                                 }
                             }
                         }
                         else -> InlineVideo(
                             url = item.url,
                             quality = videoQuality,
-                            playWhenReady = shouldPlayInlineVideo(playbackMode, revealed = true, started = item.url in startedVideos, viewerOpen = videoViewerUrl != null),
-                            onOpen = {
-                                if (playbackMode == VideoPlaybackMode.PLAY_ON_TAP && item.url !in startedVideos) {
-                                    startedVideos = startedVideos + item.url
-                                } else open()
-                            },
+                            playWhenReady = shouldPlayInlineVideo(playbackMode, revealed = true, started = false, viewerOpen = videoViewerUrl != null),
+                            onOpen = open,
                         )
                     }
                 }
@@ -268,7 +268,7 @@ fun NoteMediaContent(mediaItems: List<MediaItem>, modifier: Modifier = Modifier)
     }
 }
 
-/** Inline playback surface. A tap always promotes it to the themed player. */
+/** Tap the video to play/pause; only the fullscreen button opens the viewer. */
 @Composable
 private fun InlineVideo(
     url: String,
@@ -285,14 +285,14 @@ private fun InlineVideo(
                 .height(INLINE_IMAGE_HEIGHT)
                 .clip(appCornerShape(MaterialTheme.shapes.medium))
                 .background(BonyColors.SurfaceAlt)
-                .border(1.dp, BonyColors.Rule)
-                .clickable(onClick = onOpen),
+                .border(1.dp, BonyColors.Rule),
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = playerState.errorMessage ?: "video preview unavailable · tap to open",
+                text = playerState.errorMessage ?: "video preview unavailable",
                 style = BonyType.meta.copy(color = BonyColors.TextMute),
             )
+            FullscreenButton(onOpen, Modifier.align(Alignment.BottomEnd))
         }
         return
     }
@@ -340,14 +340,14 @@ private fun InlineVideo(
                 .height(INLINE_IMAGE_HEIGHT)
                 .clip(appCornerShape(MaterialTheme.shapes.medium))
                 .background(BonyColors.SurfaceAlt)
-                .border(1.dp, BonyColors.Rule)
-                .clickable(onClick = onOpen),
+                .border(1.dp, BonyColors.Rule),
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = "video preview unavailable · tap to open",
+                text = "video preview unavailable",
                 style = BonyType.meta.copy(color = BonyColors.TextMute),
             )
+            FullscreenButton(onOpen, Modifier.align(Alignment.BottomEnd))
         }
         return
     }
@@ -387,18 +387,19 @@ private fun InlineVideo(
                 update = { it.player = player; it.keepScreenOn = isPlaying.value },
                 modifier = Modifier.fillMaxSize(),
             )
-            // Keep the image-like gesture: the inline surface is a preview, while
-            // all real controls are in the full-screen T-Bone player.
-            Box(Modifier.fillMaxSize().clickable(onClick = onOpen), contentAlignment = Alignment.Center) {
+            Box(Modifier.fillMaxSize().clickable {
+                if (player.playWhenReady) player.pause() else player.play()
+            }, contentAlignment = Alignment.Center) {
                 if (!isPlaying.value) VideoPlayBadge()
             }
+            FullscreenButton({ player.pause(); onOpen() }, Modifier.align(Alignment.BottomEnd))
         }
     }
 }
 
 /** Video frame preview used only for the explicit load-on-tap thumbnail option. */
 @Composable
-private fun VideoThumbnail(url: String, onOpen: () -> Unit) {
+private fun VideoThumbnail(url: String, onOpen: () -> Unit, onFullscreen: () -> Unit) {
     val context = LocalContext.current
     val youniversal = YouniversalTheme.enabled
     var aspectRatio by remember(url) { mutableStateOf<Float?>(null) }
@@ -469,7 +470,21 @@ private fun VideoThumbnail(url: String, onOpen: () -> Unit) {
                 },
             )
             VideoPlayBadge()
+            FullscreenButton(onFullscreen, Modifier.align(Alignment.BottomEnd))
         }
+    }
+}
+
+@Composable
+private fun FullscreenButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.padding(6.dp).size(48.dp)
+            .background(Color.Black.copy(alpha = 0.68f), CircleShape)
+            .semantics { contentDescription = "Open fullscreen video" }
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(Icons.Default.Fullscreen, contentDescription = null, tint = Color.White, modifier = Modifier.size(26.dp))
     }
 }
 
@@ -576,7 +591,7 @@ private fun InlineImage(url: String, lowQuality: Boolean, onOpen: () -> Unit) {
 }
 
 @Composable
-private fun VideoPlaceholder(onOpen: () -> Unit) {
+private fun VideoPlaceholder(onOpen: () -> Unit, onFullscreen: () -> Unit) {
     val shape = appCornerShape(MaterialTheme.shapes.medium)
     Box(
         modifier = Modifier.fillMaxWidth().height(PLACEHOLDER_HEIGHT).clip(shape)
@@ -586,6 +601,7 @@ private fun VideoPlaceholder(onOpen: () -> Unit) {
     ) {
         MediaStripes(Modifier.matchParentSize())
         VideoPlayBadge()
+        FullscreenButton(onFullscreen, Modifier.align(Alignment.BottomEnd))
     }
 }
 

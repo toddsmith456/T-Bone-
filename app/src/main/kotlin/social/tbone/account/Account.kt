@@ -21,13 +21,18 @@ data class Account(
     val pictureUrl: String? = null,              // cached from kind-0 metadata
     val signerType: SignerType,
     val nsecBunkerConfig: NsecBunkerConfig? = null,
-    val relays: List<String> = emptyList(),      // NIP-65 outbox relays
+    val relays: List<String> = emptyList(),      // locally configured personal relays
+    val relayListConfigured: Boolean = false,    // distinguishes an intentional empty list from legacy defaults
     val follows: List<String> = emptyList(),     // pubkey-only list for fast lookups (legacy / compat)
     val followEntries: List<FollowEntry> = emptyList(), // full NIP-02 entries with relay hints + petnames
     // ── Stealth: hidden account ────────────────────────────────────────────
     val isHidden: Boolean = false,
     val hiddenPinHash: String? = null,
 ) {
+    /** Preserve legacy defaults for old empty accounts without overwriting saved data. */
+    fun effectiveRelays(): List<String> =
+        if (relays.isEmpty() && !relayListConfigured) social.tbone.Tunables.DEFAULT_RELAYS else relays
+
     /** True if [pubkey] is in the follow list. */
     fun isFollowing(pubkey: String): Boolean =
         follows.contains(pubkey) || followEntries.any { it.pubkey == pubkey }

@@ -466,12 +466,11 @@ class AppSettings @Inject constructor(
                 _moneroXapsEnabled.value = prefs[MONERO_XAPS_ENABLED] ?: false
                 _screenTimeEnabled.value = prefs[SCREEN_TIME_ENABLED] ?: false
                 _screenTimeMinutes.value = prefs[SCREEN_TIME_MINUTES] ?: 120
-                // Global relays: if nothing stored, seed with defaults. Normalize stored values.
+                // Absence means first-run defaults; a stored empty set is intentional.
                 val storedGlobal = prefs[GLOBAL_RELAYS]?.mapNotNull { normalizeGlobalRelay(it) }?.toSet()
-                _globalRelays.value = storedGlobal?.takeIf { it.isNotEmpty() } ?: GLOBAL_RELAY_DEFAULTS
+                _globalRelays.value = storedGlobal ?: GLOBAL_RELAY_DEFAULTS
                 val storedActive = prefs[GLOBAL_ACTIVE_RELAYS]?.mapNotNull { normalizeGlobalRelay(it) }?.toSet()
-                _globalActiveRelays.value = storedActive?.takeIf { it.isNotEmpty() && it.all { r -> r in _globalRelays.value } }
-                    ?: _globalRelays.value
+                _globalActiveRelays.value = storedActive?.intersect(_globalRelays.value) ?: _globalRelays.value
                 _initialized.value = true
             }
         }
@@ -942,97 +941,73 @@ class AppSettings @Inject constructor(
         return trimmed
     }
 
+    private fun Preferences.globalConfigured(): Set<String> =
+        this[GLOBAL_RELAYS]?.mapNotNull { normalizeGlobalRelay(it) }?.toSet() ?: GLOBAL_RELAY_DEFAULTS
+
+    private fun Preferences.globalEnabled(configured: Set<String>): Set<String> =
+        this[GLOBAL_ACTIVE_RELAYS]?.mapNotNull { normalizeGlobalRelay(it) }?.toSet()?.intersect(configured) ?: configured
+
     suspend fun setGlobalRelays(relays: Set<String>) {
-        val normalized = relays.mapNotNull { normalizeGlobalRelay(it) }.toSet()
-        val toStore = normalized.ifEmpty { GLOBAL_RELAY_DEFAULTS }
-        _globalRelays.value = toStore
-        // Keep active subset valid — drop any active that no longer exists
-        val active = _globalActiveRelays.value.filter { it in toStore }.toSet()
-        _globalActiveRelays.value = active.ifEmpty { toStore }
-        dataStore.edit {
-            it[GLOBAL_RELAYS] = toStore
-            it[GLOBAL_ACTIVE_RELAYS] = _globalActiveRelays.value
+        val next = relays.mapNotNull { normalizeGlobalRelay(it) }.toSet()
+        dataStore.edit { prefs ->
+            val active = prefs.globalEnabled(prefs.globalConfigured()).intersect(next)
+            prefs[GLOBAL_RELAYS] = next
+            prefs[GLOBAL_ACTIVE_RELAYS] = active
         }
     }
 
     suspend fun addGlobalRelay(url: String) {
         val normalized = normalizeGlobalRelay(url) ?: return
-        if (normalized in _globalRelays.value) return
-        val next = _globalRelays.value + normalized
-        _globalRelays.value = next
-        // Auto-enable new relay for viewing
-        val activeNext = _globalActiveRelays.value + normalized
-        _globalActiveRelays.value = activeNext
-        dataStore.edit {
-            it[GLOBAL_RELAYS] = next
-            it[GLOBAL_ACTIVE_RELAYS] = activeNext
+        dataStore.edit { prefs ->
+            val current = prefs.globalConfigured()
+            if (normalized !in current) {
+                prefs[GLOBAL_RELAYS] = current + normalized
+                prefs[GLOBAL_ACTIVE_RELAYS] = prefs.globalEnabled(current) + normalized
+            }
         }
     }
 
     suspend fun removeGlobalRelay(url: String) {
-        val normalized = normalizeGlobalRelay(url) ?: url.trim().trimEnd('/')
-        val next = _globalRelays.value - normalized
-        if (next.size == _globalRelays.value.size) return
-        if (next.isEmpty()) {
-            // Never allow empty global list — reset to defaults
-            _globalRelays.value = GLOBAL_RELAY_DEFAULTS
-            _globalActiveRelays.value = GLOBAL_RELAY_DEFAULTS
-            dataStore.edit {
-                it[GLOBAL_RELAYS] = GLOBAL_RELAY_DEFAULTS
-                it[GLOBAL_ACTIVE_RELAYS] = GLOBAL_RELAY_DEFAULTS
-            }
-            return
-        }
-        _globalRelays.value = next
-        val activeNext = _globalActiveRelays.value - normalized
-        _globalActiveRelays.value = activeNext.ifEmpty { next }
-        dataStore.edit {
-            it[GLOBAL_RELAYS] = next
-            it[GLOBAL_ACTIVE_RELAYS] = _globalActiveRelays.value
+        val normalized = normalizeGlobalRelay(url) ?: return
+        dataStore.edit { prefs ->
+            val current = prefs.globalConfigured()
+            prefs[GLOBAL_RELAYS] = current - normalized
+            prefs[GLOBAL_ACTIVE_RELAYS] = prefs.globalEnabled(current) - normalized
         }
     }
 
     suspend fun setGlobalActiveRelays(active: Set<String>) {
         val normalized = active.mapNotNull { normalizeGlobalRelay(it) }.toSet()
-        val valid = normalized.filter { it in _globalRelays.value }.toSet()
-        val toStore = valid.ifEmpty { _globalRelays.value }
-        _globalActiveRelays.value = toStore
-        dataStore.edit { it[GLOBAL_ACTIVE_RELAYS] = toStore }
+        dataStore.edit { prefs -> prefs[GLOBAL_ACTIVE_RELAYS] = normalized.intersect(prefs.globalConfigured()) }
     }
 
     suspend fun toggleGlobalRelayActive(url: String) {
         val normalized = normalizeGlobalRelay(url) ?: return
-        if (normalized !in _globalRelays.value) return
-        val current = _globalActiveRelays.value
-        val next = if (normalized in current) {
-            // Don't allow disabling the last active relay — keep at least one
-            if (current.size <= 1) return
-            current - normalized
-        } else {
-            current + normalized
+        dataStore.edit { prefs ->
+            val current = prefs.globalConfigured()
+            if (normalized in current) {
+                val active = prefs.globalEnabled(current)
+                prefs[GLOBAL_ACTIVE_RELAYS] = if (normalized in active) active - normalized else active + normalized
+            }
         }
-        _globalActiveRelays.value = next
-        dataStore.edit { it[GLOBAL_ACTIVE_RELAYS] = next }
     }
 
     suspend fun soloGlobalRelay(url: String) {
         val normalized = normalizeGlobalRelay(url) ?: return
-        if (normalized !in _globalRelays.value) return
-        _globalActiveRelays.value = setOf(normalized)
-        dataStore.edit { it[GLOBAL_ACTIVE_RELAYS] = setOf(normalized) }
+        dataStore.edit { prefs ->
+            if (normalized in prefs.globalConfigured()) prefs[GLOBAL_ACTIVE_RELAYS] = setOf(normalized)
+        }
     }
 
     suspend fun enableAllGlobalRelays() {
-        _globalActiveRelays.value = _globalRelays.value
-        dataStore.edit { it[GLOBAL_ACTIVE_RELAYS] = _globalRelays.value }
+        dataStore.edit { prefs -> prefs[GLOBAL_ACTIVE_RELAYS] = prefs.globalConfigured() }
     }
 
     suspend fun resetGlobalRelays() {
-        _globalRelays.value = GLOBAL_RELAY_DEFAULTS
-        _globalActiveRelays.value = GLOBAL_RELAY_DEFAULTS
-        dataStore.edit {
-            it[GLOBAL_RELAYS] = GLOBAL_RELAY_DEFAULTS
-            it[GLOBAL_ACTIVE_RELAYS] = GLOBAL_RELAY_DEFAULTS
+        dataStore.edit { prefs ->
+            prefs[GLOBAL_RELAYS] = GLOBAL_RELAY_DEFAULTS
+            prefs[GLOBAL_ACTIVE_RELAYS] = GLOBAL_RELAY_DEFAULTS
         }
     }
+
 }

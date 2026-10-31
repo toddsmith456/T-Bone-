@@ -17,6 +17,14 @@ import social.tbone.settings.OrbotHelper
 import social.tbone.settings.OrbotStatus
 import okhttp3.OkHttpClient
 import javax.inject.Singleton
+import javax.inject.Qualifier
+import social.tbone.account.AccountRepository
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class GlobalFeedPool
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -37,7 +45,23 @@ object NetworkModule {
         scope: CoroutineScope,
         appSettings: AppSettings,
         @ApplicationContext context: Context,
+        accountRepository: AccountRepository,
     ): RelayPool {
+        val pool = createPool(scope, appSettings, context)
+        scope.launch {
+            accountRepository.activeAccount.map { it?.effectiveRelays().orEmpty() }
+                .distinctUntilChanged().collect { pool.setPersonalRelays(it) }
+        }
+        return pool
+    }
+
+    @Provides
+    @Singleton
+    @GlobalFeedPool
+    fun provideGlobalFeedPool(scope: CoroutineScope, appSettings: AppSettings, @ApplicationContext context: Context): RelayPool =
+        createPool(scope, appSettings, context)
+
+    private fun createPool(scope: CoroutineScope, appSettings: AppSettings, context: Context): RelayPool {
         val pool = RelayPool(
             scope = scope,
             connectionFactory = { url ->

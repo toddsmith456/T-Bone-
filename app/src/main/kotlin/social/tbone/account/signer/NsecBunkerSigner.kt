@@ -3,6 +3,8 @@ package social.tbone.account.signer
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onSubscription
+import social.tbone.nostr.relay.RelayStatus
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -97,36 +99,37 @@ class NsecBunkerSigner(
                 )
             ).getOrThrow()
 
-            pool.addRelay(config.relayUrl)
-            pool.subscribe(
-                filters = listOf(
-                    Filter(
-                        kinds = listOf(EventKind.NOSTR_CONNECT),
-                        authors = listOf(config.bunkerPubkey),
-                        pTags = listOf(config.sessionPubkey),
-                    )
-                ),
-            )
-
-            pool.send(config.relayUrl, ClientMessage.Publish(requestEvent))
-
-            // Await the response matching our requestId
-            return withTimeout(REQUEST_TIMEOUT_MS) {
-                pool.messages
-                    .filter { it.relayUrl == config.relayUrl }
-                    .filter { it.message is RelayMessage.EventMessage }
-                    .first { poolMessage ->
-                        val event = (poolMessage.message as RelayMessage.EventMessage).event
-                        parseResponse(event, requestId) != null
-                    }
-                    .let { poolMessage ->
-                        val event = (poolMessage.message as RelayMessage.EventMessage).event
-                        val response = parseResponse(event, requestId)!!
-                        if (response.error.isNotEmpty()) {
-                            error("nsecBunker error: ${response.error}")
+            val relayUrl = RelayPool.normalize(config.relayUrl)
+            pool.acquireRelay(relayUrl)
+            var subscriptionId: String? = null
+            try {
+                return withTimeout(REQUEST_TIMEOUT_MS) {
+                    pool.relayStatuses.first { it[relayUrl] == RelayStatus.CONNECTED }
+                    pool.messages.onSubscription {
+                        subscriptionId = pool.subscribeTo(
+                            filters = listOf(Filter(
+                                kinds = listOf(EventKind.NOSTR_CONNECT),
+                                authors = listOf(config.bunkerPubkey),
+                                pTags = listOf(config.sessionPubkey),
+                            )),
+                            relays = setOf(relayUrl),
+                        )
+                        check(pool.send(relayUrl, ClientMessage.Publish(requestEvent))) { "Bunker relay disconnected" }
+                    }.filter { it.relayUrl == relayUrl }
+                        .filter { it.message is RelayMessage.EventMessage }
+                        .first { poolMessage ->
+                            val event = (poolMessage.message as RelayMessage.EventMessage).event
+                            parseResponse(event, requestId) != null
+                        }.let { poolMessage ->
+                            val event = (poolMessage.message as RelayMessage.EventMessage).event
+                            val response = parseResponse(event, requestId)!!
+                            if (response.error.isNotEmpty()) error("nsecBunker error: ${response.error}")
+                            response.result
                         }
-                        response.result
-                    }
+                }
+            } finally {
+                subscriptionId?.let(pool::unsubscribe)
+                pool.releaseRelay(relayUrl)
             }
         }
 

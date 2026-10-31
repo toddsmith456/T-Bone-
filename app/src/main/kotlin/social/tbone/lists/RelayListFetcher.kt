@@ -52,10 +52,10 @@ class RelayListFetcher @Inject constructor(
         seedRelays: List<String> = emptyList(),
         timeoutMs: Long = DEFAULT_TIMEOUT_MS,
     ): Result = coroutineScope {
-        // Make sure there is something to talk to (a fresh install may have no relays yet).
-        if (pool.relayUrls().isEmpty()) {
-            seedRelays.ifEmpty { Tunables.DEFAULT_RELAYS }.forEach { pool.addRelay(it) }
-        }
+        // Scope this one-shot request to its chosen relays and release all leases.
+        val targets = seedRelays.ifEmpty { pool.relayUrls().toList().ifEmpty { Tunables.DEFAULT_RELAYS } }
+            .map(RelayPool::normalize).filter(RelayPool::isValidRelayUrl).toSet()
+        targets.forEach(pool::acquireRelay)
 
         val eose: MutableSet<String> = ConcurrentHashMap.newKeySet()
         val best = AtomicReference<Event?>(null)
@@ -65,10 +65,11 @@ class RelayListFetcher @Inject constructor(
         val collector: Job = launch(Dispatchers.Default) {
             pool.messages
                 .onSubscription {
-                    pool.subscribe(
+                    pool.subscribeTo(
                         listOf(Filter(authors = listOf(pubkey), kinds = listOf(kind), limit = 1)),
                         id = subId,
                         label = "list-fetch",
+                        relays = targets,
                     )
                     ready.complete(Unit)
                 }
@@ -96,7 +97,7 @@ class RelayListFetcher @Inject constructor(
             while (true) {
                 delay(POLL_MS)
                 val now = System.currentTimeMillis()
-                val expected = pool.relayUrls().size.coerceAtLeast(1)
+                val expected = targets.size.coerceAtLeast(1)
                 if (eose.size >= expected) break                 // everyone answered
                 if (eose.isNotEmpty()) {
                     if (graceStart == 0L) graceStart = now
@@ -107,6 +108,7 @@ class RelayListFetcher @Inject constructor(
         } finally {
             collector.cancel()
             pool.unsubscribe(subId)
+            targets.forEach(pool::releaseRelay)
         }
         Timber.d("List fetch kind=$kind: event=${best.get()?.id?.take(8)} eose=${eose.size}")
         Result(best.get(), eose.size)

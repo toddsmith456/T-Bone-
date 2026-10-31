@@ -204,7 +204,6 @@ fun RelayManagementScreen(
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Text("Your relays (${relayStatuses.size})", style = MaterialTheme.typography.titleMedium.copy(color = BonyColors.Text))
-                    Text("Only you change this list.", style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant))
                 }
             }
             if (relayStatuses.isEmpty()) {

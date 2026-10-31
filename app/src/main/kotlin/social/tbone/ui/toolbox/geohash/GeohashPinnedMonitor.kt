@@ -4,6 +4,7 @@ import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,7 +38,8 @@ class GeohashPinnedMonitor @Inject constructor(
     val unread: StateFlow<Map<String, Int>> = _unread.asStateFlow()
 
     private val subIds = ConcurrentHashMap<String, String>() // code -> subId
-    private val addedRelays = ConcurrentHashMap.newKeySet<String>()
+    private val channelRelays = ConcurrentHashMap<String, Set<String>>()
+    private val collectorJobs = ConcurrentHashMap<String, Job>()
     private val seenPerChannel = ConcurrentHashMap<String, MutableSet<String>>()
 
     init {
@@ -59,27 +61,21 @@ class GeohashPinnedMonitor @Inject constructor(
     private fun startWatch(code: String) {
         if (subIds.containsKey(code)) return
         seenPerChannel[code] = ConcurrentHashMap.newKeySet()
-        scope.launch {
-            val relays = GeohashRelays.closestRelays(code).toSet()
-            relays.forEach {
-                if (it !in pool.relayUrls()) {
-                    pool.addRelay(it)
-                    addedRelays.add(it)
-                }
-            }
-            val since = lastSeen(code)
-            val subId = pool.subscribeTo(
-                listOf(Filter(
-                    kinds = listOf(20000),
-                    gTags = social.tbone.nostr.geohash.GeohashRelays.watchGeohashes(code),
-                    since = since.takeIf { it > 0 },
-                )),
-                label = "geohash_home_$code",
-                relays = relays,
-            )
-            subIds[code] = subId
-        }
-        scope.launch {
+        val relays = GeohashRelays.closestRelays(code).toSet()
+        channelRelays[code] = relays
+        relays.forEach(pool::acquireRelay)
+        val since = lastSeen(code)
+        val subId = pool.subscribeTo(
+            listOf(Filter(
+                kinds = listOf(20000),
+                gTags = social.tbone.nostr.geohash.GeohashRelays.watchGeohashes(code),
+                since = since.takeIf { it > 0 },
+            )),
+            label = "geohash_home_$code",
+            relays = relays,
+        )
+        subIds[code] = subId
+        collectorJobs[code] = scope.launch {
             pool.messages.collect { poolMessage ->
                 val msg = poolMessage.message
                 if (msg !is RelayMessage.EventMessage) return@collect
@@ -99,6 +95,8 @@ class GeohashPinnedMonitor @Inject constructor(
 
     private fun stopWatch(code: String) {
         subIds.remove(code)?.let { pool.unsubscribe(it) }
+        collectorJobs.remove(code)?.cancel()
+        channelRelays.remove(code)?.forEach(pool::releaseRelay)
         seenPerChannel.remove(code)
         _unread.update { it - code }
     }

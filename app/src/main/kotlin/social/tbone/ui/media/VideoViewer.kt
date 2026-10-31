@@ -189,7 +189,7 @@ fun VideoViewer(
 
         Row(
             modifier = Modifier
-                .align(Alignment.TopCenter)
+                .align(Alignment.TopStart)
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 12.dp),
         ) {

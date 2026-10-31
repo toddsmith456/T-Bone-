@@ -1,6 +1,8 @@
 package social.tbone.nostr.relay
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -72,63 +74,70 @@ class RelayPool(
 
     // ── Relay management ──────────────────────────────────────────────────────
 
+    // Personal relays and temporary leases have independent ownership. Closing a
+    // search/thread/tool must never disconnect a personal relay or another owner.
+    private val personalRelays = mutableSetOf<String>()
+    private val relayRefCounts = mutableMapOf<String, Int>()
+
+    @Synchronized
     fun addRelay(url: String) {
         val normalized = normalize(url)
-        if (connections.containsKey(normalized)) return
+        if (!isValidRelayUrl(normalized) || connections.containsKey(normalized)) return
         val connection = connectionFactory(normalized)
-        val job = scope.launch { connectWithRetry(normalized, connection) }
+        // Register before launching, so a fast connection cannot miss its entry.
+        val job = scope.launch(start = CoroutineStart.LAZY) { connectWithRetry(normalized, connection) }
         connections[normalized] = RelayEntry(connection, job)
         _relayStatuses.update { it + (normalized to RelayStatus.CONNECTING) }
-        Timber.d("Added relay: $normalized")
+        job.start()
     }
 
+    @Synchronized
     fun removeRelay(url: String) {
         val normalized = normalize(url)
-        connections.remove(normalized)?.job?.cancel()
-        _relayStatuses.update { it - normalized }
-        Timber.d("Removed relay: $normalized")
+        if (normalized in personalRelays || (relayRefCounts[normalized] ?: 0) > 0) return
+        disconnect(normalized)
     }
 
-    private val relayRefCounts = ConcurrentHashMap<String, Int>()
+    private fun disconnect(normalized: String) {
+        connections.remove(normalized)?.job?.cancel()
+        _relayStatuses.update { it - normalized }
+    }
 
-    /**
-     * Connect to a relay with reference counting: every [acquireRelay] must be
-     * matched by a [releaseRelay], and the connection is only torn down when the
-     * last user releases it. Several screens (search, composer @-mentions) may
-     * hold the same relay at once without yanking it out from under each other.
-     */
+    @Synchronized
+    fun setPersonalRelays(urls: Collection<String>) {
+        val next = urls.map(::normalize).filter(::isValidRelayUrl).toSet()
+        val removed = personalRelays - next
+        personalRelays.clear()
+        personalRelays.addAll(next)
+        removed.forEach { removeRelay(it) }
+        next.forEach { addRelay(it) }
+    }
+
+    @Synchronized
     fun acquireRelay(url: String) {
         val normalized = normalize(url)
-        synchronized(relayRefCounts) {
-            relayRefCounts[normalized] = (relayRefCounts[normalized] ?: 0) + 1
-        }
+        if (!isValidRelayUrl(normalized)) return
+        relayRefCounts[normalized] = (relayRefCounts[normalized] ?: 0) + 1
         addRelay(normalized)
     }
 
+    @Synchronized
     fun releaseRelay(url: String) {
         val normalized = normalize(url)
-        val remaining = synchronized(relayRefCounts) {
-            val count = (relayRefCounts[normalized] ?: 0) - 1
-            if (count <= 0) relayRefCounts.remove(normalized) else relayRefCounts[normalized] = count
-            count
-        }
-        if (remaining <= 0) removeRelay(normalized)
+        val count = relayRefCounts[normalized] ?: return
+        if (count <= 1) relayRefCounts.remove(normalized) else relayRefCounts[normalized] = count - 1
+        removeRelay(normalized)
     }
 
-    /**
-     * Swap the transport (e.g. plain vs. Tor SOCKS proxy) and reconnect all
-     * existing relays so the new client takes effect immediately.
-     */
-    fun updateTransport(client: okhttp3.OkHttpClient) =
-        updateTransportFactory { client }
+    fun updateTransport(client: okhttp3.OkHttpClient) = updateTransportFactory { client }
 
-    /** Rebuilds per-relay clients, allowing loopback relays to bypass Tor only. */
+    /** Reconnect without losing owners; loopback relay routing is preserved. */
+    @Synchronized
     fun updateTransportFactory(clientFactory: (url: String) -> okhttp3.OkHttpClient) {
         connectionFactory = { url -> RelayConnection(url, clientFactory(url)) }
         val urls = connections.keys.toList()
-        urls.forEach { removeRelay(it) }
+        urls.forEach { disconnect(it) }
         urls.forEach { addRelay(it) }
-        Timber.d("Transport updated, reconnecting ${urls.size} relay(s)")
     }
 
     fun relayUrls(): Set<String> = connections.keys.toSet()
@@ -241,6 +250,8 @@ class RelayPool(
                         }
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Timber.w(e, "Collection error on $url")
             }

@@ -73,6 +73,7 @@ class GeohashChatViewModel @Inject constructor(
     private val seen = ConcurrentHashMap.newKeySet<String>()
     private var subId: String? = null
     private var collectJob: Job? = null
+    private var relayJoinJob: Job? = null
     private var currentGeohash: String = ""
     /** Relays this chat added to the pool — removed again on leave. */
     private val addedRelays = ConcurrentHashMap.newKeySet<String>()
@@ -114,14 +115,11 @@ class GeohashChatViewModel @Inject constructor(
         _error.value = null
         _live.value = false
 
-        viewModelScope.launch {
+        relayJoinJob = viewModelScope.launch {
             // Only this channel's ~5 relays — not the account's whole list.
             val relays = GeohashRelays.closestRelays(g).toSet()
             relays.forEach {
-                if (it !in pool.relayUrls()) {
-                    pool.addRelay(it)
-                    addedRelays.add(it)
-                }
+                if (addedRelays.add(it)) pool.acquireRelay(it)
             }
             // Subscribe to the code AND its parent prefixes (4..len) so messages
             // posted at any coarser precision — city / province — arrive too.
@@ -168,6 +166,8 @@ class GeohashChatViewModel @Inject constructor(
     }
 
     fun leave() {
+        relayJoinJob?.cancel()
+        relayJoinJob = null
         collectJob?.cancel()
         collectJob = null
         subId?.let { pool.unsubscribe(it) }
@@ -175,7 +175,7 @@ class GeohashChatViewModel @Inject constructor(
         currentGeohash = ""
         _live.value = false
         // Drop the relays this chat connected (other channels re-add theirs).
-        addedRelays.forEach { pool.removeRelay(it) }
+        addedRelays.forEach { pool.releaseRelay(it) }
         addedRelays.clear()
     }
 
@@ -214,7 +214,6 @@ class GeohashChatViewModel @Inject constructor(
                 return@launch
             }
             val relays = GeohashRelays.closestRelays(g).toSet()
-            relays.forEach { pool.addRelay(it) }
             pool.publishTo(event, relays)
             // Optimistic local add — you always see your own message.
             seen.add(event.id)
