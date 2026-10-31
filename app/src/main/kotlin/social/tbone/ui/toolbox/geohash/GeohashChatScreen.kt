@@ -230,6 +230,5 @@ private fun shortNpub(hex: String): String =
     runCatching { Nip19.hexToNpub(hex) }.getOrNull()?.let { "${it.take(9)}…" } ?: "${hex.take(8)}…"
 
 private fun Long.formatChatTime(): String =
-    Instant.ofEpochSecond(this)
-        .atZone(ZoneId.systemDefault())
-        .format(DateTimeFormatter.ofPattern("MMM d · HH:mm"))
+    runCatching { Instant.ofEpochSecond(this).atZone(ZoneId.systemDefault())
+        .format(DateTimeFormatter.ofPattern("MMM d · HH:mm")) }.getOrDefault("unknown date")

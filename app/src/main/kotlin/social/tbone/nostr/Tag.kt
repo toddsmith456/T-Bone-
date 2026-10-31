@@ -1,7 +1,7 @@
 package social.tbone.nostr
 
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 
 /**
@@ -17,7 +17,7 @@ value class Tag(val values: List<String>) {
 
     companion object {
         fun fromJsonArray(array: JsonArray): Tag =
-            Tag(array.map { it.jsonPrimitive.contentOrNull ?: "" })
+            Tag(array.map { (it as? JsonPrimitive)?.contentOrNull ?: "" })
 
         // Convenience constructors for common tag types
         fun event(eventId: String, relayHint: String = "", marker: String = ""): Tag =

@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.onSubscription
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import social.tbone.nostr.Filter
@@ -42,6 +43,7 @@ class GeohashPinnedMonitor @Inject constructor(
 
     init {
         scope.launch {
+            appSettings.initialized.first { it }
             appSettings.geohashChannels.collect { channels ->
                 val home = channels.filter { it.pinnedToHome }.map { it.code }.toSet()
                 subIds.keys.filterNot { it in home }.forEach { stopWatch(it) }
@@ -56,6 +58,7 @@ class GeohashPinnedMonitor @Inject constructor(
     private fun startWatch(code: String) {
         if (subIds.containsKey(code)) return
         val seen = ConcurrentHashMap.newKeySet<String>()
+        val liveRelays = ConcurrentHashMap.newKeySet<String>()
         seenPerChannel[code] = seen
         val relays = GeohashRelays.closestRelays(code).toSet()
         channelRelays[code] = relays
@@ -67,20 +70,25 @@ class GeohashPinnedMonitor @Inject constructor(
                 pool.subscribeTo(listOf(Filter(kinds = listOf(20000), gTags = GeohashRelays.watchGeohashes(code),
                     since = lastSeen(code).takeIf { it > 0 })), id = subId, label = "geohash_home_$code", relays = relays)
             }.collect { poolMessage ->
-                val msg = poolMessage.message as? RelayMessage.EventMessage ?: return@collect
+                val incoming = poolMessage.message
+                if (incoming is RelayMessage.EndOfStoredEvents && incoming.subscriptionId == subId) {
+                    liveRelays.add(poolMessage.relayUrl)
+                    return@collect
+                }
+                val msg = incoming as? RelayMessage.EventMessage ?: return@collect
                 if (msg.subscriptionId != subId) return@collect
                 val event = msg.event
                 if (event.kind != 20000 || !event.matchesGeohashChannel(code) || !event.verify()) return@collect
                 if (!seen.add(event.id)) return@collect
                 if (seen.size > 4096) { seen.clear(); seen.add(event.id) }
                 val own = event.pubkey in cache.ownPubkeys(code)
-                cache.save(code, GeohashMessage(event.id, event.pubkey, event.createdAt, event.content,
-                    event.parsedTags.firstOrNull { it.name == "n" }?.value(), own))
                 if (openChannel == code) {
                     markSeen(code)
-                } else if (!own && event.createdAt > lastSeen(code)) {
+                } else if (!own && (poolMessage.relayUrl in liveRelays || event.createdAt > lastSeen(code))) {
                     _unread.update { it + (code to ((it[code] ?: 0) + 1)) }
                 }
+                cache.enqueue(code, GeohashMessage(event.id, event.pubkey, event.createdAt, event.content,
+                    event.parsedTags.firstOrNull { it.name == "n" }?.value(), own))
             }
         }
     }

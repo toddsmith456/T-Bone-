@@ -1100,8 +1100,9 @@ private fun Long.formatRelative(): String {
         delta < 3600 -> "${delta / 60}m"
         delta < 86400 -> "${delta / 3600}h"
         delta < 604800 -> "${delta / 86400}d"
-        else -> Instant.ofEpochSecond(this)
-            .atZone(ZoneId.systemDefault())
-            .format(DateTimeFormatter.ofPattern("MMM d"))
+        else -> runCatching {
+            Instant.ofEpochSecond(this).atZone(ZoneId.systemDefault())
+                .format(DateTimeFormatter.ofPattern("MMM d"))
+        }.getOrDefault("unknown date")
     }
 }

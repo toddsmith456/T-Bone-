@@ -705,7 +705,7 @@ class FeedViewModel @Inject constructor(
         // Defense in depth: relay filters and event dispatch both restrict the
         // feed, but cached/side-loaded data must also never surface NIP-17 or
         // its NIP-59 wrappers in the public timeline.
-        val publicEvents = events.filterNot { EventKind.isPrivateMessaging(it.kind) }
+        val publicEvents = events.filterNot { EventKind.isPrivateMessaging(it.kind) }.distinctBy { it.id }
         val blocked = muteRepository.effectiveMuted.value
         val hideNsfw = appSettings.hideNsfw.value
         val hideWords = appSettings.hideWords.value

@@ -192,7 +192,7 @@ class GeohashChatViewModel @Inject constructor(
     }
 
     private fun appendMessage(channel: String, msg: GeohashMessage) {
-        viewModelScope.launch(Dispatchers.IO) { cache.save(channel, msg) }
+        cache.enqueue(channel, msg)
         if (currentGeohash != channel) return
         _messages.update { current -> (current + msg).distinctBy { it.id }.sortedBy { it.createdAt } }
     }

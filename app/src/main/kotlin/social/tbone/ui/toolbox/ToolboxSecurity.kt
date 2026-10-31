@@ -24,6 +24,7 @@ import javax.inject.Singleton
 class ToolboxSecurity @Inject constructor(
     private val appSettings: AppSettings,
     private val appDatabase: AppDatabase,
+    private val geohashCache: social.tbone.ui.toolbox.geohash.GeohashMessageCache,
     @ApplicationContext private val context: Context,
     private val scope: CoroutineScope,
 ) {
@@ -91,6 +92,9 @@ class ToolboxSecurity @Inject constructor(
     fun wipeToolbox() {
         scope.launch(Dispatchers.IO) {
             runCatching {
+                // Stop new geohash cache writes before deleting private messages.
+                appSettings.setGeohashCacheMillis(0L)
+                geohashCache.clear()
                 // Delete every table except `notifications`. Children first so
                 // any foreign-key ordering is respected.
                 val db = appDatabase.openHelper.writableDatabase

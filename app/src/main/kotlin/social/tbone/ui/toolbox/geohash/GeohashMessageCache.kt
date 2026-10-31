@@ -22,7 +22,7 @@ import javax.inject.Singleton
 class GeohashMessageCache @Inject constructor(
     private val dao: GeohashMessageDao,
     private val settings: AppSettings,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
 ) {
     private val lock = Mutex()
 
@@ -37,12 +37,18 @@ class GeohashMessageCache @Inject constructor(
         }
     }
 
+    fun enqueue(channel: String, msg: GeohashMessage) {
+        scope.launch(Dispatchers.IO) { save(channel, msg) }
+    }
+
+    suspend fun clear() = lock.withLock { dao.deleteAll() }
+
     suspend fun prune() = lock.withLock {
         try {
             val duration = settings.geohashCacheMillis.value
             if (duration == 0L) dao.deleteAll()
             else dao.deleteOlderThan(System.currentTimeMillis() - duration)
-        } catch (e: Exception) { Timber.e(e, "Could not prune geohash cache") }
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; Timber.e(e, "Could not prune geohash cache") }
     }
 
     suspend fun save(channel: String, msg: GeohashMessage) = lock.withLock {
@@ -50,7 +56,7 @@ class GeohashMessageCache @Inject constructor(
         try {
             dao.insert(GeohashMessageEntity(msg.id, channel, msg.pubkey, msg.createdAt,
                 msg.content, msg.nickname, msg.own, System.currentTimeMillis()))
-        } catch (e: Exception) { Timber.e(e, "Could not cache geohash message") }
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; Timber.e(e, "Could not cache geohash message") }
     }
 
     suspend fun load(channel: String): List<GeohashMessage> = lock.withLock {
@@ -60,7 +66,7 @@ class GeohashMessageCache @Inject constructor(
             dao.getForChannel(channel, System.currentTimeMillis() - duration).map {
                 GeohashMessage(it.id, it.pubkey, it.createdAt, it.content, it.nickname, it.own)
             }
-        } catch (e: Exception) { Timber.e(e, "Could not load geohash cache"); emptyList() }
+        } catch (e: Exception) { if (e is kotlinx.coroutines.CancellationException) throw e; Timber.e(e, "Could not load geohash cache"); emptyList() }
     }
 
     /** Match all saved channel identities: one event can carry several geohash tags. */
