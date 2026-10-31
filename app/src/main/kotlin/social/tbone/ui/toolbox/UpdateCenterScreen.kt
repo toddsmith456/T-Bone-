@@ -300,7 +300,7 @@ private fun UpdateCenterContent(
                 BonyButton(
                     label = if (state.isChecking) "checking…" else "check now",
                     primary = false,
-                    enabled = !state.isChecking,
+                    enabled = !state.isChecking && !state.isDownloading,
                     modifier = Modifier.weight(1f),
                     onClick = viewModel::checkForUpdates,
                 )

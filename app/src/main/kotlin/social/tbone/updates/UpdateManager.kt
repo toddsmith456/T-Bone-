@@ -258,12 +258,12 @@ class UpdateManager @Inject constructor(
     /** Download, verify package identity and signer compatibility, then cache the APK. */
     fun downloadUpdate() {
         if (BuildConfig.IS_BETA) return
-        val snapshot = _state.value
-        if (snapshot.apkUrl.isNullOrBlank() || snapshot.isDownloading || snapshot.isChecking) return
-        // Allow re-download even if not “newer” when user explicitly taps download —
-        // updateAvailable is for badge, not for blocking a manual download.
-        // Only block if already downloading.
         scope.launch(Dispatchers.IO) {
+            // Serialize checks and downloads so release metadata cannot change mid-download.
+            if (!checkMutex.tryLock()) return@launch
+            try {
+            val snapshot = _state.value
+            if (snapshot.apkUrl.isNullOrBlank() || snapshot.isDownloading || snapshot.isChecking) return@launch
             _state.update { it.copy(isDownloading = true, downloadProgress = 0, error = null) }
             val partial = File(updateDirectory, "latest.apk.part")
             try {
@@ -303,6 +303,9 @@ class UpdateManager @Inject constructor(
                         error = msg ?: "Couldn't download the update.",
                     )
                 }
+            }
+            } finally {
+                checkMutex.unlock()
             }
         }
     }
