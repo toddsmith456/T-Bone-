@@ -65,6 +65,7 @@ android {
         // FORK IDENTITY — side-by-side with upstream (upstream: social.tbone).
         // App label stays "T-bone" (see res/values/strings.xml) per owner request.
         applicationId = "social.tbone.fork"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 26
         targetSdk = 34
         versionCode = appVersionCode
@@ -244,6 +245,12 @@ dependencies {
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui)
     implementation(libs.media3.datasource.okhttp)
+
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test:runner:1.5.2")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     // Unit tests (JVM only — build-time, never shipped in the APK)
     testImplementation("junit:junit:4.13.2")
