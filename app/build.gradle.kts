@@ -250,6 +250,7 @@ dependencies {
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test:runner:1.5.2")
+    androidTestImplementation(libs.okhttp.mockwebserver)
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     // Unit tests (JVM only — build-time, never shipped in the APK)
