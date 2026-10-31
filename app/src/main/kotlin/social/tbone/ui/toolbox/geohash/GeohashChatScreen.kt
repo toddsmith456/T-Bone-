@@ -25,6 +25,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,6 +35,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
@@ -65,8 +68,9 @@ fun GeohashChatScreen(
     val listState = rememberLazyListState()
 
     // Connect only while this screen is open.
-    LaunchedEffect(code) {
+    DisposableEffect(code, viewModel) {
         viewModel.join(code)
+        onDispose { viewModel.leave() }
     }
 
     Column(
@@ -113,7 +117,7 @@ fun GeohashChatScreen(
         // Honest note: kind-20000 geohash events are EPHEMERAL — relays don't
         // store them, so a channel only shows what's posted while you're here.
         Text(
-            text = "geohash messages are live-only (relays don't keep them) — you'll see messages posted while you're in this channel",
+            text = "geohash messages are live-only; cached messages are kept on this device according to your cache setting",
             style = BonyType.caption.copy(color = BonyColors.TextMute),
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
         )
@@ -186,6 +190,7 @@ fun GeohashChatScreen(
 private fun MessageBubble(m: GeohashMessage) {
     // Own messages align right and use the accent; others align left.
     val alignment = if (m.own) Alignment.CenterEnd else Alignment.CenterStart
+    val color = if (m.own) GeohashOwnColor else geohashPeerColor(m.pubkey, BonyColors.Bg.luminance() < 0.5f)
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -195,15 +200,15 @@ private fun MessageBubble(m: GeohashMessage) {
         Column(
             modifier = Modifier
                 .fillMaxWidth(0.85f)
-                .background(if (m.own) BonyColors.AccentBg else BonyColors.SurfaceAlt)
-                .appBorder(1.dp, if (m.own) BonyColors.AccentDim else BonyColors.Rule)
+                .background(BonyColors.SurfaceAlt)
+                .appBorder(1.dp, color.copy(alpha = 0.55f))
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = m.nickname?.takeIf { it.isNotBlank() } ?: shortNpub(m.pubkey),
                     style = BonyType.metaDim.copy(
-                        color = if (m.own) BonyColors.Accent else BonyColors.TextMute,
+                        color = color,
                     ),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -216,7 +221,7 @@ private fun MessageBubble(m: GeohashMessage) {
                 )
             }
             Spacer(Modifier.height(3.dp))
-            Text(text = m.content, style = BonyType.body.copy(color = BonyColors.Text))
+            Text(text = m.content, style = BonyType.body.copy(color = color))
         }
     }
 }

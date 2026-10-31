@@ -59,12 +59,15 @@ fun GeohashChannelScreen(
 ) {
     val channels by viewModel.channels.collectAsStateWithLifecycle()
     val nickname by viewModel.nickname.collectAsStateWithLifecycle()
+    val cacheMillis by viewModel.cacheMillis.collectAsStateWithLifecycle()
     var showAdd by remember { mutableStateOf(false) }
     var target by remember { mutableStateOf<GeohashChannelEntry?>(null) }
 
     GeohashChannelContent(
         channels = channels,
         nickname = nickname,
+        cacheMillis = cacheMillis,
+        onCacheChange = viewModel::setCacheMillis,
         onBack = onBack,
         onNicknameChange = viewModel::setNickname,
         onOpenChannel = onOpenChannel,
@@ -100,6 +103,8 @@ fun GeohashChannelScreen(
 private fun GeohashChannelContent(
     channels: List<GeohashChannelEntry>,
     nickname: String,
+    cacheMillis: Long,
+    onCacheChange: (Long) -> Unit,
     onBack: () -> Unit,
     onNicknameChange: (String) -> Unit,
     onOpenChannel: (String) -> Unit,
@@ -114,6 +119,7 @@ private fun GeohashChannelContent(
                 .statusBarsPadding(),
         ) {
             GeohashChannelTitleBar(onBack)
+            CacheSelector(cacheMillis, onCacheChange)
             NicknameEditor(nickname, onNicknameChange)
             Text(
                 text = "long-press a channel to pin, move or delete",
@@ -159,6 +165,28 @@ private fun GeohashChannelTitleBar(onBack: () -> Unit) {
             Text("location channels", style = BonyType.body.copy(color = BonyColors.Text), modifier = Modifier.weight(1f))
         }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+    }
+}
+
+@Composable
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+private fun CacheSelector(selected: Long, onSelect: (Long) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val options = listOf("never", "30 min", "1 hr", "5 hr", "1 day", "1 week")
+        .zip(social.tbone.settings.AppSettings.GEOHASH_CACHE_OPTIONS)
+    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp)) {
+        Text("message cache: ${options.firstOrNull { it.second == selected }?.first ?: "never"} ${if (expanded) "▴" else "▾"}",
+            style = BonyType.meta.copy(color = BonyColors.Text),
+            modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(vertical = 8.dp))
+        if (expanded) {
+            androidx.compose.foundation.layout.FlowRow(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)) {
+                options.forEach { (label, value) ->
+                    Text(label, style = BonyType.meta.copy(color = if (selected == value) BonyColors.Accent else BonyColors.TextMute),
+                        modifier = Modifier.clickable { onSelect(value); expanded = false }.padding(vertical = 8.dp))
+                }
+            }
+            Text("Stores received messages on this device. Selecting never clears the cache.", style = BonyType.caption.copy(color = BonyColors.TextMute))
+        }
     }
 }
 

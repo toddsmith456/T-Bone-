@@ -94,7 +94,7 @@ class ToolboxSecurity @Inject constructor(
                 // Delete every table except `notifications`. Children first so
                 // any foreign-key ordering is respected.
                 val db = appDatabase.openHelper.writableDatabase
-                listOf("bookmarks", "bookmark_folders", "note_attachments", "note_folders", "calendar_events", "notes", "events", "profiles")
+                listOf("bookmarks", "bookmark_folders", "note_attachments", "note_folders", "calendar_events", "notes", "events", "profiles", "geohash_messages")
                     .forEach { table ->
                         runCatching { db.execSQL("DELETE FROM $table") }
                     }

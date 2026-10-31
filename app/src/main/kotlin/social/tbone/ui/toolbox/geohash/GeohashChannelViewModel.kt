@@ -26,6 +26,9 @@ class GeohashChannelViewModel @Inject constructor(
     val channels: StateFlow<List<GeohashChannelEntry>> = appSettings.geohashChannels
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val cacheMillis = appSettings.geohashCacheMillis
+    fun setCacheMillis(value: Long) { viewModelScope.launch { appSettings.setGeohashCacheMillis(value) } }
+
     val nickname: StateFlow<String> = appSettings.geohashNickname
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
 

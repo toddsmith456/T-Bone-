@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -54,7 +56,7 @@ class GeohashChatViewModel @Inject constructor(
     private val accountRepository: AccountRepository,
     private val appSettings: AppSettings,
     private val pinnedMonitor: GeohashPinnedMonitor,
-    private val geohashDao: GeohashMessageDao,
+    private val cache: GeohashMessageCache,
 ) : ViewModel() {
 
     private val _messages = MutableStateFlow<List<GeohashMessage>>(emptyList())
@@ -74,7 +76,7 @@ class GeohashChatViewModel @Inject constructor(
     private var subId: String? = null
     private var collectJob: Job? = null
     private var relayJoinJob: Job? = null
-    private var currentGeohash: String = ""
+    @Volatile private var currentGeohash: String = ""
     /** Relays this chat added to the pool — removed again on leave. */
     private val addedRelays = ConcurrentHashMap.newKeySet<String>()
 
@@ -90,76 +92,41 @@ class GeohashChatViewModel @Inject constructor(
         if (g.isEmpty()) return
         leave()
         currentGeohash = g
-        pinnedMonitor.markSeen(g) // clear the home badge when opening the chat
+        pinnedMonitor.open(g)
         seen.clear()
         _messages.value = emptyList()
-        // Load cached messages from last 24h
-        viewModelScope.launch {
-            val cutoff = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
-            val cached = geohashDao.getForChannel(g, cutoff)
-            val loaded = cached.map {
-                GeohashMessage(
-                    id = it.id,
-                    pubkey = it.pubkey,
-                    createdAt = it.createdAt,
-                    content = it.content,
-                    nickname = it.nickname,
-                    own = it.own,
-                )
-            }
-            _messages.value = loaded.sortedBy { it.createdAt }.takeLast(MAX_MESSAGES)
-            loaded.forEach { seen.add(it.id) }
-            // Clean old cache
-            geohashDao.deleteOlderThan(cutoff - 24L * 60L * 60L * 1000L)
-        }
         _error.value = null
         _live.value = false
 
         relayJoinJob = viewModelScope.launch {
-            // Only this channel's ~5 relays — not the account's whole list.
+            val ownKeys = cache.ownPubkeys(g)
+            if (currentGeohash != g) return@launch
+            val cached = cache.load(g).map { it.copy(own = it.own || it.pubkey in ownKeys) }
+            if (currentGeohash != g) return@launch
+            cached.forEach { seen.add(it.id) }
+            _messages.update { current -> (current + cached).distinctBy { it.id }.sortedBy { it.createdAt } }
             val relays = GeohashRelays.closestRelays(g).toSet()
-            relays.forEach {
-                if (addedRelays.add(it)) pool.acquireRelay(it)
-            }
-            // Subscribe to the code AND its parent prefixes (4..len) so messages
-            // posted at any coarser precision — city / province — arrive too.
-            // That's exactly how Bitchat/Amethyst tag their messages.
-            subId = pool.subscribeTo(
-                listOf(
-                    Filter(
-                        kinds = listOf(20000),
-                        gTags = GeohashRelays.watchGeohashes(g),
-                        limit = MAX_MESSAGES,
-                    )
-                ),
-                label = "geohash",
-                relays = relays,
-            )
-        }
-        collectJob = viewModelScope.launch(Dispatchers.Default) {
-            pool.messages.collect { poolMessage ->
-                val msg = poolMessage.message
-                when (msg) {
-                    is RelayMessage.EndOfStoredEvents -> {
-                        if (msg.subscriptionId == subId) _live.value = true
+            relays.forEach { if (addedRelays.add(it)) pool.acquireRelay(it) }
+            val id = java.util.UUID.randomUUID().toString().take(8)
+            subId = id
+            collectJob = viewModelScope.launch(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
+                pool.messages.onSubscription {
+                    pool.subscribeTo(listOf(Filter(kinds = listOf(20000), gTags = GeohashRelays.watchGeohashes(g),
+                        limit = MAX_MESSAGES)), id = id, label = "geohash", relays = relays)
+                }.collect { poolMessage ->
+                    when (val msg = poolMessage.message) {
+                        is RelayMessage.EndOfStoredEvents -> if (msg.subscriptionId == id) _live.value = true
+                        is RelayMessage.EventMessage -> {
+                            if (msg.subscriptionId != id || currentGeohash != g) return@collect
+                            val event = msg.event
+                            if (event.kind != 20000 || !event.matchesGeohashChannel(g) || !event.verify()) return@collect
+                            if (!seen.add(event.id)) return@collect
+                            val message = GeohashMessage(event.id, event.pubkey, event.createdAt, event.content,
+                                event.parsedTags.firstOrNull { it.name == "n" }?.value(), event.pubkey in ownKeys)
+                            appendMessage(g, message)
+                        }
+                        else -> Unit
                     }
-                    is RelayMessage.EventMessage -> {
-                        if (msg.subscriptionId != subId) return@collect
-                        val event = msg.event
-                        if (!event.verify()) return@collect
-                        if (event.kind != 20000) return@collect
-                        val gh = event.parsedTags.firstOrNull { it.name == "g" }?.value() ?: return@collect
-                        // The relay already matched one of our watch geohashes;
-                        // accept anything that's a prefix of (or equal to) the
-                        // channel code — i.e. posted in this cell or a parent.
-                        if (!currentGeohash.startsWith(gh)) return@collect
-                        if (!seen.add(event.id)) return@collect
-                        val n = event.parsedTags.firstOrNull { it.name == "n" }?.value()
-                        appendMessage(
-                            GeohashMessage(event.id, event.pubkey, event.createdAt, event.content, n, own = false),
-                        )
-                    }
-                    else -> Unit
                 }
             }
         }
@@ -172,7 +139,9 @@ class GeohashChatViewModel @Inject constructor(
         collectJob = null
         subId?.let { pool.unsubscribe(it) }
         subId = null
+        val previous = currentGeohash
         currentGeohash = ""
+        if (previous.isNotEmpty()) pinnedMonitor.close(previous)
         _live.value = false
         // Drop the relays this chat connected (other channels re-add theirs).
         addedRelays.forEach { pool.releaseRelay(it) }
@@ -214,40 +183,18 @@ class GeohashChatViewModel @Inject constructor(
                 return@launch
             }
             val relays = GeohashRelays.closestRelays(g).toSet()
-            pool.publishTo(event, relays)
-            // Optimistic local add — you always see your own message.
+            if (currentGeohash != g) return@launch
+            // Mark before publish, so a fast relay echo cannot be mistaken for another sender.
             seen.add(event.id)
-            appendMessage(
-                GeohashMessage(event.id, event.pubkey, event.createdAt, event.content, nick, own = true),
-            )
+            appendMessage(g, GeohashMessage(event.id, event.pubkey, event.createdAt, event.content, nick, own = true))
+            pool.publishTo(event, relays)
         }
     }
 
-    private fun appendMessage(msg: GeohashMessage) {
-        // Cache to Room for 24h retention
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                geohashDao.insert(
-                    social.tbone.db.GeohashMessageEntity(
-                        id = msg.id,
-                        channelCode = currentGeohash,
-                        pubkey = msg.pubkey,
-                        createdAt = msg.createdAt,
-                        content = msg.content,
-                        nickname = msg.nickname,
-                        own = msg.own,
-                        cachedAt = System.currentTimeMillis(),
-                    )
-                )
-            } catch (_: Exception) { }
-        }
-        _messages.update { current ->
-            val merged = (current + msg).distinctBy { it.id }
-                .sortedBy { it.createdAt }
-            // Keep only the 40 newest — but displayed oldest → newest, so a
-            // chat reads top-to-bottom like a normal conversation.
-            merged.takeLast(MAX_MESSAGES)
-        }
+    private fun appendMessage(channel: String, msg: GeohashMessage) {
+        viewModelScope.launch(Dispatchers.IO) { cache.save(channel, msg) }
+        if (currentGeohash != channel) return
+        _messages.update { current -> (current + msg).distinctBy { it.id }.sortedBy { it.createdAt } }
     }
 
     override fun onCleared() {

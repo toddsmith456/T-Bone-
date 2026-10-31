@@ -37,6 +37,7 @@ class BonyApp : Application() {
     @Inject lateinit var calendarRepository: CalendarRepository
     @Inject lateinit var calendarScheduler: CalendarAlarmScheduler
     @Inject lateinit var updateManager: UpdateManager
+    @Inject lateinit var geohashPinnedMonitor: social.tbone.ui.toolbox.geohash.GeohashPinnedMonitor
 
     override fun onCreate() {
         super.onCreate()

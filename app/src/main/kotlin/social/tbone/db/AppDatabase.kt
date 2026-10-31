@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DecoyNoteFolderEntity::class,
         DecoyNoteAttachmentEntity::class,
     ],
-    version = 16,
+    version = 17,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun eventDao(): EventDao
@@ -199,6 +199,16 @@ abstract class AppDatabase : RoomDatabase() {
                     "CREATE INDEX IF NOT EXISTS index_calendar_events_startMillis " +
                         "ON calendar_events (startMillis)"
                 )
+            }
+        }
+
+        val MIGRATION_16_17 = object : Migration(16, 17) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `geohash_messages_new` (`id` TEXT NOT NULL, `channel_code` TEXT NOT NULL, `pubkey` TEXT NOT NULL, `created_at` INTEGER NOT NULL, `content` TEXT NOT NULL, `nickname` TEXT, `own` INTEGER NOT NULL, `cached_at` INTEGER NOT NULL, PRIMARY KEY(`id`, `channel_code`))")
+                db.execSQL("INSERT OR IGNORE INTO geohash_messages_new SELECT id, channel_code, pubkey, created_at, content, nickname, own, cached_at FROM geohash_messages")
+                db.execSQL("DROP TABLE geohash_messages")
+                db.execSQL("ALTER TABLE geohash_messages_new RENAME TO geohash_messages")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_geohash_messages_channel_code_cached_at` ON `geohash_messages` (`channel_code`, `cached_at`)")
             }
         }
 

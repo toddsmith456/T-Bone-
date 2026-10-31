@@ -30,6 +30,7 @@ class AppSettings @Inject constructor(
     companion object {
         /** Default anchor for the clock feed: six hours back. */
         const val DEFAULT_CLOCK_HOURS = 6
+        val GEOHASH_CACHE_OPTIONS = listOf(0L, 30*60_000L, 60*60_000L, 5*60*60_000L, 24*60*60_000L, 7*24*60*60_000L)
 
         private val TOR_ENABLED = booleanPreferencesKey("tor_enabled")
         private val TOR_KILL_SWITCH = booleanPreferencesKey("tor_kill_switch")
@@ -89,6 +90,7 @@ class AppSettings @Inject constructor(
         private val GEOHASH_IDENTITY_SEED = stringPreferencesKey("geohash_identity_seed")
         private val GEOHASH_CHANNELS = stringPreferencesKey("geohash_channels")
         private val GEOHASH_NICKNAME = stringPreferencesKey("geohash_nickname")
+        private val GEOHASH_CACHE_MILLIS = longPreferencesKey("geohash_cache_millis")
         // Content filtering: blocked pubkeys, NSFW hiding, word bleep/hide.
         private val BLOCKED_PUBKEYS = stringSetPreferencesKey("blocked_pubkeys")
         private val NOTE_MENU_MODERATION = booleanPreferencesKey("note_menu_moderation")
@@ -281,6 +283,9 @@ class AppSettings @Inject constructor(
     private val _geohashChannels = MutableStateFlow<List<GeohashChannelEntry>>(emptyList())
     val geohashChannels = _geohashChannels.asStateFlow()
 
+    private val _geohashCacheMillis = MutableStateFlow(0L)
+    val geohashCacheMillis = _geohashCacheMillis.asStateFlow()
+
     /** Consistent nickname used when posting to geohash channels. */
     private val _geohashNickname = MutableStateFlow("")
     val geohashNickname = _geohashNickname.asStateFlow()
@@ -435,6 +440,7 @@ class AppSettings @Inject constructor(
                 _xdcCustomTools.value = XdcCustomToolsCodec.decode(prefs[XDC_CUSTOM_TOOLS])
                 _geohashChannels.value = prefs[GEOHASH_CHANNELS]?.let { GeohashChannelStore.decode(it) } ?: emptyList()
                 _geohashNickname.value = prefs[GEOHASH_NICKNAME] ?: ""
+                _geohashCacheMillis.value = prefs[GEOHASH_CACHE_MILLIS]?.takeIf { it in GEOHASH_CACHE_OPTIONS } ?: 0L
                 _blockedPubkeys.value = prefs[BLOCKED_PUBKEYS] ?: emptySet()
                 _noteMenuModerationEnabled.value = prefs[NOTE_MENU_MODERATION] ?: false
                 _clientTagEnabled.value = prefs[CLIENT_TAG_ENABLED] ?: true
@@ -913,6 +919,12 @@ class AppSettings @Inject constructor(
         dataStore.edit { it[GEOHASH_CHANNELS] = GeohashChannelStore.encode(entries) }
     }
 
+    suspend fun setGeohashCacheMillis(millis: Long) {
+        require(millis in GEOHASH_CACHE_OPTIONS)
+        _geohashCacheMillis.value = millis
+        dataStore.edit { it[GEOHASH_CACHE_MILLIS] = millis }
+    }
+
     suspend fun setGeohashNickname(name: String) {
         _geohashNickname.value = name
         dataStore.edit { it[GEOHASH_NICKNAME] = name }
@@ -920,14 +932,16 @@ class AppSettings @Inject constructor(
 
     /** Returns the persistent geohash identity seed (32 random bytes), creating it if absent. */
     suspend fun geohashIdentitySeed(): ByteArray {
-        val existing = dataStore.data.first()[GEOHASH_IDENTITY_SEED]
-        if (existing != null) {
-            runCatching { return java.util.Base64.getDecoder().decode(existing) }.getOrNull()
+        var result: ByteArray? = null
+        dataStore.edit { prefs ->
+            val existing = prefs[GEOHASH_IDENTITY_SEED]?.let {
+                runCatching { java.util.Base64.getDecoder().decode(it) }.getOrNull()
+            }?.takeIf { it.size == 32 }
+            val seed = existing ?: ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+            if (existing == null) prefs[GEOHASH_IDENTITY_SEED] = java.util.Base64.getEncoder().encodeToString(seed)
+            result = seed
         }
-        val seed = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
-        val encoded = java.util.Base64.getEncoder().encodeToString(seed)
-        dataStore.edit { it[GEOHASH_IDENTITY_SEED] = encoded }
-        return seed
+        return checkNotNull(result)
     }
 
     // ── Global relays (separate from personal relay list) ───────────────────

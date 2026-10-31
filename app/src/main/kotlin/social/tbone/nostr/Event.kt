@@ -44,8 +44,9 @@ data class Event(
      * Returns false if either check fails — never throws.
      */
     fun verify(): Boolean {
-        if (VerifiedEventCache.contains(id)) return true
-        val result = runCatching { verifyId() && verifySignature() }.getOrDefault(false)
+        // A cached signature only authenticates the original payload, not a
+        // different event claiming the same id. Always recompute the id first.
+        val result = runCatching { verifyId() && (VerifiedEventCache.contains(id) || verifySignature()) }.getOrDefault(false)
         if (result) VerifiedEventCache.add(id)
         return result
     }
