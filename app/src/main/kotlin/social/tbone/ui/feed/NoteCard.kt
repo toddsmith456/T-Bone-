@@ -720,6 +720,7 @@ private fun NoteEngagementRow(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val moneroXapsEnabled by walletViewModel.moneroXapsEnabled.collectAsStateWithLifecycle()
+    val lightningZapsEnabled by walletViewModel.lightningZapsEnabled.collectAsStateWithLifecycle()
     var xapPending by remember(event.id) { mutableStateOf(false) }
     var zapPending by remember(event.id) { mutableStateOf(false) }
     var showZapDialog by remember(event.id) { mutableStateOf(false) }
@@ -779,7 +780,7 @@ private fun NoteEngagementRow(
                 onLike = onLike,
             )
         }
-        EngagementButton(
+        if (lightningZapsEnabled) EngagementButton(
             icon = Icons.Outlined.Bolt,
             contentDescription = if (zapPending) "Preparing Lightning invoice" else "Zap with Lightning",
             count = 0,

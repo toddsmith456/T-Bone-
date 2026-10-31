@@ -344,6 +344,9 @@ class AppSettings @Inject constructor(
     val blossomAudioCompress = _blossomAudioCompress.asStateFlow()
 
 
+    private val _lightningZapsEnabled = MutableStateFlow(true)
+    val lightningZapsEnabled = _lightningZapsEnabled.asStateFlow()
+
     private val _moneroXapsEnabled = MutableStateFlow(false)
     val moneroXapsEnabled = _moneroXapsEnabled.asStateFlow()
 
@@ -459,6 +462,7 @@ class AppSettings @Inject constructor(
                         ?.takeIf { it in storedServers }
                 _blossomCompress.value = prefs[BLOSSOM_COMPRESS] ?: true
                 _blossomAudioCompress.value = prefs[BLOSSOM_AUDIO_COMPRESS] ?: false
+                _lightningZapsEnabled.value = prefs[LIGHTNING_ZAPS_ENABLED] ?: true
                 _moneroXapsEnabled.value = prefs[MONERO_XAPS_ENABLED] ?: false
                 _screenTimeEnabled.value = prefs[SCREEN_TIME_ENABLED] ?: false
                 _screenTimeMinutes.value = prefs[SCREEN_TIME_MINUTES] ?: 120
@@ -750,6 +754,11 @@ class AppSettings @Inject constructor(
 
     // ── External-wallet payments ────────────────────────────────────────────
 
+    suspend fun setLightningZapsEnabled(enabled: Boolean) {
+        _lightningZapsEnabled.value = enabled
+        dataStore.edit { it[LIGHTNING_ZAPS_ENABLED] = enabled }
+    }
+
     suspend fun setMoneroXapsEnabled(enabled: Boolean) {
         _moneroXapsEnabled.value = enabled
         dataStore.edit { it[MONERO_XAPS_ENABLED] = enabled }
@@ -758,7 +767,6 @@ class AppSettings @Inject constructor(
     /** Wipes removed wallet connection and payment preferences on upgrade. */
     private suspend fun migrateRemovedNwcPreferences() {
         dataStore.edit { prefs ->
-            prefs.remove(LIGHTNING_ZAPS_ENABLED)
             prefs.remove(LEGACY_NWC_ZAPS_ENABLED)
             prefs.remove(LEGACY_NWC_ZAP_AMOUNT_SATS)
             prefs.remove(LEGACY_NWC_ZAP_AMOUNTS)

@@ -25,6 +25,7 @@ class WalletViewModel @Inject constructor(
     private val profileRepository: social.tbone.profile.ProfileRepository,
 ) : ViewModel() {
     val moneroXapsEnabled: StateFlow<Boolean> = appSettings.moneroXapsEnabled
+    val lightningZapsEnabled: StateFlow<Boolean> = appSettings.lightningZapsEnabled
 
     val activePubkey: StateFlow<String?> = accountRepository.activeAccount
         .map { it?.pubkey }
@@ -51,6 +52,55 @@ class WalletViewModel @Inject constructor(
         viewModelScope.launch {
             appSettings.setMoneroXapsEnabled(enabled)
             _message.value = if (enabled) "Monero xap buttons enabled" else "Monero xap buttons hidden"
+        }
+    }
+
+    private val _ownLightningAddress = MutableStateFlow("")
+    val ownLightningAddress = _ownLightningAddress.asStateFlow()
+    private val _lightningStatus = MutableStateFlow("Load your profile from connected relays.")
+    val lightningStatus = _lightningStatus.asStateFlow()
+    private val _loadingLightning = MutableStateFlow(false)
+    val loadingLightning = _loadingLightning.asStateFlow()
+
+    fun setLightningZapsEnabled(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setLightningZapsEnabled(enabled) }
+    }
+    fun setOwnLightningAddress(value: String) { _ownLightningAddress.value = value }
+    fun loadLightningProfile(pubkey: String?) {
+        _ownLightningAddress.value = ""
+        if (pubkey == null) { _lightningStatus.value = "Sign in to load your profile."; return }
+        viewModelScope.launch {
+            _loadingLightning.value = true
+            _lightningStatus.value = "Checking connected relays…"
+            try {
+                val (event, synced) = paymentTargetsRepository.lookupLightningProfile(pubkey)
+                if (activePubkey.value != pubkey) return@launch
+                _ownLightningAddress.value = event?.let { social.tbone.nostr.ProfileContent.parse(it.content)?.lightningAddress }.orEmpty()
+                _lightningStatus.value = if (synced) "Profile loaded from connected relays." else "Could not confirm latest profile; publishing is blocked until relays respond."
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { if (activePubkey.value == pubkey) _lightningStatus.value = error.message ?: "Could not load profile" }
+            finally { _loadingLightning.value = false }
+        }
+    }
+    fun saveLightningProfile(remove: Boolean = false) {
+        val pubkey = activePubkey.value ?: return
+        val value = _ownLightningAddress.value.trim()
+        if (!remove && !isLightningAddressShape(value)) {
+            _lightningStatus.value = "Enter a valid user@domain or LNURL."
+            return
+        }
+        viewModelScope.launch {
+            _loadingLightning.value = true
+            _lightningStatus.value = "Publishing profile…"
+            try {
+                val result = paymentTargetsRepository.publishLightningProfile(pubkey, if (remove) null else value)
+                if (activePubkey.value == pubkey) {
+                    result.onSuccess { receipt ->
+                        if (remove) _ownLightningAddress.value = ""
+                        _lightningStatus.value = "Profile accepted by ${receipt.acceptedRelays} relay(s)."
+                    }.onFailure { error -> _lightningStatus.value = error.message ?: "Could not publish profile" }
+                }
+            } finally { _loadingLightning.value = false }
         }
     }
 
@@ -173,4 +223,12 @@ class WalletViewModel @Inject constructor(
     }
 
 
+}
+
+internal fun isLightningAddressShape(value: String): Boolean {
+    val address = value.trim()
+    if (address.startsWith("lnurl1", ignoreCase = true)) return social.tbone.nostr.Nip19.lnurlToUrl(address)?.startsWith("https://", true) == true
+    if (address.any(Char::isWhitespace) || address.count { it == '@' } != 1) return false
+    val parts = address.split('@')
+    return parts[0].isNotEmpty() && parts[1].contains('.') && !parts[1].startsWith('.') && !parts[1].endsWith('.') && parts[1].none { it in "/:?#" }
 }

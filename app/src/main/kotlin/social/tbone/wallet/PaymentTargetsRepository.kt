@@ -22,6 +22,13 @@ import social.tbone.nostr.relay.RelayMessage
 import social.tbone.nostr.relay.RelayPool
 import java.util.LinkedHashMap
 import java.util.UUID
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import social.tbone.nostr.NostrJson
+import social.tbone.nostr.EventKind
+import social.tbone.nostr.UnsignedEvent
+import social.tbone.profile.ProfileRepository
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -56,6 +63,7 @@ class PaymentTargetsRepository @Inject constructor(
     private val eventRepository: EventRepository,
     private val signerFactory: NostrSignerFactory,
     private val accountRepository: AccountRepository,
+    private val profileRepository: ProfileRepository,
 ) {
     private data class CachedLookup(val value: MoneroTargetLookup, val cachedAtMs: Long)
     private data class RelayLookup(
@@ -191,7 +199,50 @@ class PaymentTargetsRepository @Inject constructor(
         }
     }
 
-    private suspend fun fetchLatestFromConnectedRelays(pubkey: String): RelayLookup = coroutineScope {
+    /** A kind-0 profile lookup; this does not alter the Monero kind-10133 path. */
+    suspend fun lookupLightningProfile(pubkey: String): Pair<Event?, Boolean> = withContext(Dispatchers.IO) {
+        require(pubkey.matches(Regex("^[0-9a-fA-F]{64}$"))) { "invalid public key" }
+        val local = eventRepository.getLatestByAuthorAndKind(pubkey, EventKind.METADATA)
+            ?.takeIf { it.pubkey.equals(pubkey, true) && it.verify() }
+        val network = fetchLatestFromConnectedRelays(pubkey, EventKind.METADATA)
+        val remote = network.events.maxWithOrNull(EVENT_ORDER)
+        val newest = listOfNotNull(local, remote).maxWithOrNull(EVENT_ORDER)
+        if (remote != null) {
+            eventRepository.save(remote, "")
+            profileRepository.processEvent(remote)
+        }
+        newest to (network.complete && (newest == null || newest.id == remote?.id))
+    }
+
+    suspend fun publishLightningProfile(pubkey: String, address: String?): Result<PaymentTargetPublishReceipt> {
+        return try {
+            val result = withContext(Dispatchers.IO) {
+                val (existing, synced) = lookupLightningProfile(pubkey)
+                require(synced && existing != null) { "Could not confirm your latest profile on connected relays; nothing was changed." }
+                val account = accountRepository.activeAccount.first() ?: error("No active account")
+                require(account.pubkey.equals(pubkey, true)) { "Account changed; reload and try again" }
+                val signer = signerFactory.forActiveAccount() ?: error("No signer available")
+                require(signer.pubkey.equals(pubkey, true)) { "Signer does not match the account" }
+                val updated = updateLightningProfileMetadata(existing.content, address)
+                val unsigned = UnsignedEvent(pubkey = pubkey, kind = EventKind.METADATA,
+                    createdAt = maxOf(System.currentTimeMillis() / 1000, existing.createdAt + 1),
+                    content = updated, tags = existing.tags)
+                val signed = signer.signEvent(unsigned).getOrThrow()
+                require(signed.kind == EventKind.METADATA && signed.pubkey.equals(pubkey, true) &&
+                    signed.content == unsigned.content && signed.verify()) { "Signed profile did not match the requested update" }
+                val relays = relayPool.relayStatuses.value.filterValues { it == social.tbone.nostr.relay.RelayStatus.CONNECTED }.keys
+                require(relays.isNotEmpty()) { "No connected relays" }
+                val receipt = publishAndAwaitAcceptance(signed, relays)
+                eventRepository.save(signed, "")
+                profileRepository.processEvent(signed)
+                receipt
+            }
+            Result.success(result)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: Exception) { Result.failure(error) }
+    }
+
+    private suspend fun fetchLatestFromConnectedRelays(pubkey: String, kind: Int = NipA3PaymentTargets.KIND): RelayLookup = coroutineScope {
         val connected = relayPool.relayStatuses.value
             .filterValues { it == social.tbone.nostr.relay.RelayStatus.CONNECTED }
             .keys
@@ -207,7 +258,7 @@ class PaymentTargetsRepository @Inject constructor(
                     message.message.subscriptionId == subscriptionId
                 ) {
                     val event = message.message.event
-                    if (event.kind == NipA3PaymentTargets.KIND &&
+                    if (event.kind == kind &&
                         event.pubkey.equals(pubkey, ignoreCase = true) &&
                         runCatching { event.verify() }.getOrDefault(false)
                     ) {
@@ -229,7 +280,7 @@ class PaymentTargetsRepository @Inject constructor(
                 filters = listOf(
                     Filter(
                         authors = listOf(pubkey),
-                        kinds = listOf(NipA3PaymentTargets.KIND),
+                        kinds = listOf(kind),
                         limit = 1,
                     ),
                 ),
@@ -324,4 +375,13 @@ class PaymentTargetsRepository @Inject constructor(
         private const val MAX_CACHE_ENTRIES = 500
         private val EVENT_ORDER = compareBy<Event> { it.createdAt }.thenBy { it.id }
     }
+}
+
+/** Replace only Lightning profile fields, preserving every unrelated JSON value. */
+internal fun updateLightningProfileMetadata(content: String, address: String?): String {
+    val updated = NostrJson.parseToJsonElement(content).jsonObject.toMutableMap()
+    updated.remove("lud16")
+    updated.remove("lud06")
+    if (address != null) updated[if (address.startsWith("lnurl1", true)) "lud06" else "lud16"] = JsonPrimitive(address)
+    return JsonObject(updated).toString()
 }

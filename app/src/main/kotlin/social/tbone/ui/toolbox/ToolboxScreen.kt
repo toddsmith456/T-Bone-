@@ -112,7 +112,7 @@ fun ToolboxScreen(
         put("calendar", ToolEntry(Icons.Outlined.CalendarMonth, "calendar",
             "fully local encrypted calendar", onCalendar))
         put("wallet", ToolEntry(Icons.Outlined.Bolt, "wallet tool",
-            "Monero xaps", onWallet))
+            "Lightning zaps & Monero xaps", onWallet))
         put("updates", ToolEntry(Icons.Outlined.Update, "update center",
             "check, download & install app updates", onUpdateCenter, hasBadge = hasUpdate))
         put("followlists", ToolEntry(Icons.Outlined.Groups, "follow lists",

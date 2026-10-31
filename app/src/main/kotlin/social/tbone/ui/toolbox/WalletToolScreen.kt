@@ -51,6 +51,10 @@ fun WalletToolScreen(
     viewModel: WalletViewModel = hiltViewModel(),
 ) {
     val moneroEnabled by viewModel.moneroXapsEnabled.collectAsStateWithLifecycle()
+    val lightningEnabled by viewModel.lightningZapsEnabled.collectAsStateWithLifecycle()
+    val lightningAddress by viewModel.ownLightningAddress.collectAsStateWithLifecycle()
+    val lightningStatus by viewModel.lightningStatus.collectAsStateWithLifecycle()
+    val loadingLightning by viewModel.loadingLightning.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
     val activePubkey by viewModel.activePubkey.collectAsStateWithLifecycle()
@@ -62,6 +66,7 @@ fun WalletToolScreen(
 
     androidx.compose.runtime.LaunchedEffect(activePubkey) {
         val pubkey = activePubkey
+        viewModel.loadLightningProfile(pubkey)
         if (pubkey == null) {
             viewModel.clearOwnMoneroTarget()
         } else {
@@ -91,6 +96,42 @@ fun WalletToolScreen(
             contentPadding = PaddingValues(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+                item {
+                    Text("Lightning zaps", style = BonyType.title.copy(color = BonyColors.Accent))
+                    Text("Zaps open an invoice in your external wallet. No wallet connection or private key is stored.", style = BonyType.caption.copy(color = BonyColors.TextDim))
+                }
+                item {
+                    Row(modifier = Modifier.fillMaxWidth().appBorder(1.dp, BonyColors.Rule).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Show Lightning zap buttons", style = BonyType.body.copy(color = BonyColors.Text))
+                            Text(if (lightningEnabled) "⚡ buttons shown on notes" else "⚡ buttons hidden", style = BonyType.caption.copy(color = BonyColors.TextMute))
+                        }
+                        Switch(checked = lightningEnabled, onCheckedChange = viewModel::setLightningZapsEnabled)
+                    }
+                }
+                item {
+                    Column(modifier = Modifier.fillMaxWidth().appBorder(1.dp, BonyColors.Rule).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Your Lightning receiving address", style = BonyType.body.copy(color = BonyColors.Text))
+                        Text("Publish your Lightning address in your public Nostr profile so clients can find it. Publishing or removing it changes the public profile; it does not change your Monero target.", style = BonyType.caption.copy(color = BonyColors.TextMute))
+                        OutlinedTextField(value = lightningAddress, onValueChange = viewModel::setOwnLightningAddress,
+                            modifier = Modifier.fillMaxWidth(), label = { Text("Lightning address or LNURL") },
+                            placeholder = { Text("you@example.com") }, singleLine = true,
+                            enabled = activePubkey != null && !loadingLightning,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, capitalization = KeyboardCapitalization.None), colors = walletFieldColors())
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Button(onClick = { viewModel.saveLightningProfile() }, enabled = activePubkey != null && !loadingLightning && lightningAddress.isNotBlank(),
+                                colors = ButtonDefaults.buttonColors(containerColor = BonyColors.Accent, contentColor = Color.Black)) { Text("publish") }
+                            Button(onClick = { viewModel.saveLightningProfile(remove = true) }, enabled = activePubkey != null && !loadingLightning && lightningAddress.isNotBlank(),
+                                colors = ButtonDefaults.buttonColors(containerColor = BonyColors.Surface, contentColor = BonyColors.Danger)) { Text("remove") }
+                            if (loadingLightning) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp), color = BonyColors.Accent)
+                        }
+                        Text(lightningStatus, style = BonyType.caption.copy(color = BonyColors.TextMute))
+                        activePubkey?.let { pubkey ->
+                            Text("reload current profile from relays", style = BonyType.caption.copy(color = BonyColors.Accent),
+                                modifier = Modifier.clickable(enabled = !loadingLightning) { viewModel.loadLightningProfile(pubkey) }.padding(vertical = 2.dp))
+                        }
+                    }
+                }
                 item {
                     Text("Monero xaps", style = BonyType.title.copy(color = BonyColors.Accent))
                     Text(
