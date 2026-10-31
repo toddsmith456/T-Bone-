@@ -932,6 +932,10 @@ class AppSettings @Inject constructor(
 
     /** Returns the persistent geohash identity seed (32 random bytes), creating it if absent. */
     suspend fun geohashIdentitySeed(): ByteArray {
+        val existing = dataStore.data.first()[GEOHASH_IDENTITY_SEED]?.let {
+            runCatching { java.util.Base64.getDecoder().decode(it) }.getOrNull()
+        }?.takeIf { it.size == 32 }
+        if (existing != null) return existing
         var result: ByteArray? = null
         dataStore.edit { prefs ->
             val existing = prefs[GEOHASH_IDENTITY_SEED]?.let {

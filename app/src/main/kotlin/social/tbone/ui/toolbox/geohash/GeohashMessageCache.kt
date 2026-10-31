@@ -25,6 +25,7 @@ class GeohashMessageCache @Inject constructor(
     private val scope: CoroutineScope,
 ) {
     private val lock = Mutex()
+    private val publicKeys = java.util.concurrent.ConcurrentHashMap<Pair<String, String>, String>()
 
     init {
         scope.launch(Dispatchers.IO) {
@@ -72,9 +73,13 @@ class GeohashMessageCache @Inject constructor(
     /** Match all saved channel identities: one event can carry several geohash tags. */
     suspend fun ownPubkeys(extraCode: String): Set<String> = withContext(Dispatchers.Default) {
         val seed = settings.geohashIdentitySeed()
+        val fingerprint = java.security.MessageDigest.getInstance("SHA-256").digest(seed)
+            .joinToString("") { "%02x".format(it) }
         (settings.geohashChannels.value.map { it.code } + extraCode).distinct().map { code ->
-            val priv = GeohashKeyDerivation.derivePrivateKey(seed, code)
-            GeohashKeyDerivation.pubkeyBytesFromPrivkey(priv).joinToString("") { "%02x".format(it) }
+            publicKeys.computeIfAbsent(fingerprint to code) {
+                val priv = GeohashKeyDerivation.derivePrivateKey(seed, code)
+                GeohashKeyDerivation.pubkeyBytesFromPrivkey(priv).joinToString("") { "%02x".format(it) }
+            }
         }.toSet()
     }
 }
