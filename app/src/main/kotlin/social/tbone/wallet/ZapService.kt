@@ -306,12 +306,13 @@ class ZapService @Inject constructor(
             .callTimeout(30, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false)
             .apply {
                 if (base.proxy == null || base.proxy?.type() == Proxy.Type.DIRECT) {
-                    dns(Dns { hostname ->
-                        Dns.SYSTEM.lookup(hostname).also { addresses ->
-                            require(addresses.isNotEmpty() && addresses.all(::isPublicLightningAddress)) {
-                                "Lightning endpoint resolves to a private or local address"
+                    dns(object : Dns {
+                        override fun lookup(hostname: String): List<InetAddress> =
+                            Dns.SYSTEM.lookup(hostname).also { addresses ->
+                                require(addresses.isNotEmpty() && addresses.all(::isPublicLightningAddress)) {
+                                    "Lightning endpoint resolves to a private or local address"
+                                }
                             }
-                        }
                     })
                 }
             }.build()
