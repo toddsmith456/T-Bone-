@@ -14,6 +14,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import social.tbone.account.signer.AmberSignerBridge
 import social.tbone.debug.FrameMonitor
@@ -70,6 +71,13 @@ class MainActivity : FragmentActivity() {
         // File/content intents are local operations; the signer is a protocol
         // handoff rather than a link and must not interrupt signing.
         val external = uri != null && scheme != null && scheme !in setOf("file", "content", "nostrsigner")
+        if (external && ::appSettings.isInitialized && !appSettings.initialized.value) {
+            lifecycleScope.launch {
+                appSettings.initialized.first { it }
+                if (!isFinishing && !isDestroyed) startActivity(intent, options)
+            }
+            return
+        }
         if (external && ::appSettings.isInitialized && appSettings.confirmExternalLinks.value) {
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread

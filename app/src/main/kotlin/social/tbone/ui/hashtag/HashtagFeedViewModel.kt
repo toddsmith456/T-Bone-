@@ -16,6 +16,7 @@ import social.tbone.account.signer.NostrSignerFactory
 import social.tbone.nostr.UnsignedEvent
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.add
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
 import social.tbone.nostr.Filter
