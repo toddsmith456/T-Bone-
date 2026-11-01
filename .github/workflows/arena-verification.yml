@@ -30,9 +30,9 @@ jobs:
             python3 - <<'PYCODE'
           from pathlib import Path
           lines = Path('/tmp/arena-gradle.log').read_text(errors='replace').splitlines()
-          selected = [x for x in lines if x.startswith('e: ') or ' FAILED' in x or 'What went wrong:' in x or x.startswith('> ')]
-          for line in (selected[-50:] or lines[-50:]):
-              print('::error::' + line.replace('%','%25').replace('\r','%0D').replace('\n','%0A'))
+          selected = [x for x in lines if x.startswith('e: ') or ' FAILED' in x or 'What went wrong:' in x or 'Caused by:' in x or 'exception' in x.lower() or x.startswith('* ')]
+          message = '\n'.join(selected[-80:] + lines[-35:])[-25000:]
+          print('::error::' + message.replace('%','%25').replace('\r','%0D').replace('\n','%0A'))
           PYCODE
           fi
           exit "$result"
