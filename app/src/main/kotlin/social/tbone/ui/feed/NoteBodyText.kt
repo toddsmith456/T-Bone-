@@ -130,6 +130,7 @@ fun NoteBodyText(
     onProfileClick: ((String) -> Unit)? = null,
     onHashtagClick: ((String) -> Unit)? = null,
     onOpenNote: (() -> Unit)? = null,
+    onLongPressText: (() -> Unit)? = null,
     profiles: Map<String, ProfileContent> = emptyMap(),
     /**
      * Notes already resolved by the caller (quote targets, reposts, NIP-27
@@ -215,14 +216,15 @@ fun NoteBodyText(
                                         CustomAccessibilityAction("Copy ${action.copyText}") { copyNoteLink(context, action.copyText!!); true },
                                     )
                                 }
-                            }.pointerInput(run, onOpenNote) {
+                            }.pointerInput(run, onOpenNote, onLongPressText) {
                                 detectTapGestures(
                                     onTap = { position ->
                                         val action = actionAt(position)
                                         if (action?.action != null) action.action() else onOpenNote?.invoke()
                                     },
                                     onLongPress = { position ->
-                                        actionAt(position)?.copyText?.let { copyNoteLink(context, it) }
+                                        val link = actionAt(position)?.copyText
+                                        if (link != null) copyNoteLink(context, link) else onLongPressText?.invoke()
                                     },
                                 )
                             },

@@ -695,6 +695,7 @@ fun QuotedNoteCard(
                 onProfileClick = onProfileClick,
                 onHashtagClick = onHashtagClick,
                 onOpenNote = { onThreadClick?.invoke(event.id) },
+                onLongPressText = referenceUri?.let { uri -> { copyNoteLink(context, uri) } },
                 profiles = profiles,
                 quotedEvents = quotedEvents,
                 quoteNestingDepth = nestingDepth + 1,
