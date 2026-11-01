@@ -3,6 +3,8 @@ package social.tbone.ui.media
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -53,6 +55,7 @@ fun InlineAudioPlayer(
     url: String,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     val format = remember(url) { audioFormatLabel(url) }
     var playerRequested by remember(url) { mutableStateOf(false) }
     var playWhenReady by remember(url) { mutableStateOf(false) }
@@ -70,6 +73,7 @@ fun InlineAudioPlayer(
                 playerRequested = true
             },
             onSeek = {},
+            onCopyLink = { social.tbone.ui.feed.copyNoteLink(context, url) },
             modifier = modifier,
         )
     } else {
@@ -146,11 +150,13 @@ fun InlineAudioPlayer(
                     player.seekTo((durationMs * fraction.coerceIn(0f, 1f)).toLong())
                 }
             },
+            onCopyLink = { social.tbone.ui.feed.copyNoteLink(context, url) },
             modifier = modifier,
         )
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AudioPlayerCard(
     format: String,
@@ -161,6 +167,7 @@ private fun AudioPlayerCard(
     error: Boolean,
     onPlayPause: () -> Unit,
     onSeek: (Float) -> Unit,
+    onCopyLink: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(12.dp)
@@ -170,6 +177,7 @@ private fun AudioPlayerCard(
             .clip(shape)
             .background(BonyColors.SurfaceAlt, shape)
             .border(1.dp, BonyColors.Rule, shape)
+            .combinedClickable(onClick = {}, onLongClick = onCopyLink)
             .padding(horizontal = 10.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
