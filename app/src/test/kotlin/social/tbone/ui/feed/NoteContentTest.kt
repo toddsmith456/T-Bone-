@@ -66,6 +66,24 @@ class NoteContentTest {
         assertNull(extractInlineQuoteId("no reference at all"))
     }
 
+    @Test fun referencesAfterProfilesAndMultipleQuotesAreFound() {
+        val first = "ab".repeat(32)
+        val second = "cd".repeat(32)
+        val profile = Nip19.hexToNpub("ef".repeat(32))
+        val text = "nostr:$profile nostr:${Nip19.hexToNote(first)} nostr:${Nip19.hexToNote(second)}"
+        assertEquals(listOf(first, second), extractInlineQuoteIds(text))
+        assertEquals(first, extractInlineQuoteId(text))
+    }
+
+    @Test fun strippingOneQuotePreservesOtherTrailingReferences() {
+        val first = "ab".repeat(32)
+        val second = "cd".repeat(32)
+        val text = "hello nostr:${Nip19.hexToNote(first)} nostr:${Nip19.hexToNote(second)}"
+        val result = stripQuoteRefs(text, first)
+        assertTrue(!result.contains(Nip19.hexToNote(first)))
+        assertTrue(result.contains(Nip19.hexToNote(second)))
+    }
+
     @Test fun quoteReferenceIsStrippedFromTheBody() {
         val id = "cd".repeat(32)
         val note = Nip19.hexToNote(id)

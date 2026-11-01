@@ -29,6 +29,7 @@ import social.tbone.nostr.NostrJson
 import social.tbone.nostr.relay.RelayMessage
 import social.tbone.nostr.relay.RelayPool
 import social.tbone.nostr.replyEventId
+import social.tbone.ui.feed.extractInlineQuoteIds
 import social.tbone.profile.ProfileRepository
 import social.tbone.settings.AppSettings
 import java.util.concurrent.ConcurrentHashMap
@@ -458,7 +459,13 @@ class NotificationsRepository @Inject constructor(
             EventKind.TEXT_NOTE, EventKind.COMMENT -> {
                 // NIP-22 comments use the same q/e reply semantics as text
                 // notes, but were previously discarded before this point.
-                val quoteId = event.parsedTags.firstOrNull { it.name == "q" }?.value()
+                val quoteIds = (event.parsedTags.filter { it.name == "q" }.mapNotNull { it.value() } +
+                    extractInlineQuoteIds(event.content)).distinct()
+                // A p tag can mention us while quoting someone else. Only call it
+                // a quote of our note when ownership is actually established.
+                val quoteId = quoteIds.firstOrNull { id ->
+                    synchronized(lock) { id in myOwnEventIds } || eventRepository.getById(id)?.pubkey == me
+                }
                 val replyId = event.parsedTags.replyEventId
                 val item = synchronized(lock) {
                     when {
@@ -907,6 +914,9 @@ class NotificationsRepository @Inject constructor(
                     since = since,
                     limit = 100,
                 ),
+                // NIP-18 quote events often have #q but no #e or #p.
+                Filter(qTags = ids, kinds = listOf(EventKind.TEXT_NOTE, EventKind.COMMENT),
+                    since = since, limit = 100),
                 // NIP-22 comments also carry the thread root in uppercase #E.
                 Filter(
                     bigETags = ids,

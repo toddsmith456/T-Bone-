@@ -38,6 +38,7 @@ fun HashtagFeedScreen(
     onThreadClick: (eventId: String) -> Unit = {},
     onProfileClick: (pubkey: String) -> Unit = {},
     onHashtagClick: (tag: String) -> Unit = {},
+    onQuoteClick: (social.tbone.nostr.Event) -> Unit = {},
     viewModel: HashtagFeedViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -98,6 +99,8 @@ fun HashtagFeedScreen(
                                 onThreadClick = onThreadClick,
                                 onProfileClick = onProfileClick,
                                 onHashtagClick = onHashtagClick,
+                                onBoost = viewModel::boost,
+                                onQuote = onQuoteClick,
                             )
                         }
                     }

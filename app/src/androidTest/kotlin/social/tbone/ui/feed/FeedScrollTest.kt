@@ -7,6 +7,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import social.tbone.FeedRegressionActivity
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.performClick
@@ -94,6 +95,35 @@ class FeedScrollTest {
         compose.waitForIdle()
         compose.onAllNodesWithTag("active-inline-video").assertCountEquals(1)
         compose.onAllNodesWithTag("video-placeholder").assertCountEquals(1)
+    }
+
+    @Test fun repostAndQuoteShareOneMenu() {
+        val event = Event("1".repeat(64), "a".repeat(64), 1_700_000_000, 1, emptyList(), "test", "")
+        var reposts = 0
+        var quotes = 0
+        compose.setContent {
+            BonyTheme {
+                NoteCard(event = event, profile = null,
+                    onBoost = { reposts++ }, onQuote = { quotes++ })
+            }
+        }
+        compose.onNodeWithContentDescription("Repost or quote").performClick()
+        compose.onNodeWithText("Repost").assertExists().performClick()
+        compose.runOnIdle { org.junit.Assert.assertEquals(1, reposts) }
+        compose.onNodeWithContentDescription("Repost or quote").performClick()
+        compose.onNodeWithText("Quote").assertExists().performClick()
+        compose.runOnIdle { org.junit.Assert.assertEquals(1, quotes) }
+    }
+
+    @Test fun quoteAfterProfileMentionIsRendered() {
+        val id = "b".repeat(64)
+        val target = Event(id, "c".repeat(64), 1_700_000_000, 1, emptyList(), "quoted target body", "")
+        val profile = Nip19.hexToNpub("d".repeat(64))
+        val note = Event("e".repeat(64), "f".repeat(64), 1_700_000_000, 1, emptyList(),
+            "hello nostr:$profile nostr:${Nip19.hexToNote(id)}", "")
+        compose.setContent { BonyTheme { NoteCard(event = note, profile = null, quotedEvent = target,
+            quotedEventId = id, quotedEvents = mapOf(id to target)) } }
+        compose.onNodeWithText("quoted target body", substring = true).assertExists()
     }
 
 }

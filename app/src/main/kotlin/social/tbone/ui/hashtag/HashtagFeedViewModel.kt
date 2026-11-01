@@ -12,6 +12,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import social.tbone.db.EventRepository
+import social.tbone.account.signer.NostrSignerFactory
+import social.tbone.nostr.UnsignedEvent
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonArray
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
 import social.tbone.nostr.Filter
@@ -20,7 +24,7 @@ import social.tbone.nostr.quotedEventId
 import social.tbone.nostr.relay.RelayMessage
 import social.tbone.nostr.relay.RelayPool
 import social.tbone.profile.ProfileRepository
-import social.tbone.ui.feed.extractInlineQuoteId
+import social.tbone.ui.feed.extractInlineQuoteIds
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
@@ -36,6 +40,7 @@ class HashtagFeedViewModel @Inject constructor(
     private val profileRepository: ProfileRepository,
     private val eventRepository: EventRepository,
     private val muteRepository: social.tbone.lists.MuteListRepository,
+    private val signerFactory: NostrSignerFactory,
 ) : ViewModel() {
 
     val hashtag: String = checkNotNull(savedStateHandle["tag"])
@@ -61,6 +66,7 @@ class HashtagFeedViewModel @Inject constructor(
     private val profileSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val quoteSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val requestedQuoteIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val settlingQuoteIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val pendingEvents = mutableListOf<Event>()
     @Volatile private var settled = false
 
@@ -80,6 +86,7 @@ class HashtagFeedViewModel @Inject constructor(
                                 refreshUnresolvedQuotes()
                                 viewModelScope.launch { eventRepository.save(referenced, "") }
                                 fetchProfileForAuthor(referenced.pubkey)
+                                if (referenced.kind != EventKind.REPOST) fetchReferencesFor(listOf(referenced))
                             }
                             return@collect
                         }
@@ -98,11 +105,15 @@ class HashtagFeedViewModel @Inject constructor(
                     }
                     is RelayMessage.EndOfStoredEvents -> {
                         if (msg.subscriptionId in quoteSubIds) {
-                            // Lookup settled: anything still missing is gone,
-                            // not "loading".
-                            quoteSubIds -= msg.subscriptionId
-                            pool.unsubscribe(msg.subscriptionId)
-                            refreshUnresolvedQuotes()
+                            // The first EOSE is only one relay. Allow slower
+                            // relays to supply a reference before ending lookup.
+                            val id = msg.subscriptionId
+                            if (settlingQuoteIds.add(id)) viewModelScope.launch {
+                                delay(10_000)
+                                if (quoteSubIds.remove(id)) pool.unsubscribe(id)
+                                settlingQuoteIds.remove(id)
+                                refreshUnresolvedQuotes()
+                            }
                             return@collect
                         }
                         if (msg.subscriptionId != subId) return@collect
@@ -174,9 +185,8 @@ class HashtagFeedViewModel @Inject constructor(
                     }
                 }
                 EventKind.TEXT_NOTE, EventKind.COMMENT, EventKind.POLL -> {
-                    (event.parsedTags.quotedEventId ?: extractInlineQuoteId(event.content))
-                        ?.takeIf { it !in requestedQuoteIds }
-                        ?.let { toResolve += it }
+                    val ids = event.parsedTags.filter { it.name == "q" }.mapNotNull { it.value() }.take(32) + extractInlineQuoteIds(event.content)
+                    toResolve.addAll(ids.filter { it !in requestedQuoteIds })
                 }
             }
         }
@@ -190,6 +200,7 @@ class HashtagFeedViewModel @Inject constructor(
                 _quotedEvents.update { it + cached }
                 refreshUnresolvedQuotes()
                 cached.values.forEach { fetchProfileForAuthor(it.pubkey) }
+                fetchReferencesFor(cached.values.toList())
             }
             val stillMissing = missing.filter { it !in cached }
             if (stillMissing.isEmpty()) return@launch
@@ -204,6 +215,22 @@ class HashtagFeedViewModel @Inject constructor(
         if (profileRepository.profiles.value[pubkey] != null) return
         val id = pool.subscribe(listOf(Filter(authors = listOf(pubkey), kinds = listOf(EventKind.METADATA), limit = 1)))
         profileSubIds.add(id)
+    }
+
+    fun boost(event: Event) {
+        viewModelScope.launch {
+            val signer = signerFactory.forActiveAccount() ?: return@launch
+            val unsigned = UnsignedEvent(
+                pubkey = signer.pubkey,
+                kind = EventKind.REPOST,
+                content = Json.encodeToString(Event.serializer(), event),
+                tags = listOf(
+                    buildJsonArray { add("e"); add(event.id); add(""); add("mention") },
+                    buildJsonArray { add("p"); add(event.pubkey) },
+                ),
+            )
+            signer.signEvent(unsigned).onSuccess { pool.publish(it) }
+        }
     }
 
     override fun onCleared() {

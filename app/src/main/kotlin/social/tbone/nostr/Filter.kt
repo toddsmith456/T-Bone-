@@ -28,6 +28,8 @@ data class Filter(
      */
     @SerialName("#E") val bigETags: List<String>? = null,
     @SerialName("#p") val pTags: List<String>? = null,
+    /** NIP-18 quoted event IDs. */
+    @SerialName("#q") val qTags: List<String>? = null,
     @SerialName("#t") val tTags: List<String>? = null,
     /**
      * NIP-DC discovery: webxdc apps are kind 1063 events whose `m` tag is

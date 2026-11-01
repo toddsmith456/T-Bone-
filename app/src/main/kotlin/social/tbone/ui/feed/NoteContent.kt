@@ -4,6 +4,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -108,12 +110,14 @@ data class ParsedContent(
     val mediaItems: List<MediaItem>,
 )
 
-fun extractInlineQuoteId(content: String): String? =
-    NOSTR_URI_REGEX.find(content)
-        ?.value
-        ?.let { Nip19.nostrUriToEventId(it) }
-
 private val QUOTE_URI_REGEX = Regex("""nostr:(note1|nevent1|naddr1)[a-z0-9]+""")
+
+/** All decodable note references, including those following an npub mention. */
+fun extractInlineQuoteIds(content: String): List<String> =
+    QUOTE_URI_REGEX.findAll(content).mapNotNull { Nip19.nostrUriToEventId(it.value) }
+        .distinct().take(32).toList()
+
+fun extractInlineQuoteId(content: String): String? = extractInlineQuoteIds(content).firstOrNull()
 
 /**
  * Removes the quote reference URI(s) from a note's body text.
@@ -121,15 +125,13 @@ private val QUOTE_URI_REGEX = Regex("""nostr:(note1|nevent1|naddr1)[a-z0-9]+""")
  * When a note quotes another note we render the quoted note as a card below
  * the body — so the raw `nostr:nevent1…` / `nostr:note1…` string must never
  * also appear inside the text (it looks like a broken link). Removes:
- *  1. any trailing quote URI block (the classic `…\n\nnostr:note1…` form), and
- *  2. any URI whose decoded event id equals [quotedId].
+ *  any URI whose decoded event id equals [quotedId].
  * Legitimate inline note references that aren't the quote are left alone.
  */
 fun stripQuoteRefs(content: String, quotedId: String): String {
     var out = content
-    // 1. Trailing quote block (URI preceded by whitespace/newlines, at the end).
-    out = out.replace(Regex("""(?:\s*nostr:(note1|nevent1|naddr1)[a-z0-9]+)+\s*$"""), "")
-    // 2. The specific quoted event's URI anywhere in the text.
+    // Remove only the specific quote; other references, even trailing ones,
+    // still need to render and remain accessible.
     out = QUOTE_URI_REGEX.replace(out) { m ->
         val id = Nip19.nostrUriToEventId(m.value)
         if (id == quotedId) "" else m.value
@@ -215,6 +217,7 @@ fun NoteMediaContent(mediaItems: List<MediaItem>, modifier: Modifier = Modifier)
                         }
                     } else {
                         VideoPlaceholder(
+                            url = item.url,
                             onOpen = { ActiveInlineVideo.owner = token },
                             onFullscreen = {
                                 ActiveInlineVideo.owner = null
@@ -252,6 +255,7 @@ private object ActiveInlineVideo {
 }
 
 /** Tap the video to play/pause; only the fullscreen button opens the viewer. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun InlineVideo(
     url: String,
@@ -260,6 +264,7 @@ private fun InlineVideo(
     onOpen: () -> Unit,
     onBackground: () -> Unit,
 ) {
+    val context = LocalContext.current
     val playerState = rememberVideoPlayer(url, quality, playWhenReady)
     val player = playerState.player
     if (player == null) {
@@ -371,9 +376,10 @@ private fun InlineVideo(
                 update = { it.player = player; it.keepScreenOn = isPlaying.value },
                 modifier = Modifier.fillMaxSize(),
             )
-            Box(Modifier.fillMaxSize().clickable {
-                if (player.playWhenReady) player.pause() else player.play()
-            }, contentAlignment = Alignment.Center) {
+            Box(Modifier.fillMaxSize().combinedClickable(
+                onClick = { if (player.playWhenReady) player.pause() else player.play() },
+                onLongClick = { copyNoteLink(context, url) },
+            ), contentAlignment = Alignment.Center) {
                 if (!isPlaying.value) VideoPlayBadge()
             }
             FullscreenButton({ player.pause(); onOpen() }, Modifier.align(Alignment.BottomEnd))
@@ -419,6 +425,7 @@ private fun VideoPlayBadge() {
  * uploads don't blow up memory; tapping opens the in-app viewer at the
  * original resolution (zoom, close, download — no browser).
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun InlineImage(url: String, lowQuality: Boolean, onOpen: () -> Unit) {
     val context = LocalContext.current
@@ -470,7 +477,7 @@ private fun InlineImage(url: String, lowQuality: Boolean, onOpen: () -> Unit) {
                 .clip(shape)
                 .background(BonyColors.SurfaceAlt, shape)
                 .border(1.dp, BonyColors.Rule, shape)
-                .clickable(onClick = onOpen),
+                .combinedClickable(onClick = onOpen, onLongClick = { copyNoteLink(context, url) }),
             onSuccess = { result ->
                 val size = result.painter.intrinsicSize
                 if (size.width > 0f && size.height > 0f) {
@@ -495,13 +502,15 @@ private fun InlineImage(url: String, lowQuality: Boolean, onOpen: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun VideoPlaceholder(onOpen: () -> Unit, onFullscreen: () -> Unit) {
+private fun VideoPlaceholder(url: String, onOpen: () -> Unit, onFullscreen: () -> Unit) {
+    val context = LocalContext.current
     val shape = appCornerShape(MaterialTheme.shapes.medium)
     Box(
         modifier = Modifier.testTag("video-placeholder").fillMaxWidth().height(PLACEHOLDER_HEIGHT).clip(shape)
             .background(BonyColors.SurfaceAlt, shape).border(1.dp, BonyColors.Rule, shape)
-            .clickable(onClick = onOpen),
+            .combinedClickable(onClick = onOpen, onLongClick = { copyNoteLink(context, url) }),
         contentAlignment = Alignment.Center,
     ) {
         MediaStripes(Modifier.matchParentSize())
@@ -511,8 +520,10 @@ private fun VideoPlaceholder(onOpen: () -> Unit, onFullscreen: () -> Unit) {
 }
 
 /** Diagonal stripe placeholder matching the design system media block spec. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun MediaPlaceholder(label: String, url: String, onOpen: () -> Unit) {
+    val context = LocalContext.current
     val shape = appCornerShape(MaterialTheme.shapes.medium)
     Box(
         modifier = Modifier
@@ -521,7 +532,7 @@ private fun MediaPlaceholder(label: String, url: String, onOpen: () -> Unit) {
             .clip(shape)
             .background(BonyColors.SurfaceAlt, shape)
             .border(1.dp, BonyColors.Rule, shape)
-            .clickable(onClick = onOpen),
+            .combinedClickable(onClick = onOpen, onLongClick = { copyNoteLink(context, url) }),
         contentAlignment = Alignment.Center,
     ) {
         MediaStripes(Modifier.matchParentSize())

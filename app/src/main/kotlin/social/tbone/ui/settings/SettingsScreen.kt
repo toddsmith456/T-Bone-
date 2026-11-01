@@ -126,6 +126,14 @@ fun SettingsScreen(
             onCheckedChange = themeViewModel::setUiDeclutterEnabled,
         )
         Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+        val confirmLinks by viewModel.confirmExternalLinks.collectAsStateWithLifecycle()
+        SettingsSwitchRow(
+            title = "confirm before opening links",
+            description = "ask before opening an external link in another app",
+            checked = confirmLinks,
+            onCheckedChange = viewModel::setConfirmExternalLinks,
+        )
+        Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
         TorActiveStrip(torEnabled)
         SettingsAccountSection(
             activeAccount, onAddAccount, onAccountManagement,
@@ -1105,7 +1113,7 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
             currentMinutes = pinAutoLockMinutes,
             onSelect = viewModel::setPinAutoLockMinutes,
             title = "app auto-lock timeout",
-            description = "require PIN again after this many minutes",
+            description = "require PIN after the app has been in the background this long",
         )
     }
 

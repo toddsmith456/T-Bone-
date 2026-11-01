@@ -189,7 +189,7 @@ fun ToolboxSettingsScreen(
                 currentMinutes = toolboxAutoLockMinutes,
                 onSelect = viewModel::setToolboxAutoLockMinutes,
                 title = "toolbox auto-lock timeout",
-                description = "require PIN again after this many minutes",
+                description = "require PIN after the app has been in the background this long",
             )
         }
         Row(

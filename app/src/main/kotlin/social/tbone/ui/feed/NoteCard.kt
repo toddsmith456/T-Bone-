@@ -296,9 +296,21 @@ fun NoteCard(
                     onHashtagClick = onHashtagClick,
                     onOpenNote = { onThreadClick?.invoke(event.id) },
                     profiles = profiles,
+                    quotedEvents = quotedEvents,
                 )
                 Spacer(Modifier.height(8.dp))
             }
+            val inlinePollIds = extractInlineQuoteIds(event.content).toSet()
+            event.parsedTags.filter { it.name == "q" }.mapNotNull { it.value() }
+                .distinct().filterNot { it in inlinePollIds }.take(32).forEach { id ->
+                    val quote = quotedEvents[id] ?: quotedEvent?.takeIf { it.id == id }
+                    if (quote != null) {
+                        QuotedNoteCard(event = quote, profile = profiles[quote.pubkey], profiles = profiles,
+                            quotedEvents = quotedEvents, onThreadClick = onThreadClick,
+                            onProfileClick = onProfileClick, onHashtagClick = onHashtagClick)
+                    } else ReferencePlaceholder("loading quoted note…", id, onThreadClick)
+                    Spacer(Modifier.height(8.dp))
+                }
 
             // The poll itself.
             PollCard(
@@ -475,6 +487,20 @@ fun NoteCard(
                         )
                     }
                 }
+
+                // A note may have several q tags, including references which
+                // have no matching NIP-27 URI in its body.
+                val inlineIds = extractInlineQuoteIds(event.content).toSet()
+                event.parsedTags.filter { it.name == "q" }.mapNotNull { it.value() }
+                    .distinct().filter { it != quotedRefId && it !in inlineIds }.take(32).forEach { id ->
+                        Spacer(Modifier.height(8.dp))
+                        val quote = quotedEvents[id]
+                        if (quote != null) QuotedNoteCard(
+                            event = quote, profile = profiles[quote.pubkey], profiles = profiles,
+                            quotedEvents = quotedEvents, onThreadClick = onThreadClick,
+                            onProfileClick = onProfileClick, onHashtagClick = onHashtagClick,
+                        ) else ReferencePlaceholder("loading quoted note…", id, onThreadClick)
+                    }
 
                 Spacer(Modifier.height(8.dp))
 
@@ -756,6 +782,7 @@ private fun NoteEngagementRow(
     val didReply = activePubkey != null && event.id in repliedByMe
     var repostPressed by remember(event.id) { mutableStateOf(false) }
     var quotePressed by remember(event.id) { mutableStateOf(false) }
+    var showRepostMenu by remember(event.id) { mutableStateOf(false) }
 
     Row(
         modifier = modifier,
@@ -771,29 +798,28 @@ private fun NoteEngagementRow(
                 onClick = { onReply(event) },
             )
         }
-        if (onBoost != null) {
-            EngagementButton(
-                icon = Icons.Outlined.Repeat,
-                contentDescription = "Repost",
-                count = 0,
-                tint = if (repostPressed) BonyColors.Accent else BonyColors.TextMute,
-                onClick = {
-                    repostPressed = true
-                    onBoost(event)
-                },
-            )
-        }
-        if (onQuote != null) {
-            EngagementButton(
-                icon = Icons.Outlined.FormatQuote,
-                contentDescription = "Quote",
-                count = 0,
-                tint = if (quotePressed) BonyColors.Accent else BonyColors.TextMute,
-                onClick = {
-                    quotePressed = true
-                    onQuote(event)
-                },
-            )
+        if (onBoost != null || onQuote != null) {
+            Box {
+                EngagementButton(
+                    icon = Icons.Outlined.Repeat,
+                    contentDescription = "Repost or quote",
+                    count = 0,
+                    tint = if (repostPressed || quotePressed) BonyColors.Accent else BonyColors.TextMute,
+                    onClick = { showRepostMenu = true },
+                )
+                DropdownMenu(expanded = showRepostMenu, onDismissRequest = { showRepostMenu = false }) {
+                    if (onBoost != null) DropdownMenuItem(
+                        text = { Text("Repost") },
+                        leadingIcon = { Icon(Icons.Outlined.Repeat, contentDescription = null) },
+                        onClick = { showRepostMenu = false; repostPressed = true; onBoost(event) },
+                    )
+                    if (onQuote != null) DropdownMenuItem(
+                        text = { Text("Quote") },
+                        leadingIcon = { Icon(Icons.Outlined.FormatQuote, contentDescription = null) },
+                        onClick = { showRepostMenu = false; quotePressed = true; onQuote(event) },
+                    )
+                }
+            }
         }
         if (onLike != null) {
             LikeButton(

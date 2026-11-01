@@ -47,6 +47,7 @@ import social.tbone.nostr.isReply
 import social.tbone.nostr.quotedEventId
 import social.tbone.ui.feed.MediaItem
 import social.tbone.ui.feed.extractInlineQuoteId
+import social.tbone.ui.feed.extractInlineQuoteIds
 import social.tbone.ui.feed.parseNoteContent
 import social.tbone.nostr.relay.RelayMessage
 import social.tbone.nostr.relay.RelayPool
@@ -376,6 +377,7 @@ class ProfileViewModel @Inject constructor(
         refreshUnresolvedQuotes()
         viewModelScope.launch { eventRepository.save(event, "") }
         fetchMetadataFor(listOf(event.pubkey))
+        if (event.kind != EventKind.REPOST) fetchQuotesFor(listOf(event))
     }
 
     /**
@@ -403,10 +405,9 @@ class ProfileViewModel @Inject constructor(
                             ?.let { toResolve += it }
                     }
                 }
-                EventKind.TEXT_NOTE, EventKind.COMMENT -> {
-                    (event.parsedTags.quotedEventId ?: extractInlineQuoteId(event.content))
-                        ?.takeIf { it !in requestedQuoteIds }
-                        ?.let { toResolve += it }
+                EventKind.TEXT_NOTE, EventKind.COMMENT, EventKind.POLL -> {
+                    val ids = event.parsedTags.filter { it.name == "q" }.mapNotNull { it.value() }.take(32) + extractInlineQuoteIds(event.content)
+                    toResolve.addAll(ids.filter { it !in requestedQuoteIds })
                 }
                 else -> Unit
             }
@@ -422,6 +423,7 @@ class ProfileViewModel @Inject constructor(
                 rebuildProfileFeed()
                 refreshUnresolvedQuotes()
                 fetchMetadataFor(cached.values.map { it.pubkey })
+                fetchQuotesFor(cached.values.toList())
             }
             val stillMissing = missing.filter { it !in cached }
             if (stillMissing.isEmpty()) return@launch

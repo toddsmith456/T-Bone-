@@ -14,12 +14,12 @@ enum class NotifType { REACTION, REPOST, REPLY, QUOTE, MENTION, VOTE, CALENDAR }
 
 /**
  * Filterable notification categories shown in the summary bar and the filter
- * sheet. Quotes are folded into MENTIONS, exactly like Wisp.
+ * sheet. Quotes are folded into REPOSTS to keep the filter row compact.
  */
 enum class NotifFilter(val label: String) {
     REPLIES("REPLIES"),
     REACTIONS("REACTIONS"),
-    REPOSTS("REPOSTS"),
+    REPOSTS("REPOSTS & QUOTES"),
     MENTIONS("MENTIONS"),
     VOTES("VOTES"),
     CALENDAR("CALENDAR"),

@@ -1,12 +1,15 @@
 package social.tbone.ui.feed
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -40,7 +43,7 @@ private val HASHTAG_REGEX = Regex("""(?<![\p{L}\p{N}_])#[\p{L}\p{N}_]+""")
 private sealed interface BodySeg {
     data class Plain(val text: String) : BodySeg
     data class Url(val url: String) : BodySeg
-    data class Profile(val hex: String, val label: String) : BodySeg
+    data class Profile(val hex: String, val label: String, val raw: String) : BodySeg
     data class NoteRef(val eventId: String, val label: String) : BodySeg
     data class Hashtag(val tag: String) : BodySeg
 }
@@ -48,7 +51,7 @@ private sealed interface BodySeg {
 private data class SegRange(val start: Int, val end: Int, val kind: Int, val value: String)
 
 /** A clickable region inside the annotated note text. */
-private data class SegAction(val start: Int, val end: Int, val action: (() -> Unit)?)
+private data class SegAction(val start: Int, val end: Int, val copyText: String? = null, val action: (() -> Unit)?)
 
 /** The styled note text plus the click regions that go with it. */
 private data class SegmentedBody(
@@ -107,6 +110,7 @@ private fun toBlocks(segs: List<BodySeg>): List<BodyBlock> {
  *    (driven by the same text-layout measurement that cuts the note off).
  * Tapping plain body text opens the note (forwarded via [onOpenNote]).
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun NoteBodyText(
     content: String,
@@ -179,20 +183,33 @@ fun NoteBodyText(
                             )
                         }
                     } else {
-                        ClickableText(
+                        var layout by remember(run.text) { mutableStateOf<TextLayoutResult?>(null) }
+                        fun actionAt(position: androidx.compose.ui.geometry.Offset): SegAction? {
+                            val textLayout = layout ?: return null
+                            val offset = textLayout.getOffsetForPosition(position)
+                            if (offset !in 0 until run.text.length) return null
+                            if (!textLayout.getBoundingBox(offset).contains(position)) return null
+                            return run.actions.firstOrNull { offset in it.start until it.end }
+                        }
+                        Text(
                             text = run.text,
                             style = style,
                             maxLines = effectiveMax,
                             overflow = TextOverflow.Ellipsis,
-                            onTextLayout = { result: TextLayoutResult ->
-                                if (result.hasVisualOverflow || result.lineCount > effectiveMax) {
-                                    truncated = true
-                                }
+                            onTextLayout = { result ->
+                                layout = result
+                                if (result.hasVisualOverflow || result.lineCount > effectiveMax) truncated = true
                             },
-                            onClick = { offset ->
-                                val action = run.actions.firstOrNull { offset in it.start until it.end }
-                                if (action?.action != null) action.action()
-                                else onOpenNote?.invoke()
+                            modifier = Modifier.pointerInput(run, onOpenNote) {
+                                detectTapGestures(
+                                    onTap = { position ->
+                                        val action = actionAt(position)
+                                        if (action?.action != null) action.action() else onOpenNote?.invoke()
+                                    },
+                                    onLongPress = { position ->
+                                        actionAt(position)?.copyText?.let { copyNoteLink(context, it) }
+                                    },
+                                )
                             },
                         )
                     }
@@ -222,7 +239,10 @@ fun NoteBodyText(
                             text = "↗ open note",
                             style = BonyType.tag.copy(color = BonyColors.Accent),
                             modifier = Modifier
-                                .clickable { onThreadClick?.invoke(block.eventId) }
+                                .combinedClickable(
+                                    onClick = { onThreadClick?.invoke(block.eventId) },
+                                    onLongClick = { copyNoteLink(context, block.raw) },
+                                )
                                 .padding(vertical = 2.dp),
                         )
                     }
@@ -265,14 +285,14 @@ private fun buildSegmentedAnnotated(
                     // Show and open the tracking-stripped URL.
                     append(seg.url)
                     addStyle(SpanStyle(color = BonyColors.Link, textDecoration = TextDecoration.Underline), start, length)
-                    actions.add(SegAction(start, length) { onOpenUrl(seg.url) })
+                    actions.add(SegAction(start, length, copyText = seg.url) { onOpenUrl(seg.url) })
                 }
 
                 is BodySeg.Profile -> {
                     val start = length
                     append(seg.label)
                     addStyle(SpanStyle(color = BonyColors.Accent), start, length)
-                    actions.add(SegAction(start, length) { onProfileClick?.invoke(seg.hex) })
+                    actions.add(SegAction(start, length, copyText = seg.raw) { onProfileClick?.invoke(seg.hex) })
                 }
 
                 is BodySeg.NoteRef -> {
@@ -320,7 +340,7 @@ private fun segment(text: String, profiles: Map<String, ProfileContent>): List<B
                 val hex = if (entity.startsWith("npub1")) Nip19.npubToHex(entity) else Nip19.nprofileToHex(entity)
                 out.add(
                     if (hex != null) {
-                        BodySeg.Profile(hex, "@${profiles[hex]?.bestName ?: abbreviateNpub(hex)}")
+                        BodySeg.Profile(hex, "@${profiles[hex]?.bestName ?: abbreviateNpub(hex)}", seg.value)
                     } else {
                         BodySeg.Plain(seg.value)
                     },
@@ -330,7 +350,7 @@ private fun segment(text: String, profiles: Map<String, ProfileContent>): List<B
                 val eventId = Nip19.nostrUriToEventId(seg.value)
                 out.add(
                     if (eventId != null) {
-                        BodySeg.NoteRef(eventId, "↗ open note")
+                        BodySeg.NoteRef(eventId, seg.value)
                     } else {
                         BodySeg.Plain(seg.value)
                     },
@@ -352,4 +372,11 @@ fun openUrl(context: android.content.Context, url: String) {
     runCatching {
         context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)))
     }
+}
+
+/** Copy a link without opening it. */
+internal fun copyNoteLink(context: android.content.Context, url: String) {
+    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+    clipboard.setPrimaryClip(android.content.ClipData.newPlainText("link", url))
+    android.widget.Toast.makeText(context, "Link copied", android.widget.Toast.LENGTH_SHORT).show()
 }

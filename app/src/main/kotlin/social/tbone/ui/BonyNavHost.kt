@@ -613,6 +613,7 @@ fun BonyNavHost() {
                             onThreadClick = { eventId -> navController.navigate("thread/$eventId") },
                             onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
                             onHashtagClick = { tag -> navController.navigate("hashtag/" + Uri.encode(tag)) },
+                            onQuoteClick = { event -> navController.navigate("compose?quoteToId=${event.id}") },
                         )
                     }
                 }

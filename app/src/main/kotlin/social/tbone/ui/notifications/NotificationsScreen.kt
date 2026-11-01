@@ -393,13 +393,13 @@ private fun DailySummaryBar(
         )
         SummaryStat(
             icon = Icons.Outlined.Repeat,
-            value = summary.repostCount.toString(),
+            value = (summary.repostCount + summary.quoteCount).toString(),
             active = isFiltered && NotifFilter.REPOSTS in enabledFilters,
             onClick = { onFilterSelect(NotifFilter.REPOSTS) },
         )
         SummaryStat(
             icon = Icons.Outlined.AlternateEmail,
-            value = (summary.mentionCount + summary.quoteCount).toString(),
+            value = summary.mentionCount.toString(),
             active = isFiltered && NotifFilter.MENTIONS in enabledFilters,
             onClick = { onFilterSelect(NotifFilter.MENTIONS) },
         )

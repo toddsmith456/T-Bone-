@@ -57,6 +57,41 @@ class MainActivity : FragmentActivity() {
         amberBridge.onResult(result.resultCode, result.data)
     }
 
+    /** Gate external links in one place, including ACTION_VIEW wrapped in a chooser. */
+    override fun startActivity(intent: Intent) = startActivity(intent, null)
+
+    override fun startActivity(intent: Intent, options: Bundle?) {
+        @Suppress("DEPRECATION")
+        val target = if (intent.action == Intent.ACTION_CHOOSER) {
+            intent.getParcelableExtra<Intent>(Intent.EXTRA_INTENT)
+        } else intent
+        val uri = target?.takeIf { it.action == Intent.ACTION_VIEW }?.data
+        val scheme = uri?.scheme?.lowercase()
+        // File/content intents are local operations; the signer is a protocol
+        // handoff rather than a link and must not interrupt signing.
+        val external = uri != null && scheme != null && scheme !in setOf("file", "content", "nostrsigner")
+        if (external && ::appSettings.isInitialized && appSettings.confirmExternalLinks.value) {
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                android.app.AlertDialog.Builder(this)
+                    .setTitle("Open external link?")
+                    .setMessage(uri.toString())
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Open") { _, _ ->
+                        runCatching { launchExternalIntent(intent, options) }
+                            .onFailure { android.widget.Toast.makeText(this, "Could not open link", android.widget.Toast.LENGTH_SHORT).show() }
+                    }
+                    .show()
+            }
+        } else {
+            launchExternalIntent(intent, options)
+        }
+    }
+
+    private fun launchExternalIntent(intent: Intent, options: Bundle?) {
+        super.startActivity(intent, options)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

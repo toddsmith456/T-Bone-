@@ -83,6 +83,8 @@ class SettingsViewModel @Inject constructor(
     val activeAccount: StateFlow<Account?> = accountRepository.activeAccount
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    val confirmExternalLinks: StateFlow<Boolean> = appSettings.confirmExternalLinks
+
     val torEnabled: StateFlow<Boolean> = appSettings.torEnabled
     val torKillSwitch: StateFlow<Boolean> = appSettings.torKillSwitch
 
@@ -367,6 +369,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setUiTheme(theme: UiTheme) {
         viewModelScope.launch { appSettings.setUiTheme(theme) }
+    }
+
+    fun setConfirmExternalLinks(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setConfirmExternalLinks(enabled) }
     }
 
     fun setScreenshotBlockEnabled(enabled: Boolean) {

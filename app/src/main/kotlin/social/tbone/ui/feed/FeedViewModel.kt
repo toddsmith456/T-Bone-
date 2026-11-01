@@ -1601,9 +1601,8 @@ class FeedViewModel @Inject constructor(
                     }
                 }
                 EventKind.TEXT_NOTE, EventKind.COMMENT, EventKind.POLL -> {
-                    val qId = event.parsedTags.quotedEventId
-                        ?: extractInlineQuoteId(event.content)
-                    if (qId != null && qId !in requestedQuoteIds) toResolve.add(qId)
+                    val ids = event.parsedTags.filter { it.name == "q" }.mapNotNull { it.value() }.take(32) + extractInlineQuoteIds(event.content)
+                    toResolve.addAll(ids.filter { it !in requestedQuoteIds })
                 }
             }
         }
@@ -1620,6 +1619,7 @@ class FeedViewModel @Inject constructor(
                 _quotedEvents.update { it + cached }
                 refreshUnresolvedQuotes()
                 fetchMetadataForAuthors(cached.values.map { it.pubkey })
+                fetchQuotesForEvents(cached.values.toList())
             }
             val stillMissing = missing.filter { it !in cached }
             if (stillMissing.isEmpty()) return@launch

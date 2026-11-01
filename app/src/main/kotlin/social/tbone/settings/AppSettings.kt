@@ -32,6 +32,7 @@ class AppSettings @Inject constructor(
         const val DEFAULT_CLOCK_HOURS = 6
         val GEOHASH_CACHE_OPTIONS = listOf(0L, 30*60_000L, 60*60_000L, 5*60*60_000L, 24*60*60_000L, 7*24*60*60_000L)
 
+        private val CONFIRM_LINKS = booleanPreferencesKey("confirm_external_links")
         private val TOR_ENABLED = booleanPreferencesKey("tor_enabled")
         private val TOR_KILL_SWITCH = booleanPreferencesKey("tor_kill_switch")
         // False until the user (or auto-detect) explicitly sets the preference.
@@ -175,6 +176,9 @@ class AppSettings @Inject constructor(
 
     private val _initialized = MutableStateFlow(false)
     val initialized = _initialized.asStateFlow()
+
+    private val _confirmExternalLinks = MutableStateFlow(false)
+    val confirmExternalLinks = _confirmExternalLinks.asStateFlow()
 
     private val _torExplicitlySet = MutableStateFlow(false)
     val torExplicitlySet = _torExplicitlySet.asStateFlow()
@@ -404,6 +408,7 @@ class AppSettings @Inject constructor(
         scope.launch {
             migrateRemovedNwcPreferences()
             dataStore.data.collect { prefs ->
+                _confirmExternalLinks.value = prefs[CONFIRM_LINKS] ?: false
                 _torExplicitlySet.value = prefs[TOR_EXPLICITLY_SET] == true
                 _torEnabled.value = prefs[TOR_ENABLED] ?: false
                 _torKillSwitch.value = prefs[TOR_KILL_SWITCH] ?: false
@@ -514,6 +519,11 @@ class AppSettings @Inject constructor(
         val safe = hours.coerceIn(1, 24)
         _clockFeedHours.value = safe
         dataStore.edit { it[CLOCK_FEED_HOURS] = safe }
+    }
+
+    suspend fun setConfirmExternalLinks(enabled: Boolean) {
+        _confirmExternalLinks.value = enabled
+        dataStore.edit { it[CONFIRM_LINKS] = enabled }
     }
 
     suspend fun setPinEnabled(enabled: Boolean) {
