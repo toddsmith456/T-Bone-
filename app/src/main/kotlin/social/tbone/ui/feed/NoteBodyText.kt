@@ -17,6 +17,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
@@ -42,9 +45,10 @@ private val HASHTAG_REGEX = Regex("""(?<![\p{L}\p{N}_])#[\p{L}\p{N}_]+""")
 
 private sealed interface BodySeg {
     data class Plain(val text: String) : BodySeg
-    data class Url(val url: String) : BodySeg
+    data class Url(val url: String, val raw: String) : BodySeg
     data class Profile(val hex: String, val label: String, val raw: String) : BodySeg
     data class NoteRef(val eventId: String, val label: String) : BodySeg
+    data class AddressRef(val address: Nip19.Address, val raw: String) : BodySeg
     data class Hashtag(val tag: String) : BodySeg
 }
 
@@ -71,6 +75,7 @@ private const val MAX_INLINE_QUOTE_DEPTH = 2
 private sealed interface BodyBlock {
     data class Text(val segs: List<BodySeg>) : BodyBlock
     data class NoteLink(val eventId: String, val raw: String) : BodyBlock
+    data class AddressLink(val address: Nip19.Address, val raw: String) : BodyBlock
 }
 
 /**
@@ -90,6 +95,9 @@ private fun toBlocks(segs: List<BodySeg>): List<BodyBlock> {
         if (seg is BodySeg.NoteRef) {
             flush()
             blocks.add(BodyBlock.NoteLink(seg.eventId, seg.label))
+        } else if (seg is BodySeg.AddressRef) {
+            flush()
+            blocks.add(BodyBlock.AddressLink(seg.address, seg.raw))
         } else {
             run.add(seg)
         }
@@ -200,7 +208,14 @@ fun NoteBodyText(
                                 layout = result
                                 if (result.hasVisualOverflow || result.lineCount > effectiveMax) truncated = true
                             },
-                            modifier = Modifier.pointerInput(run, onOpenNote) {
+                            modifier = Modifier.semantics {
+                                customActions = run.actions.filter { it.copyText != null }.flatMap { action ->
+                                    listOf(
+                                        CustomAccessibilityAction("Open ${action.copyText}") { action.action?.invoke(); true },
+                                        CustomAccessibilityAction("Copy ${action.copyText}") { copyNoteLink(context, action.copyText!!); true },
+                                    )
+                                }
+                            }.pointerInput(run, onOpenNote) {
                                 detectTapGestures(
                                     onTap = { position ->
                                         val action = actionAt(position)
@@ -215,6 +230,11 @@ fun NoteBodyText(
                     }
                 }
 
+                is BodyBlock.AddressLink -> AddressQuote(
+                    raw = block.raw, address = block.address, profiles = profiles, quotedEvents = quotedEvents,
+                    depth = quoteNestingDepth, ancestors = quoteAncestors, onThreadClick = onThreadClick,
+                    onProfileClick = onProfileClick, onHashtagClick = onHashtagClick,
+                )
                 is BodyBlock.NoteLink -> {
                     val referenced = quotedEvents[block.eventId]
                     if (referenced != null && quoteNestingDepth < MAX_INLINE_QUOTE_DEPTH && block.eventId !in quoteAncestors) {
@@ -222,6 +242,7 @@ fun NoteBodyText(
                         Spacer(Modifier.height(6.dp))
                         QuotedNoteCard(
                             event = referenced,
+                            referenceUri = block.raw,
                             profile = profiles[referenced.pubkey],
                             profiles = profiles,
                             onThreadClick = onThreadClick,
@@ -285,7 +306,7 @@ private fun buildSegmentedAnnotated(
                     // Show and open the tracking-stripped URL.
                     append(seg.url)
                     addStyle(SpanStyle(color = BonyColors.Link, textDecoration = TextDecoration.Underline), start, length)
-                    actions.add(SegAction(start, length, copyText = seg.url) { onOpenUrl(seg.url) })
+                    actions.add(SegAction(start, length, copyText = seg.raw) { onOpenUrl(seg.url) })
                 }
 
                 is BodySeg.Profile -> {
@@ -301,6 +322,8 @@ private fun buildSegmentedAnnotated(
                     addStyle(SpanStyle(color = BonyColors.Link, textDecoration = TextDecoration.Underline), start, length)
                     actions.add(SegAction(start, length) { onThreadClick?.invoke(seg.eventId) })
                 }
+
+                is BodySeg.AddressRef -> append(seg.raw)
 
                 is BodySeg.Hashtag -> {
                     val start = length
@@ -334,7 +357,7 @@ private fun segment(text: String, profiles: Map<String, ProfileContent>): List<B
         if (seg.start < cursor) return@forEach
         pushPlain(cursor, seg.start)
         when (seg.kind) {
-            1 -> out.add(BodySeg.Url(social.tbone.util.LinkCleaner.stripTrackingParams(seg.value)))
+            1 -> out.add(BodySeg.Url(social.tbone.util.LinkCleaner.stripTrackingParams(seg.value), seg.value))
             2 -> {
                 val entity = seg.value.removePrefix("nostr:")
                 val hex = if (entity.startsWith("npub1")) Nip19.npubToHex(entity) else Nip19.nprofileToHex(entity)
@@ -352,7 +375,8 @@ private fun segment(text: String, profiles: Map<String, ProfileContent>): List<B
                     if (eventId != null) {
                         BodySeg.NoteRef(eventId, seg.value)
                     } else {
-                        BodySeg.Plain(seg.value)
+                        Nip19.naddrToAddress(seg.value)?.let { BodySeg.AddressRef(it, seg.value) }
+                            ?: BodySeg.Plain(seg.value)
                     },
                 )
             }

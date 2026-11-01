@@ -119,6 +119,9 @@ fun extractInlineQuoteIds(content: String): List<String> =
 
 fun extractInlineQuoteId(content: String): String? = extractInlineQuoteIds(content).firstOrNull()
 
+internal fun inlineQuoteUri(content: String, eventId: String): String? =
+    QUOTE_URI_REGEX.findAll(content).firstOrNull { Nip19.nostrUriToEventId(it.value) == eventId }?.value
+
 /**
  * Removes the quote reference URI(s) from a note's body text.
  *
