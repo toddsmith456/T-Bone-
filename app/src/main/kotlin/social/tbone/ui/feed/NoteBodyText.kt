@@ -63,6 +63,8 @@ private data class SegmentedBody(
  * note reference gets a block of its own so it can be drawn as an actual note
  * card instead of a bare `nostr:nevent1…` link.
  */
+private const val MAX_INLINE_QUOTE_DEPTH = 2
+
 private sealed interface BodyBlock {
     data class Text(val segs: List<BodySeg>) : BodyBlock
     data class NoteLink(val eventId: String, val raw: String) : BodyBlock
@@ -123,6 +125,9 @@ fun NoteBodyText(
      * these it is rendered as an embedded note card, not as a link.
      */
     quotedEvents: Map<String, Event> = emptyMap(),
+    /** Number of inline quote levels already rendered and their ancestry. */
+    quoteNestingDepth: Int = 0,
+    quoteAncestors: Set<String> = emptySet(),
 ) {
     val context = LocalContext.current
     val filter = LocalContentFilter.current
@@ -195,8 +200,8 @@ fun NoteBodyText(
 
                 is BodyBlock.NoteLink -> {
                     val referenced = quotedEvents[block.eventId]
-                    if (referenced != null) {
-                        // Resolved: show the referenced note itself.
+                    if (referenced != null && quoteNestingDepth < MAX_INLINE_QUOTE_DEPTH && block.eventId !in quoteAncestors) {
+                        // Resolved: show the referenced note, but never recurse without a bound.
                         Spacer(Modifier.height(6.dp))
                         QuotedNoteCard(
                             event = referenced,
@@ -207,12 +212,12 @@ fun NoteBodyText(
                             onHashtagClick = onHashtagClick,
                             fullContent = false,
                             quotedEvents = quotedEvents,
-                            nestingDepth = 1,
+                            nestingDepth = quoteNestingDepth,
+                            quoteAncestors = quoteAncestors,
                         )
                         Spacer(Modifier.height(6.dp))
                     } else {
-                        // Not resolved yet — a compact chip that opens the note,
-                        // never a raw `nostr:nevent1…` URL.
+                        // Unresolved or beyond the nesting limit: keep a tappable link.
                         Text(
                             text = "↗ open note",
                             style = BonyType.tag.copy(color = BonyColors.Accent),

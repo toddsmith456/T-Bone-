@@ -566,6 +566,7 @@ fun QuotedNoteCard(
     /** Nesting counter — quotes stop nesting after one level so a quote cycle cannot recurse. */
     nestingDepth: Int = 0,
     modifier: Modifier = Modifier,
+    quoteAncestors: Set<String> = emptySet(),
 ) {
     val contentFilter = LocalContentFilter.current
     if (ContentFilter.shouldHide(
@@ -661,6 +662,8 @@ fun QuotedNoteCard(
                 onOpenNote = { onThreadClick?.invoke(event.id) },
                 profiles = profiles,
                 quotedEvents = quotedEvents,
+                quoteNestingDepth = nestingDepth + 1,
+                quoteAncestors = quoteAncestors + event.id,
             )
         }
 
@@ -684,7 +687,7 @@ fun QuotedNoteCard(
                 style = BonyType.metaDim.copy(color = BonyColors.TextMute),
             )
         }
-        if (nested != null && nested.id != event.id && nestingDepth < 1) {
+        if (nested != null && nested.id != event.id && nested.id !in quoteAncestors && nestingDepth < 1) {
             Spacer(Modifier.height(8.dp))
             QuotedNoteCard(
                 event = nested,
@@ -696,6 +699,7 @@ fun QuotedNoteCard(
                 fullContent = false,
                 quotedEvents = quotedEvents,
                 nestingDepth = nestingDepth + 1,
+                quoteAncestors = quoteAncestors + event.id,
             )
         }
     }

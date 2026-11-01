@@ -13,6 +13,7 @@ import social.tbone.BuildConfig
 import social.tbone.di.ImageClientProvider
 import social.tbone.calendar.CalendarAlarmScheduler
 import social.tbone.calendar.CalendarRepository
+import social.tbone.logging.CrashRecorder
 import social.tbone.logging.FileLoggingTree
 import social.tbone.logging.LOG_FILE_NAME
 import social.tbone.notifications.createNotificationChannels
@@ -46,6 +47,9 @@ class BonyApp : Application() {
 
         if (BuildConfig.DEBUG) Timber.plant(Timber.DebugTree())
         Timber.plant(FileLoggingTree(logFile))
+        Thread.setDefaultUncaughtExceptionHandler(
+            CrashRecorder(File(filesDir, "logs/last-crash.log"), Thread.getDefaultUncaughtExceptionHandler()),
+        )
 
         createNotificationChannels(this)
         Phrase.init(this)
