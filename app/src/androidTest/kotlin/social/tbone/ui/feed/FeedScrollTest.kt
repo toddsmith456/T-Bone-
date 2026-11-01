@@ -8,8 +8,6 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import social.tbone.FeedRegressionActivity
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.assertDoesNotExist
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.serialization.json.JsonArray
