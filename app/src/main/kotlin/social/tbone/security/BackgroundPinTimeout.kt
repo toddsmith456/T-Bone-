@@ -82,9 +82,11 @@ internal class BackgroundPinTimeout(
         if (foreground) {
             if (!clearMarker() && enabled) _locked.value = true
         } else if (enabled && !_locked.value) {
-            // Already backgrounded while initialization completed: start a fresh
-            // timer only if a valid prior grace period was restored.
-            startBackground()
+            // Continue the original persisted interval; initializing while
+            // backgrounded must not grant a fresh timeout.
+            val start = prefs.getLong("${key}_elapsed", -1L)
+            startedElapsed = start
+            schedule(start)
         }
     }
 
