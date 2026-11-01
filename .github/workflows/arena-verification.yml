@@ -22,7 +22,20 @@ jobs:
       - name: Build app and instrumentation tests; run unit tests
         env:
           GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
-        run: ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:assembleDebugAndroidTest --stacktrace --no-configuration-cache
+        run: |
+          set +e
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:assembleDebugAndroidTest --stacktrace --no-configuration-cache 2>&1 | tee /tmp/arena-gradle.log
+          result=${PIPESTATUS[0]}
+          if [ "$result" -ne 0 ]; then
+            python3 - <<'PYCODE'
+          from pathlib import Path
+          lines = Path('/tmp/arena-gradle.log').read_text(errors='replace').splitlines()
+          selected = [x for x in lines if x.startswith('e: ') or ' FAILED' in x or 'What went wrong:' in x or x.startswith('> ')]
+          for line in (selected[-50:] or lines[-50:]):
+              print('::error::' + line.replace('%','%25').replace('\r','%0D').replace('\n','%0A'))
+          PYCODE
+          fi
+          exit "$result"
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
