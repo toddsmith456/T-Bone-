@@ -7,6 +7,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import social.tbone.FeedRegressionActivity
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.assertDoesNotExist
+import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.serialization.json.JsonArray
@@ -16,6 +19,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import social.tbone.nostr.Event
+import social.tbone.nostr.Nip19
 import social.tbone.ui.theme.BonyTheme
 
 /** Exercises real note composition and disposal as items enter/leave a scrolling feed. */
@@ -47,4 +51,27 @@ class FeedScrollTest {
             compose.waitForIdle()
         }
     }
+    @Test fun longInlineQuoteChainIsBounded() {
+        val ids = (1..40).map { it.toString(16).padStart(64, '0') }
+        val notes = ids.mapIndexed { index, id ->
+            val next = ids.getOrNull(index + 1)
+            val body = "chain-node-$index" + (next?.let { "\nnostr:${Nip19.hexToNote(it)}" } ?: "")
+            Event(id, "a".repeat(64), 1_700_000_000, 1, emptyList(), body, "")
+        }
+        val lookup = notes.associateBy { it.id }
+        compose.setContent { BonyTheme { QuotedNoteCard(event = notes.first(), profile = null, quotedEvents = lookup) } }
+        compose.onNodeWithText("chain-node-0", substring = true).assertExists()
+        compose.onNodeWithText("chain-node-1", substring = true).assertExists()
+        compose.onNodeWithText("chain-node-10", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("↗ open note", substring = true).assertExists()
+    }
+
+    @Test fun selfReferentialInlineQuoteDoesNotRecurse() {
+        val id = "b".repeat(64)
+        val event = Event(id, "a".repeat(64), 1_700_000_000, 1, emptyList(),
+            "self reference nostr:${Nip19.hexToNote(id)}", "")
+        compose.setContent { BonyTheme { QuotedNoteCard(event = event, profile = null, quotedEvents = mapOf(id to event)) } }
+        compose.onNodeWithText("↗ open note", substring = true).assertExists()
+    }
+
 }
