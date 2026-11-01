@@ -63,4 +63,14 @@ class BackgroundPinTimeoutTest {
         pin.lock(); pin.onBackground(); pin.onForeground()
         assertTrue(pin.locked.value)
     }
+    @Test fun processDeathWhileForegroundedFailsClosed() {
+        val first = timer()
+        first.onForeground(); first.initialize(true, 1); first.unlock()
+        clock.advance(20 * 60_000L)
+        assertFalse(first.locked.value)
+        val restarted = timer()
+        restarted.onForeground(); restarted.initialize(true, 1)
+        assertTrue(restarted.locked.value)
+    }
+
 }
