@@ -24,4 +24,13 @@ class Nip19Test {
         val nevent = Nip19.hexToNevent(id)
         assertEquals(id, Nip19.neventToHex(nevent))
     }
+    @Test
+    fun `address references round trip and reject malformed input`() {
+        val address = Nip19.Address("article-é", "ab".repeat(32), 30023)
+        val naddr = Nip19.addressToNaddr(address)
+        assertTrue(Nip19.isBech32(naddr))
+        assertEquals(address, Nip19.naddrToAddress("nostr:$naddr"))
+        assertEquals(null, Nip19.naddrToAddress(naddr.dropLast(1)))
+        assertEquals(null, Nip19.nostrUriToEventId(naddr))
+    }
 }

@@ -12,6 +12,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -470,6 +472,7 @@ fun NoteCard(
                     if (quotedEvent != null) {
                         QuotedNoteCard(
                             event = quotedEvent,
+                            referenceUri = quotedRefId?.let { inlineQuoteUri(event.content, it) },
                             profile = profiles[quotedEvent.pubkey],
                             profiles = profiles,
                             onThreadClick = onThreadClick,
@@ -577,6 +580,7 @@ private fun ReferencePlaceholder(
 /** Body lines shown inside a quoted note before "show more". */
 private const val QUOTED_MAX_LINES = 6
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun QuotedNoteCard(
     event: Event,
@@ -593,7 +597,9 @@ fun QuotedNoteCard(
     nestingDepth: Int = 0,
     modifier: Modifier = Modifier,
     quoteAncestors: Set<String> = emptySet(),
+    referenceUri: String? = null,
 ) {
+    val context = LocalContext.current
     val contentFilter = LocalContentFilter.current
     if (ContentFilter.shouldHide(
             event,
@@ -628,7 +634,10 @@ fun QuotedNoteCard(
             .border(1.dp, BonyColors.Rule, quoteShape)
             .background(BonyColors.SurfaceAlt, quoteShape)
             .then(
-                if (onThreadClick != null)
+                if (referenceUri != null)
+                    Modifier.combinedClickable(onClick = { onThreadClick?.invoke(event.id) },
+                        onLongClick = { copyNoteLink(context, referenceUri) })
+                else if (onThreadClick != null)
                     Modifier.clickable { onThreadClick(event.id) }
                 else Modifier,
             )

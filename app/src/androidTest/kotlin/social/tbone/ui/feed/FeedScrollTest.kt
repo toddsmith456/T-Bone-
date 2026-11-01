@@ -11,6 +11,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -126,4 +128,27 @@ class FeedScrollTest {
         compose.onNodeWithText("quoted target body", substring = true).assertExists()
     }
 
+    @Test fun longPressCopiesOriginalLink() {
+        val raw = "https://example.org/path?utm_source=friend&x=1"
+        compose.setContent { BonyTheme { NoteBodyText(content = raw, style = social.tbone.ui.theme.BonyType.body) } }
+        compose.onNodeWithText("https://example.org/path?x=1", substring = true)
+            .performTouchInput { longClick(center) }
+        compose.runOnIdle {
+            val clipboard = compose.activity.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            org.junit.Assert.assertEquals(raw, clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        }
+    }
+
+    @Test fun longPressCopiesEmbeddedQuoteReference() {
+        val id = "9".repeat(64)
+        val raw = "nostr:${Nip19.hexToNote(id)}"
+        val quote = Event(id, "c".repeat(64), 1_700_000_000, 1, emptyList(), "quoted for copy", "")
+        compose.setContent { BonyTheme { NoteBodyText(content = raw, style = social.tbone.ui.theme.BonyType.body,
+            quotedEvents = mapOf(id to quote), onThreadClick = {}) } }
+        compose.onNodeWithText("quoted for copy", substring = true).performTouchInput { longClick(center) }
+        compose.runOnIdle {
+            val clipboard = compose.activity.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            org.junit.Assert.assertEquals(raw, clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        }
+    }
 }

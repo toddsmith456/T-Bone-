@@ -77,7 +77,7 @@ object Nip19 {
     /** Returns true if the string looks like a bech32-encoded Nostr entity. */
     fun isBech32(s: String): Boolean =
         s.startsWith("npub1") || s.startsWith("note1") ||
-        s.startsWith("nprofile1") || s.startsWith("nevent1")
+        s.startsWith("nprofile1") || s.startsWith("nevent1") || s.startsWith("naddr1")
 
     /**
      * Decodes a NIP-57 lud06 LNURL into its HTTPS pay endpoint.
@@ -163,6 +163,50 @@ object Nip19 {
         }
         null
     }.getOrNull()
+
+    /** An addressable event is identified by kind, author and its d tag, not an event ID. */
+    data class Address(val identifier: String, val pubkey: String, val kind: Int)
+
+    fun naddrToAddress(input: String): Address? = runCatching {
+        val (hrp, bytes) = decode(input.removePrefix("nostr:").lowercase()) ?: return null
+        if (hrp != "naddr") return null
+        var identifier: String? = null
+        var pubkey: String? = null
+        var kind: Int? = null
+        var i = 0
+        while (i < bytes.size) {
+            if (i + 2 > bytes.size) return null
+            val type = bytes[i].toInt() and 255
+            val len = bytes[i + 1].toInt() and 255
+            i += 2
+            if (i + len > bytes.size) return null
+            val value = bytes.copyOfRange(i, i + len)
+            when (type) {
+                0 -> { if (identifier != null) return null; identifier = value.toString(Charsets.UTF_8) }
+                2 -> { if (pubkey != null || len != 32) return null; pubkey = value.toHex() }
+                3 -> {
+                    if (kind != null || len != 4) return null
+                    val n = value.fold(0L) { acc, b -> (acc shl 8) or (b.toLong() and 255) }
+                    if (n > Int.MAX_VALUE) return null
+                    kind = n.toInt()
+                }
+            }
+            i += len
+        }
+        Address(identifier ?: return null, pubkey ?: return null, kind ?: return null)
+    }.getOrNull()
+
+    /** Encode address references, useful for interoperable NIP-19 links. */
+    fun addressToNaddr(address: Address): String {
+        val identifier = address.identifier.toByteArray(Charsets.UTF_8)
+        val pubkey = address.pubkey.hexToBytes()
+        require(identifier.size <= 255 && pubkey.size == 32 && address.kind >= 0)
+        val kind = address.kind
+        val bytes = byteArrayOf(0, identifier.size.toByte()) + identifier +
+            byteArrayOf(2, 32) + pubkey + byteArrayOf(3, 4,
+                (kind ushr 24).toByte(), (kind ushr 16).toByte(), (kind ushr 8).toByte(), kind.toByte())
+        return requireNotNull(encode("naddr", bytes))
+    }
 
     /** Extracts a hex event ID from a nostr:note1… or nostr:nevent1… URI. */
     fun nostrUriToEventId(uri: String): String? = when {
