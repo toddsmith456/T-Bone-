@@ -229,7 +229,6 @@ dependencies {
     // Images
     implementation(libs.coil.compose)
     implementation(libs.coil.gif)
-    implementation(libs.coil.video)
 
     // Logging
     implementation(libs.timber)

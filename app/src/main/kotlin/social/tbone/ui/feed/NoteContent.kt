@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -46,29 +47,18 @@ import androidx.media3.ui.PlayerView
 import android.view.LayoutInflater
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
-import coil.decode.Decoder
-import coil.decode.VideoFrameDecoder
-import coil.ImageLoader
-import coil.fetch.SourceResult
-import coil.request.Options
-import coil.request.videoFrameMillis
-import coil.request.CachePolicy
 import coil.size.Precision
 import social.tbone.R
 import social.tbone.nostr.Nip19
 import social.tbone.nostr.ProfileContent
 import social.tbone.settings.ImageLoadMode
-import social.tbone.settings.VideoPlaybackMode
 import social.tbone.settings.VideoQuality
 import social.tbone.ui.media.ImageViewer
 import social.tbone.ui.media.InlineAudioPlayer
 import social.tbone.ui.media.LocalImageLoadMode
-import social.tbone.ui.media.LocalVideoPlaybackMode
 import social.tbone.ui.media.LocalVideoQuality
-import social.tbone.ui.media.LocalVideoThumbnails
 import social.tbone.ui.media.VideoViewerDialog
 import social.tbone.ui.media.rememberVideoPlayer
-import social.tbone.ui.media.shouldPlayInlineVideo
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -180,13 +170,10 @@ fun NoteMediaContent(mediaItems: List<MediaItem>, modifier: Modifier = Modifier)
     if (mediaItems.isEmpty()) return
     val imageMode = LocalImageLoadMode.current
     val videoQuality = LocalVideoQuality.current
-    val playbackMode = LocalVideoPlaybackMode.current
-    val showVideoThumbnails = LocalVideoThumbnails.current
     var imageViewerUrl by remember { mutableStateOf<String?>(null) }
     var videoViewerUrl by remember { mutableStateOf<String?>(null) }
-    // TAP_TO_LOAD reveal state: first tap loads inline, second tap opens viewer
+    // Image reveal state remains local to this note.
     var revealedImages by remember { mutableStateOf(setOf<String>()) }
-    var revealedVideos by remember { mutableStateOf(setOf<String>()) }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         mediaItems.forEach { item ->
@@ -206,42 +193,33 @@ fun NoteMediaContent(mediaItems: List<MediaItem>, modifier: Modifier = Modifier)
                 }
                 is MediaItem.Audio -> InlineAudioPlayer(url = item.url)
                 is MediaItem.Video -> {
-                    val open = { videoViewerUrl = item.url }
-                    val revealVideo = { revealedVideos = revealedVideos + item.url }
-                    when {
-                        videoQuality == VideoQuality.OFF -> {
-                            if (item.url in revealedVideos) {
-                                InlineVideo(
-                                    url = item.url,
-                                    quality = VideoQuality.REGULAR,
-                                    playWhenReady = false,
-                                    onOpen = open,
-                                )
-                            } else {
-                                VideoPlaceholder(onOpen = revealVideo, onFullscreen = open)
-                            }
+                    // A token identifies this particular card, not just the URL: a
+                    // quote and a feed item may contain the same video.
+                    val token = remember(item.url) { Any() }
+                    val selected = ActiveInlineVideo.owner === token
+                    DisposableEffect(token) {
+                        onDispose { if (ActiveInlineVideo.owner === token) ActiveInlineVideo.owner = null }
+                    }
+                    if (selected && videoViewerUrl == null) {
+                        Box(Modifier.testTag("active-inline-video")) {
+                            InlineVideo(
+                                url = item.url,
+                                quality = if (videoQuality == VideoQuality.OFF) VideoQuality.REGULAR else videoQuality,
+                                playWhenReady = true,
+                                onOpen = {
+                                    ActiveInlineVideo.owner = null
+                                    videoViewerUrl = item.url
+                                },
+                                onBackground = { if (ActiveInlineVideo.owner === token) ActiveInlineVideo.owner = null },
+                            )
                         }
-                        playbackMode == VideoPlaybackMode.LOAD_ON_TAP -> {
-                            if (item.url in revealedVideos) {
-                                InlineVideo(
-                                    url = item.url,
-                                    quality = videoQuality,
-                                    playWhenReady = shouldPlayInlineVideo(playbackMode, revealed = true, started = false, viewerOpen = videoViewerUrl != null),
-                                    onOpen = open,
-                                )
-                            } else {
-                                if (showVideoThumbnails) {
-                                    VideoThumbnail(url = item.url, onOpen = revealVideo, onFullscreen = open)
-                                } else {
-                                    VideoPlaceholder(onOpen = revealVideo, onFullscreen = open)
-                                }
-                            }
-                        }
-                        else -> InlineVideo(
-                            url = item.url,
-                            quality = videoQuality,
-                            playWhenReady = shouldPlayInlineVideo(playbackMode, revealed = true, started = false, viewerOpen = videoViewerUrl != null),
-                            onOpen = open,
+                    } else {
+                        VideoPlaceholder(
+                            onOpen = { ActiveInlineVideo.owner = token },
+                            onFullscreen = {
+                                ActiveInlineVideo.owner = null
+                                videoViewerUrl = item.url
+                            },
                         )
                     }
                 }
@@ -268,6 +246,11 @@ fun NoteMediaContent(mediaItems: List<MediaItem>, modifier: Modifier = Modifier)
     }
 }
 
+/** Only a deliberately selected inline video can own a player. */
+private object ActiveInlineVideo {
+    var owner: Any? by mutableStateOf(null)
+}
+
 /** Tap the video to play/pause; only the fullscreen button opens the viewer. */
 @Composable
 private fun InlineVideo(
@@ -275,6 +258,7 @@ private fun InlineVideo(
     quality: VideoQuality,
     playWhenReady: Boolean,
     onOpen: () -> Unit,
+    onBackground: () -> Unit,
 ) {
     val playerState = rememberVideoPlayer(url, quality, playWhenReady)
     val player = playerState.player
@@ -289,7 +273,7 @@ private fun InlineVideo(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = playerState.errorMessage ?: "video preview unavailable",
+                text = playerState.errorMessage ?: "loading video…",
                 style = BonyType.meta.copy(color = BonyColors.TextMute),
             )
             FullscreenButton(onOpen, Modifier.align(Alignment.BottomEnd))
@@ -298,7 +282,7 @@ private fun InlineVideo(
     }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, player) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) player.pause() }
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) onBackground() }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
@@ -397,84 +381,6 @@ private fun InlineVideo(
     }
 }
 
-/** Video frame preview used only for the explicit load-on-tap thumbnail option. */
-@Composable
-private fun VideoThumbnail(url: String, onOpen: () -> Unit, onFullscreen: () -> Unit) {
-    val context = LocalContext.current
-    val youniversal = YouniversalTheme.enabled
-    var aspectRatio by remember(url) { mutableStateOf<Float?>(null) }
-    // Keep the complete URL: query parameters can identify different media.
-    val cacheKey = remember(url) { "video-frame:$url" }
-    val request = remember(url) {
-        ImageRequest.Builder(context)
-            .data(url)
-            .memoryCacheKey(cacheKey)
-            .diskCacheKey(cacheKey)
-            // Some video hosts return application/octet-stream; this request is
-            // known to be a video even when its HTTP MIME type is incorrect.
-            .decoderFactory(object : Decoder.Factory {
-                override fun create(result: SourceResult, options: Options, imageLoader: ImageLoader): Decoder =
-                    VideoFrameDecoder(result.source, options)
-            })
-            .videoFrameMillis(1000)
-            .size(LOW_QUALITY_MAX_SIZE)
-            .crossfade(false)
-            .build()
-    }
-
-    BoxWithConstraints(
-        modifier = Modifier.fillMaxWidth(),
-        contentAlignment = Alignment.Center,
-    ) {
-        val fittedSize = if (youniversal) {
-            aspectRatio?.let { fitMediaFrame(maxWidth, INLINE_IMAGE_HEIGHT, it) }
-        } else {
-            null
-        }
-        val shape = appCornerShape(MaterialTheme.shapes.medium)
-        val frameModifier = if (fittedSize != null) {
-            Modifier.width(fittedSize.width).height(fittedSize.height)
-        } else {
-            Modifier.fillMaxWidth().height(INLINE_IMAGE_HEIGHT)
-        }
-        Box(
-            modifier = frameModifier
-                .clip(shape)
-                .background(BonyColors.SurfaceAlt, shape)
-                .border(1.dp, BonyColors.Rule, shape)
-                .clickable(onClick = onOpen),
-            contentAlignment = Alignment.Center,
-        ) {
-            SubcomposeAsyncImage(
-                model = request,
-                contentDescription = "video thumbnail",
-                contentScale = if (youniversal) ContentScale.Fit else ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-                onSuccess = { result ->
-                    val size = result.painter.intrinsicSize
-                    if (size.width > 0f && size.height > 0f) {
-                        val ratio = size.width / size.height
-                        if (ratio.isFinite() && ratio > 0f) aspectRatio = ratio
-                    }
-                },
-                loading = { MediaStripes(Modifier.fillMaxSize()) },
-                error = {
-                    MediaStripes(Modifier.fillMaxSize())
-                    Text(
-                        text = "[ video · tap to play ]",
-                        style = BonyType.meta.copy(color = BonyColors.TextMute),
-                        modifier = Modifier
-                            .background(BonyColors.SurfaceAlt.copy(alpha = 0.85f))
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                    )
-                },
-            )
-            VideoPlayBadge()
-            FullscreenButton(onFullscreen, Modifier.align(Alignment.BottomEnd))
-        }
-    }
-}
-
 @Composable
 private fun FullscreenButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     Box(
@@ -488,7 +394,6 @@ private fun FullscreenButton(onClick: () -> Unit, modifier: Modifier = Modifier)
     }
 }
 
-/** All video previews remain visually distinct from still images. */
 @Composable
 private fun VideoPlayBadge() {
     Box(
@@ -594,7 +499,7 @@ private fun InlineImage(url: String, lowQuality: Boolean, onOpen: () -> Unit) {
 private fun VideoPlaceholder(onOpen: () -> Unit, onFullscreen: () -> Unit) {
     val shape = appCornerShape(MaterialTheme.shapes.medium)
     Box(
-        modifier = Modifier.fillMaxWidth().height(PLACEHOLDER_HEIGHT).clip(shape)
+        modifier = Modifier.testTag("video-placeholder").fillMaxWidth().height(PLACEHOLDER_HEIGHT).clip(shape)
             .background(BonyColors.SurfaceAlt, shape).border(1.dp, BonyColors.Rule, shape)
             .clickable(onClick = onOpen),
         contentAlignment = Alignment.Center,

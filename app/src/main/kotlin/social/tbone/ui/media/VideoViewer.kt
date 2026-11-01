@@ -177,7 +177,7 @@ fun VideoViewer(
         if (player == null || playerError != null) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = playerError ?: "couldn't open this video; check the link or try another format",
+                    text = playerError ?: "loading video…",
                     style = BonyType.body.copy(color = Color.White),
                     modifier = Modifier
                         .appBorder(1.dp, BonyColors.RuleStrong)
@@ -246,7 +246,10 @@ fun rememberVideoPlayer(
     playWhenReady: Boolean,
 ): VideoPlayerState {
     val context = LocalContext.current
-    val state = remember(url, quality) {
+    // Resource creation belongs to a committed effect, never in remember's
+    // composition calculation (which can be abandoned before disposal).
+    var state by remember(url, quality) { mutableStateOf(VideoPlayerState(null)) }
+    DisposableEffect(url, quality) {
         var created: ExoPlayer? = null
         try {
             val instance = ExoPlayer.Builder(context)
@@ -256,29 +259,24 @@ fun rememberVideoPlayer(
             instance.repeatMode = Player.REPEAT_MODE_OFF
             if (quality == VideoQuality.LOW) {
                 instance.trackSelectionParameters = instance.trackSelectionParameters
-                    .buildUpon()
-                    .setMaxVideoSize(640, 360)
-                    .build()
+                    .buildUpon().setMaxVideoSize(640, 360).build()
             }
             instance.setMediaItem(MediaItem.fromUri(url))
             instance.prepare()
-            VideoPlayerState(instance)
+            state = VideoPlayerState(instance)
         } catch (error: Exception) {
             runCatching { created?.release() }
-            VideoPlayerState(null, "couldn't open this video; check the link or try another format")
+            created = null
+            state = VideoPlayerState(null, "couldn't open this video; check the link or try another format")
         }
+        onDispose { created?.release() }
     }
     val player = state.player
-
     LaunchedEffect(player, playWhenReady) {
         player?.let {
             it.repeatMode = Player.REPEAT_MODE_OFF
             it.playWhenReady = playWhenReady
         }
-    }
-
-    DisposableEffect(player) {
-        onDispose { player?.release() }
     }
     return state
 }

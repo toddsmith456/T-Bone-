@@ -3,7 +3,6 @@ package social.tbone
 import android.app.Application
 import coil.Coil
 import coil.ImageLoader
-import coil.decode.VideoFrameDecoder
 import coil.disk.DiskCache
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
@@ -103,7 +102,6 @@ class BonyApp : Application() {
                 Coil.setImageLoader(
                     ImageLoader.Builder(this@BonyApp)
                         .okHttpClient(client)
-                        .components { add(VideoFrameDecoder.Factory()) }
                         .diskCache {
                             DiskCache.Builder()
                                 .directory(this@BonyApp.cacheDir.resolve("image_cache"))

@@ -42,7 +42,6 @@ import social.tbone.account.Account
 import social.tbone.nostr.identity.Phrase
 import social.tbone.settings.AvatarMode
 import social.tbone.settings.ImageLoadMode
-import social.tbone.settings.VideoPlaybackMode
 import social.tbone.settings.VideoQuality
 import social.tbone.settings.ORBOT_ZAPSTORE_URL
 import social.tbone.settings.ThemeMode
@@ -91,8 +90,6 @@ fun SettingsScreen(
     val clientTagEnabled by viewModel.clientTagEnabled.collectAsStateWithLifecycle()
     val imageLoadMode by viewModel.imageLoadMode.collectAsStateWithLifecycle()
     val videoQuality by viewModel.videoQuality.collectAsStateWithLifecycle()
-    val videoPlaybackMode by viewModel.videoPlaybackMode.collectAsStateWithLifecycle()
-    val videoThumbnails by viewModel.videoThumbnails.collectAsStateWithLifecycle()
     val imageCacheLightweight by viewModel.imageCacheLightweight.collectAsStateWithLifecycle()
     val avatarMode by viewModel.avatarMode.collectAsStateWithLifecycle()
     val avatarAnimated by viewModel.avatarAnimated.collectAsStateWithLifecycle()
@@ -163,8 +160,6 @@ fun SettingsScreen(
             onBlossom = onBlossom,
             imageLoadMode = imageLoadMode,
             videoQuality = videoQuality,
-            videoPlaybackMode = videoPlaybackMode,
-            videoThumbnails = videoThumbnails,
             imageCacheLightweight = imageCacheLightweight,
             compact = declutterMode,
             expanded = sectionExpanded("media"),
@@ -453,7 +448,7 @@ private fun SettingsNoteActionsSection(noteMenuModerationEnabled: Boolean, clien
 }
 
 @Composable
-private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: () -> Unit, onBlossom: () -> Unit, imageLoadMode: ImageLoadMode, videoQuality: VideoQuality, videoPlaybackMode: VideoPlaybackMode, videoThumbnails: Boolean, imageCacheLightweight: Boolean, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
+private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: () -> Unit, onBlossom: () -> Unit, imageLoadMode: ImageLoadMode, videoQuality: VideoQuality, imageCacheLightweight: Boolean, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
     // ── Media section ─────────────────────────────────────────────────────
     SettingsCategoryHeader("MEDIA", compact, expanded, onToggle)
     if (compact && !expanded) return
@@ -563,53 +558,10 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
         }
 
         Spacer(Modifier.height(14.dp))
-        Text("video playback", style = BonyType.body.copy(color = BonyColors.Text))
-        Spacer(Modifier.height(2.dp))
         Text(
-            "These choices never loop videos. Tapping any video opens T-Bone's player.",
+            "Videos use a lightweight placeholder. Tap to load and play one at a time; no video thumbnails are extracted.",
             style = BonyType.meta.copy(color = BonyColors.TextMute),
         )
-        Spacer(Modifier.height(8.dp))
-        VideoPlaybackMode.entries.forEach { mode ->
-            val active = mode == videoPlaybackMode
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, if (active) BonyColors.Accent else BonyColors.Rule, appCornerShape(MaterialTheme.shapes.small))
-                    .clickable { viewModel.setVideoPlaybackMode(mode) }
-                    .padding(horizontal = 10.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = if (active) "●" else "○",
-                    style = BonyType.body.copy(color = if (active) BonyColors.Accent else BonyColors.TextMute),
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = mode.label,
-                    style = BonyType.meta.copy(color = if (active) BonyColors.Accent else BonyColors.TextDim),
-                )
-            }
-            Spacer(Modifier.height(5.dp))
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("video thumbnails", style = BonyType.body.copy(color = BonyColors.TextDim))
-                Text(
-                    "load a preview frame (may download video data)",
-                    style = BonyType.meta.copy(color = BonyColors.TextMute),
-                )
-            }
-            BonyToggle(
-                checked = videoThumbnails,
-                enabled = videoQuality != VideoQuality.OFF && videoPlaybackMode == VideoPlaybackMode.LOAD_ON_TAP,
-                onCheckedChange = { viewModel.setVideoThumbnails(it) },
-            )
-        }
         Spacer(Modifier.height(12.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),

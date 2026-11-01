@@ -7,6 +7,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import social.tbone.FeedRegressionActivity
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -70,6 +73,27 @@ class FeedScrollTest {
             "self reference nostr:${Nip19.hexToNote(id)}", "")
         compose.setContent { BonyTheme { QuotedNoteCard(event = event, profile = null, quotedEvents = mapOf(id to event)) } }
         compose.onNodeWithText("↗ open note", substring = true).assertExists()
+    }
+
+    @Test fun videoPlaceholdersLoadOnlyOnTapAndOnlyOneIsSelected() {
+        compose.setContent {
+            BonyTheme {
+                NoteMediaContent(listOf(
+                    MediaItem.Video("file:///nonexistent-first.mp4"),
+                    MediaItem.Video("file:///nonexistent-second.mp4"),
+                ))
+            }
+        }
+        compose.onAllNodesWithTag("video-placeholder").assertCountEquals(2)
+        compose.onAllNodesWithTag("active-inline-video").assertCountEquals(0)
+        compose.onAllNodesWithTag("video-placeholder")[0].performClick()
+        compose.waitForIdle()
+        compose.onAllNodesWithTag("active-inline-video").assertCountEquals(1)
+        compose.onAllNodesWithTag("video-placeholder").assertCountEquals(1)
+        compose.onAllNodesWithTag("video-placeholder")[0].performClick()
+        compose.waitForIdle()
+        compose.onAllNodesWithTag("active-inline-video").assertCountEquals(1)
+        compose.onAllNodesWithTag("video-placeholder").assertCountEquals(1)
     }
 
 }
