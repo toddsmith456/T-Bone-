@@ -833,6 +833,9 @@ class FeedViewModel @Inject constructor(
                         }
                         _uiState.update { state -> state.copy(events = applyContentFilter(snapshot)) }
                         fetchProfilesForEvents(cached)
+                        // Cached home rows need the same quote lookup as live
+                        // relay rows; otherwise cards remain blank until tapped.
+                        fetchQuotesForEvents(cached)
                         repliesRepository.subscribeTo(cached.map { it.id })
                     }
                 }
