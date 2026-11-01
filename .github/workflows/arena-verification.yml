@@ -49,3 +49,21 @@ jobs:
           target: google_apis
           disable-animations: true
           script: ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=social.tbone.security.BackgroundPinTimeoutTest,social.tbone.ui.feed.FeedScrollTest --stacktrace --no-configuration-cache
+      - name: Report Android test failures
+        if: failure()
+        run: |
+          python3 - <<'PYCODE'
+          import glob, xml.etree.ElementTree as ET
+          errors = []
+          for path in glob.glob('app/build/outputs/androidTest-results/**/*.xml', recursive=True):
+              try:
+                  root = ET.parse(path).getroot()
+                  for test in root.iter('testcase'):
+                      for fail in list(test.findall('failure')) + list(test.findall('error')):
+                          errors.append(f"{test.get('classname')}.{test.get('name')}: {fail.get('message', '')}\n{fail.text or ''}")
+              except Exception as e:
+                  errors.append(f'{path}: {e}')
+          if errors:
+              message = '\n'.join(errors)[-25000:].replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+              print('::error::' + message)
+          PYCODE
