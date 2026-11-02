@@ -39,10 +39,7 @@ class PinListRepository @Inject constructor(
         }
     }
 
-    fun ids(event: Event?): List<String> = event?.parsedTags.orEmpty()
-        .filter { it.name == "e" }.mapNotNull { it.value() }
-        .filter { it.length == 64 && it.all { c -> c in '0'..'9' || c in 'a'..'f' } }
-        .distinct().take(256)
+    fun ids(event: Event?): List<String> = pinEventIds(event)
 
     /** Fetch before replacing so we never silently overwrite an unread list. */
     suspend fun toggle(target: Event): String = mutex.withLock {
@@ -76,3 +73,9 @@ class PinListRepository @Inject constructor(
         if (pinned) "Unpin sent to relays" else "Pin sent to relays"
     }
 }
+
+/** Public event IDs in a NIP-51 pin list; preserve order, ignore malformed tags. */
+internal fun pinEventIds(event: Event?): List<String> = event?.parsedTags.orEmpty()
+    .filter { it.name == "e" }.mapNotNull { it.value() }
+    .filter { it.length == 64 && it.all { c -> c in '0'..'9' || c in 'a'..'f' } }
+    .distinct().take(256)
