@@ -78,7 +78,7 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           TOOLS=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
           "$TOOLS" verify --verbose --print-certs "$APK" | tee "$RUNNER_TEMP/release-signature.txt"
-          grep -i 'Signer #1 certificate SHA-256 digest: 0e37601f5716b1476b26a0aed023df97ca8c2ab0c1500cb2d3a7237337f65678' "$RUNNER_TEMP/release-signature.txt"
+          grep -Ei '^(Signer #1|V3\.0 Signer): certificate SHA-256 digest: 0e37601f5716b1476b26a0aed023df97ca8c2ab0c1500cb2d3a7237337f65678$' "$RUNNER_TEMP/release-signature.txt"
           "$(dirname "$TOOLS")/aapt" dump badging "$APK" | grep "package: name='social.tbone.fork'"
 
       - name: Dump failure log (on failure)
