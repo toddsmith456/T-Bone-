@@ -66,4 +66,10 @@ class TagSemanticsTest {
         assertNull(t.rootEventId)
         assertNull(t.replyEventId)
     }
+    @Test fun mentionMarkedEventsAreQuoteReferencesButRepliesAreNot() {
+        assertEquals("mentioned", listOf(tags("e", "mentioned", "", "mention")).quotedEventId)
+        assertEquals("mentioned", listOf(tags("e", "mentioned", "mention")).quotedEventId)
+        assertEquals("q-first", listOf(tags("e", "mentioned", "", "mention"), tags("q", "q-first")).quotedEventId)
+        assertNull(listOf(tags("e", "reply", "", "reply")).quotedEventId)
+    }
 }

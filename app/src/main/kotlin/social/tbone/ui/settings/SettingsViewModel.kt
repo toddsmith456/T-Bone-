@@ -409,8 +409,12 @@ class SettingsViewModel @Inject constructor(
 
     fun setNotepadFrontEnabled(enabled: Boolean) {
         viewModelScope.launch {
-            appSettings.setNotepadFrontEnabled(enabled)
-            stealthManager.setNotepadFront(enabled)
+            try {
+                stealthManager.setNotepadFront(enabled)
+                appSettings.setNotepadFrontEnabled(enabled)
+            } catch (e: Exception) {
+                timber.log.Timber.e(e, "Could not switch launcher disguise")
+            }
         }
     }
 

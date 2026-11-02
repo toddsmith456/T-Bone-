@@ -27,6 +27,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -736,10 +737,14 @@ private fun DecoyNavHost(onUnlock: () -> Unit) {
 @HiltViewModel
 class StealthGateViewModel @Inject constructor(
     private val appSettings: social.tbone.settings.AppSettings,
+    private val lockManager: AppLockManager,
 ) : ViewModel() {
     val notepadFrontEnabled: StateFlow<Boolean> = appSettings.notepadFrontEnabled
     val decoyUnlocked: StateFlow<Boolean> = appSettings.decoyUnlocked
-    fun unlock() { appSettings.setDecoyUnlocked(true) }
+    fun unlock() { viewModelScope.launch {
+        lockManager.lockForStealthExit()
+        appSettings.setDecoyUnlocked(true)
+    } }
 }
 
 // ── Bottom-bar tab navigation ────────────────────────────────────────────────

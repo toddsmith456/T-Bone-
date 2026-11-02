@@ -96,6 +96,7 @@ val List<Tag>.threadRootEventId: String?
  */
 val List<Tag>.quotedEventId: String?
     get() = firstOrNull { it.name == "q" }?.value()
+        ?: firstOrNull { it.name == "e" && (it.value(3) == "mention" || it.value(2) == "mention") }?.value()
 
 /**
  * NIP-10: the root event ID of the thread.

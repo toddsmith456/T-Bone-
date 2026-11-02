@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Flag
@@ -166,6 +167,10 @@ fun NoteActionsMenu(
                 NoteActionMenuItem(Icons.Outlined.TextFields, "Copy note text") {
                     expanded = false
                     copyText(context, clipboard, event.content, "Note text")
+                }
+                NoteActionMenuItem(Icons.Outlined.PushPin, "Pin / unpin on profile") {
+                    expanded = false
+                    viewModel.togglePin(event) { message -> Toast.makeText(context, message, Toast.LENGTH_SHORT).show() }
                 }
                 NoteActionMenuItem(Icons.Outlined.BookmarkBorder, "Bookmark in…") {
                     expanded = false

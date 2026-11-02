@@ -126,14 +126,6 @@ fun SettingsScreen(
             onCheckedChange = themeViewModel::setUiDeclutterEnabled,
         )
         Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
-        val confirmLinks by viewModel.confirmExternalLinks.collectAsStateWithLifecycle()
-        SettingsSwitchRow(
-            title = "confirm before opening links",
-            description = "ask before opening an external link in another app",
-            checked = confirmLinks,
-            onCheckedChange = viewModel::setConfirmExternalLinks,
-        )
-        Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
         TorActiveStrip(torEnabled)
         SettingsAccountSection(
             activeAccount, onAddAccount, onAccountManagement,
@@ -1032,6 +1024,14 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
     // ── Privacy section ───────────────────────────────────────────────────
     SettingsCategoryHeader("PRIVACY", compact, expanded, onToggle)
     if (compact && !expanded) return
+    val confirmLinks by viewModel.confirmExternalLinks.collectAsStateWithLifecycle()
+    SettingsSwitchRow(
+        title = "confirm before opening links",
+        description = "ask before opening an external link in another app",
+        checked = confirmLinks,
+        onCheckedChange = viewModel::setConfirmExternalLinks,
+    )
+    Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
     Row(
         modifier = Modifier

@@ -604,7 +604,7 @@ class ThreadViewModel @Inject constructor(
                     }
                 }
                 EventKind.TEXT_NOTE, EventKind.COMMENT, EventKind.POLL -> {
-                    val ids = event.parsedTags.filter { it.name == "q" }.mapNotNull { it.value() }.take(32) + extractInlineQuoteIds(event.content)
+                    val ids = event.parsedTags.filter { it.name == "q" || (it.name == "e" && (it.value(3) == "mention" || it.value(2) == "mention")) }.mapNotNull { it.value() }.take(32) + extractInlineQuoteIds(event.content)
                     toResolve.addAll(ids.filter { it !in requestedQuoteIds && it !in _quotedEvents.value })
                 }
                 else -> Unit

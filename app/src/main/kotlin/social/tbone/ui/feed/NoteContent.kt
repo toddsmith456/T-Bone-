@@ -47,6 +47,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.VideoSize
 import androidx.media3.ui.PlayerView
 import android.view.LayoutInflater
+import coil.decode.GifDecoder
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
@@ -435,7 +436,7 @@ private fun InlineImage(url: String, lowQuality: Boolean, onOpen: () -> Unit) {
     val youniversal = YouniversalTheme.enabled
     var aspectRatio by remember(url, lowQuality) { mutableStateOf<Float?>(null) }
     // Keep the complete URL: query parameters can identify different media.
-    val cacheKey = remember(url) { "video-frame:$url" }
+    val cacheKey = remember(url) { "inline-image-animated:$url" }
     val request = remember(url, lowQuality) {
         ImageRequest.Builder(context)
             .data(url)
@@ -443,6 +444,9 @@ private fun InlineImage(url: String, lowQuality: Boolean, onOpen: () -> Unit) {
             .diskCacheKey(cacheKey)
             .crossfade(false)
             .apply {
+                if (url.substringBefore('?').substringBefore('#').endsWith(".gif", ignoreCase = true)) {
+                    decoderFactory(GifDecoder.Factory())
+                }
                 if (lowQuality) {
                     size(LOW_QUALITY_MAX_SIZE)
                     // Never upscale — decode at ≤512px for a fast, light render.

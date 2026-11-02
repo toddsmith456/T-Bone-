@@ -61,6 +61,7 @@ enum class ProfileTab(val label: String) {
     ALL("ALL"),
     REPLIES("REPLIES"),
     MEDIA("MEDIA"),
+    PINNED("PINNED"),
 }
 
 /** One image or video attachment in the profile's media gallery. */
@@ -81,6 +82,7 @@ class ProfileViewModel @Inject constructor(
     private val offlineLists: OfflineListRepository,
     private val muteRepository: MuteListRepository,
     private val listFetcher: RelayListFetcher,
+    private val pins: social.tbone.lists.PinListRepository,
 ) : ViewModel() {
 
     val pubkey: String = checkNotNull(savedStateHandle["pubkey"])
@@ -118,6 +120,15 @@ class ProfileViewModel @Inject constructor(
     /** Quoted/reposted notes, resolved so the cards can render them. */
     private val _quotedEvents = MutableStateFlow<Map<String, Event>>(emptyMap())
     val quotedEvents: StateFlow<Map<String, Event>> = _quotedEvents.asStateFlow()
+
+    val pinnedNotes: StateFlow<List<Event>> = combine(pins.lists, _quotedEvents, _notes) { lists, quotes, notes ->
+        val byId = notes.associateBy { it.id } + quotes
+        pins.ids(lists[pubkey]).mapNotNull { byId[it] }.filterNot { event ->
+            social.tbone.settings.ContentFilter.shouldHide(event, muteRepository.effectiveMuted.value,
+                appSettings.hideNsfw.value, appSettings.hideWords.value, byId)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
 
     /**
      * Referenced notes that were asked for and never arrived, so cards show a
@@ -245,6 +256,7 @@ class ProfileViewModel @Inject constructor(
                 limit = PROFILE_FEED_LIMIT,
             ),
             Filter(authors = listOf(pubkey), kinds = listOf(EventKind.METADATA), limit = 1),
+            Filter(authors = listOf(pubkey), kinds = listOf(EventKind.PIN_LIST), limit = 1),
         ), label = "profile")
         notesSubId?.let { allSubIds.add(it) }
 
@@ -263,6 +275,10 @@ class ProfileViewModel @Inject constructor(
                         }
                         when (event.kind) {
                             EventKind.METADATA -> profileRepository.processEvent(event)
+                            EventKind.PIN_LIST -> if (event.pubkey == pubkey) {
+                                pins.consume(event)
+                                fetchPinnedNotes(pins.ids(pins.lists.value[pubkey]))
+                            }
                             EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL,
                             EventKind.COMMENT ->
                                 if (event.pubkey == pubkey) {
@@ -372,6 +388,7 @@ class ProfileViewModel @Inject constructor(
     }
 
     private fun handleQuotedEvent(event: Event) {
+        if (EventKind.isPrivateMessaging(event.kind)) return
         _quotedEvents.update { it + (event.id to event) }
         rebuildProfileFeed()
         refreshUnresolvedQuotes()
@@ -406,7 +423,7 @@ class ProfileViewModel @Inject constructor(
                     }
                 }
                 EventKind.TEXT_NOTE, EventKind.COMMENT, EventKind.POLL -> {
-                    val ids = event.parsedTags.filter { it.name == "q" }.mapNotNull { it.value() }.take(32) + extractInlineQuoteIds(event.content)
+                    val ids = event.parsedTags.filter { it.name == "q" || (it.name == "e" && (it.value(3) == "mention" || it.value(2) == "mention")) }.mapNotNull { it.value() }.take(32) + extractInlineQuoteIds(event.content)
                     toResolve.addAll(ids.filter { it !in requestedQuoteIds })
                 }
                 else -> Unit
@@ -429,6 +446,24 @@ class ProfileViewModel @Inject constructor(
             if (stillMissing.isEmpty()) return@launch
             val subId = pool.subscribe(listOf(Filter(ids = stillMissing)), label = "profile-quote")
             quoteSubIds += subId
+        }
+    }
+
+    private fun fetchPinnedNotes(ids: List<String>) {
+        val missing = ids.filter { it !in _quotedEvents.value && it !in requestedQuoteIds }
+        if (missing.isEmpty()) return
+        requestedQuoteIds.addAll(missing)
+        viewModelScope.launch {
+            val cached = eventRepository.getByIds(missing).filterNot { EventKind.isPrivateMessaging(it.kind) }
+            cached.forEach(::handleQuotedEvent)
+            val remaining = missing.filter { id -> cached.none { it.id == id } }
+            if (remaining.isNotEmpty()) {
+                val subId = "pin-" + java.util.UUID.randomUUID().toString().take(8)
+                quoteSubIds.add(subId)
+                pool.subscribe(listOf(Filter(ids = remaining)), id = subId, label = "pinned-notes")
+                delay(30_000)
+                if (quoteSubIds.remove(subId)) pool.unsubscribe(subId)
+            }
         }
     }
 

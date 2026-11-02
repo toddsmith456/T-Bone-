@@ -88,6 +88,7 @@ fun ProfileScreen(
     val profile by viewModel.profile.collectAsStateWithLifecycle()
     val notes by viewModel.notes.collectAsStateWithLifecycle()
     val replyNotes by viewModel.replyNotes.collectAsStateWithLifecycle()
+    val pinnedNotes by viewModel.pinnedNotes.collectAsStateWithLifecycle()
     val mediaItems by viewModel.mediaItems.collectAsStateWithLifecycle()
     val quotedEvents by viewModel.quotedEvents.collectAsStateWithLifecycle()
     val unresolvedQuoteIds by viewModel.unresolvedQuoteIds.collectAsStateWithLifecycle()
@@ -118,6 +119,7 @@ fun ProfileScreen(
         ProfileTab.ALL -> notes
         ProfileTab.REPLIES -> replyNotes
         ProfileTab.MEDIA -> emptyList()
+        ProfileTab.PINNED -> pinnedNotes
     }
 
     // Index of the tapped gallery image (null = viewer closed).
@@ -454,7 +456,7 @@ fun ProfileScreen(
                 if (visibleNotes.isEmpty() && !isLoading) {
                     item {
                         EmptyTabLabel(
-                            if (selectedTab == ProfileTab.REPLIES) "no replies yet" else "no notes yet",
+                            if (selectedTab == ProfileTab.REPLIES) "no replies yet" else if (selectedTab == ProfileTab.PINNED) "no pinned notes found" else "no notes yet",
                         )
                     }
                 }
@@ -473,7 +475,7 @@ fun ProfileScreen(
                     }
                     NoteCard(
                         event = event,
-                        profile = profile,
+                        profile = profiles[event.pubkey] ?: profile.takeIf { event.pubkey == pubkey },
                         profiles = profiles,
                         quotedEvent = quotedEvent,
                         quotedEvents = quotedEvents,

@@ -36,6 +36,7 @@ class NoteActionsViewModel @Inject constructor(
     private val bookmarksRepository: BookmarksRepository,
     private val eventRepository: EventRepository,
     private val profileRepository: ProfileRepository,
+    private val pins: social.tbone.lists.PinListRepository,
 ) : ViewModel() {
     val moderationActionsEnabled = appSettings.noteMenuModerationEnabled
     val bookmarkFolders: StateFlow<List<BookmarkFolderUi>> = bookmarksRepository.folders
@@ -67,6 +68,10 @@ class NoteActionsViewModel @Inject constructor(
             text = text,
             mediaCount = media.size,
         )
+    }
+
+    fun togglePin(event: Event, onFinished: (String) -> Unit) {
+        viewModelScope.launch { onFinished(runCatching { pins.toggle(event) }.getOrElse { "Could not update pin list" }) }
     }
 
     fun saveBookmark(event: Event, folderId: String, onFinished: (String) -> Unit) {

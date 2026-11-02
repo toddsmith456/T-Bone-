@@ -247,7 +247,7 @@ fun FollowListsScreen(
                 text = {
                     Text(
                         "Follower list on Nostr is decentralized — relays don't reliably know who follows who. " +
-                        "When you turn this on, T-Bone will ask Primal's centralized cache (relay.primal.net + cache2.primal.net) for your followers, exactly like Monostr does for follower counts via NIP-45.\n\n" +
+                        "When you turn this on, T-Bone will ask Primal's centralized cache (relay.primal.net + cache2.primal.net) for your followers.\n\n" +
                         "Primal sees your pubkey when you use this, just like any relay. No additional tracking. You can turn it off anytime.",
                         style = BonyType.meta.copy(color = BonyColors.TextDim)
                     )
@@ -471,7 +471,7 @@ private fun FollowersTab(
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Off by default. When on, T-Bone asks Primal's centralized cache for who follows you — same approach Monostr uses for follower counts (largest NIP-45 COUNT wins, cached 5 min). The list may be incomplete; relays are the lower bound.",
+                    "Off by default. When on, T-Bone asks Primal's centralized cache for who follows you (cached 5 min). The list may be incomplete; relays are the lower bound.",
                     style = BonyType.metaDim.copy(color = BonyColors.TextMute)
                 )
                 if (followersEnabled) {

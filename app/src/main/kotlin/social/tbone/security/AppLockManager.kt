@@ -31,6 +31,13 @@ class AppLockManager @Inject constructor(
         }
     }
 
+    /** Secret decoy exit must never inherit an unlocked foreground session. */
+    suspend fun lockForStealthExit() {
+        appSettings.initialized.first { it }
+        timeout.initialize(appSettings.pinEnabled.value, appSettings.pinAutoLockMinutes.value)
+        timeout.lock()
+    }
+
     fun lock() = timeout.lock()
     fun unlock() = timeout.unlock()
     fun onAppBackgrounded() = timeout.onBackground()

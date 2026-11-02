@@ -770,7 +770,7 @@ class FeedViewModel @Inject constructor(
         _pendingEventScroll.value = null
         requestedQuoteIds.clear()
         _unresolvedQuoteIds.value = emptySet()
-        quoteSubIds.forEach { pool.unsubscribe(it) }
+        quoteSubIds.forEach { pool.unsubscribe(it); globalPool.unsubscribe(it) }
         quoteSubIds.clear()
         metadataFetchSubIds.forEach { pool.unsubscribe(it) }
         metadataFetchSubIds.clear()
@@ -927,7 +927,7 @@ class FeedViewModel @Inject constructor(
         pendingBuffer.clear()
         requestedQuoteIds.clear()
         _unresolvedQuoteIds.value = emptySet()
-        quoteSubIds.forEach { pool.unsubscribe(it) }
+        quoteSubIds.forEach { pool.unsubscribe(it); globalPool.unsubscribe(it) }
         quoteSubIds.clear()
         metadataFetchSubIds.forEach { pool.unsubscribe(it) }
         metadataFetchSubIds.clear()
@@ -1031,7 +1031,7 @@ class FeedViewModel @Inject constructor(
         _pendingEventScroll.value = null
         requestedQuoteIds.clear()
         _unresolvedQuoteIds.value = emptySet()
-        quoteSubIds.forEach { pool.unsubscribe(it) }
+        quoteSubIds.forEach { pool.unsubscribe(it); globalPool.unsubscribe(it) }
         quoteSubIds.clear()
         metadataFetchSubIds.forEach { pool.unsubscribe(it) }
         metadataFetchSubIds.clear()
@@ -1319,7 +1319,7 @@ class FeedViewModel @Inject constructor(
                             val sid = msg.subscriptionId
                             viewModelScope.launch {
                                 kotlinx.coroutines.delay(QUOTE_GRACE_MS)
-                                if (quoteSubIds.remove(sid)) pool.unsubscribe(sid)
+                                if (quoteSubIds.remove(sid)) { pool.unsubscribe(sid); globalPool.unsubscribe(sid) }
                                 // Lookup finished: whatever is still missing is
                                 // genuinely unavailable, not "loading".
                                 refreshUnresolvedQuotes()
@@ -1604,7 +1604,7 @@ class FeedViewModel @Inject constructor(
                     }
                 }
                 EventKind.TEXT_NOTE, EventKind.COMMENT, EventKind.POLL -> {
-                    val ids = event.parsedTags.filter { it.name == "q" }.mapNotNull { it.value() }.take(32) + extractInlineQuoteIds(event.content)
+                    val ids = event.parsedTags.filter { it.name == "q" || (it.name == "e" && (it.value(3) == "mention" || it.value(2) == "mention")) }.mapNotNull { it.value() }.take(32) + extractInlineQuoteIds(event.content)
                     toResolve.addAll(ids.filter { it !in requestedQuoteIds })
                 }
             }
@@ -1629,11 +1629,22 @@ class FeedViewModel @Inject constructor(
 
             // Kind-agnostic on purpose: a quoted poll or repost was never
             // resolved before, so the reference stayed as a dead link.
-            val subId = pool.subscribe(
-                listOf(Filter(ids = stillMissing)),
-                label = "quote",
-            )
+            // Register before sending the REQ so even a fast relay response
+            // cannot race the subscription bookkeeping. Query both already-
+            // connected pools; do not connect to untrusted relay hints.
+            val subId = "qt-" + java.util.UUID.randomUUID().toString().take(8)
             quoteSubIds.add(subId)
+            val filters = listOf(Filter(ids = stillMissing))
+            pool.subscribe(filters, id = subId, label = "quote")
+            globalPool.subscribe(filters, id = subId, label = "quote")
+            viewModelScope.launch {
+                kotlinx.coroutines.delay(30_000)
+                if (quoteSubIds.remove(subId)) {
+                    pool.unsubscribe(subId)
+                    globalPool.unsubscribe(subId)
+                    refreshUnresolvedQuotes()
+                }
+            }
         }
     }
 
@@ -1677,7 +1688,7 @@ class FeedViewModel @Inject constructor(
         unsub(followsRelayListSubId); followsRelayListSubId = null
         followsForRelaySelection = emptyList()
         followRelayMap.clear()
-        quoteSubIds.forEach { pool.unsubscribe(it) }
+        quoteSubIds.forEach { pool.unsubscribe(it); globalPool.unsubscribe(it) }
         quoteSubIds.clear()
         metadataFetchSubIds.forEach { pool.unsubscribe(it) }
         metadataFetchSubIds.clear()
@@ -1763,4 +1774,4 @@ class FeedViewModel @Inject constructor(
 }
 
 /** How long a quote lookup stays open after the first relay EOSE. */
-private const val QUOTE_GRACE_MS = 8_000L
+private const val QUOTE_GRACE_MS = 20_000L

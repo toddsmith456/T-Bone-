@@ -26,7 +26,7 @@ class StealthManager @Inject constructor(
 
     private val packageName: String get() = context.packageName
 
-    private fun component(suffix: String) = ComponentName(packageName, "$packageName.$suffix")
+    private fun component(suffix: String) = ComponentName(packageName, "${social.tbone.MainActivity::class.java.`package`!!.name}.$suffix")
 
     /** True if Notepad alias is currently the enabled one. */
     fun isNotepadActive(): Boolean {
@@ -44,21 +44,14 @@ class StealthManager @Inject constructor(
      */
     fun setNotepadFront(enableNotepad: Boolean) {
         val pm = context.packageManager
-        try {
-            pm.setComponentEnabledSetting(
-                component("LauncherTBone"),
-                if (enableNotepad) PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-                else PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-                PackageManager.DONT_KILL_APP,
-            )
-            pm.setComponentEnabledSetting(
-                component("LauncherNotepad"),
-                if (enableNotepad) PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-                else PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-                PackageManager.DONT_KILL_APP,
-            )
-        } catch (_: Exception) {
-            // Some OEM launchers cache aggressively — failure is non-fatal.
-        }
+        // Enable the destination first so an OEM failure never leaves the app
+        // without a launcher. Alias class names use the manifest namespace,
+        // which differs from the beta application ID.
+        val enable = component(if (enableNotepad) "LauncherNotepad" else "LauncherTBone")
+        val disable = component(if (enableNotepad) "LauncherTBone" else "LauncherNotepad")
+        pm.setComponentEnabledSetting(enable, PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+            PackageManager.DONT_KILL_APP)
+        pm.setComponentEnabledSetting(disable, PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+            PackageManager.DONT_KILL_APP)
     }
 }

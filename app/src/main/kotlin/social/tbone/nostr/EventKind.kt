@@ -24,6 +24,7 @@ object EventKind {
     const val SOFTWARE_ASSET = 3063 // NIP-82: software asset
     const val WEBXDC_UPDATE = 4932   // NIP-DC: webxdc state update
     const val WEBXDC_REALTIME = 20932 // NIP-DC: ephemeral webxdc realtime data
+    const val PIN_LIST = 10001       // NIP-51: replaceable profile pin list
     const val RELAY_LIST = 10002     // NIP-65: relay list metadata
     const val BLOSSOM_SERVER_LIST = 10063 // BUD-03: user's Blossom server list
     const val PAYMENT_TARGETS = 10133  // NIP-A3: replaceable payment-target list

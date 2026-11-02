@@ -48,6 +48,7 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var lockManager: AppLockManager
     @Inject lateinit var toolboxLockManager: ToolboxLockManager
     @Inject lateinit var screenTimeManager: ScreenTimeManager
+    @Inject lateinit var stealthManager: social.tbone.stealth.StealthManager
     @Inject lateinit var appSettings: AppSettings
     @Inject lateinit var updateManager: UpdateManager
     @Inject lateinit var reactionsRepository: social.tbone.reactions.ReactionsRepository
@@ -103,6 +104,13 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Repair alias state for users who enabled the disguise before the
+        // beta application-ID/manifest-class mismatch was fixed.
+        lifecycleScope.launch {
+            appSettings.initialized.first { it }
+            runCatching { stealthManager.setNotepadFront(appSettings.notepadFrontEnabled.value) }
+                .onFailure { timber.log.Timber.e(it, "Could not synchronize launcher disguise") }
+        }
 
         // Opaque window background so not even the very first frame (or a
         // returning process) can flash a previous screen behind the lock.
