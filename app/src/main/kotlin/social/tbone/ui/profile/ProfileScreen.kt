@@ -5,6 +5,8 @@ import android.content.ComponentName
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -398,6 +400,7 @@ fun ProfileScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(BonyColors.Surface)
+                        .horizontalScroll(rememberScrollState())
                         .padding(horizontal = 14.dp, vertical = 8.dp),
                 ) {
                     ProfileTab.entries.forEachIndexed { index, tab ->
