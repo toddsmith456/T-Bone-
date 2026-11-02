@@ -100,11 +100,29 @@ jobs:
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:ci-log --force || true
 
       - name: Unit tests (release aborts on failure)
+        env:
+          GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
         run: |
-          chmod +x gradlew
-          # Blossom upload regression suite + the rest of the unit tests.
-          # The live-network test is opt-in via -DblossomLive=1.
-          ./gradlew :app:testDebugUnitTest --stacktrace
+          set +e
+          ./gradlew :app:testDebugUnitTest --stacktrace --no-configuration-cache 2>&1 | tee /tmp/release-tests.log
+          result=${PIPESTATUS[0]}
+          if [ "$result" -ne 0 ]; then
+            python3 - <<'PYCODE'
+          from pathlib import Path
+          import glob, xml.etree.ElementTree as ET
+          lines = Path('/tmp/release-tests.log').read_text(errors='replace').splitlines()
+          selected = [x for x in lines if x.startswith('e: ') or ' FAILED' in x or 'What went wrong:' in x or 'Caused by:' in x or 'exception' in x.lower() or x.startswith('* ')]
+          for path in glob.glob('app/build/test-results/**/*.xml', recursive=True):
+              try:
+                  for test in ET.parse(path).getroot().iter('testcase'):
+                      for fail in list(test.findall('failure')) + list(test.findall('error')):
+                          selected.append(f"{test.get('classname')}.{test.get('name')}: {fail.get('message', '')} {fail.text or ''}")
+              except Exception: pass
+          message = '\n'.join(selected[-80:] + lines[-30:])[-25000:]
+          print('::error::' + message.replace('%','%25').replace('\r','%0D').replace('\n','%0A'))
+          PYCODE
+          fi
+          exit "$result"
 
       - name: Dump unit test log (on failure)
         if: failure()
