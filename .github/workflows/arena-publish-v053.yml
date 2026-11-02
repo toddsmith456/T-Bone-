@@ -1,0 +1,161 @@
+name: Publish verified v0.5.3
+
+# Push a version tag such as v0.3.53 to build and publish one release APK.
+# See docs/RELEASE.md.
+
+on:
+  push:
+    branches: [arena-release-signing-diagnostic]
+
+permissions:
+  contents: write # needed to create the GitHub Release and upload its files
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out tag
+        uses: actions/checkout@v4
+        with:
+          ref: v0.5.3
+
+      - name: Privacy gate (release aborts on failure)
+        run: |
+          chmod +x scripts/privacy-check.sh
+          ./scripts/privacy-check.sh
+
+      - name: Release version/tag gate (release aborts on mismatch)
+        env:
+          RELEASE_TAG: v0.5.3
+        run: |
+          chmod +x scripts/verify-release-version.sh
+          ./scripts/verify-release-version.sh
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: ''
+
+      - name: Require and decode release signing key
+        id: keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing $name; refusing to publish an incompatible release APK."
+              exit 1
+            fi
+          done
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+          chmod 600 "$RUNNER_TEMP/release.keystore"
+          echo "path=$RUNNER_TEMP/release.keystore" >> "$GITHUB_OUTPUT"
+          echo "present=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build release APK
+        env:
+          KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleRelease --stacktrace --no-configuration-cache --info 2>&1 | tee /tmp/assemble.log; test ${PIPESTATUS[0]} -eq 0
+
+      - name: Verify production signing identity
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/app-release.apk
+          TOOLS=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          "$TOOLS" verify --verbose --print-certs "$APK" | tee "$RUNNER_TEMP/release-signature.txt"
+          grep -Ei '^(Signer #1|V3\.0 Signer): certificate SHA-256 digest: 0e37601f5716b1476b26a0aed023df97ca8c2ab0c1500cb2d3a7237337f65678$' "$RUNNER_TEMP/release-signature.txt"
+          "$(dirname "$TOOLS")/aapt" dump badging "$APK" | grep "package: name='social.tbone.fork'"
+
+      - name: Dump failure log (on failure)
+        if: failure()
+        run: |
+          cat /tmp/assemble.log | tail -n 800 || true
+          grep -n "e: file" /tmp/assemble.log | head -n 80 || true
+          grep -n "FAILURE" /tmp/assemble.log | head || true
+          mkdir -p /tmp/ci-log
+          cp /tmp/assemble.log /tmp/ci-log/build.log || true
+          echo "${{ github.sha }}" > /tmp/ci-log/sha.txt
+          cd /tmp/ci-log
+          git init
+          git config user.email "ci@tbone.local"
+          git config user.name "CI Logger"
+          git add build.log sha.txt
+          git commit -m "CI log for ${{ github.sha }}" || true
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:ci-log --force || true
+
+      - name: Unit tests (release aborts on failure)
+        run: |
+          chmod +x gradlew
+          # Blossom upload regression suite + the rest of the unit tests.
+          # The live-network test is opt-in via -DblossomLive=1.
+          ./gradlew :app:testDebugUnitTest --stacktrace
+
+      - name: Dump unit test log (on failure)
+        if: failure()
+        run: |
+          echo "=== unit tests failed — release blocked ==="
+          find app/build/test-results -name "*.xml" | head -n 20 || true
+          cat app/build/test-results/debugUnitTest/*.xml 2>&1 | head -n 300 || true
+          echo "--- reports ---"
+          ls app/build/reports/tests/debugUnitTest/classes/ 2>&1 | head -n 20 || true
+
+      - name: Package release APK and checksum
+        run: |
+          TAG="v0.5.3"
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK" || { echo "missing $APK"; exit 1; }
+          OUT="dist"
+          mkdir -p "$OUT"
+          APK_NAME="T-Bone-fork-${TAG}-release.apk"
+          cp "$APK" "$OUT/$APK_NAME"
+          (cd "$OUT" && sha256sum "$APK_NAME" > SHA256SUMS.txt)
+          cat "$OUT/SHA256SUMS.txt"
+
+      - name: Release notes header
+        run: |
+          TAG="v0.5.3"
+          if [ "${{ steps.keystore.outputs.present }}" = "true" ]; then
+            SIG="Signed with the repo owner's **release key** (stable update identity)."
+          else
+            SIG="This is the **release build**, signed with the debug key because no KEYSTORE_* secrets are configured. Set up a release key for stable updates — see docs/RELEASE.md."
+          fi
+          {
+            echo "## T-Bone fork ${TAG}"
+            echo ""
+            echo "- Package: \`social.tbone.fork\` — installs **alongside** the original T-Bone (\`social.tbone\`)."
+            echo "- ${SIG}"
+            echo "- Privacy: no Google services, no tracking — enforced by CI privacy gate."
+            echo ""
+            echo "### Files"
+            echo "- \`T-Bone-fork-${TAG}-release.apk\` — the release APK (minify enabled)."
+            echo "- \`SHA256SUMS.txt\` — verify with \`sha256sum -c SHA256SUMS.txt\`."
+          } > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.5.3
+          body_path: ${{ runner.temp }}/notes.md
+          files: |
+            dist/T-Bone-fork-*-release.apk
+            dist/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          append_body: true
