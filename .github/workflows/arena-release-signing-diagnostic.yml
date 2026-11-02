@@ -49,11 +49,11 @@ jobs:
           "$TOOLS" verify --verbose --print-certs "$APK" > "$RUNNER_TEMP/apkcert.txt" 2>&1
           status=$?
           echo "::notice::apksigner exit: $status"
-          while IFS= read -r line; do echo "::notice::$line"; done < "$RUNNER_TEMP/apkcert.txt"
+          python3 -c 'import os,pathlib; p=pathlib.Path(os.environ["RUNNER_TEMP"])/"apkcert.txt"; print("::notice::APK verification output: " + p.read_text().replace("%", "%25").replace("\n", "%0A"))'
           "$(dirname "$TOOLS")/aapt" dump badging "$APK" > "$RUNNER_TEMP/badging.txt" 2>&1
           badgestatus=$?
           echo "::notice::aapt exit: $badgestatus"
-          grep '^package:' "$RUNNER_TEMP/badging.txt" | while IFS= read -r line; do echo "::notice::$line"; done
+          grep '^package:' "$RUNNER_TEMP/badging.txt" | head -1 | sed 's/^/::notice::/'
           grep -i 'Signer #1 certificate SHA-256 digest: 0e37601f5716b1476b26a0aed023df97ca8c2ab0c1500cb2d3a7237337f65678' "$RUNNER_TEMP/apkcert.txt" >/dev/null
           grepstatus=$?
           echo "::notice::signature match exit: $grepstatus"
