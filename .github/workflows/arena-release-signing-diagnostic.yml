@@ -29,3 +29,32 @@ jobs:
             echo '::error::The configured signing key does not match the published v0.5.2 APK certificate.'
             exit 1
           fi
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: ''
+      - name: Build release for signing verification diagnosis
+        env:
+          KEYSTORE_PATH: ${{ runner.temp }}/signing.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
+        run: ./gradlew :app:assembleRelease --stacktrace --no-configuration-cache
+      - name: Diagnose APK verification without publishing
+        run: |
+          set +e
+          APK=app/build/outputs/apk/release/app-release.apk
+          TOOLS=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          "$TOOLS" verify --verbose --print-certs "$APK" > "$RUNNER_TEMP/apkcert.txt" 2>&1
+          status=$?
+          echo "::notice::apksigner exit: $status"
+          while IFS= read -r line; do echo "::notice::$line"; done < "$RUNNER_TEMP/apkcert.txt"
+          "$(dirname "$TOOLS")/aapt" dump badging "$APK" > "$RUNNER_TEMP/badging.txt" 2>&1
+          badgestatus=$?
+          echo "::notice::aapt exit: $badgestatus"
+          grep '^package:' "$RUNNER_TEMP/badging.txt" | while IFS= read -r line; do echo "::notice::$line"; done
+          grep -i 'Signer #1 certificate SHA-256 digest: 0e37601f5716b1476b26a0aed023df97ca8c2ab0c1500cb2d3a7237337f65678' "$RUNNER_TEMP/apkcert.txt" >/dev/null
+          grepstatus=$?
+          echo "::notice::signature match exit: $grepstatus"
+          test "$status" = 0 && test "$badgestatus" = 0 && test "$grepstatus" = 0
