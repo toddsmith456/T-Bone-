@@ -5,6 +5,24 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.3] — 2026-11-01
+
+### Added
+- Profile pin lists using NIP-51 kind 10001, compatible with other clients; pin or unpin from the note action menu.
+- Inline animated GIF playback and a privacy setting to confirm external links before opening them.
+- External-wallet Lightning zaps and wallet controls, including invoice verification.
+
+### Changed
+- Quote and repost actions share one menu; quote notifications are grouped with reposts.
+- Quote rendering and relay lookups now cover more references, including addressable and mention-marked events.
+- PIN auto-lock measures time spent in the background rather than active use. Link text and media links support long-press copying.
+- The notepad disguise uses the correct launcher alias, and leaving the decoy requires the app PIN when enabled.
+- Feed videos load on demand to reduce resource use while scrolling; video controls and relay ownership have also been improved.
+
+### Fixed
+- Hardened feed rendering and geohash live delivery/cache handling, plus update checks and downloads.
+- Fixed composer account switching and improved signer, wallet, and relay handling.
+
 ## [0.5.2] — 2026-10-27
 
 ### Fixed
