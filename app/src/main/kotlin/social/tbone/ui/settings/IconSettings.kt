@@ -68,7 +68,7 @@ internal fun IconSettings() {
         val res = when (mode) {
             "alternative" -> social.tbone.R.drawable.icon_alternative_steak
             "colors" -> context.resources.getIdentifier("icon_color_${bg}_${fg}", "drawable", context.packageName)
-            else -> social.tbone.R.mipmap.ic_launcher
+            else -> social.tbone.R.drawable.ic_launcher_foreground
         }
         if (res != 0) Image(painterResource(res), contentDescription = "Icon preview", modifier = Modifier.size(80.dp))
         Text("SAVE ICON", Modifier.clickable {
@@ -108,7 +108,7 @@ internal fun StartupAppearance(context: Context) {
     val resource = when {
         choice == "LauncherAlternative" -> social.tbone.R.drawable.icon_alternative_steak
         choice.startsWith("LauncherColor") && choice.length == "LauncherColor00".length -> context.resources.getIdentifier("icon_color_${choice[13]}_${choice[14]}", "drawable", context.packageName)
-        else -> social.tbone.R.mipmap.ic_launcher
+        else -> social.tbone.R.drawable.ic_launcher_foreground
     }
     Box(Modifier.fillMaxSize().background(Color(0xFF0A0A0A)), contentAlignment = Alignment.Center) {
         if (choice == "upload" && File(context.filesDir, "splash-image.png").exists()) {
