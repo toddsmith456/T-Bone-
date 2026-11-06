@@ -7,51 +7,36 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * Toggles the launcher icon between T-Bone and the Notepad disguise.
- *
- * Manifest defines two <activity-alias> entries:
- *  - social.tbone.LauncherTBone    (enabled by default, @mipmap/ic_launcher)
- *  - social.tbone.LauncherNotepad  (disabled  by default, @mipmap/ic_notepad)
- * Both aliases target [social.tbone.MainActivity].
- *
- * We use [PackageManager.setComponentEnabledSetting] with DONT_KILL_APP so
- * the current process survives the swap. The new icon takes effect after the
- * launcher re-queries activities (usually immediate, worst-case next reboot).
- */
+/** Launcher aliases are bundled resources: arbitrary bitmaps cannot be launcher icons. */
 @Singleton
-class StealthManager @Inject constructor(
-    @ApplicationContext private val context: Context,
-) {
+class StealthManager @Inject constructor(@ApplicationContext private val context: Context) {
+    private val prefs = context.getSharedPreferences("launcher_appearance", Context.MODE_PRIVATE)
+    private fun component(suffix: String) = ComponentName(context.packageName, "${social.tbone.MainActivity::class.java.`package`!!.name}.$suffix")
+    private val regularAliases = listOf("LauncherTBone", "LauncherAlternative") +
+        (0..3).flatMap { bg -> (0..3).map { fg -> "LauncherColor$bg$fg" } }
+    private val allAliases get() = regularAliases + "LauncherNotepad"
 
-    private val packageName: String get() = context.packageName
+    fun selectedAlias(): String = prefs.getString("alias", "LauncherTBone")
+        ?.takeIf { it in regularAliases } ?: "LauncherTBone"
 
-    private fun component(suffix: String) = ComponentName(packageName, "${social.tbone.MainActivity::class.java.`package`!!.name}.$suffix")
+    fun isNotepadActive(): Boolean = context.packageManager.getComponentEnabledSetting(component("LauncherNotepad")) ==
+        PackageManager.COMPONENT_ENABLED_STATE_ENABLED
 
-    /** True if Notepad alias is currently the enabled one. */
-    fun isNotepadActive(): Boolean {
+    /** Enable the destination before disabling others, to avoid losing the launcher. */
+    private fun switchTo(destination: String) {
         val pm = context.packageManager
-        val tBone = pm.getComponentEnabledSetting(component("LauncherTBone"))
-        // Default (DEFAULT) means manifest value: T-Bone enabled, Notepad disabled.
-        if (tBone == PackageManager.COMPONENT_ENABLED_STATE_DISABLED) return true
-        val notepad = pm.getComponentEnabledSetting(component("LauncherNotepad"))
-        return notepad == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+        pm.setComponentEnabledSetting(component(destination), PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP)
+        allAliases.filter { it != destination }.forEach {
+            pm.setComponentEnabledSetting(component(it), PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP)
+        }
     }
 
-    /**
-     * Switch launcher alias. [enableNotepad] true → show Notepad icon/label,
-     * false → restore T-Bone icon/label.
-     */
-    fun setNotepadFront(enableNotepad: Boolean) {
-        val pm = context.packageManager
-        // Enable the destination first so an OEM failure never leaves the app
-        // without a launcher. Alias class names use the manifest namespace,
-        // which differs from the beta application ID.
-        val enable = component(if (enableNotepad) "LauncherNotepad" else "LauncherTBone")
-        val disable = component(if (enableNotepad) "LauncherTBone" else "LauncherNotepad")
-        pm.setComponentEnabledSetting(enable, PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-            PackageManager.DONT_KILL_APP)
-        pm.setComponentEnabledSetting(disable, PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-            PackageManager.DONT_KILL_APP)
+    fun setNotepadFront(enableNotepad: Boolean) = switchTo(if (enableNotepad) "LauncherNotepad" else selectedAlias())
+
+    /** Save only after PackageManager accepts the requested launcher. */
+    fun setRegularIcon(alias: String) {
+        require(alias in regularAliases)
+        if (!isNotepadActive()) switchTo(alias)
+        check(prefs.edit().putString("alias", alias).commit())
     }
 }

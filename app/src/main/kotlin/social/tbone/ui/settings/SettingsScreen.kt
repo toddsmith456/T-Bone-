@@ -186,6 +186,7 @@ fun SettingsScreen(
             expanded = sectionExpanded("appearance"),
             onToggle = { toggleSection("appearance") },
         )
+        IconSettings()
         SettingsPrivacySection(
             viewModel = viewModel,
             context = context,

@@ -31,4 +31,22 @@ class StealthManagerTest {
             pm.setComponentEnabledSetting(disguise, oldDisguise, PackageManager.DONT_KILL_APP)
         }
     }
+    @Test fun selectedIconIsRestoredAfterDisguise() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val manager = StealthManager(context)
+        val previous = manager.selectedAlias()
+        try {
+            manager.setNotepadFront(false)
+            manager.setRegularIcon("LauncherColor12")
+            assertEquals("LauncherColor12", manager.selectedAlias())
+            manager.setNotepadFront(true)
+            assertEquals(true, manager.isNotepadActive())
+            manager.setNotepadFront(false)
+            assertEquals(PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                context.packageManager.getComponentEnabledSetting(ComponentName(context.packageName, "social.tbone.LauncherColor12")))
+        } finally {
+            manager.setNotepadFront(false)
+            manager.setRegularIcon(previous)
+        }
+    }
 }

@@ -14,6 +14,7 @@
     <!-- Voice recorder (toolbox): needed to capture audio. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Offline calendar event alarms (exact time when the user grants it). -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -103,6 +104,159 @@
             android:roundIcon="@mipmap/ic_launcher_round"
             android:label="@string/app_name"
             android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias android:name=".LauncherAlternative" android:enabled="false" android:exported="true"
+            android:icon="@drawable/icon_alternative_steak" android:roundIcon="@drawable/icon_alternative_steak"
+            android:label="@string/app_name" android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias android:name=".LauncherColor00" android:enabled="false" android:exported="true"
+            android:icon="@drawable/icon_color_0_0" android:roundIcon="@drawable/icon_color_0_0"
+            android:label="@string/app_name" android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias android:name=".LauncherColor01" android:enabled="false" android:exported="true"
+            android:icon="@drawable/icon_color_0_1" android:roundIcon="@drawable/icon_color_0_1"
+            android:label="@string/app_name" android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias android:name=".LauncherColor02" android:enabled="false" android:exported="true"
+            android:icon="@drawable/icon_color_0_2" android:roundIcon="@drawable/icon_color_0_2"
+            android:label="@string/app_name" android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias android:name=".LauncherColor03" android:enabled="false" android:exported="true"
+            android:icon="@drawable/icon_color_0_3" android:roundIcon="@drawable/icon_color_0_3"
+            android:label="@string/app_name" android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias android:name=".LauncherColor10" android:enabled="false" android:exported="true"
+            android:icon="@drawable/icon_color_1_0" android:roundIcon="@drawable/icon_color_1_0"
+            android:label="@string/app_name" android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias android:name=".LauncherColor11" android:enabled="false" android:exported="true"
+            android:icon="@drawable/icon_color_1_1" android:roundIcon="@drawable/icon_color_1_1"
+            android:label="@string/app_name" android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias android:name=".LauncherColor12" android:enabled="false" android:exported="true"
+            android:icon="@drawable/icon_color_1_2" android:roundIcon="@drawable/icon_color_1_2"
+            android:label="@string/app_name" android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias android:name=".LauncherColor13" android:enabled="false" android:exported="true"
+            android:icon="@drawable/icon_color_1_3" android:roundIcon="@drawable/icon_color_1_3"
+            android:label="@string/app_name" android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias android:name=".LauncherColor20" android:enabled="false" android:exported="true"
+            android:icon="@drawable/icon_color_2_0" android:roundIcon="@drawable/icon_color_2_0"
+            android:label="@string/app_name" android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias android:name=".LauncherColor21" android:enabled="false" android:exported="true"
+            android:icon="@drawable/icon_color_2_1" android:roundIcon="@drawable/icon_color_2_1"
+            android:label="@string/app_name" android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias android:name=".LauncherColor22" android:enabled="false" android:exported="true"
+            android:icon="@drawable/icon_color_2_2" android:roundIcon="@drawable/icon_color_2_2"
+            android:label="@string/app_name" android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias android:name=".LauncherColor23" android:enabled="false" android:exported="true"
+            android:icon="@drawable/icon_color_2_3" android:roundIcon="@drawable/icon_color_2_3"
+            android:label="@string/app_name" android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias android:name=".LauncherColor30" android:enabled="false" android:exported="true"
+            android:icon="@drawable/icon_color_3_0" android:roundIcon="@drawable/icon_color_3_0"
+            android:label="@string/app_name" android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias android:name=".LauncherColor31" android:enabled="false" android:exported="true"
+            android:icon="@drawable/icon_color_3_1" android:roundIcon="@drawable/icon_color_3_1"
+            android:label="@string/app_name" android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias android:name=".LauncherColor32" android:enabled="false" android:exported="true"
+            android:icon="@drawable/icon_color_3_2" android:roundIcon="@drawable/icon_color_3_2"
+            android:label="@string/app_name" android:targetActivity=".MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
+        <activity-alias android:name=".LauncherColor33" android:enabled="false" android:exported="true"
+            android:icon="@drawable/icon_color_3_3" android:roundIcon="@drawable/icon_color_3_3"
+            android:label="@string/app_name" android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

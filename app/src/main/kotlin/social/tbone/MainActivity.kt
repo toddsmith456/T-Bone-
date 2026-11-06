@@ -33,6 +33,10 @@ import social.tbone.ui.BonyNavHost
 import social.tbone.ui.SigningOverlay
 import social.tbone.ui.theme.ThemeHost
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -110,6 +114,7 @@ class MainActivity : FragmentActivity() {
             appSettings.initialized.first { it }
             runCatching { stealthManager.setNotepadFront(appSettings.notepadFrontEnabled.value) }
                 .onFailure { timber.log.Timber.e(it, "Could not synchronize launcher disguise") }
+            if (!appSettings.notepadFrontEnabled.value) maybeAskBatteryExemption()
         }
 
         // Opaque window background so not even the very first frame (or a
@@ -152,6 +157,16 @@ class MainActivity : FragmentActivity() {
                 val brightness by social.tbone.ui.media.ScreenBrightness.level
                     .collectAsStateWithLifecycle()
                 val screenTimeLocked by screenTimeManager.locked.collectAsStateWithLifecycle()
+                var starting by remember { mutableStateOf(true) }
+                var showStartupIcon by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) {
+                    appSettings.initialized.first { it }
+                    if (!appSettings.notepadFrontEnabled.value) {
+                        showStartupIcon = true
+                        kotlinx.coroutines.delay(500)
+                    }
+                    starting = false
+                }
                 Box(modifier = Modifier.fillMaxSize()) {
                     // Multi emoji reactions: one app-wide config read by every
                     // note's like button.
@@ -173,6 +188,10 @@ class MainActivity : FragmentActivity() {
                         ContentFilterProvider {
                             BonyNavHost()
                         }
+                    }
+                    if (starting) {
+                        if (showStartupIcon) social.tbone.ui.settings.StartupAppearance(this@MainActivity)
+                        else Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xFF0A0A0A)))
                     }
                     // Parental screen-time lock: drawn OVER everything (but under
                     // the brightness dim) once the daily allowance is used up.
@@ -210,6 +229,34 @@ class MainActivity : FragmentActivity() {
         }
 
         FrameMonitor.start(this)
+    }
+
+    private fun maybeAskBatteryExemption() {
+        val prefs = getSharedPreferences("battery_prompt", MODE_PRIVATE)
+        if (prefs.getBoolean("asked", false)) return
+        val info = packageManager.getPackageInfo(packageName, 0)
+        // Do not surprise users who are upgrading an existing installation.
+        if (info.lastUpdateTime - info.firstInstallTime > 10_000L) {
+            prefs.edit().putBoolean("asked", true).apply()
+            return
+        }
+        val power = getSystemService(POWER_SERVICE) as android.os.PowerManager
+        if (power.isIgnoringBatteryOptimizations(packageName)) {
+            prefs.edit().putBoolean("asked", true).apply()
+            return
+        }
+        if (isFinishing || isDestroyed) return
+        prefs.edit().putBoolean("asked", true).apply()
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Allow unrestricted battery usage?")
+            .setMessage("Allowing unrestricted battery usage can improve background connectivity and notifications, but may use more battery. Android controls this setting and you can change it later.")
+            .setNegativeButton("Not now", null)
+            .setPositiveButton("Continue") { _, _ ->
+                val intent = Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, android.net.Uri.parse("package:$packageName"))
+                runCatching { startActivity(intent) }.onFailure {
+                    runCatching { startActivity(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+                }
+            }.show()
     }
 
     override fun onResume() {

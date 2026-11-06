@@ -195,10 +195,17 @@ fun NoteBodyText(
                         var layout by remember(run.text) { mutableStateOf<TextLayoutResult?>(null) }
                         fun actionAt(position: androidx.compose.ui.geometry.Offset): SegAction? {
                             val textLayout = layout ?: return null
-                            val offset = textLayout.getOffsetForPosition(position)
-                            if (offset !in 0 until run.text.length) return null
-                            if (!textLayout.getBoundingBox(offset).contains(position)) return null
-                            return run.actions.firstOrNull { offset in it.start until it.end }
+                            // getOffsetForPosition returns the nearest insertion point, not
+                            // necessarily the glyph under the finger (often the NEXT
+                            // character when tapping the right half of a glyph).
+                            val insertion = textLayout.getOffsetForPosition(position)
+                            return listOf(insertion, insertion - 1).asSequence()
+                                .filter { it in 0 until run.text.length }
+                                .firstNotNullOfOrNull { offset ->
+                                    if (textLayout.getBoundingBox(offset).contains(position))
+                                        run.actions.firstOrNull { offset in it.start until it.end }
+                                    else null
+                                }
                         }
                         Text(
                             text = run.text,
