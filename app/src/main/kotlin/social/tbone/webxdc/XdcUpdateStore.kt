@@ -74,7 +74,12 @@ class XdcUpdateStore(private val file: File) {
         summary: String? = null,
         href: String? = null,
     ): XdcUpdate = synchronized(lock) {
-        val existing = load().lastOrNull()?.serial ?: 0
+        val records = load()
+        val existing = records.lastOrNull()?.serial ?: 0
+        // Bound input before Base64 encoding to avoid creating huge transient copies.
+        val inputBytes = listOfNotNull(payloadJson, info, document, summary, href)
+            .sumOf { it.toByteArray(Charsets.UTF_8).size.toLong() }
+        require(inputBytes <= MAX_BYTES) { "webxdc update too large" }
         val update = XdcUpdate(
             serial = existing + 1,
             payloadJson = payloadJson,
@@ -84,10 +89,8 @@ class XdcUpdateStore(private val file: File) {
             href = href,
             createdAt = System.currentTimeMillis(),
         )
-        if (load().size >= MAX_UPDATES) error("webxdc update limit reached (5k)")
-        if (file.exists() && file.length() > MAX_BYTES) error("webxdc journal full (5 MB)")
-        file.parentFile?.mkdirs()
-        file.appendText(buildString {
+        if (records.size >= MAX_UPDATES) error("webxdc update limit reached (5k)")
+        val record = buildString {
             append(update.serial.toString())
             append(SEP)
             append(update.createdAt.toString())
@@ -102,7 +105,11 @@ class XdcUpdateStore(private val file: File) {
             append(SEP)
             append(encode(update.href))
             append('\n')
-        })
+        }
+        val recordBytes = record.toByteArray(Charsets.UTF_8).size.toLong()
+        if (file.length() + recordBytes > MAX_BYTES) error("webxdc journal full (5 MB)")
+        file.parentFile?.mkdirs()
+        file.appendText(record)
         update
     }
 

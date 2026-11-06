@@ -170,7 +170,6 @@ class NotesRepository @Inject constructor(
         val trimmed = text.trim()
         val eid = id ?: UUID.randomUUID().toString()
         val existing = dao.getById(eid)
-        if (trimmed.isEmpty() && existing == null) return eid
         val now = System.currentTimeMillis()
         val (ct, iv) = crypto.encrypt(trimmed)
         val (tct, tiv) = if (title.isBlank()) null to null else crypto.encrypt(title.trim())

@@ -55,7 +55,7 @@ private sealed interface BodySeg {
 private data class SegRange(val start: Int, val end: Int, val kind: Int, val value: String)
 
 /** A clickable region inside the annotated note text. */
-private data class SegAction(val start: Int, val end: Int, val copyText: String? = null, val action: (() -> Unit)?)
+private data class SegAction(val start: Int, val end: Int, val copyText: String? = null, val accessibilityLabel: String? = null, val action: (() -> Unit)?)
 
 /** The styled note text plus the click regions that go with it. */
 private data class SegmentedBody(
@@ -217,11 +217,14 @@ fun NoteBodyText(
                                 if (result.hasVisualOverflow || result.lineCount > effectiveMax) truncated = true
                             },
                             modifier = Modifier.semantics {
-                                customActions = run.actions.filter { it.copyText != null }.flatMap { action ->
-                                    listOf(
-                                        CustomAccessibilityAction("Open ${action.copyText}") { action.action?.invoke(); true },
-                                        CustomAccessibilityAction("Copy ${action.copyText}") { copyNoteLink(context, action.copyText!!); true },
-                                    )
+                                customActions = run.actions.flatMap { action ->
+                                    val label = action.accessibilityLabel ?: action.copyText
+                                    if (label == null) emptyList() else buildList {
+                                        add(CustomAccessibilityAction("Open $label") { action.action?.invoke(); true })
+                                        action.copyText?.let { text ->
+                                            add(CustomAccessibilityAction("Copy $text") { copyNoteLink(context, text); true })
+                                        }
+                                    }
                                 }
                             }.pointerInput(run, onOpenNote, onLongPressText) {
                                 detectTapGestures(
@@ -338,7 +341,7 @@ private fun buildSegmentedAnnotated(
                     val start = length
                     append("#${seg.tag}")
                     addStyle(SpanStyle(color = BonyColors.Accent), start, length)
-                    actions.add(SegAction(start, length) { onHashtagClick?.invoke(seg.tag) })
+                    actions.add(SegAction(start, length, accessibilityLabel = "hashtag ${seg.tag}") { onHashtagClick?.invoke(seg.tag) })
                 }
             }
         }
@@ -348,7 +351,10 @@ private fun buildSegmentedAnnotated(
 
 private fun segment(text: String, profiles: Map<String, ProfileContent>): List<BodySeg> {
     val segs = mutableListOf<SegRange>()
-    HTTP_REGEX.findAll(text).forEach { m -> segs.add(SegRange(m.range.first, m.range.last + 1, 1, m.value)) }
+    HTTP_REGEX.findAll(text).forEach { m ->
+        val url = social.tbone.util.trimUrlPunctuation(m.value)
+        if (url.isNotEmpty()) segs.add(SegRange(m.range.first, m.range.first + url.length, 1, url))
+    }
     NPUB_REGEX.findAll(text).forEach { m -> segs.add(SegRange(m.range.first, m.range.last + 1, 2, m.value)) }
     NOTE_REGEX.findAll(text).forEach { m -> segs.add(SegRange(m.range.first, m.range.last + 1, 3, m.value)) }
     HASHTAG_REGEX.findAll(text).forEach { m ->

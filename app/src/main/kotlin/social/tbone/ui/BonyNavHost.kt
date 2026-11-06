@@ -29,7 +29,8 @@ import androidx.navigation.navArgument
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -161,11 +162,17 @@ fun BonyNavHost() {
     val avatarAnimated by mediaSettings.avatarAnimated.collectAsStateWithLifecycle()
     val navController = rememberNavController()
 
-    LaunchedEffect(Unit) {
-        viewModel.openThread.collect { eventId -> navController.navigate("thread/$eventId") }
+    LaunchedEffect(startupState, isLocked) {
+        if (!isLocked && (startupState as? StartupState.Ready)?.hasAccount == true) {
+            navController.currentBackStackEntryFlow.first()
+            viewModel.openThread.collect { eventId -> navController.navigate("thread/$eventId") }
+        }
     }
-    LaunchedEffect(Unit) {
-        viewModel.openProfile.collect { pubkey -> navController.navigate("profile/$pubkey") }
+    LaunchedEffect(startupState, isLocked) {
+        if (!isLocked && (startupState as? StartupState.Ready)?.hasAccount == true) {
+            navController.currentBackStackEntryFlow.first()
+            viewModel.openProfile.collect { pubkey -> navController.navigate("profile/$pubkey") }
+        }
     }
     LaunchedEffect(startupState) {
         if (startupState is StartupState.Ready && !(startupState as StartupState.Ready).hasAccount) {
@@ -826,8 +833,8 @@ class StartupViewModel @Inject constructor(
         .map { account -> StartupState.Ready(hasAccount = account != null) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StartupState.Loading)
 
-    val openThread: SharedFlow<String> = deepLinkHandler.openThread
-    val openProfile: SharedFlow<String> = deepLinkHandler.openProfile
+    val openThread: Flow<String> = deepLinkHandler.openThread
+    val openProfile: Flow<String> = deepLinkHandler.openProfile
 }
 
 // ── Lock ViewModel ────────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
@@ -190,8 +191,11 @@ class MainActivity : FragmentActivity() {
                         }
                     }
                     if (starting) {
-                        if (showStartupIcon) social.tbone.ui.settings.StartupAppearance(this@MainActivity)
-                        else Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xFF0A0A0A)))
+                        Box(Modifier.fillMaxSize().clickable(indication = null,
+                            interactionSource = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) {}) {
+                            if (showStartupIcon) social.tbone.ui.settings.StartupAppearance(this@MainActivity)
+                            else Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xFF0A0A0A)))
+                        }
                     }
                     // Parental screen-time lock: drawn OVER everything (but under
                     // the brightness dim) once the daily allowance is used up.

@@ -154,13 +154,14 @@ fun parseNoteContent(
     val withoutNostrUris = content
 
     val text = URL_REGEX.replace(withoutNostrUris) { match ->
-        val url = match.value
+        val url = social.tbone.util.trimUrlPunctuation(match.value)
+        val suffix = match.value.substring(url.length)
         val ext = url.substringAfterLast('.').lowercase()
             .substringBefore('?').substringBefore('#')
         when {
-            ext in IMAGE_EXTENSIONS -> { mediaItems.add(MediaItem.Image(url)); "" }
-            ext in AUDIO_EXTENSIONS -> { mediaItems.add(MediaItem.Audio(url)); "" }
-            ext in VIDEO_EXTENSIONS -> { mediaItems.add(MediaItem.Video(url)); "" }
+            ext in IMAGE_EXTENSIONS -> { mediaItems.add(MediaItem.Image(url)); suffix }
+            ext in AUDIO_EXTENSIONS -> { mediaItems.add(MediaItem.Audio(url)); suffix }
+            ext in VIDEO_EXTENSIONS -> { mediaItems.add(MediaItem.Video(url)); suffix }
             else -> match.value
         }
     }.replace(Regex(" {2,}"), " ").replace(Regex("\n{3,}"), "\n\n").trim()

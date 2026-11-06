@@ -44,7 +44,8 @@ internal fun AddressQuote(
     val context = LocalContext.current
     var event by remember(address) { mutableStateOf<Event?>(null) }
     var finished by remember(address) { mutableStateOf(false) }
-    LaunchedEffect(address) {
+    LaunchedEffect(address, depth) {
+        if (depth >= 2) { finished = true; return@LaunchedEffect }
         val pool = runCatching {
             EntryPointAccessors.fromApplication(context.applicationContext, AddressQuoteEntryPoint::class.java).relayPool()
         }.getOrNull()
@@ -77,7 +78,7 @@ internal fun AddressQuote(
             quotedEvents = quotedEvents, onThreadClick = onThreadClick, onProfileClick = onProfileClick,
             onHashtagClick = onHashtagClick, nestingDepth = depth, quoteAncestors = ancestors)
     } else {
-        Text(if (finished) "addressed note unavailable" else "loading quoted note…",
+        Text(if (depth >= 2 || (resolved != null && resolved.id in ancestors)) "open quoted note" else if (finished) "addressed note unavailable" else "loading quoted note…",
             style = BonyType.tag.copy(color = BonyColors.Accent),
             modifier = Modifier.combinedClickable(onClick = { resolved?.let { onThreadClick?.invoke(it.id) } },
                 onLongClick = { copyNoteLink(context, raw) }).padding(vertical = 2.dp))

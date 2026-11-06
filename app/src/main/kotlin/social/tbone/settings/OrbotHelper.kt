@@ -12,12 +12,8 @@ const val ORBOT_PACKAGE = "org.torproject.android"
 private const val PROXY_HOST = "127.0.0.1"
 private const val CONNECT_TIMEOUT_MS = 2_000
 
-/**
- * NOTE: Fill in the correct Zapstore deep-link URL for Orbot before shipping.
- * Expected format: something like "https://zapstore.dev/app/org.torproject.android"
- * — verify against the live Zapstore app/website.
- */
-const val ORBOT_ZAPSTORE_URL = "TODO_ZAPSTORE_URL_FOR_ORBOT"
+/** F-Droid listing for the official Orbot package. */
+const val ORBOT_ZAPSTORE_URL = "https://f-droid.org/packages/org.torproject.android/"
 
 sealed class OrbotStatus {
     /**

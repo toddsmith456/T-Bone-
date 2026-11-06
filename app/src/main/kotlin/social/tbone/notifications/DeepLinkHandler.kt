@@ -1,25 +1,25 @@
 package social.tbone.notifications
 
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.receiveAsFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class DeepLinkHandler @Inject constructor() {
 
-    private val _openThread = MutableSharedFlow<String>(extraBufferCapacity = 1)
-    val openThread: SharedFlow<String> = _openThread.asSharedFlow()
+    private val _openThread = Channel<String>(capacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val openThread = _openThread.receiveAsFlow()
 
-    private val _openProfile = MutableSharedFlow<String>(extraBufferCapacity = 1)
-    val openProfile: SharedFlow<String> = _openProfile.asSharedFlow()
+    private val _openProfile = Channel<String>(capacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val openProfile = _openProfile.receiveAsFlow()
 
     fun navigateToThread(eventId: String) {
-        _openThread.tryEmit(eventId)
+        _openThread.trySend(eventId)
     }
 
     fun navigateToProfile(pubkey: String) {
-        _openProfile.tryEmit(pubkey)
+        _openProfile.trySend(pubkey)
     }
 }

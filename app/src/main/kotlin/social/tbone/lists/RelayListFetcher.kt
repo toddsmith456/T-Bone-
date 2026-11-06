@@ -84,7 +84,7 @@ class RelayListFetcher @Inject constructor(
                             }
                         }
                         is RelayMessage.EndOfStoredEvents -> if (m.subscriptionId == subId) eose.add(pm.relayUrl)
-                        is RelayMessage.Closed -> if (m.subscriptionId == subId) eose.add(pm.relayUrl)
+                        is RelayMessage.Closed -> Unit // Rejection is not a successful read.
                         else -> Unit
                     }
                 }
@@ -93,16 +93,11 @@ class RelayListFetcher @Inject constructor(
         try {
             ready.await()
             val start = System.currentTimeMillis()
-            var graceStart = 0L
             while (true) {
                 delay(POLL_MS)
                 val now = System.currentTimeMillis()
                 val expected = targets.size.coerceAtLeast(1)
                 if (eose.size >= expected) break                 // everyone answered
-                if (eose.isNotEmpty()) {
-                    if (graceStart == 0L) graceStart = now
-                    if (now - graceStart >= GRACE_AFTER_FIRST_EOSE_MS) break // stragglers: stop waiting
-                }
                 if (now - start >= timeoutMs) break
             }
         } finally {
@@ -117,6 +112,5 @@ class RelayListFetcher @Inject constructor(
     companion object {
         const val DEFAULT_TIMEOUT_MS = 10_000L
         private const val POLL_MS = 100L
-        private const val GRACE_AFTER_FIRST_EOSE_MS = 3_000L
     }
 }

@@ -78,4 +78,4 @@ class PinListRepository @Inject constructor(
 internal fun pinEventIds(event: Event?): List<String> = event?.parsedTags.orEmpty()
     .filter { it.name == "e" }.mapNotNull { it.value() }
     .filter { it.length == 64 && it.all { c -> c in '0'..'9' || c in 'a'..'f' } }
-    .distinct().take(256)
+    .distinct()

@@ -88,7 +88,7 @@ internal fun IconSettings() {
 private fun saveSplashImage(context: Context, uri: Uri) {
     val resolver = context.contentResolver
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: error("No image")
+    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds); Unit } ?: error("No image")
     require(bounds.outWidth in 1..100000 && bounds.outHeight in 1..100000)
     var sample = 1
     while (bounds.outWidth / sample > 1024 || bounds.outHeight / sample > 1024) sample *= 2

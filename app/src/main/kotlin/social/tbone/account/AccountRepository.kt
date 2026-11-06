@@ -68,8 +68,25 @@ class AccountRepository @Inject constructor(
 
     /** Find a hidden account by its PIN (hashed). Null if no match. */
     suspend fun findHiddenByPin(pin: String): Account? {
-        val hash = hashPin(pin.trim())
-        return allAccounts.first().firstOrNull { it.isHidden && it.hiddenPinHash == hash }
+        val input = pin.trim()
+        val found = allAccounts.first().firstOrNull {
+            it.isHidden && it.hiddenPinHash?.let { stored ->
+                social.tbone.security.PinHasher.verify(input, stored)
+            } == true
+        } ?: return null
+        val oldHash = found.hiddenPinHash ?: return null
+        if (social.tbone.security.PinHasher.isLegacy(oldHash)) {
+            val upgraded = hashPin(input)
+            dataStore.edit { prefs ->
+                val raw = prefs[KEY_ACCOUNTS] ?: return@edit
+                val accounts = NostrJson.decodeFromString<List<Account>>(raw)
+                prefs[KEY_ACCOUNTS] = NostrJson.encodeToString(accounts.map {
+                    if (it.pubkey == found.pubkey && it.hiddenPinHash == oldHash)
+                        it.copy(hiddenPinHash = upgraded) else it
+                })
+            }
+        }
+        return found
     }
 
     /** Hide / unhide an account. When hiding, [pin] is required and hashed. */
@@ -78,7 +95,7 @@ class AccountRepository @Inject constructor(
         if (hidden && hash == null) return // need a PIN to hide
         dataStore.edit { prefs ->
             val accounts = prefs[KEY_ACCOUNTS]
-                ?.let { runCatching { NostrJson.decodeFromString<List<Account>>(it) }.getOrDefault(emptyList()) }
+                ?.let { NostrJson.decodeFromString<List<Account>>(it) }
                 ?: return@edit
             val updated = accounts.map {
                 if (it.pubkey == pubkey) it.copy(isHidden = hidden, hiddenPinHash = if (hidden) hash else null)

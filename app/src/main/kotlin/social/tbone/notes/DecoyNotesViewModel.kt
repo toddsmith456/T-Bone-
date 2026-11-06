@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -56,11 +58,15 @@ class DecoyNotesViewModel @Inject constructor(
 
     fun attachmentsFor(noteId: String): Flow<List<NoteAttachmentUi>> = repository.attachments(noteId)
 
+    private val textSaveMutex = Mutex()
+
     fun saveText(id: String?, title: String, text: String, folderId: String? = null, onSaved: (String) -> Unit = {}) {
         viewModelScope.launch {
-            runCatching { repository.saveText(id, title, text, folderId) }
-                .onSuccess { onSaved(it) }
-                .onFailure { _error.value = "could not save (${it.message})" }
+            textSaveMutex.withLock {
+                runCatching { repository.saveText(id, title, text, folderId) }
+                    .onSuccess { onSaved(it) }
+                    .onFailure { _error.value = "could not save (${it.message})" }
+            }
         }
     }
 

@@ -19,8 +19,13 @@ import timber.log.Timber
 import java.time.Duration
 import javax.inject.Inject
 import javax.inject.Singleton
-import okhttp3.OkHttpClient
-import social.tbone.di.ImageClientProvider
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.first
+import social.tbone.settings.AppSettings
+import social.tbone.settings.OrbotHelper
+import social.tbone.settings.OrbotStatus
+import social.tbone.nostr.relay.RelayConnection
 import okhttp3.Request
 import org.json.JSONObject
 
@@ -38,7 +43,8 @@ import org.json.JSONObject
 @Singleton
 class FollowerListRepository @Inject constructor(
     private val pool: RelayPool,
-    private val okHttp: OkHttpClient, // central: if Tor enabled, ImageClientProvider.client is Tor-aware; injected client should be ImageClientProvider.client (see NetworkModule)
+    private val appSettings: AppSettings,
+    @ApplicationContext private val context: Context,
 ) {
     data class FollowersState(
         val followers: List<String>? = null, // null = still loading / unknown
@@ -56,7 +62,13 @@ class FollowerListRepository @Inject constructor(
     // We probe both the primal relay (NIP-45 COUNT is not enough — we need the actual pubkeys) and
     // the HTTP endpoint. Either may be unavailable; we return whatever we get.
     private suspend fun fetchPrimalHttp(pubkeyHex: String): List<String>? {
+        appSettings.initialized.first { it }
         return try {
+            val useTor = appSettings.torEnabled.value
+            val proxy = if (useTor) OrbotHelper.getStatus(context) as? OrbotStatus.InstalledAndConnected else null
+            val okHttp = RelayConnection.buildClient(useTor = useTor,
+                proxyType = proxy?.proxyType ?: java.net.Proxy.Type.HTTP,
+                torPort = proxy?.port ?: 8118)
             // Primal's caching API: POST https://cache2.primal.net/v1 with ["contacts_list", pubkey]
             // The simpler public endpoint is https://primal.net/api/v1/contacts/followers?pubkey=...
             // Try the documented primal.net cache endpoint first.

@@ -149,6 +149,7 @@ fun DecoyNoteEditorScreen(
             }
             val att = atts[m.groupValues[2]]
             if (att != null) out.add(EditorBlock.Att(att))
+            else out.add(EditorBlock.Text(TextFieldValue(m.value))) // preserve unresolved references
             cursor = m.range.last + 1
         }
         if (cursor < text.length) out.add(EditorBlock.Text(TextFieldValue(text.substring(cursor))))
@@ -192,15 +193,19 @@ fun DecoyNoteEditorScreen(
         return out
     }
 
-    fun performSave(onDone: (String) -> Unit = {}) {
+    var builtOnce by remember { mutableStateOf(false) }
+
+    fun performSave(force: Boolean = false, onDone: (String) -> Unit = {}) {
+        if (!loaded || (id.isNotBlank() && !builtOnce)) return
         val text = serialize(blocks)
-        if (text.isBlank() && title.isBlank()) return
+        val submittedTitle = title
+        if (!force && text.isBlank() && submittedTitle.isBlank()) return
         val eid = savedId ?: java.util.UUID.randomUUID().toString()
         savedId = eid
-        viewModel.saveText(eid, title, text, folderId) { newId ->
+        viewModel.saveText(eid, submittedTitle, text, folderId) { newId ->
             savedId = newId
-            lastSaved = serialize(blocks)
-            lastSavedTitle = title
+            lastSaved = text
+            lastSavedTitle = submittedTitle
             onDone(newId)
         }
     }
@@ -210,12 +215,15 @@ fun DecoyNoteEditorScreen(
     // been resolved into boxes; after the one-time build, `blocks` is the
     // source of truth so editing/inserting never gets clobbered.
     var rawText by remember { mutableStateOf<String?>(null) }
-    var builtOnce by remember { mutableStateOf(false) }
-    val attachmentsFlow = savedId?.let { viewModel.attachmentsFor(it) }
+    val attachmentsFlow = remember(savedId) { savedId?.let { viewModel.attachmentsFor(it) } }
+    var attachmentsLoaded by remember(savedId) { mutableStateOf(false) }
     var attachmentsMap by remember { mutableStateOf<Map<String, NoteAttachmentUi>>(emptyMap()) }
     attachmentsFlow?.let { flow ->
         LaunchedEffect(flow) {
-            flow.collect { list -> attachmentsMap = list.associateBy { it.id } }
+            flow.collect { list ->
+                attachmentsMap = list.associateBy { it.id }
+                attachmentsLoaded = true
+            }
         }
     }
 
@@ -237,9 +245,9 @@ fun DecoyNoteEditorScreen(
     }
     // One-time rebuild of the storybook blocks once the note text AND its
     // attachments are both available.
-    LaunchedEffect(attachmentsMap, rawText, savedId, loaded) {
+    LaunchedEffect(attachmentsMap, attachmentsLoaded, rawText, savedId, loaded) {
         val rt = rawText
-        if (loaded && !builtOnce && rt != null && savedId != null) {
+        if (loaded && attachmentsLoaded && !builtOnce && rt != null && savedId != null) {
             blocks = buildBlocks(rt, attachmentsMap)
             builtOnce = true
         }
@@ -307,7 +315,7 @@ fun DecoyNoteEditorScreen(
         }
         val nid = savedId
         if (nid != null) saveInto(nid)
-        else performSave { newId -> saveInto(newId) }
+        else performSave(force = true) { newId -> saveInto(newId) }
     }
 
     fun beginRecording() {
