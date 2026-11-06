@@ -528,6 +528,8 @@ class AppSettings @Inject constructor(
 
     suspend fun setPinEnabled(enabled: Boolean) {
         dataStore.edit { it[PIN_ENABLED] = enabled }
+        // Do not return while callers can still see a stale disabled PIN.
+        pinEnabled.first { it == enabled }
     }
 
     suspend fun setPinAutoLockMinutes(minutes: Int) {
