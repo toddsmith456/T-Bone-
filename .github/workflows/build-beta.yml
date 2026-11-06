@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -50,6 +50,8 @@ jobs:
           GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
         run: ./gradlew :app:assembleBeta --stacktrace --no-configuration-cache
       - name: Run unit tests
+        env:
+          GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
         run: ./gradlew :app:testBetaUnitTest --stacktrace --no-configuration-cache
       - name: Build and test production release variant
         env:
@@ -70,7 +72,8 @@ jobs:
           test -f "$APK"
           TOOLS=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
           AAPT="$(dirname "$TOOLS")/aapt"
-          "$TOOLS" verify --verbose --print-certs "$APK"
+          "$TOOLS" verify --verbose --print-certs "$APK" | tee "$RUNNER_TEMP/beta-signature.txt"
+          grep -Ei '^(Signer #1|V3\.0 Signer): certificate SHA-256 digest: 0e37601f5716b1476b26a0aed023df97ca8c2ab0c1500cb2d3a7237337f65678$' "$RUNNER_TEMP/beta-signature.txt"
           "$AAPT" dump badging "$APK" | grep "package: name='social.tbone.fork.beta'"
           if "$AAPT" dump permissions "$APK" | grep -E 'android.permission.(BLUETOOTH_SCAN|BLUETOOTH_CONNECT|BLUETOOTH_ADVERTISE|NEARBY_WIFI_DEVICES|UWB_RANGING)'; then
             echo '::error::Nearby-device permission present in APK'
@@ -85,3 +88,29 @@ jobs:
           path: beta-artifact/
           if-no-files-found: error
           retention-days: 90
+
+      - name: Prepare beta release metadata
+        id: release
+        run: |
+          VERSION=$(sed -n 's/^versionName=//p' version.properties)
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "tag=beta-${VERSION}-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+      - name: Publish public beta
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: T-Bone beta ${{ steps.release.outputs.tag }}
+          prerelease: true
+          body: |
+            Public beta for testing. Package: `social.tbone.fork.beta` (installed alongside the public release).
+
+            - Choose bundled official color combinations or the supplied alternative launcher icon. Uploads apply to the in-app loading display, not the Android launcher or system splash.
+            - New installations can request unrestricted background battery usage; approval is optional and may increase battery use.
+            - Improves inline link hit testing and synchronizes PIN locking on exit from the notepad disguise.
+
+            Launcher refresh behavior varies by device. Please report icon, link, battery-prompt and disguise/PIN issues. This is not a full physical-device security audit.
+          files: |
+            beta-artifact/*.apk
+            beta-artifact/SHA256SUMS.txt
+          fail_on_unmatched_files: true
