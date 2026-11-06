@@ -27,14 +27,17 @@ class AppLockManager @Inject constructor(
             appSettings.initialized.first { it }
             timeout.initialize(appSettings.pinEnabled.value, appSettings.pinAutoLockMinutes.value)
             combine(appSettings.pinEnabled, appSettings.pinAutoLockMinutes) { enabled, minutes -> enabled to minutes }
-                .collect { (enabled, minutes) -> timeout.settingsChanged(enabled, minutes) }
+                .collect { timeout.settingsChanged(appSettings.pinEnabled.value, appSettings.pinAutoLockMinutes.value) }
         }
     }
 
     /** Secret decoy exit must never inherit an unlocked foreground session. */
     suspend fun lockForStealthExit() {
         appSettings.initialized.first { it }
-        timeout.initialize(appSettings.pinEnabled.value, appSettings.pinAutoLockMinutes.value)
+        val enabled = appSettings.getPinEnabled()
+        val minutes = appSettings.getPinAutoLockMinutes()
+        timeout.initialize(enabled, minutes)
+        timeout.settingsChanged(enabled, minutes)
         timeout.lock()
     }
 
