@@ -67,6 +67,7 @@ import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.ui.theme.appBorder
 import social.tbone.webxdc.WebxdcBridge
+import social.tbone.util.readBounded
 import social.tbone.webxdc.WebxdcShim
 import social.tbone.webxdc.XdcWebViewClient
 import timber.log.Timber
@@ -466,12 +467,13 @@ private suspend fun filesJson(context: Context, uris: List<Uri>): String = withC
     buildJsonArray {
         var total = 0L
         for (uri in uris.take(16)) {
+            val remaining = 24L * 1024 * 1024 - total
+            if (remaining <= 0) break
+            val maxFile = minOf(8L * 1024 * 1024, remaining).toInt()
             val bytes = runCatching {
-                context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                context.contentResolver.openInputStream(uri)?.use { it.readBounded(maxFile) }
             }.getOrNull() ?: continue
-            if (bytes.size > 8 * 1024 * 1024) continue
             total += bytes.size
-            if (total > 24 * 1024 * 1024) break
             addJsonObject {
                 put("name", displayName(context, uri))
                 put("type", context.contentResolver.getType(uri) ?: "application/octet-stream")
