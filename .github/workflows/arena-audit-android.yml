@@ -1,0 +1,99 @@
+name: Audit Android verification (no release)
+on:
+  push:
+    branches: [arena-release-readiness]
+permissions:
+  contents: read
+jobs:
+  unit-and-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Privacy gate
+        run: ./scripts/privacy-check.sh
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: ''
+      - name: Build app and instrumentation tests; run unit tests
+        id: build
+        env:
+          GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
+        run: |
+          set +e
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:assembleDebugAndroidTest --stacktrace --no-configuration-cache 2>&1 | tee /tmp/arena-gradle.log
+          result=${PIPESTATUS[0]}
+          if [ "$result" -ne 0 ]; then
+            python3 - <<'PYCODE'
+          from pathlib import Path
+          lines = Path('/tmp/arena-gradle.log').read_text(errors='replace').splitlines()
+          selected = [x for x in lines if x.startswith('e: ') or ' FAILED' in x or 'What went wrong:' in x or 'Caused by:' in x or 'exception' in x.lower() or x.startswith('* ')]
+          message = '\n'.join(selected[-80:] + lines[-35:])[-25000:]
+          print('::error::' + message.replace('%','%25').replace('\r','%0D').replace('\n','%0A'))
+          PYCODE
+          fi
+          exit "$result"
+      - name: Enable KVM
+        id: kvm
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run account, notes, feed and PIN regression tests
+        id: general
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=social.tbone.migration.LegacyCleanupTest,social.tbone.notifications.NavigationIntentTest,social.tbone.settings.OrbotInstallTest,social.tbone.media.MediaMetadataTest,social.tbone.ui.AccountStartupScreenTest,social.tbone.ui.settings.HideAccountDialogTest,social.tbone.notes.NewNoteEditorTest,social.tbone.notes.NoteAudioSourceTest,social.tbone.notes.NotesCryptoConcurrencyTest,social.tbone.calendar.CalendarCryptoConcurrencyTest,social.tbone.account.LocalKeyConcurrencyTest,social.tbone.notes.PersistentWipeStateTest,social.tbone.notes.NoteEditorSaveTest,social.tbone.ui.toolbox.geohash.GeohashLiveTest,social.tbone.notes.NotesIntegrityTest,social.tbone.security.BackgroundPinTimeoutTest,social.tbone.security.PinAttemptLimiterTest,social.tbone.calendar.CalendarWipeGateTest,social.tbone.ui.feed.FeedScrollTest,social.tbone.ui.feed.IconAndLinkRegressionTest,social.tbone.ui.feed.RemainingAuditUiTest,social.tbone.stealth.StealthManagerTest,social.tbone.stealth.StealthPinExitTest --stacktrace --no-configuration-cache
+      - name: Preserve and verify targeted general results
+        if: ${{ !cancelled() && steps.general.outcome != 'skipped' }}
+        run: |
+          cp -R app/build/outputs/androidTest-results /tmp/arena-general-results 2>/dev/null || true
+          python3 - <<'PYCODE'
+          import glob, xml.etree.ElementTree as ET
+          paths = glob.glob('/tmp/arena-general-results/**/*.xml', recursive=True)
+          cases = [case for path in paths for case in ET.parse(path).getroot().iter('testcase')]
+          for name, expected in [('NewNoteEditorTest', 14), ('HideAccountDialogTest', 1), ('AccountStartupScreenTest', 1), ('OrbotInstallTest', 1), ('MediaMetadataTest', 2), ('NavigationIntentTest', 2), ('LegacyCleanupTest', 5), ('RemainingAuditUiTest', 8), ('IconAndLinkRegressionTest', 9)]:
+              selected = [c for c in cases if c.get('classname', '').endswith(name)]
+              if len(selected) != expected or any(c.find('skipped') is not None for c in selected):
+                  raise SystemExit(f'{name}: expected {expected} executed tests, found {len(selected)} (some may have skipped)')
+              print(f'{name}: {len(selected)} tests executed')
+          PYCODE
+      - name: Report Android test failures
+        if: failure()
+        run: |
+          python3 - <<'PYCODE'
+          import glob, xml.etree.ElementTree as ET
+          errors = []
+          paths = glob.glob('app/build/outputs/androidTest-results/**/*.xml', recursive=True) + glob.glob('/tmp/arena-webview-results/**/*.xml', recursive=True) + glob.glob('/tmp/arena-general-results/**/*.xml', recursive=True) + glob.glob('app/build/test-results/testDebugUnitTest/**/*.xml', recursive=True)
+          for path in paths:
+              try:
+                  root = ET.parse(path).getroot()
+                  for test in root.iter('testcase'):
+                      for fail in list(test.findall('failure')) + list(test.findall('error')):
+                          errors.append(f"{test.get('classname')}.{test.get('name')}: {fail.get('message', '')}\n{fail.text or ''}")
+              except Exception as e:
+                  errors.append(f'{path}: {e}')
+          for path in paths:
+              try:
+                  root = ET.parse(path).getroot()
+                  for test in root.iter('testcase'):
+                      if test.get('classname', '').endswith('XdcBrowserWipeTest'):
+                          skipped = test.find('skipped')
+                          if skipped is not None:
+                              errors.append(f"WebView probe skipped: {test.get('name')}: {skipped.get('message', '')} {skipped.text or ''}")
+              except Exception:
+                  pass
+          if not paths:
+              errors.append('No Android test XML results were produced; check emulator startup and test runner logs.')
+          if errors:
+              message = '\n'.join(errors)[-25000:].replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+              print('::error::' + message)
+          PYCODE

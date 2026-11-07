@@ -1,0 +1,46 @@
+name: Audit verification (no release)
+on:
+  push:
+    branches: [arena-release-readiness]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: ''
+      - name: Privacy gate
+        run: bash scripts/privacy-check.sh
+      - name: Build and unit tests
+        env:
+          GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
+        run: |
+          chmod +x gradlew
+          set +e
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest --stacktrace --no-configuration-cache > /tmp/audit-build.log 2>&1
+          status=$?
+          tail -250 /tmp/audit-build.log
+          if [ "$status" -ne 0 ]; then
+            while IFS= read -r line; do
+              echo "::error::$line"
+            done < <(grep -E '(^e:| FAILED|[0-9]+ tests completed|Compilation error|What went wrong)' /tmp/audit-build.log | head -35)
+            for xml in app/build/test-results/testDebugUnitTest/TEST-*.xml; do
+              [ -f "$xml" ] || continue
+              python3 - "$xml" <<'PYXML'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse(sys.argv[1]).getroot()
+          for case in root.iter('testcase'):
+              for failure in case.findall('failure'):
+                  for line in (case.get('name', '') + '\n' + (failure.text or '')).splitlines()[:12]:
+                      print('::error::' + line.replace('%', '%25'))
+          PYXML
+            done
+          fi
+          exit "$status"
