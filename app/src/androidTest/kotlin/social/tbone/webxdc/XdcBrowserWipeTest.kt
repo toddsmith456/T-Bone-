@@ -28,6 +28,9 @@ import social.tbone.FeedRegressionActivity
 import org.junit.runner.RunWith
 import social.tbone.notes.NoteWriteCoordinator
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -95,7 +98,14 @@ class XdcBrowserWipeTest {
     private suspend fun checkOfflineMiniAppLoadsLocalAssetsAndBlocksSockets() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val root = File(context.cacheDir, "xdc-network-test-" + UUID.randomUUID()).apply { mkdirs() }
-        val server = MockWebServer().apply { start() }
+        val server = MockWebServer().apply {
+            enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    webSocket.close(code, reason)
+                }
+            }))
+            start()
+        }
         var view: WebView? = null
         var probe: WebView? = null
         try {
@@ -124,8 +134,11 @@ class XdcBrowserWipeTest {
             // rather than merely observing the mini-app CSP reject the socket.
             val bare = newView("http://127.0.0.1/")
             probe = bare
-            withContext(Dispatchers.Main) { configureXdcNetworkIsolation(bare) }
             val ws = server.url("/socket").toString().replaceFirst("http://", "ws://")
+            evaluate(bare, "window.baselineSocket = new WebSocket('$ws'); true")
+            assertTrue("positive control must reach local server", server.takeRequest(5, TimeUnit.SECONDS) != null)
+            evaluate(bare, "window.baselineSocket.close(); true")
+            withContext(Dispatchers.Main) { configureXdcNetworkIsolation(bare) }
             evaluate(bare, "try { new WebSocket('$ws'); } catch (e) {} true")
             assertEquals("WebSocket should not reach the local test server", null, server.takeRequest(2, TimeUnit.SECONDS))
         } finally {
