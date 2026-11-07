@@ -59,9 +59,14 @@ data class VoiceRecorderState(
 @HiltViewModel
 class VoiceRecorderViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val recordingGate: social.tbone.toolbox.VoiceRecordingGate,
+    private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
 ) : ViewModel() {
 
     private val anonymizer = VoiceAnonymizer()
+    private val recordingOwner = Any()
+    private val starting = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val disposed = java.util.concurrent.atomic.AtomicBoolean(false)
 
     private val _state = MutableStateFlow(VoiceRecorderState())
     val state: StateFlow<VoiceRecorderState> = _state.asStateFlow()
@@ -95,45 +100,57 @@ class VoiceRecorderViewModel @Inject constructor(
 
     /** Begins a new recording into [dir]. Assumes microphone permission granted. */
     fun startRecording(dir: File) {
-        if (_state.value.isRecording || _state.value.isAnonymizing) return
+        if (_state.value.isRecording || _state.value.isAnonymizing || !starting.compareAndSet(false, true)) return
+        val epoch = noteWrites.currentWipeEpoch()
+        stopPreview()
         viewModelScope.launch {
-            val q = _state.value.quality
-            val ok = withContext(Dispatchers.IO) {
-                runCatching {
-                    dir.mkdirs()
-                    val file = File(dir, "voice_${System.currentTimeMillis()}.m4a")
-                    val r = MediaRecorder(context).apply {
-                        setAudioSource(MediaRecorder.AudioSource.MIC)
-                        setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                        setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                        setAudioSamplingRate(q.sampleRate)
-                        setAudioEncodingBitRate(q.bitRate)
-                        setOutputFile(file.absolutePath)
-                        prepare()
-                        start()
-                    }
-                    recorder = r
-                    startedAt = System.currentTimeMillis()
-                    stopPreview()
-                    _state.update {
-                        it.copy(
-                            isRecording = true,
-                            isPaused = false,
-                            currentFile = file,
-                            anonymousFile = null,
-                            isAnonymous = false,
-                            isAnonymizing = false,
-                            elapsedMs = 0L,
-                            error = null,
-                        )
-                    }
-                    startTicker()
-                    true
-                }.getOrDefault(false)
-            }
-            if (!ok) {
-                _state.update { it.copy(isRecording = false, error = "could not start recording — check microphone permission") }
-            }
+            try {
+                val q = _state.value.quality
+                val ok = withContext(Dispatchers.IO) {
+                    runCatching {
+                        recordingGate.start(recordingOwner, epoch) {
+                            check(!disposed.get()) { "recorder closed" }
+                            check(dir.isDirectory || dir.mkdirs()) { "recording directory unavailable" }
+                            val file = File.createTempFile("voice_", ".m4a", dir)
+                            val r = MediaRecorder(context)
+                            try {
+                                r.setAudioSource(MediaRecorder.AudioSource.MIC)
+                                r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                                r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                                r.setAudioSamplingRate(q.sampleRate)
+                                r.setAudioEncodingBitRate(q.bitRate)
+                                r.setOutputFile(file.absolutePath)
+                                r.prepare()
+                                r.start()
+                            } catch (failure: Exception) {
+                                runCatching { r.release() }
+                                file.delete()
+                                throw failure
+                            }
+                            recorder = r
+                            startedAt = System.currentTimeMillis()
+                            _state.update { it.copy(isRecording = true, isPaused = false,
+                                currentFile = file, anonymousFile = null, isAnonymous = false,
+                                isAnonymizing = false, elapsedMs = 0L, error = null) }
+                            startTicker()
+                            val closeRecording: (Boolean) -> Unit = { discard ->
+                                ticker?.cancel()
+                                runCatching { r.stop() } // A too-short recording may not be finalizable.
+                                r.release() // A release failure keeps the registration for a wipe retry.
+                                recorder = null
+                                if (discard) {
+                                    _state.update { VoiceRecorderState(quality = it.quality) }
+                                } else {
+                                    _state.update { it.copy(isRecording = false, isPaused = false,
+                                        anonymousFile = null, isAnonymous = false, isAnonymizing = false) }
+                                }
+                            }
+                            closeRecording
+                        }
+                    }.getOrDefault(false)
+                }
+                if (!ok) _state.update { it.copy(error = "could not start recording") }
+            } finally { starting.set(false) }
         }
     }
 
@@ -141,12 +158,13 @@ class VoiceRecorderViewModel @Inject constructor(
         if (!_state.value.isRecording || _state.value.isPaused) return
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) {
-                runCatching { recorder?.pause(); true }.getOrDefault(false)
+                runCatching { recordingGate.runIfOwned(recordingOwner) {
+                    recorder?.pause()
+                    ticker?.cancel()
+                    _state.update { it.copy(isPaused = true) }
+                } }.getOrDefault(false)
             }
-            if (ok) {
-                ticker?.cancel()
-                _state.update { it.copy(isPaused = true) }
-            }
+            if (!ok && _state.value.isRecording) _state.update { it.copy(error = "could not pause recording") }
         }
     }
 
@@ -154,39 +172,24 @@ class VoiceRecorderViewModel @Inject constructor(
         if (!_state.value.isRecording || !_state.value.isPaused) return
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) {
-                runCatching { recorder?.resume(); true }.getOrDefault(false)
+                runCatching { recordingGate.runIfOwned(recordingOwner) {
+                    recorder?.resume()
+                    _state.update { it.copy(isPaused = false) }
+                    startTicker()
+                } }.getOrDefault(false)
             }
-            if (ok) {
-                _state.update { it.copy(isPaused = false) }
-                startTicker()
-            }
+            if (!ok && _state.value.isRecording) _state.update { it.copy(error = "could not resume recording") }
         }
     }
 
-    /** Stops recording and finalizes the file. Share/save options appear after this. */
+    /** Stops recording and finalizes the file. */
     fun stopRecording() {
         if (!_state.value.isRecording) return
-        ticker?.cancel()
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    recorder?.apply {
-                        runCatching { stop() }
-                        release()
-                    }
-                    recorder = null
-                }
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { recordingGate.stop(recordingOwner) }.isSuccess
             }
-            // Starting a new recording after this resets the anonymized state.
-            _state.update {
-                it.copy(
-                    isRecording = false,
-                    isPaused = false,
-                    anonymousFile = null,
-                    isAnonymous = false,
-                    isAnonymizing = false,
-                )
-            }
+            if (!ok) _state.update { it.copy(error = "could not stop recording") }
         }
     }
 
@@ -199,14 +202,23 @@ class VoiceRecorderViewModel @Inject constructor(
         val snapshot = _state.value
         val src = snapshot.currentFile ?: return
         if (snapshot.isRecording || snapshot.isPaused || snapshot.isAnonymizing) return
+        val epoch = noteWrites.currentWipeEpoch()
         val speed = snapshot.speed
         val pitch = snapshot.pitch
         val drive = snapshot.drive
         _state.update { it.copy(isAnonymizing = true, error = null) }
 
         viewModelScope.launch {
-            val anon = withContext(Dispatchers.IO) {
-                anonymizer.anonymize(src, speed, pitch, drive)
+            val anon = try {
+                noteWrites.runCancellableAtEpoch(epoch) {
+                    withContext(Dispatchers.IO) { anonymizer.anonymize(src, speed, pitch, drive) }
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) { null }
+            if (epoch != noteWrites.currentWipeEpoch()) {
+                _state.update { VoiceRecorderState(quality = it.quality) }
+                return@launch
             }
             if (anon != null) {
                 stopPreview()
@@ -327,10 +339,10 @@ class VoiceRecorderViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        disposed.set(true)
         ticker?.cancel()
         previewTicker?.cancel()
-        runCatching { recorder?.release() }
-        recorder = null
+        runCatching { recordingGate.stop(recordingOwner, discard = true) }
         runCatching { player?.release() }
         player = null
     }

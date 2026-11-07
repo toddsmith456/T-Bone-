@@ -37,6 +37,7 @@ class ToolboxSecurity @Inject constructor(
     private val scope: CoroutineScope,
     private val calendarAlarms: social.tbone.calendar.CalendarAlarmScheduler,
     private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
+    private val voiceRecordingGate: social.tbone.toolbox.VoiceRecordingGate,
 ) {
 
     private val attempts = PinAttemptLimiter(context, "toolbox")
@@ -121,6 +122,7 @@ class ToolboxSecurity @Inject constructor(
             val complete = noteWrites.runWipe(social.tbone.notes.NoteWriteCoordinator.WipeKind.TOOLBOX) {
             val steps = WipeSteps { name, error -> timber.log.Timber.e(error, "Toolbox wipe step failed: $name") }
             steps.run("pause geohash watchers") { geohashMonitor.pauseForWipe() }
+            steps.run("stop active voice recording") { voiceRecordingGate.stopForWipe() }
             steps.run("pause and drain note writes") { noteWrites.pauseAndDrain() }
             steps.run("block and cancel reminders") { calendarAlarms.beginSensitiveWipe() }
             steps.run("disable geohash cache") { appSettings.setGeohashCacheMillis(0L) }

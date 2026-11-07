@@ -35,6 +35,7 @@ class DataWiper @Inject constructor(
     private val scope: CoroutineScope,
     private val calendarAlarms: social.tbone.calendar.CalendarAlarmScheduler,
     private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
+    private val voiceRecordingGate: social.tbone.toolbox.VoiceRecordingGate,
     private val appSettings: social.tbone.settings.AppSettings,
     private val geohashCache: social.tbone.ui.toolbox.geohash.GeohashMessageCache,
     private val geohashMonitor: social.tbone.ui.toolbox.geohash.GeohashPinnedMonitor,
@@ -63,6 +64,7 @@ class DataWiper @Inject constructor(
             val steps = WipeSteps { name, error -> timber.log.Timber.e(error, "Wipe step failed: $name") }
             steps.run("pause follow list mutations") { followMutations.pauseForWipe() }
             steps.run("pause geohash watchers") { geohashMonitor.pauseForWipe() }
+            steps.run("stop active voice recording") { voiceRecordingGate.stopForWipe() }
             steps.run("pause and drain note writes") { noteWrites.pauseAndDrain() }
             steps.run("block and cancel calendar reminders") { calendarAlarms.beginSensitiveWipe() }
             steps.run("cancel notifications") {

@@ -73,7 +73,7 @@ fun VoiceRecorderScreen(
     var status by remember { mutableStateOf<String?>(null) }
 
     val recordingsDir = remember(context) {
-        File(context.filesDir, "recordings").apply { mkdirs() }
+        File(context.filesDir, "recordings")
     }
 
     // Microphone permission — asked on the first record tap, with proper
@@ -255,7 +255,7 @@ fun VoiceRecorderScreen(
 
                 if (state.isAnonymous) {
                     LockBadge(
-                        label = "anonymized output · each re-render starts from the original recording",
+                        label = "modified output · each re-render starts from the original recording",
                         tint = BonyColors.Accent,
                         iconSize = 14.dp,
                         modifier = Modifier.padding(vertical = 8.dp),
@@ -273,13 +273,18 @@ fun VoiceRecorderScreen(
                 Spacer(Modifier.height(6.dp))
                 ActionButton(
                     label = when {
-                        state.isAnonymizing -> "◌ ANONYMIZING…"
-                        state.isAnonymous -> "◉ RE-ANONYMIZE VOICE"
-                        else -> "◉ ANONYMIZE VOICE"
+                        state.isAnonymizing -> "◌ MODIFYING VOICE…"
+                        state.isAnonymous -> "◉ RE-MODIFY VOICE"
+                        else -> "◉ MODIFY VOICE"
                     },
                     enabled = !state.isAnonymizing,
                 ) { viewModel.anonymize() }
 
+                Text(
+                    text = "Voice effects do not guarantee anonymity. Your voice or what you say may still identify you.",
+                    style = BonyType.caption.copy(color = BonyColors.TextMute),
+                    modifier = Modifier.padding(vertical = 6.dp),
+                )
                 Spacer(Modifier.height(6.dp))
                 ActionButton("↓ save to device", enabled = !state.isAnonymizing) {
                     val extension = state.activeFile?.extension?.takeIf { it.isNotBlank() } ?: "m4a"

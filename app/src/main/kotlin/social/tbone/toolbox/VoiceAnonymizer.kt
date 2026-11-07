@@ -9,18 +9,8 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.abs
 
-/**
- * Voice anonymizer: decodes a recording to PCM, applies an irreversible
- * transform (slow down + pitch down + hard distortion) that makes the voice
- * completely unrecognizable, and writes a WAV you can preview / save / share.
- *
- * Why it can't be undone in an audio editor:
- *  - Resampling permanently discards samples — the original timing is gone,
- *    so pitch/speed can't be cleanly restored (any attempt introduces severe
- *    artifacts).
- *  - The waveshaper (soft-clip distortion) non-linearly squashes the waveform,
- *    destroying the original spectral structure irreversibly.
- */
+/** Applies voice effects and writes a WAV for preview or export. These effects
+ * do not guarantee anonymity or prevent speaker identification. */
 class VoiceAnonymizer {
 
     private data class Pcm(val samples: ShortArray, val sampleRate: Int)
@@ -113,7 +103,7 @@ class VoiceAnonymizer {
      *  - [pitch] (0.8–1.3): extra pitch-character smear (resample + inverse
      *    resample), which audibly changes the voice without changing duration.
      *  - [drive] (0–8): waveshaper distortion amount.
-     * All are irreversible.
+     * These effects do not guarantee anonymity.
      */
     fun anonymize(
         src: File,
@@ -163,7 +153,7 @@ class VoiceAnonymizer {
         for (i in samples.indices) {
             val x = samples[i] / 32768f
             // Mild drive keeps articulation intact; the non-linearity still
-            // smears the formant structure enough to hide identity.
+            // changes the sound; it does not guarantee identity protection.
             val y = (drive * x) / (1f + abs(drive * x))
             val v = y * 32768f * 0.95f
             out[i] = v.toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort()
