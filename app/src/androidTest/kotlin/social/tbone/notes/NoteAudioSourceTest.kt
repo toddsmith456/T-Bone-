@@ -16,7 +16,7 @@ class NoteAudioSourceTest {
         assertEquals(2, source.readAt(2, buffer, 1, 4))
         assertArrayEquals(byteArrayOf(0, 3, 4, 0, 0), buffer)
         assertEquals(-1, source.readAt(4, buffer, 0, 1))
-        assertEquals(4L, source.size)
+        assertEquals(4L, source.getSize())
         source.close()
     }
 
