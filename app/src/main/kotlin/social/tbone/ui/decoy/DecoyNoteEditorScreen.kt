@@ -784,32 +784,36 @@ private fun AttachmentCard(
 private var player: MediaPlayer? = null
 
 private fun playAttachment(context: Context, att: NoteAttachmentUi, onDone: () -> Unit) {
-    runCatching {
-        val file = File(context.cacheDir, "play_${att.id}.m4a")
-        file.writeBytes(att.data)
-        stopPlayback()
-        // Delete any stale play file after 6h grace is handled by CacheCleaner;
-        // we also clear the current file on completion to avoid accumulation.
-        player = MediaPlayer().apply {
-            setDataSource(file.absolutePath)
-            setOnCompletionListener {
-                stopPlayback()
-                try { file.delete() } catch (_: Exception) {}
-                onDone()
+    stopPlayback()
+    val instance = MediaPlayer()
+    player = instance
+    try {
+        // Feed decrypted bytes directly to the player; no plaintext copy in cache.
+        instance.setDataSource(object : android.media.MediaDataSource() {
+            override fun getSize(): Long = att.data.size.toLong()
+            override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
+                if (position < 0 || position >= att.data.size) return -1
+                val count = minOf(size, att.data.size - position.toInt())
+                System.arraycopy(att.data, position.toInt(), buffer, offset, count)
+                return count
             }
-            setOnErrorListener { _, _, _ -> try { file.delete() } catch (_: Exception) {}; false }
-            prepare()
-            start()
-        }
+            override fun close() = Unit
+        })
+        instance.setOnCompletionListener { stopPlayback(); onDone() }
+        instance.setOnErrorListener { _, _, _ -> stopPlayback(); onDone(); true }
+        instance.prepare()
+        instance.start()
+    } catch (_: Exception) {
+        stopPlayback()
+        onDone()
     }
 }
 
 private fun stopPlayback() {
-    runCatching {
-        player?.stop()
-        player?.release()
-        player = null
-    }
+    val current = player
+    player = null
+    runCatching { current?.stop() }
+    runCatching { current?.release() }
 }
 
 private fun formatSize(bytes: Long): String = when {
