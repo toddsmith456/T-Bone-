@@ -33,7 +33,14 @@ jobs:
             done < <(grep -E '(^e:| FAILED|[0-9]+ tests completed|Compilation error|What went wrong)' /tmp/audit-build.log | head -35)
             for xml in app/build/test-results/testDebugUnitTest/TEST-*.xml; do
               [ -f "$xml" ] || continue
-              grep -o '<failure[^>]*' "$xml" | head -10 | while IFS= read -r line; do echo "::error::$line"; done
+              python3 - "$xml" <<'PYXML'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse(sys.argv[1]).getroot()
+          for case in root.iter('testcase'):
+              for failure in case.findall('failure'):
+                  for line in (case.get('name', '') + '\n' + (failure.text or '')).splitlines()[:12]:
+                      print('::error::' + line.replace('%', '%25'))
+          PYXML
             done
           fi
           exit "$status"
