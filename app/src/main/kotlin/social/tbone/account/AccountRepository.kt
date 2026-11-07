@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import social.tbone.nostr.NostrJson
 import social.tbone.Tunables
@@ -33,6 +35,8 @@ class AccountRepository @Inject constructor(
     private val dataStore: DataStore<Preferences>,
     private val appSettings: AppSettings,
 ) {
+    private val hiddenVerification = Mutex()
+
     // Raw, unfiltered — used internally for hidden PIN lookup and migration.
     private val allAccounts: Flow<List<Account>> = dataStore.data.map { prefs ->
         prefs[KEY_ACCOUNTS]
@@ -67,7 +71,9 @@ class AccountRepository @Inject constructor(
         allAccounts.first().any { it.isHidden }
 
     /** Find a hidden account by its PIN (hashed). Null if no match. */
-    suspend fun findHiddenByPin(pin: String): Account? = findHiddenMatches(pin).firstOrNull()
+    suspend fun findHiddenByPin(pin: String): Account? = hiddenVerification.withLock {
+        findHiddenMatches(pin).firstOrNull()
+    }
 
     /** A PIN can intentionally be shared by several hidden accounts. */
     private suspend fun findHiddenMatches(pin: String): List<Account> {
@@ -130,7 +136,9 @@ class AccountRepository @Inject constructor(
     }
 
     /** Unlock a hidden account via PIN: reveals it for this session and switches to it. */
-    suspend fun unlockHiddenByPin(pin: String): Boolean = activateHiddenMatches(findHiddenMatches(pin))
+    suspend fun unlockHiddenByPin(pin: String): Boolean = hiddenVerification.withLock {
+        activateHiddenMatches(findHiddenMatches(pin))
+    }
 
     /** A verified PIN must not unlock an account whose PIN changed while
      * verification was in flight, or resurrect an account already removed. */

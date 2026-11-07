@@ -424,6 +424,7 @@ class SettingsViewModel @Inject constructor(
 
     // ── Stealth: hidden accounts ─────────────────────────────────────────────
     private val _hiddenUnlockMessage = MutableStateFlow<String?>(null)
+    private val hiddenUnlockRunning = java.util.concurrent.atomic.AtomicBoolean(false)
     val hiddenUnlockMessage: StateFlow<String?> = _hiddenUnlockMessage.asStateFlow()
 
     fun hideAccount(pubkey: String, pin: String) {
@@ -447,7 +448,9 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun unlockHiddenAccount(pin: String) {
+        if (!hiddenUnlockRunning.compareAndSet(false, true)) return
         viewModelScope.launch {
+          try {
             val message = try {
                 if (accountRepository.unlockHiddenByPin(pin)) "Matching hidden accounts unlocked" else "Wrong PIN"
             } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
@@ -455,6 +458,9 @@ class SettingsViewModel @Inject constructor(
             _hiddenUnlockMessage.value = message
             kotlinx.coroutines.delay(2000)
             _hiddenUnlockMessage.value = null
+          } finally {
+            hiddenUnlockRunning.set(false)
+          }
         }
     }
 
