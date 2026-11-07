@@ -82,12 +82,13 @@ class DecoyNotesRepository @Inject constructor(
         text: String,
         folderId: String?,
     ): String {
-        val trimmed = text.trim()
         val eid = id ?: UUID.randomUUID().toString()
         val existing = dao.getById(eid)
         val now = System.currentTimeMillis()
-        val (ct, iv) = crypto.encrypt(trimmed)
-        val (tct, tiv) = if (title.isBlank()) null to null else crypto.encrypt(title.trim())
+        // Whitespace can be meaningful in notes (indentation, blank lines,
+        // and spaces beside attachment markers); store the exact edit.
+        val (ct, iv) = crypto.encrypt(text)
+        val (tct, tiv) = if (title.isBlank()) null to null else crypto.encrypt(title)
         dao.upsert(
             DecoyNoteEntity(
                 id = eid,

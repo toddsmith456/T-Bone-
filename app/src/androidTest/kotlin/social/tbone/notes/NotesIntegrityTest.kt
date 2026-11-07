@@ -52,6 +52,17 @@ class NotesIntegrityTest {
         assertEquals("", decoy.getById(decoyId)?.text)
     }
 
+    @Test fun noteWhitespaceSurvivesSaveAndReopenInBothVaults() = runBlocking {
+        val title = "  title  "
+        val text = "\n  indented text  \n\n"
+        real.saveText("spaced-real", title, text, null)
+        decoy.saveText("spaced-decoy", title, text, null)
+        assertEquals(title, real.getById("spaced-real")?.title)
+        assertEquals(text, real.getById("spaced-real")?.text)
+        assertEquals(title, decoy.getById("spaced-decoy")?.title)
+        assertEquals(text, decoy.getById("spaced-decoy")?.text)
+    }
+
     @Test fun checklistsUpdateSameIdAndPreserveIndependentValues() = runBlocking {
         val first = listOf(ChecklistItem("one"))
         val latest = listOf(ChecklistItem("two", checked = true))
