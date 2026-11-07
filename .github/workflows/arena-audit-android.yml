@@ -95,7 +95,7 @@ jobs:
           python3 - <<'PYCODE'
           import glob, xml.etree.ElementTree as ET
           errors = []
-          paths = glob.glob('app/build/outputs/androidTest-results/**/*.xml', recursive=True) + glob.glob('/tmp/arena-webview-results/**/*.xml', recursive=True) + glob.glob('/tmp/arena-general-results/**/*.xml', recursive=True)
+          paths = glob.glob('app/build/outputs/androidTest-results/**/*.xml', recursive=True) + glob.glob('/tmp/arena-webview-results/**/*.xml', recursive=True) + glob.glob('/tmp/arena-general-results/**/*.xml', recursive=True) + glob.glob('app/build/test-results/testDebugUnitTest/**/*.xml', recursive=True)
           for path in paths:
               try:
                   root = ET.parse(path).getroot()
