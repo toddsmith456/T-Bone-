@@ -64,8 +64,7 @@ fun PinLockScreen(
             // Duress pin: wipe all app data instead of unlocking. This happens
             // silently (the app restarts into onboarding) so the duress pin is
             // indistinguishable from a wrong pin at the moment of entry.
-            if (viewModel.isDuressPin(attemptedPin)) {
-                viewModel.wipeData()
+            if (viewModel.handleDuressPin(attemptedPin)) {
                 return@launch
             }
             val ok = viewModel.verifyPin(attemptedPin)

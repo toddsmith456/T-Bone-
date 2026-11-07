@@ -23,11 +23,14 @@ class ToolboxLockViewModel @Inject constructor(
 
     suspend fun verifyPin(input: String): Boolean = withContext(Dispatchers.Default) { security.verifyPin(input) }
 
-    suspend fun isDuressPin(input: String): Boolean = withContext(Dispatchers.Default) { security.isDuressPin(input) }
+    suspend fun handleDuressPin(input: String): Boolean =
+        social.tbone.security.verifyAndStartDuressWipe(
+            verify = { security.isDuressPin(input) },
+            startWipe = { security.wipeToolbox() },
+        )
 
     fun unlock() {
         toolboxLockManager.unlock()
     }
 
-    fun wipeToolbox() = security.wipeToolbox()
 }

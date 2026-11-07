@@ -67,8 +67,7 @@ fun ToolboxLockScreen(
         isSubmitting = true
         scope.launch {
           try {
-            if (viewModel.isDuressPin(attemptedPin)) {
-                viewModel.wipeToolbox()
+            if (viewModel.handleDuressPin(attemptedPin)) {
                 return@launch
             }
             val ok = viewModel.verifyPin(attemptedPin)

@@ -27,10 +27,11 @@ class PinLockViewModel @Inject constructor(
      * True when the entered pin is the duress pin (meaning we should wipe
      * instead of unlock). Returns false when duress is disabled.
      */
-    suspend fun isDuressPin(input: String): Boolean = withContext(Dispatchers.Default) { lockManager.isDuressPin(input) }
-
-    /** Completely wipes the app's data and restarts into onboarding. */
-    fun wipeData() = dataWiper.wipeAndRestart()
+    suspend fun handleDuressPin(input: String): Boolean =
+        social.tbone.security.verifyAndStartDuressWipe(
+            verify = { lockManager.isDuressPin(input) },
+            startWipe = { dataWiper.wipeAndRestart() },
+        )
 
     fun unlock() = lockManager.unlock()
 }
