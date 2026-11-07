@@ -557,13 +557,7 @@ class ThreadViewModel @Inject constructor(
                 if (msg.subscriptionId in quoteSubIds &&
                     eoseCount(msg.subscriptionId) >= expectedEose()
                 ) {
-                    quoteSubIds -= msg.subscriptionId
-                    activeSubIds -= msg.subscriptionId
-                    eoseRelays.remove(msg.subscriptionId)
-                    pool.unsubscribe(msg.subscriptionId)
-                    // Every relay has answered: whatever is still missing is
-                    // unavailable rather than still loading.
-                    refreshUnresolvedQuotes()
+                    closeQuote(msg.subscriptionId)
                 }
             }
 
@@ -644,9 +638,27 @@ class ThreadViewModel @Inject constructor(
                 val subId = "thread-quote-" + java.util.UUID.randomUUID().toString()
                 quoteSubIds += subId
                 activeSubIds += subId
-                pool.subscribe(listOf(Filter(ids = batch)), id = subId, label = "thread-quote")
+                try {
+                    pool.subscribe(listOf(Filter(ids = batch)), id = subId, label = "thread-quote")
+                } catch (error: Exception) {
+                    closeQuote(subId)
+                    throw error
+                }
+                viewModelScope.launch {
+                    kotlinx.coroutines.delay(15_000)
+                    closeQuote(subId)
+                }
             }
         }
+    }
+
+    private fun closeQuote(id: String) {
+        if (!quoteSubIds.remove(id)) return
+        activeSubIds.remove(id)
+        eoseRelays.remove(id)
+        pool.unsubscribe(id)
+        // A timeout or all-relay EOSE ends loading for unresolved quotes.
+        refreshUnresolvedQuotes()
     }
 
     private fun fetchMetadataForAuthors(pubkeys: List<String>) {
