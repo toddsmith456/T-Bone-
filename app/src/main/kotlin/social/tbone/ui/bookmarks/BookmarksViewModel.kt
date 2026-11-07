@@ -18,6 +18,7 @@ class BookmarksViewModel @Inject constructor(
     private val bookmarksRepository: BookmarksRepository,
     profileRepository: ProfileRepository,
 ) : ViewModel() {
+    private val screenEpoch = bookmarksRepository.currentWipeEpoch()
     val folders: StateFlow<List<BookmarkFolderUi>> = bookmarksRepository.folders
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -26,7 +27,7 @@ class BookmarksViewModel @Inject constructor(
     fun observeBookmarks(folderId: String) = bookmarksRepository.observeBookmarks(folderId)
 
     fun createFolder(name: String, onFinished: (Result<BookmarkFolderUi>) -> Unit) {
-        viewModelScope.launch { onFinished(runCatching { bookmarksRepository.createFolder(name) }) }
+        viewModelScope.launch { onFinished(runCatching { bookmarksRepository.createFolder(name, screenEpoch) }) }
     }
 
     fun renameFolder(folderId: String, name: String, onFinished: (Result<Unit>) -> Unit) {

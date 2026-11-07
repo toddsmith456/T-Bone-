@@ -88,8 +88,10 @@ class BookmarksRepository @Inject constructor(
         dao.getBookmarks(folderId).mapNotNull(::decryptBookmark)
     }
 
-    suspend fun createFolder(name: String): BookmarkFolderUi =
-        coordinated { createFolderInternal(name) }
+    fun currentWipeEpoch(): Long = noteWrites.currentWipeEpoch()
+
+    suspend fun createFolder(name: String, epoch: Long = noteWrites.currentWipeEpoch()): BookmarkFolderUi =
+        noteWrites.submitAtEpoch(epoch) { createFolderInternal(name) }.await()
 
     private suspend fun createFolderInternal(name: String): BookmarkFolderUi {
         val cleanName = name.trim()
@@ -137,8 +139,8 @@ class BookmarksRepository @Inject constructor(
         return true
     }
 
-    suspend fun addBookmark(event: Event, folderId: String): BookmarkSaveResult =
-        coordinated { addBookmarkInternal(event, folderId) }
+    suspend fun addBookmark(event: Event, folderId: String, epoch: Long = noteWrites.currentWipeEpoch()): BookmarkSaveResult =
+        noteWrites.submitAtEpoch(epoch) { addBookmarkInternal(event, folderId) }.await()
 
     private suspend fun addBookmarkInternal(event: Event, folderId: String): BookmarkSaveResult {
         require(event.verify()) { "This event failed signature verification and was not bookmarked." }

@@ -193,6 +193,24 @@ class NotesIntegrityTest {
     }
 
 
+    @Test fun staleBookmarkFolderRequestCannotRepopulateAfterWipe() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val coordinator = NoteWriteCoordinator(scope)
+            val bookmarks = BookmarksRepository(db.bookmarkDao(), NotesCrypto(), coordinator)
+            val stale = bookmarks.currentWipeEpoch()
+            assertTrue(coordinator.runWipe(NoteWriteCoordinator.WipeKind.TOOLBOX) {
+                coordinator.pauseAndDrain()
+                db.clearAllTables()
+                true
+            })
+            try { bookmarks.createFolder("old private folder", stale); fail("stale folder created") }
+            catch (_: java.io.IOException) { }
+            assertEquals(0, db.bookmarkDao().folderCount())
+            assertEquals("new", bookmarks.createFolder("new").name)
+        } finally { scope.cancel() }
+    }
+
     @Test fun bookmarkContentsAndLookupsAreHiddenDuringWipe() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         try {
