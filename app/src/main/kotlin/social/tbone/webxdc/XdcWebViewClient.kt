@@ -14,17 +14,16 @@ import java.io.FileInputStream
  * Serves a mini app from app-private storage under a private origin
  * (`https://<appId>.xdc.local/`) and denies every other origin.
  *
- * Webxdc's first security rule is "no internet access". Three layers enforce it:
- *
- *  1. every request whose host is not this app's origin gets a 403 and never
- *     reaches the network stack;
- *  2. HTML is served with a CSP that only allows `'self'`, `data:` and `blob:`;
- *  3. file/content access is disabled on the WebView itself (see the player).
+ * Webxdc's first security rule is "no internet access". Resource interception
+ * and CSP are defense in depth, not complete network controls: WebSockets and
+ * service workers are not fully covered by shouldInterceptRequest. The player
+ * additionally configures WebView and service-worker network blocking, and
+ * disables direct file/content access. Platform behavior still needs testing.
  *
  * `webxdc.js` is not read from the archive — the messenger must provide it — so
  * this client injects the T-Bone shim and references it from every HTML page.
  */
-class XdcWebViewClient(
+open class XdcWebViewClient(
     private val originHost: String,
     private val filesDir: File,
     private val shim: String,
@@ -40,8 +39,7 @@ class XdcWebViewClient(
         // produced and consumed inside the renderer, never on the network, so
         // hand them back to WebView instead of 403-ing every inline image.
         if (scheme != "http" && scheme != "https") return null
-        if (!uri.host.equals(originHost, ignoreCase = true)) {
-            // No internet, ever — not even a tracking pixel.
+        if (!isXdcOrigin(scheme, uri.host, uri.port, uri.userInfo, originHost)) {
             return forbidden("blocked external request")
         }
 
@@ -87,8 +85,8 @@ class XdcWebViewClient(
 
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         val uri = request.url ?: return true
-        if (uri.host.equals(originHost, ignoreCase = true)) return false
-        if (uri.scheme == "http" || uri.scheme == "https" || uri.scheme == "mailto") {
+        if (isXdcOrigin(uri.scheme, uri.host, uri.port, uri.userInfo, originHost)) return false
+        if (request.hasGesture() && (uri.scheme == "http" || uri.scheme == "https" || uri.scheme == "mailto")) {
             runCatching { onExternalUrl(uri) }
         }
         return true

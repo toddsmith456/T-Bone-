@@ -290,6 +290,7 @@ fun XdcPlayerScreen(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                         )
                         setBackgroundColor(android.graphics.Color.WHITE)
+                        social.tbone.webxdc.configureXdcNetworkIsolation(this)
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.databaseEnabled = true
