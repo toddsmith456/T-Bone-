@@ -1053,7 +1053,7 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
             Text("route via tor", style = BonyType.body.copy(color = BonyColors.Text))
             if (!viewModel.orbotInstalled) {
                 Text(
-                    "install orbot from F-Droid",
+                    "install orbot from its official download page",
                     style = BonyType.meta.copy(color = BonyColors.Link),
                 )
             }
