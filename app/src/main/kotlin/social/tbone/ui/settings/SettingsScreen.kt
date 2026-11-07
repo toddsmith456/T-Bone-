@@ -1163,10 +1163,14 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
             Text("duress pin", style = BonyType.body.copy(color = BonyColors.Text))
             Text(
                 text = when {
-                    duressPinEnabled -> "entering it on the lock screen wipes all app data · tap to disable"
-                    else -> "a 4-digit pin that wipes all app data instead of unlocking · tap to set"
+                    duressPinEnabled -> "entering it attempts to clear local app data · tap to disable"
+                    else -> "a 4-digit pin that attempts to clear local app data instead of unlocking · tap to set"
                 },
                 style = BonyType.meta.copy(color = BonyColors.TextMute),
+            )
+            Text(
+                "Mini-app browser storage and exported or shared copies may remain. Deletion is not guaranteed secure erasure.",
+                style = BonyType.caption.copy(color = BonyColors.TextMute),
             )
         }
         BonyToggle(
