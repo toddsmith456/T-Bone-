@@ -48,7 +48,6 @@ import social.tbone.settings.LocalContentFilter
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 
-private val HTTP_REGEX = Regex("""https?://[^\s<>"')\]]+""")
 private val NPUB_REGEX = Regex("""nostr:(npub1|nprofile1)[a-z0-9]+""")
 private val NOTE_REGEX = Regex("""nostr:(note1|nevent1|naddr1)[a-z0-9]+""")
 // A #tag: must not be preceded by a word character so URLs (…/#frag) and
@@ -386,9 +385,8 @@ private fun buildSegmentedAnnotated(
 
 private fun segment(text: String, profiles: Map<String, ProfileContent>): List<BodySeg> {
     val segs = mutableListOf<SegRange>()
-    HTTP_REGEX.findAll(text).forEach { m ->
-        val url = social.tbone.util.trimUrlPunctuation(m.value)
-        if (url.isNotEmpty()) segs.add(SegRange(m.range.first, m.range.first + url.length, 1, url))
+    social.tbone.util.httpUrlTokens(text).forEach { token ->
+        segs.add(SegRange(token.start, token.endExclusive, 1, token.url))
     }
     NPUB_REGEX.findAll(text).forEach { m -> segs.add(SegRange(m.range.first, m.range.last + 1, 2, m.value)) }
     NOTE_REGEX.findAll(text).forEach { m -> segs.add(SegRange(m.range.first, m.range.last + 1, 3, m.value)) }

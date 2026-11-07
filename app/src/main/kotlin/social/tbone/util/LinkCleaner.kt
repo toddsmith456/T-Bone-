@@ -27,7 +27,6 @@ object LinkCleaner {
 
     private val UTM_PREFIXES = listOf("utm_", "ga_", "_ga", "_gl")
 
-    private val URL_REGEX = Regex("""https?://[^\s<>"')\]]+""")
 
     /** Returns [url] with tracking query parameters removed. */
     fun stripTrackingParams(url: String): String {
@@ -52,5 +51,8 @@ object LinkCleaner {
 
     /** Strips tracking params from every http(s) URL found in [text]. */
     fun cleanUrlsInText(text: String): String =
-        URL_REGEX.replace(text) { m -> stripTrackingParams(m.value) }
+        HTTP_URL_REGEX.replace(text) { m ->
+            val url = trimUrlPunctuation(m.value)
+            stripTrackingParams(url) + m.value.substring(url.length)
+        }
 }
