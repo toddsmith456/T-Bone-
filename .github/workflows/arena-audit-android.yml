@@ -67,6 +67,18 @@ jobs:
                           errors.append(f"{test.get('classname')}.{test.get('name')}: {fail.get('message', '')}\n{fail.text or ''}")
               except Exception as e:
                   errors.append(f'{path}: {e}')
+          for path in glob.glob('app/build/outputs/androidTest-results/**/*.xml', recursive=True):
+              try:
+                  root = ET.parse(path).getroot()
+                  for test in root.iter('testcase'):
+                      if test.get('classname', '').endswith('XdcBrowserWipeTest'):
+                          skipped = test.find('skipped')
+                          if skipped is not None:
+                              errors.append(f"WebView probe skipped: {test.get('name')}: {skipped.get('message', '')} {skipped.text or ''}")
+              except Exception:
+                  pass
+          if not glob.glob('app/build/outputs/androidTest-results/**/*.xml', recursive=True):
+              errors.append('No Android test XML results were produced; check emulator startup and test runner logs.')
           if errors:
               message = '\n'.join(errors)[-25000:].replace('%','%25').replace('\r','%0D').replace('\n','%0A')
               print('::error::' + message)
