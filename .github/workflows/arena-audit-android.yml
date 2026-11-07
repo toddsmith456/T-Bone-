@@ -49,17 +49,26 @@ jobs:
           target: google_apis
           disable-animations: true
           script: |
-            set -e
+            set +e
             ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=social.tbone.webxdc.XdcBrowserWipeTest --stacktrace --no-configuration-cache
+            web_result=$?
+            if [ "$web_result" -ne 0 ]; then echo "::error::Isolated WebView Android test task failed (exit $web_result)."; fi
             python3 -c 'import glob,xml.etree.ElementTree as E; cases=[c for p in glob.glob("app/build/outputs/androidTest-results/**/*.xml",recursive=True) for c in E.parse(p).getroot().iter("testcase") if c.get("classname", "").endswith("XdcBrowserWipeTest")]; assert cases and all(c.find("skipped") is None for c in cases), "Isolated WebView test did not execute (missing or skipped)"; print("Isolated WebView test executed:", len(cases))'
+            execution_result=$?
+            if [ "$execution_result" -ne 0 ]; then echo "::error::Isolated WebView test was missing or skipped; no browser cleanup verification can be claimed."; fi
+            cp -R app/build/outputs/androidTest-results /tmp/arena-webview-results 2>/dev/null || true
             ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=social.tbone.notes.NoteAudioSourceTest,social.tbone.notes.NotesCryptoConcurrencyTest,social.tbone.calendar.CalendarCryptoConcurrencyTest,social.tbone.account.LocalKeyConcurrencyTest,social.tbone.notes.PersistentWipeStateTest,social.tbone.notes.NoteEditorSaveTest,social.tbone.ui.toolbox.geohash.GeohashLiveTest,social.tbone.notes.NotesIntegrityTest,social.tbone.security.BackgroundPinTimeoutTest,social.tbone.security.PinAttemptLimiterTest,social.tbone.calendar.CalendarWipeGateTest,social.tbone.ui.feed.FeedScrollTest,social.tbone.ui.feed.IconAndLinkRegressionTest,social.tbone.stealth.StealthManagerTest,social.tbone.stealth.StealthPinExitTest --stacktrace --no-configuration-cache
+            suite_result=$?
+            if [ "$suite_result" -ne 0 ]; then echo "::error::General Android regression suite failed (exit $suite_result)."; fi
+            if [ "$web_result" -ne 0 ] || [ "$execution_result" -ne 0 ] || [ "$suite_result" -ne 0 ]; then exit 1; fi
       - name: Report Android test failures
         if: failure()
         run: |
           python3 - <<'PYCODE'
           import glob, xml.etree.ElementTree as ET
           errors = []
-          for path in glob.glob('app/build/outputs/androidTest-results/**/*.xml', recursive=True):
+          paths = glob.glob('app/build/outputs/androidTest-results/**/*.xml', recursive=True) + glob.glob('/tmp/arena-webview-results/**/*.xml', recursive=True)
+          for path in paths:
               try:
                   root = ET.parse(path).getroot()
                   for test in root.iter('testcase'):
@@ -67,7 +76,7 @@ jobs:
                           errors.append(f"{test.get('classname')}.{test.get('name')}: {fail.get('message', '')}\n{fail.text or ''}")
               except Exception as e:
                   errors.append(f'{path}: {e}')
-          for path in glob.glob('app/build/outputs/androidTest-results/**/*.xml', recursive=True):
+          for path in paths:
               try:
                   root = ET.parse(path).getroot()
                   for test in root.iter('testcase'):
@@ -77,7 +86,7 @@ jobs:
                               errors.append(f"WebView probe skipped: {test.get('name')}: {skipped.get('message', '')} {skipped.text or ''}")
               except Exception:
                   pass
-          if not glob.glob('app/build/outputs/androidTest-results/**/*.xml', recursive=True):
+          if not paths:
               errors.append('No Android test XML results were produced; check emulator startup and test runner logs.')
           if errors:
               message = '\n'.join(errors)[-25000:].replace('%','%25').replace('\r','%0D').replace('\n','%0A')
