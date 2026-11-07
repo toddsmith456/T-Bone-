@@ -127,6 +127,7 @@ fun NoteEditorScreen(
     val scrollState = rememberScrollState()
 
     val context = LocalContext.current
+    val editorEpoch = remember(viewModel, id) { viewModel.recordingEpoch() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val perm = rememberPermissionRequester()
     val recordingOwner = remember { Any() }
@@ -211,7 +212,7 @@ fun NoteEditorScreen(
         if (!force && savedId == null && text.isBlank() && submittedTitle.isBlank()) return
         val eid = savedId ?: java.util.UUID.randomUUID().toString()
         savedId = eid
-        viewModel.saveText(eid, submittedTitle, text, folderId, onError = onError) { newId ->
+        viewModel.saveText(eid, submittedTitle, text, folderId, epoch = editorEpoch, onError = onError) { newId ->
             savedId = newId
             lastSaved = text
             lastSavedTitle = submittedTitle
@@ -358,7 +359,7 @@ fun NoteEditorScreen(
         // Keep the editor open until both the attachment and its inline marker
         // are saved. A failed marker save leaves the attachment intact for retry.
         performSave(force = true, onError = failed) { noteId ->
-            viewModel.addAttachment(noteId, kind, mime, bytes, onError = failed) { attId ->
+            viewModel.addAttachment(noteId, kind, mime, bytes, epoch = editorEpoch, onError = failed) { attId ->
                 val placeholder = NoteAttachmentUi(attId, noteId, kind, mime, bytes, bytes.size.toLong(), 0L)
                 insertAttachment(placeholder)
                 performSave(force = true, onError = failed) { pendingMedia-- }
@@ -369,7 +370,7 @@ fun NoteEditorScreen(
     fun beginRecording() {
         if (deleted || exiting || pendingMedia > 0 || recording || !loaded) return
         pendingMedia++
-        val epoch = viewModel.recordingEpoch()
+        val epoch = editorEpoch
         scope.launch {
             val file = withContext(Dispatchers.IO) {
                 runCatching {
@@ -443,7 +444,7 @@ fun NoteEditorScreen(
         // Persist the marker removal before deleting its encrypted bytes. If
         // saving fails, retaining an orphan is safer than breaking the note.
         blocks = coalesce(blocks.filterNot { it is EditorBlock.Att && it.att.id == att.id })
-        performSave(force = true) { viewModel.deleteAttachment(att.id) }
+        performSave(force = true) { viewModel.deleteAttachment(att.id, epoch = editorEpoch) }
     }
 
     // Photo picker.
@@ -531,7 +532,7 @@ fun NoteEditorScreen(
                             deleted = true // disposal must not recreate the deleted note
                             val target = savedId
                             if (target == null) { skipDisposeSave = true; onBack() }
-                            else viewModel.delete(target, onError = {
+                            else viewModel.delete(target, epoch = editorEpoch, onError = {
                                 deleted = false
                                 android.widget.Toast.makeText(context, "Could not delete note; please try again.", android.widget.Toast.LENGTH_LONG).show()
                             }) { skipDisposeSave = true; onBack() }

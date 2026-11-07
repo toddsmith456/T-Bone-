@@ -69,6 +69,7 @@ fun ChecklistEditorScreen(
 ) {
 
     val context = LocalContext.current
+    val editorEpoch = remember(viewModel, id) { viewModel.recordingEpoch() }
     var exiting by remember { mutableStateOf(false) }
     var skipDisposeSave by remember { mutableStateOf(false) }
     var title by remember { mutableStateOf("") }
@@ -118,7 +119,7 @@ fun ChecklistEditorScreen(
             return
         }
         val noteId = savedId ?: java.util.UUID.randomUUID().toString().also { savedId = it }
-        viewModel.saveChecklist(noteId, title, items, folderId, onError = onError) { newId ->
+        viewModel.saveChecklist(noteId, title, items, folderId, epoch = editorEpoch, onError = onError) { newId ->
             savedId = newId
             lastSavedJson = json
             onDone()
@@ -215,7 +216,7 @@ fun ChecklistEditorScreen(
                             deleted = true
                             val target = savedId
                             if (target == null) { skipDisposeSave = true; onBack() }
-                            else viewModel.delete(target, onError = {
+                            else viewModel.delete(target, epoch = editorEpoch, onError = {
                                 deleted = false
                                 android.widget.Toast.makeText(context, "Could not delete checklist; please try again.", android.widget.Toast.LENGTH_LONG).show()
                             }) { skipDisposeSave = true; onBack() }

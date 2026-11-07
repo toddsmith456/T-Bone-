@@ -65,10 +65,10 @@ class DecoyNotesViewModel @Inject constructor(
 
     fun attachmentsFor(noteId: String): Flow<List<NoteAttachmentUi>> = repository.attachments(noteId)
 
-    fun saveText(id: String?, title: String, text: String, folderId: String? = null, onError: (Exception) -> Unit = {}, onSaved: (String) -> Unit = {}) {
+    fun saveText(id: String?, title: String, text: String, folderId: String? = null, epoch: Long = noteWrites.currentWipeEpoch(), onError: (Exception) -> Unit = {}, onSaved: (String) -> Unit = {}) {
         // Enqueue synchronously before the editor can be popped. Only the UI
         // callback is scoped to this ViewModel; persistence is app-scoped.
-        val pending = noteWrites.submit { repository.saveText(id, title, text, folderId) }
+        val pending = noteWrites.submitAtEpoch(epoch) { repository.saveText(id, title, text, folderId) }
         viewModelScope.launch {
             try { onSaved(pending.await()) }
             catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
@@ -76,8 +76,8 @@ class DecoyNotesViewModel @Inject constructor(
         }
     }
 
-    fun saveChecklist(id: String?, title: String, items: List<ChecklistItem>, folderId: String? = null, onError: (Exception) -> Unit = {}, onSaved: (String) -> Unit = {}) {
-        val pending = noteWrites.submit { repository.saveChecklist(id, title, items.toList(), folderId) }
+    fun saveChecklist(id: String?, title: String, items: List<ChecklistItem>, folderId: String? = null, epoch: Long = noteWrites.currentWipeEpoch(), onError: (Exception) -> Unit = {}, onSaved: (String) -> Unit = {}) {
+        val pending = noteWrites.submitAtEpoch(epoch) { repository.saveChecklist(id, title, items.toList(), folderId) }
         viewModelScope.launch {
             try { onSaved(pending.await()) }
             catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
@@ -85,8 +85,8 @@ class DecoyNotesViewModel @Inject constructor(
         }
     }
 
-    fun delete(id: String, onError: (Exception) -> Unit = {}, onDeleted: () -> Unit = {}) {
-        val pending = noteWrites.submit { repository.delete(id) }
+    fun delete(id: String, epoch: Long = noteWrites.currentWipeEpoch(), onError: (Exception) -> Unit = {}, onDeleted: () -> Unit = {}) {
+        val pending = noteWrites.submitAtEpoch(epoch) { repository.delete(id) }
         viewModelScope.launch {
             try { pending.await(); onDeleted() }
             catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
@@ -176,8 +176,8 @@ class DecoyNotesViewModel @Inject constructor(
         enqueueNoteOperation({ repository.swapFolderOrder(list[index].id, list[index + 1].id) }, onError = { _error.value = "could not move (${it.message})" })
     }
 
-    fun addAttachment(noteId: String, kind: String, mime: String, bytes: ByteArray, onError: (Exception) -> Unit = {}, onSaved: (String) -> Unit = {}) {
-        val pending = noteWrites.submit { repository.addAttachment(noteId, kind, mime, bytes) }
+    fun addAttachment(noteId: String, kind: String, mime: String, bytes: ByteArray, epoch: Long = noteWrites.currentWipeEpoch(), onError: (Exception) -> Unit = {}, onSaved: (String) -> Unit = {}) {
+        val pending = noteWrites.submitAtEpoch(epoch) { repository.addAttachment(noteId, kind, mime, bytes) }
         viewModelScope.launch {
             try { onSaved(pending.await()) }
             catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
@@ -185,8 +185,8 @@ class DecoyNotesViewModel @Inject constructor(
         }
     }
 
-    fun deleteAttachment(id: String) {
-        val pending = noteWrites.submit { repository.deleteAttachment(id) }
+    fun deleteAttachment(id: String, epoch: Long = noteWrites.currentWipeEpoch()) {
+        val pending = noteWrites.submitAtEpoch(epoch) { repository.deleteAttachment(id) }
         viewModelScope.launch {
             try { pending.await() }
             catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
