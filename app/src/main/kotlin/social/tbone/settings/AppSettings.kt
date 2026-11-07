@@ -970,6 +970,10 @@ class AppSettings @Inject constructor(
         dataStore.edit { it[GEOHASH_CHANNELS] = GeohashChannelStore.encode(entries) }
     }
 
+    /** Read committed preferences, not the eventually updated presentation flow. */
+    suspend fun getGeohashCacheMillis(): Long =
+        dataStore.data.first()[GEOHASH_CACHE_MILLIS]?.takeIf { it in GEOHASH_CACHE_OPTIONS } ?: 0L
+
     suspend fun setGeohashCacheMillis(millis: Long) {
         require(millis in GEOHASH_CACHE_OPTIONS)
         _geohashCacheMillis.value = millis

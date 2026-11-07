@@ -50,6 +50,19 @@ class GeohashCacheTest {
         cache.save("abc", oldEventTime); assertTrue(dao.rows.isEmpty())
         Unit
     }
+    @Test fun `disabled cache cannot write after the setting commits`() = runBlocking {
+        val message = GeohashMessage("id", "key", 1L, "message", own = false)
+        repeat(50) {
+            settings.setGeohashCacheMillis(1_800_000L)
+            cache.save("abc", message)
+            settings.setGeohashCacheMillis(0L)
+            cache.prune()
+            cache.save("abc", message)
+            assertTrue(cache.load("abc").isEmpty())
+            assertTrue(dao.rows.isEmpty())
+        }
+    }
+
     @Test fun `identity seed is stable under concurrent first use`() = runBlocking {
         val seeds = (1..20).map { async(Dispatchers.IO) { settings.geohashIdentitySeed().toList() } }.awaitAll()
         assertEquals(1, seeds.distinct().size)
