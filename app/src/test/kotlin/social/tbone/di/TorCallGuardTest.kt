@@ -3,6 +3,8 @@ package social.tbone.di
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.SocketPolicy
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.*
 import org.junit.Test
@@ -55,4 +57,32 @@ class TorCallGuardTest {
             assertNull(server.takeRequest(200, TimeUnit.MILLISECONDS))
         } finally { server.shutdown() }
     }
+
+    @Test fun modeSwitchInterruptsAnAlreadyRunningRequest() {
+        val server = MockWebServer()
+        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val client = OkHttpClient.Builder().callTimeout(10, TimeUnit.SECONDS).build()
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        server.start()
+        try {
+            val guard = TorCallGuard()
+            val call = client.newCall(Request.Builder().url(server.url("/held")).build())
+            guard.register(call, false)
+            val result = executor.submit<Boolean> {
+                try { call.execute().close(); false } catch (_: IOException) { true }
+                finally { guard.unregister(call) }
+            }
+            assertNotNull("request should reach server before transition", server.takeRequest(5, TimeUnit.SECONDS))
+            guard.update(true)
+            assertTrue("old-mode running call must fail", result.get(5, TimeUnit.SECONDS))
+            assertTrue(call.isCanceled())
+        } finally {
+            client.dispatcher.cancelAll()
+            client.connectionPool.evictAll()
+            client.dispatcher.executorService.shutdownNow()
+            executor.shutdownNow()
+            server.shutdown()
+        }
+    }
+
 }
