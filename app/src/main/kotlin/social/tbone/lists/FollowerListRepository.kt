@@ -27,6 +27,7 @@ import social.tbone.settings.OrbotHelper
 import social.tbone.settings.OrbotStatus
 import social.tbone.nostr.relay.RelayConnection
 import okhttp3.Request
+import social.tbone.util.readBounded
 import org.json.JSONObject
 
 /**
@@ -86,7 +87,7 @@ class FollowerListRepository @Inject constructor(
                     try {
                         call.execute().use { resp ->
                             if (!resp.isSuccessful) return@use
-                            val body = resp.body?.string() ?: return@use
+                            val body = resp.body?.byteStream()?.use { it.readBounded(4 * 1024 * 1024).toString(Charsets.UTF_8) } ?: return@use
                             val list = parsePrimalBody(body)
                             if (list != null && list.isNotEmpty()) return list
                         }

@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import social.tbone.util.readBounded
 import okhttp3.RequestBody
 import okio.BufferedSink
 import okio.source
@@ -102,7 +103,9 @@ class BlossomClient(private val client: OkHttpClient) {
         if (expectedTor != null) guard.register(call, expectedTor)
         try {
         call.execute().use { response ->
-            val text = runCatching { response.body?.string() }.getOrNull()
+            val text = response.body?.byteStream()?.use {
+                it.readBounded(1024 * 1024).toString(Charsets.UTF_8)
+            }
             if (!response.isSuccessful) {
                 throw BlossomException(
                     server = serverBaseUrl,
