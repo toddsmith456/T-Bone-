@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withLock
 import social.tbone.toolbox.VoiceAnonymizer
 import java.io.File
 import javax.inject.Inject
@@ -65,6 +66,9 @@ class VoiceRecorderViewModel @Inject constructor(
 
     private val anonymizer = VoiceAnonymizer()
     private val recordingOwner = Any()
+    private val previewOwner = Any()
+    private val previewSerial = kotlinx.coroutines.sync.Mutex()
+    private val previewGeneration = java.util.concurrent.atomic.AtomicLong()
     private val starting = java.util.concurrent.atomic.AtomicBoolean(false)
     private val disposed = java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -75,7 +79,7 @@ class VoiceRecorderViewModel @Inject constructor(
     private var startedAt: Long = 0L
     private var ticker: Job? = null
 
-    private var player: MediaPlayer? = null
+    @Volatile private var player: MediaPlayer? = null
     private var previewTicker: Job? = null
 
     fun setSpeed(value: Float) {
@@ -265,72 +269,114 @@ class VoiceRecorderViewModel @Inject constructor(
     }
 
     private fun playPreview(file: File) {
+        val request = previewGeneration.incrementAndGet()
+        val epoch = noteWrites.currentWipeEpoch()
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) {
-                runCatching {
-                    val p = MediaPlayer().apply {
-                        setDataSource(file.absolutePath)
-                        setOnCompletionListener {
-                            previewTicker?.cancel()
-                            _state.update { it.copy(isPreviewPlaying = false, previewPositionMs = 0L) }
+                previewSerial.withLock {
+                    if (disposed.get() || previewGeneration.get() != request) return@withLock false
+                    try {
+                        recordingGate.stopPlayback(previewOwner)
+                        recordingGate.startPlayback(previewOwner, epoch) { register ->
+                            var instance: MediaPlayer? = null
+                            register {
+                                instance?.release()
+                                if (player === instance) player = null
+                                previewTicker?.cancel()
+                                if (previewGeneration.get() == request) {
+                                    _state.update { it.copy(isPreviewPlaying = false, previewPositionMs = 0L) }
+                                }
+                            }
+                            val p = MediaPlayer()
+                            instance = p
+                            p.setDataSource(file.absolutePath)
+                            p.setOnCompletionListener {
+                                if (previewGeneration.get() == request) {
+                                    previewTicker?.cancel()
+                                    _state.update { it.copy(isPreviewPlaying = false, previewPositionMs = 0L) }
+                                }
+                            }
+                            p.prepare()
+                            check(!disposed.get() && previewGeneration.get() == request) { "preview closed" }
+                            player = p
+                            p.start()
+                            _state.update { it.copy(isPreviewPlaying = true, previewPositionMs = 0L,
+                                previewDurationMs = p.duration.toLong().coerceAtLeast(0L)) }
                         }
-                        prepare()
-                    }
-                    player = p
-                    p.start()
-                    _state.update {
-                        it.copy(
-                            isPreviewPlaying = true,
-                            previewPositionMs = 0L,
-                            previewDurationMs = p.duration.toLong().coerceAtLeast(0L),
-                        )
-                    }
-                    true
-                }.getOrDefault(false)
+                    } catch (_: Exception) { false }
+                }
             }
             if (!ok) {
-                _state.update { it.copy(error = "could not play recording") }
+                if (!disposed.get() && previewGeneration.get() == request) _state.update { it.copy(error = "could not play recording") }
                 return@launch
             }
-            previewTicker = viewModelScope.launch {
-                while (true) {
-                    delay(250)
-                    val p = player ?: break
-                    _state.update { it.copy(previewPositionMs = p.currentPosition.toLong().coerceAtLeast(0L)) }
-                }
+            startPreviewTicker(request)
+        }
+    }
+
+    private fun startPreviewTicker(request: Long) {
+        previewTicker?.cancel()
+        previewTicker = viewModelScope.launch {
+            while (previewGeneration.get() == request) {
+                delay(250)
+                val position = withContext(Dispatchers.IO) {
+                    var value: Long? = null
+                    runCatching { recordingGate.runIfPlaybackOwned(previewOwner) {
+                        value = player?.currentPosition?.toLong()?.coerceAtLeast(0L)
+                    } }
+                    value
+                } ?: break
+                _state.update { it.copy(previewPositionMs = position) }
             }
         }
     }
 
     private fun pausePreview() {
-        runCatching { player?.pause() }
-        previewTicker?.cancel()
-        _state.update { it.copy(isPreviewPlaying = false) }
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) { runCatching {
+                recordingGate.runIfPlaybackOwned(previewOwner) { player?.pause() }
+            }.getOrDefault(false) }
+            if (ok) {
+                previewTicker?.cancel()
+                _state.update { it.copy(isPreviewPlaying = false) }
+            }
+        }
     }
 
     private fun resumePreview() {
-        runCatching { player?.start() }
-        _state.update { it.copy(isPreviewPlaying = true) }
-        previewTicker?.cancel()
-        previewTicker = viewModelScope.launch {
-            while (true) {
-                delay(250)
-                val p = player ?: break
-                _state.update { it.copy(previewPositionMs = p.currentPosition.toLong().coerceAtLeast(0L)) }
+        val request = previewGeneration.get()
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) { runCatching {
+                recordingGate.runIfPlaybackOwned(previewOwner) { player?.start() }
+            }.getOrDefault(false) }
+            if (ok && request == previewGeneration.get()) {
+                _state.update { it.copy(isPreviewPlaying = true) }
+                startPreviewTicker(request)
             }
         }
     }
 
     fun seekPreview(positionMs: Long) {
-        runCatching { player?.seekTo(positionMs.toInt()) }
-        _state.update { it.copy(previewPositionMs = positionMs) }
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) { runCatching {
+                recordingGate.runIfPlaybackOwned(previewOwner) { player?.seekTo(positionMs.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()) }
+            }.getOrDefault(false) }
+            if (ok) _state.update { it.copy(previewPositionMs = positionMs) }
+        }
     }
 
     fun stopPreview() {
+        val request = previewGeneration.incrementAndGet()
         previewTicker?.cancel()
-        runCatching { player?.release() }
-        player = null
         _state.update { it.copy(isPreviewPlaying = false, previewPositionMs = 0L) }
+        viewModelScope.launch(Dispatchers.IO) {
+            previewSerial.withLock {
+                if (previewGeneration.get() == request) {
+                    try { recordingGate.stopPlayback(previewOwner) }
+                    catch (error: Exception) { timber.log.Timber.w(error, "Preview release failed") }
+                }
+            }
+        }
     }
 
     /** Reads the recorded file bytes (for save-to-device / sharing). */
@@ -349,7 +395,7 @@ class VoiceRecorderViewModel @Inject constructor(
         ticker?.cancel()
         previewTicker?.cancel()
         recordingGate.stopAfterDispose(recordingOwner)
-        runCatching { player?.release() }
-        player = null
+        previewGeneration.incrementAndGet()
+        recordingGate.stopPlaybackAfterDispose(previewOwner)
     }
 }

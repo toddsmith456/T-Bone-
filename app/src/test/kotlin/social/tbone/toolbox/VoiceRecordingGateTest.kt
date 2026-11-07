@@ -132,6 +132,46 @@ class VoiceRecordingGateTest {
         assertTrue(deleted)
     }
 
+    @Test fun wipeStopsAllPlaybackAndRetainsFailedCleanupForRetry() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val writes = NoteWriteCoordinator(scope)
+            val gate = VoiceRecordingGate(writes, scope)
+            val one = Any(); val two = Any()
+            var first = 0; var second = 0
+            assertTrue(gate.startPlayback(one, writes.currentWipeEpoch()) { register ->
+                register { if (++first == 1) error("injected failure") }
+            })
+            assertTrue(gate.startPlayback(two, writes.currentWipeEpoch()) { register ->
+                register { second++ }
+            })
+            writes.requestWipe(NoteWriteCoordinator.WipeKind.TOOLBOX)
+            try { gate.stopForWipe(); fail("failure was swallowed") } catch (_: IllegalStateException) { }
+            assertEquals(1, second)
+            assertFalse(gate.startPlayback(Any(), writes.currentWipeEpoch()) { fail("started during wipe") })
+            gate.stopForWipe()
+            assertEquals(2, first)
+            assertEquals(1, second)
+        } finally { scope.cancel() }
+    }
+
+    @Test fun failedPlaybackSetupReleasesPartialPlayer() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val writes = NoteWriteCoordinator(scope)
+            val gate = VoiceRecordingGate(writes, scope)
+            var closed = false
+            try {
+                gate.startPlayback(Any(), writes.currentWipeEpoch()) { register ->
+                    register { closed = true }
+                    error("prepare failed")
+                }
+                fail("failure was swallowed")
+            } catch (_: IllegalStateException) { }
+            assertTrue(closed)
+        } finally { scope.cancel() }
+    }
+
     @Test fun renderingFinishesBeforeWipeAndOldEpochCannotRecreateFile() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val dir = kotlin.io.path.createTempDirectory("voice-wipe").toFile()

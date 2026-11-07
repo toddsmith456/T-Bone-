@@ -3,7 +3,6 @@ package social.tbone.ui.notes
 import social.tbone.ui.theme.appBorder
 import android.Manifest
 import android.content.Context
-import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.net.Uri
 import androidx.activity.compose.BackHandler
@@ -129,6 +128,9 @@ fun NoteEditorScreen(
     val context = LocalContext.current
     val editorEpoch = remember(viewModel, id) { viewModel.currentWipeEpoch() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val attachmentPlayer = remember(viewModel, id) {
+        social.tbone.notes.NoteAttachmentPlayer(viewModel.recordingGate, scope, editorEpoch)
+    }
     val perm = rememberPermissionRequester()
     val recordingOwner = remember { Any() }
     val editorDisposed = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
@@ -621,10 +623,10 @@ fun NoteEditorScreen(
                                     playing = playingId == block.att.id,
                                     onPlay = {
                                         if (playingId == block.att.id) {
-                                            stopPlayback(); playingId = null
+                                            attachmentPlayer.stop(); playingId = null
                                         } else {
-                                            stopPlayback(); playingId = block.att.id
-                                            playAttachment(context, block.att) { playingId = null }
+                                            playingId = block.att.id
+                                            attachmentPlayer.play(block.att.data) { playingId = null }
                                         }
                                     },
                                     onDelete = { removeAttachment(block.att) },
@@ -663,7 +665,7 @@ fun NoteEditorScreen(
         onDispose {
             editorDisposed.set(true)
             viewModel.recordingGate.stopAfterDispose(recordingOwner)
-            stopPlayback()
+            attachmentPlayer.dispose()
         }
     }
 }
@@ -778,32 +780,6 @@ private fun AttachmentCard(
             }
         }
     }
-}
-
-private var player: MediaPlayer? = null
-
-private fun playAttachment(context: Context, att: NoteAttachmentUi, onDone: () -> Unit) {
-    stopPlayback()
-    val instance = MediaPlayer()
-    player = instance
-    try {
-        // Feed decrypted bytes directly to the player; no plaintext copy in cache.
-        instance.setDataSource(social.tbone.notes.NoteAudioSource(att.data))
-        instance.setOnCompletionListener { stopPlayback(); onDone() }
-        instance.setOnErrorListener { _, _, _ -> stopPlayback(); onDone(); true }
-        instance.prepare()
-        instance.start()
-    } catch (_: Exception) {
-        stopPlayback()
-        onDone()
-    }
-}
-
-private fun stopPlayback() {
-    val current = player
-    player = null
-    runCatching { current?.stop() }
-    runCatching { current?.release() }
 }
 
 private fun formatSize(bytes: Long): String = when {
