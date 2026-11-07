@@ -1,0 +1,69 @@
+name: Audit Android verification (no release)
+on:
+  push:
+    branches: [arena-audit-verification]
+permissions:
+  contents: read
+jobs:
+  unit-and-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Privacy gate
+        run: ./scripts/privacy-check.sh
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: ''
+      - name: Build app and instrumentation tests; run unit tests
+        env:
+          GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
+        run: |
+          set +e
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:assembleDebugAndroidTest --stacktrace --no-configuration-cache 2>&1 | tee /tmp/arena-gradle.log
+          result=${PIPESTATUS[0]}
+          if [ "$result" -ne 0 ]; then
+            python3 - <<'PYCODE'
+          from pathlib import Path
+          lines = Path('/tmp/arena-gradle.log').read_text(errors='replace').splitlines()
+          selected = [x for x in lines if x.startswith('e: ') or ' FAILED' in x or 'What went wrong:' in x or 'Caused by:' in x or 'exception' in x.lower() or x.startswith('* ')]
+          message = '\n'.join(selected[-80:] + lines[-35:])[-25000:]
+          print('::error::' + message.replace('%','%25').replace('\r','%0D').replace('\n','%0A'))
+          PYCODE
+          fi
+          exit "$result"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run feed and PIN regression tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=social.tbone.security.BackgroundPinTimeoutTest,social.tbone.security.PinAttemptLimiterTest,social.tbone.calendar.CalendarWipeGateTest,social.tbone.ui.feed.FeedScrollTest,social.tbone.ui.feed.IconAndLinkRegressionTest,social.tbone.stealth.StealthManagerTest,social.tbone.stealth.StealthPinExitTest --stacktrace --no-configuration-cache
+      - name: Report Android test failures
+        if: failure()
+        run: |
+          python3 - <<'PYCODE'
+          import glob, xml.etree.ElementTree as ET
+          errors = []
+          for path in glob.glob('app/build/outputs/androidTest-results/**/*.xml', recursive=True):
+              try:
+                  root = ET.parse(path).getroot()
+                  for test in root.iter('testcase'):
+                      for fail in list(test.findall('failure')) + list(test.findall('error')):
+                          errors.append(f"{test.get('classname')}.{test.get('name')}: {fail.get('message', '')}\n{fail.text or ''}")
+              except Exception as e:
+                  errors.append(f'{path}: {e}')
+          if errors:
+              message = '\n'.join(errors)[-25000:].replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+              print('::error::' + message)
+          PYCODE
