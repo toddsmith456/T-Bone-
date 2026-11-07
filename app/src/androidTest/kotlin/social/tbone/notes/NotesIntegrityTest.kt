@@ -4,6 +4,10 @@ import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -102,6 +106,25 @@ class NotesIntegrityTest {
         assertNotNull(db.noteAttachmentDao().getById(realAttachment))
         assertNotNull(db.decoyNoteDao().getById("d"))
         assertNotNull(db.decoyNoteAttachmentDao().getById(decoyAttachment))
+    }
+
+
+    @Test fun bookmarkFoldersCannotBeCreatedDuringWipeAndRecoverAfterward() = runBlocking {
+        val owner = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val coordinator = NoteWriteCoordinator(owner)
+            val bookmarks = BookmarksRepository(db.bookmarkDao(), NotesCrypto(), coordinator)
+            coordinator.pauseAndDrain()
+            var rejected = false
+            try { bookmarks.createFolder("secret") } catch (_: java.io.IOException) { rejected = true }
+            assertTrue(rejected)
+            // Even subscribing while blocked must not recreate the default folder.
+            assertTrue(bookmarks.folders.first().isEmpty())
+            assertEquals(0, db.bookmarkDao().folderCount())
+            coordinator.resumeAfterWipe()
+            assertEquals("secret", bookmarks.createFolder("secret").name)
+            assertEquals(2, db.bookmarkDao().folderCount())
+        } finally { owner.cancel() }
     }
 
 }
