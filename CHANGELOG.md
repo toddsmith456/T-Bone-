@@ -14,6 +14,10 @@ All notable changes to this fork are documented here. Format follows
 - Clarified media metadata and Tor upload preflight limitations; follower views disclose incomplete coverage.
 - Improved notes, hidden accounts, list replacement safety, links, notifications, accessibility, and player lifecycle. Duress deletion and Tor protections have scope limitations and are not forensic or universal network guarantees.
 
+### Fixed in the release-readiness candidate
+- Audio uploads stage their own copy instead of risking deletion of a source file; audio and video staging enforce a stream-size ceiling.
+- Note editors stop saves when attachment data cannot be read instead of silently treating failed decryptions as missing data.
+
 ### Verification limits
 - Device upgrade, process-death, live relay, physical-device TalkBack and end-to-end Tor isolation checks remain necessary. This section describes beta preparation, not a production release.
 
