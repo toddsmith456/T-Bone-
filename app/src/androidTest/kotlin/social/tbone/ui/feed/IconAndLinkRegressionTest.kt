@@ -51,6 +51,27 @@ class IconAndLinkRegressionTest {
         compose.runOnIdle { assertEquals(1, clicked) }
     }
 
+    @Test fun proseLinkUsesBalancedUrlForTapAndCopyAndStripsTrackingOnOpen() {
+        val raw = "https://example.com/a(b)?utm_source=foo&keep=1"
+        val clean = "https://example.com/a(b)?keep=1"
+        var opened: android.content.Intent? = null
+        val context = object : android.content.ContextWrapper(compose.activity) {
+            override fun startActivity(intent: android.content.Intent) { opened = intent }
+        }
+        compose.setContent { androidx.compose.runtime.CompositionLocalProvider(androidx.compose.ui.platform.LocalContext provides context) {
+            BonyTheme { NoteBodyText(content = "Read ($raw), please.", style = TextStyle(fontSize = 20.sp)) }
+        } }
+        val node = compose.onNodeWithText("Read ($clean), please.")
+        val actions = node.fetchSemanticsNode().config.getOrNull(androidx.compose.ui.semantics.SemanticsActions.CustomActions).orEmpty()
+        assertTrue(actions.any { it.label == "Copy $raw" })
+        val open = actions.single { it.label == "Open $raw" }
+        compose.runOnIdle {
+            assertTrue(open.action())
+            assertEquals(android.content.Intent.ACTION_VIEW, opened?.action)
+            assertEquals(clean, opened?.data.toString())
+        }
+    }
+
     @Test fun iconPresetSavesAndCanBeRestored() {
         val context = compose.activity.applicationContext
         val manager = StealthManager(context)
