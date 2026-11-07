@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="social.tbone.ui.feed.ShareCardBodyTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-10-24T05:00:50" hostname="e2b.local" time="0.005">
+  <properties/>
+  <testcase name="aVideoOnlyNoteHasAnEmptyTextSlotToo" classname="social.tbone.ui.feed.ShareCardBodyTest" time="0.002"/>
+  <testcase name="aQuoteReferenceIsRemovedFromTheBody" classname="social.tbone.ui.feed.ShareCardBodyTest" time="0.001"/>
+  <testcase name="anImageOnlyNoteHasAnEmptyTextSlot" classname="social.tbone.ui.feed.ShareCardBodyTest" time="0.001"/>
+  <testcase name="textAroundAQuoteSurvives" classname="social.tbone.ui.feed.ShareCardBodyTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

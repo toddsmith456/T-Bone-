@@ -1,0 +1,6 @@
+Command: :app:testDebugUnitTest
+Gradle: 8.7
+JDK: OpenJDK 21
+Result: BUILD SUCCESSFUL
+Test summary: 43 suites, 228 tests, 0 failures, 0 errors, 3 skipped.
+The report and JUnit XML files in this directory were refreshed from this run.
