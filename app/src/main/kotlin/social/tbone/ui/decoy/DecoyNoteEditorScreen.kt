@@ -384,21 +384,28 @@ fun DecoyNoteEditorScreen(
         // restore the exact pre-insertion blocks, including selected text.
         performSave(force = true, onError = failed) { noteId ->
             val before = blocks
-            val attId = java.util.UUID.randomUUID().toString()
-            val placeholder = NoteAttachmentUi(attId, noteId, kind, mime, bytes, bytes.size.toLong(), 0L)
-            insertAttachment(placeholder)
-            val submittedText = serialize(blocks)
-            val submittedTitle = title
-            viewModel.addAttachmentAndSaveText(noteId, attId, kind, mime, bytes,
-                submittedTitle, submittedText, folderId, editorEpoch, onError = {
-                    blocks = before
-                    failed(it)
-                }, onSaved = {
-                    lastSaved = submittedText
-                    lastSavedTitle = submittedTitle
-                    attachmentCommitInFlight = false
-                    pendingMedia--
-                })
+            try {
+                val attId = java.util.UUID.randomUUID().toString()
+                val placeholder = NoteAttachmentUi(attId, noteId, kind, mime, bytes, bytes.size.toLong(), 0L)
+                insertAttachment(placeholder)
+                val submittedText = serialize(blocks)
+                val submittedTitle = title
+                viewModel.addAttachmentAndSaveText(noteId, attId, kind, mime, bytes,
+                    submittedTitle, submittedText, folderId, editorEpoch, onError = {
+                        blocks = before
+                        failed(it)
+                    }, onSaved = {
+                        lastSaved = submittedText
+                        lastSavedTitle = submittedTitle
+                        attachmentCommitInFlight = false
+                        pendingMedia--
+                    })
+            } catch (error: Exception) {
+                // An exception before enqueue must not leave a marker that a
+                // later autosave could persist without its encrypted bytes.
+                blocks = before
+                failed(error)
+            }
         }
     }
 
