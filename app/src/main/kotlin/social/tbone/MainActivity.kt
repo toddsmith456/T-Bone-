@@ -120,6 +120,11 @@ class MainActivity : FragmentActivity() {
             if (!appSettings.notepadFrontEnabled.value) maybeAskBatteryExemption()
         }
 
+        // Until saved screenshot preferences are loaded, assume protection is
+        // enabled. Otherwise a returning protected session could briefly expose
+        // its first frame or task preview while the default false values load.
+        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+
         // Opaque window background so not even the very first frame (or a
         // returning process) can flash a previous screen behind the lock.
         window.decorView.setBackgroundColor(android.graphics.Color.parseColor("#0A0A0A"))
@@ -140,6 +145,7 @@ class MainActivity : FragmentActivity() {
         // be cleared mid-navigation between toolbox screens and reliably covers
         // every screen inside the toolbox.
         lifecycleScope.launch {
+            appSettings.initialized.first { it }
             combine(
                 appSettings.screenshotBlockEnabled,
                 appSettings.toolboxScreenshotBlockEnabled,
