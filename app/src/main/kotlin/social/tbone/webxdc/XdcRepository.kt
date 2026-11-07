@@ -57,9 +57,9 @@ class XdcRepository @Inject constructor(
     private val _loaded = MutableStateFlow(false)
     val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
 
-    private val _busy = MutableStateFlow<Set<String>>(emptySet())
+    private val busyTracker = XdcBusyTracker()
     /** ids currently being downloaded/imported (catalog app ids or urls). */
-    val busy: StateFlow<Set<String>> = _busy.asStateFlow()
+    val busy: StateFlow<Set<String>> = busyTracker.keys
 
     init {
         scope.launch {
@@ -82,7 +82,7 @@ class XdcRepository @Inject constructor(
     /** Called after full-wipe writers have drained, before files are removed. */
     fun clearInMemoryForWipe() {
         _savedApps.value = emptyList()
-        _busy.value = emptySet()
+        busyTracker.clear()
         _loaded.value = true
     }
 
@@ -194,12 +194,12 @@ class XdcRepository @Inject constructor(
         key: String = url,
     ): SavedXdcApp = withContext(Dispatchers.IO) {
         val epoch = noteWrites.currentWipeEpoch()
-        _busy.value = _busy.value + key
+        val busyToken = busyTracker.start(key)
         try {
             val bytes = httpGetBytes(url, XdcArchive.MAX_ARCHIVE_BYTES)
             importBytes(bytes, fallbackName, origin, uuid, expectedEpoch = epoch)
         } finally {
-            _busy.value = _busy.value - key
+            busyTracker.finish(key, busyToken)
         }
     }
 
