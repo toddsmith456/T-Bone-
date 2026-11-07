@@ -52,10 +52,14 @@ class NewNoteEditorTest {
     @Test fun decoyTitleOnlyAutosavesAndReopens() = titleOnly(true, true)
     @Test fun normalTitleOnlyReportsFailureAndCanRetry() = titleOnlyFailure(false)
     @Test fun decoyTitleOnlyReportsFailureAndCanRetry() = titleOnlyFailure(true)
-    @Test fun normalBlankNoteAcceptsFirstImage() = firstImage(false, false)
-    @Test fun decoyBlankNoteAcceptsFirstImage() = firstImage(true, false)
-    @Test fun normalBlankNoteCanRetryAfterParentSaveFailure() = firstImage(false, true)
-    @Test fun decoyBlankNoteCanRetryAfterParentSaveFailure() = firstImage(true, true)
+    @Test fun normalBlankNoteAcceptsFirstImage() = firstImage(false, null)
+    @Test fun decoyBlankNoteAcceptsFirstImage() = firstImage(true, null)
+    @Test fun normalBlankNoteCanRetryAfterParentSaveFailure() = firstImage(false, "parent")
+    @Test fun decoyBlankNoteCanRetryAfterParentSaveFailure() = firstImage(true, "parent")
+    @Test fun normalBlankNoteCanRetryAfterAttachmentFailure() = firstImage(false, "attachment")
+    @Test fun decoyBlankNoteCanRetryAfterAttachmentFailure() = firstImage(true, "attachment")
+    @Test fun canceledNormalPickerDoesNotCreateNote() = canceledPicker(false)
+    @Test fun canceledDecoyPickerDoesNotCreateNote() = canceledPicker(true)
 
     private class Fixture {
         val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), AppDatabase::class.java).build()
@@ -127,7 +131,30 @@ class NewNoteEditorTest {
         } finally { f.close() }
     }
 
-    private fun firstImage(decoy: Boolean, failFirstSave: Boolean) {
+    private fun canceledPicker(decoy: Boolean) {
+        val f = Fixture()
+        val registry = object : ActivityResultRegistry() {
+            override fun <I, O> onLaunch(requestCode: Int, contract: ActivityResultContract<I, O>, input: I, options: ActivityOptionsCompat?) {
+                dispatchResult(requestCode, Activity.RESULT_CANCELED, null)
+            }
+        }
+        val resultOwner = object : ActivityResultRegistryOwner { override val activityResultRegistry = registry }
+        val showing = mutableStateOf(true)
+        try {
+            compose.setContent { CompositionLocalProvider(LocalActivityResultRegistryOwner provides resultOwner) { BonyTheme {
+                if (showing.value) {
+                    if (decoy) DecoyNoteEditorScreen("", onBack = { showing.value = false }, onShare = {}, viewModel = f.decoyVm)
+                    else NoteEditorScreen("", onBack = { showing.value = false }, onShare = {}, viewModel = f.normalVm)
+                }
+            } } }
+            compose.onNodeWithText("image").performClick()
+            compose.onNodeWithText("←").performClick()
+            compose.waitUntil(15_000) { !showing.value }
+            assertTrue(runBlocking { f.rows(decoy).isEmpty() })
+        } finally { f.close() }
+    }
+
+    private fun firstImage(decoy: Boolean, failAt: String?) {
         val f = Fixture()
         val context = ApplicationProvider.getApplicationContext<Context>()
         val image = File.createTempFile("picked-image", ".png", context.cacheDir)
@@ -142,8 +169,13 @@ class NewNoteEditorTest {
         val showing = mutableStateOf(true)
         val editorId = mutableStateOf("")
         try {
-            if (failFirstSave) {
-                val table = if (decoy) "decoy_notes" else "notes"
+            if (failAt != null) {
+                val table = when {
+                    failAt == "attachment" && decoy -> "decoy_note_attachments"
+                    failAt == "attachment" -> "note_attachments"
+                    decoy -> "decoy_notes"
+                    else -> "notes"
+                }
                 f.db.openHelper.writableDatabase.execSQL("CREATE TRIGGER reject_first_save BEFORE INSERT ON $table BEGIN SELECT RAISE(ABORT, 'injected'); END")
             }
             compose.setContent { CompositionLocalProvider(LocalActivityResultRegistryOwner provides resultOwner) { BonyTheme {
@@ -154,9 +186,15 @@ class NewNoteEditorTest {
             } } }
             compose.waitForIdle()
             compose.onNodeWithText("image").performClick()
-            if (failFirstSave) {
+            if (failAt != null) {
                 compose.waitUntil(15_000) { if (decoy) f.decoyVm.error.value != null else f.normalVm.error.value != null }
-                assertTrue(runBlocking { f.rows(decoy).isEmpty() })
+                val ids = runBlocking { f.rows(decoy) }
+                if (failAt == "parent") assertTrue(ids.isEmpty())
+                else {
+                    assertEquals(1, ids.size)
+                    assertEquals("", runBlocking { f.get(decoy, ids.single())?.text })
+                    assertTrue(runBlocking { f.attachments(decoy, ids.single()).isEmpty() })
+                }
                 f.db.openHelper.writableDatabase.execSQL("DROP TRIGGER reject_first_save")
                 compose.onNodeWithText("image").performClick()
             }
