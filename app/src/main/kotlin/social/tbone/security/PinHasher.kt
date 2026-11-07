@@ -29,6 +29,7 @@ object PinHasher {
     }
 
     fun verify(pin: String, stored: String): Boolean {
+        if (stored.length > 256) return false
         // Legacy SHA-256 (64 hex, no $)
         if (!stored.contains("$")) {
             return sha256(pin) == stored
@@ -50,8 +51,12 @@ object PinHasher {
 
     private fun pbkdf2(pin: String, salt: ByteArray, iterations: Int): ByteArray {
         val spec = PBEKeySpec(pin.toCharArray(), salt, iterations, HASH_BITS)
-        val skf = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-        return skf.generateSecret(spec).encoded
+        return try {
+            val skf = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+            skf.generateSecret(spec).encoded
+        } finally {
+            spec.clearPassword()
+        }
     }
 
     private fun sha256(input: String): String {
