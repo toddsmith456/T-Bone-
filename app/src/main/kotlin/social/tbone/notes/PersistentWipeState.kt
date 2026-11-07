@@ -18,10 +18,10 @@ class PersistentWipeState @Inject constructor(@ApplicationContext context: Conte
     override fun read(): Set<NoteWriteCoordinator.WipeKind> = try {
         val names = prefs.getStringSet(KEY, emptySet()).orEmpty()
         if (names.any { it !in NoteWriteCoordinator.WipeKind.entries.map { kind -> kind.name } }) {
-            setOf(NoteWriteCoordinator.WipeKind.APP) // Unknown marker: fail closed.
+            setOf(NoteWriteCoordinator.WipeKind.UNKNOWN) // Block without initiating deletion.
         } else names.mapTo(mutableSetOf()) { NoteWriteCoordinator.WipeKind.valueOf(it) }
     } catch (_: Exception) {
-        setOf(NoteWriteCoordinator.WipeKind.APP)
+        setOf(NoteWriteCoordinator.WipeKind.UNKNOWN)
     }
 
     override fun write(pending: Set<NoteWriteCoordinator.WipeKind>): Boolean = try {

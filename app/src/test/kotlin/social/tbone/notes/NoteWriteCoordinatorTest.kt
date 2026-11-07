@@ -238,4 +238,20 @@ class NoteWriteCoordinatorTest {
         } finally { owner.cancel() }
     }
 
+
+    @Test fun unknownRecoveryMarkerBlocksWithoutStartingDestruction() = runBlocking {
+        val state = InMemoryWipeState()
+        state.write(setOf(NoteWriteCoordinator.WipeKind.UNKNOWN))
+        val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val coordinator = NoteWriteCoordinator(owner, state)
+            var ran = false
+            assertTrue(coordinator.pendingAppWipe.value)
+            assertTrue(coordinator.invalidWipeState.value)
+            assertFalse(coordinator.runWipe(NoteWriteCoordinator.WipeKind.APP) { ran = true; true })
+            assertFalse(ran)
+            assertEquals(setOf(NoteWriteCoordinator.WipeKind.UNKNOWN), state.read())
+        } finally { owner.cancel() }
+    }
+
 }

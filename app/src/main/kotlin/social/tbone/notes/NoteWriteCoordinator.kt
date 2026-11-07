@@ -36,11 +36,13 @@ class NoteWriteCoordinator internal constructor(scope: CoroutineScope, private v
     private var wiping = failedWipes.isNotEmpty()
     private val _available = MutableStateFlow(!wiping)
     val available = _available.asStateFlow()
-    private val _pendingAppWipe = MutableStateFlow(WipeKind.APP in failedWipes)
+    private val _pendingAppWipe = MutableStateFlow(WipeKind.APP in failedWipes || WipeKind.UNKNOWN in failedWipes)
     val pendingAppWipe = _pendingAppWipe.asStateFlow()
+    private val _invalidWipeState = MutableStateFlow(WipeKind.UNKNOWN in failedWipes)
+    val invalidWipeState = _invalidWipeState.asStateFlow()
     private val wipeMutex = Mutex()
 
-    enum class WipeKind { APP, TOOLBOX }
+    enum class WipeKind { APP, TOOLBOX, UNKNOWN }
 
     init {
         scope.launch {
@@ -88,10 +90,14 @@ class NoteWriteCoordinator internal constructor(scope: CoroutineScope, private v
 
     /** Close the gate and durably record intent before launching wipe work. */
     fun requestWipe(kind: WipeKind): Boolean = synchronized(lock) {
+        require(kind != WipeKind.UNKNOWN) { "Unknown wipe is not an executable operation" }
+        // Never turn a corrupt/unknown marker into an automatic destructive wipe.
+        if (WipeKind.UNKNOWN in failedWipes) return@synchronized false
         failedWipes.add(kind)
         wiping = true
         _available.value = false
-        _pendingAppWipe.value = WipeKind.APP in failedWipes
+        _pendingAppWipe.value = WipeKind.APP in failedWipes || WipeKind.UNKNOWN in failedWipes
+        _invalidWipeState.value = WipeKind.UNKNOWN in failedWipes
         wipeState.write(failedWipes.toSet())
     }
 
@@ -117,12 +123,13 @@ class NoteWriteCoordinator internal constructor(scope: CoroutineScope, private v
                 // only after successful cleanup; interruption remains fail-closed.
                 wiping = failedWipes.isNotEmpty()
                 _available.value = !wiping
-                _pendingAppWipe.value = WipeKind.APP in failedWipes
+                _pendingAppWipe.value = WipeKind.APP in failedWipes || WipeKind.UNKNOWN in failedWipes
+                _invalidWipeState.value = WipeKind.UNKNOWN in failedWipes
             }
         }
     }
 
-    fun hasFailedAppWipe(): Boolean = synchronized(lock) { WipeKind.APP in failedWipes }
+    fun hasFailedAppWipe(): Boolean = synchronized(lock) { WipeKind.APP in failedWipes || WipeKind.UNKNOWN in failedWipes }
 
     suspend fun pauseAndDrain() {
         val drained = CompletableDeferred<Unit>()

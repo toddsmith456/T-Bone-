@@ -158,11 +158,19 @@ class MainActivity : FragmentActivity() {
         setContent {
             ThemeHost {
                 val pendingWipe by noteWrites.pendingAppWipe.collectAsStateWithLifecycle()
+                val invalidWipeState by noteWrites.invalidWipeState.collectAsStateWithLifecycle()
                 if (pendingWipe) {
                     Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xFF0A0A0A)),
                         contentAlignment = androidx.compose.ui.Alignment.Center) {
-                        androidx.compose.material3.Button(onClick = { dataWiper.wipeAndRestart() }) {
-                            androidx.compose.material3.Text("Retry cleanup")
+                        if (invalidWipeState) {
+                            androidx.compose.material3.Text(
+                                "Unable to resume cleanup safely. Contact support.",
+                                color = androidx.compose.ui.graphics.Color.White,
+                            )
+                        } else {
+                            androidx.compose.material3.Button(onClick = { dataWiper.wipeAndRestart() }) {
+                                androidx.compose.material3.Text("Retry cleanup")
+                            }
                         }
                     }
                 } else {

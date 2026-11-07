@@ -40,7 +40,7 @@ class PersistentWipeStateTest {
         val prefs = context.getSharedPreferences(PersistentWipeState.PREFS_NAME, 0)
         try {
             assertTrue(prefs.edit().putStringSet("pending_kinds", setOf("UNKNOWN_WIPE")).commit())
-            assertEquals(setOf(NoteWriteCoordinator.WipeKind.APP), PersistentWipeState(context).read())
+            assertEquals(setOf(NoteWriteCoordinator.WipeKind.UNKNOWN), PersistentWipeState(context).read())
         } finally { prefs.edit().clear().commit() }
     }
 

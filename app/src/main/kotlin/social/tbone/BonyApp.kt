@@ -61,6 +61,7 @@ class BonyApp : Application() {
         val pending = noteWrites.pendingWipes()
         if (pending.isNotEmpty()) geohashPinnedMonitor.pauseForWipe()
         when {
+            social.tbone.notes.NoteWriteCoordinator.WipeKind.UNKNOWN in pending -> Unit // Preserve data; do not guess a destructive action.
             social.tbone.notes.NoteWriteCoordinator.WipeKind.APP in pending -> dataWiper.wipeAndRestart()
             social.tbone.notes.NoteWriteCoordinator.WipeKind.TOOLBOX in pending -> toolboxSecurity.wipeToolbox()
         }
