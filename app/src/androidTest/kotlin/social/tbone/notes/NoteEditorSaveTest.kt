@@ -33,10 +33,12 @@ import social.tbone.ui.theme.BonyTheme
 class NoteEditorSaveTest {
     @get:Rule val compose = createAndroidComposeRule<FeedRegressionActivity>()
 
-    @Test fun regularEditorSavesNewerEditBeforeLeaving() = exercise(decoy = false)
-    @Test fun decoyEditorSavesNewerEditBeforeLeaving() = exercise(decoy = true)
+    @Test fun regularEditorSavesNewerEditBeforeLeaving() = exercise(decoy = false, failSave = false)
+    @Test fun decoyEditorSavesNewerEditBeforeLeaving() = exercise(decoy = true, failSave = false)
+    @Test fun regularEditorStaysOpenWhenSaveFails() = exercise(decoy = false, failSave = true)
+    @Test fun decoyEditorStaysOpenWhenSaveFails() = exercise(decoy = true, failSave = true)
 
-    private fun exercise(decoy: Boolean) {
+    private fun exercise(decoy: Boolean, failSave: Boolean) {
         val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), AppDatabase::class.java).build()
         val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val writes = NoteWriteCoordinator(owner)
@@ -62,17 +64,33 @@ class NoteEditorSaveTest {
                 }
             } }
             compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasText("old title")).fetchSemanticsNodes().isNotEmpty() }
-            writes.submit { started.complete(Unit); release.await() }
-            runBlocking { withTimeout(5_000) { started.await() } }
-            compose.onNodeWithText("old title").performTextReplacement("first title")
-            compose.onNodeWithText("←").performClick()
-            compose.onNodeWithText("first title").performTextReplacement("newer title")
-            assertEquals(false, left.get())
-            release.complete(Unit)
-            compose.waitUntil(10_000) { left.get() }
-            val saved = runBlocking { if (decoy) hidden.getById("note-id") else regular.getById("note-id") }
-            assertEquals("newer title", saved?.title)
-            assertEquals("body", saved?.text)
+            if (failSave) {
+                val table = if (decoy) "decoy_notes" else "notes"
+                db.openHelper.writableDatabase.execSQL(
+                    "CREATE TRIGGER reject_save BEFORE INSERT ON $table BEGIN SELECT RAISE(ABORT, 'injected failure'); END"
+                )
+                compose.onNodeWithText("old title").performTextReplacement("first title")
+                compose.onNodeWithText("←").performClick()
+                compose.waitUntil(10_000) {
+                    if (decoy) hiddenVm.error.value != null else regularVm.error.value != null
+                }
+                assertEquals(false, left.get())
+                val saved = runBlocking { if (decoy) hidden.getById("note-id") else regular.getById("note-id") }
+                assertEquals("old title", saved?.title)
+                assertEquals("body", saved?.text)
+            } else {
+                writes.submit { started.complete(Unit); release.await() }
+                runBlocking { withTimeout(5_000) { started.await() } }
+                compose.onNodeWithText("old title").performTextReplacement("first title")
+                compose.onNodeWithText("←").performClick()
+                compose.onNodeWithText("first title").performTextReplacement("newer title")
+                assertEquals(false, left.get())
+                release.complete(Unit)
+                compose.waitUntil(10_000) { left.get() }
+                val saved = runBlocking { if (decoy) hidden.getById("note-id") else regular.getById("note-id") }
+                assertEquals("newer title", saved?.title)
+                assertEquals("body", saved?.text)
+            }
         } finally {
             release.complete(Unit)
             owner.cancel()
