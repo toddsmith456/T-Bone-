@@ -1,5 +1,6 @@
 package social.tbone.lists
 
+import kotlinx.coroutines.async
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -45,6 +46,25 @@ class FollowerSnapshotsTest {
         cache.put("user", emptyList(), state, cache.generation())
         assertEquals(state, cache.get("user", emptyList()))
         cache.clear()
+        assertNull(cache.get("user", emptyList()))
+    }
+    @Test fun simultaneousSourceUpdatesRetainBothSets() = kotlinx.coroutines.runBlocking {
+        val samples = FollowerSamples(maxEntries = 1_000)
+        val first = async(kotlinx.coroutines.Dispatchers.Default) { samples.merge((0 until 250).map { "r$it" }, "relays") }
+        val second = async(kotlinx.coroutines.Dispatchers.Default) { samples.merge((0 until 250).map { "p$it" }, "primal.net") }
+        first.await(); second.await()
+        val final = samples.merge(listOf("last"), "relays")!!
+        assertEquals(501, final.followers?.size)
+        assertTrue(final.followers!!.containsAll((0 until 250).map { "r$it" }))
+        assertTrue(final.followers!!.containsAll((0 until 250).map { "p$it" }))
+    }
+
+    @Test fun backwardsClockDoesNotKeepOldCacheIndefinitely() {
+        var now = 10_000L
+        val cache = FollowerSnapshotCache { now }
+        val state = FollowerListRepository.FollowersState(followers = listOf("a"), loading = false)
+        cache.put("user", emptyList(), state, cache.generation())
+        now = 9_999L
         assertNull(cache.get("user", emptyList()))
     }
 }
