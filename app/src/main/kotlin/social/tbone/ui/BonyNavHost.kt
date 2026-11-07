@@ -10,10 +10,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,8 +73,6 @@ import social.tbone.ui.toolbox.UpdateCenterScreen
 import social.tbone.ui.toolbox.ToolboxSettingsScreen
 import social.tbone.ui.toolbox.VoiceRecorderScreen
 import social.tbone.ui.toolbox.WalletToolScreen
-import social.tbone.ui.toolbox.webxdc.XdcPlayerScreen
-import social.tbone.ui.toolbox.webxdc.XdcScreen
 import social.tbone.ui.toolbox.calendar.CalendarEventEditorScreen
 import social.tbone.ui.toolbox.calendar.CalendarScreen
 import social.tbone.ui.toolbox.geohash.GeohashChannelScreen
@@ -124,8 +127,6 @@ private const val ROUTE_VOICE              = "voice"
 private const val ROUTE_WALLET             = "wallet"
 private const val ROUTE_UPDATE_CENTER      = "update_center"
 private const val ROUTE_TOOLBOX_SETTINGS = "toolbox_settings"
-private const val ROUTE_XDC             = "webxdc"
-private const val ROUTE_XDC_PLAYER      = "webxdc_player/{appId}"
 private const val ROUTE_GEOHASH          = "geohash"
 private const val ROUTE_GEOHASH_CHAT     = "geohash_chat?code={code}"
 private const val ROUTE_CALENDAR         = "calendar"
@@ -193,6 +194,19 @@ fun BonyNavHost() {
         return
     }
 
+    val cleanupStatus by viewModel.cleanupStatus.collectAsStateWithLifecycle()
+    var dismissedCleanupWarning by remember { mutableStateOf(false) }
+    if (cleanupStatus == social.tbone.migration.CleanupStatus.NeedsAttention &&
+        startupState is StartupState.Ready && !dismissedCleanupWarning) {
+        AlertDialog(
+            onDismissRequest = { dismissedCleanupWarning = true },
+            title = { Text("Old mini-app cleanup incomplete") },
+            text = { Text("Some old mini-app data may remain. Update Android System WebView and retry. You can retry later in Settings. Shared or exported copies cannot be removed by the app.") },
+            confirmButton = { TextButton(onClick = { viewModel.retryLegacyCleanup() }) { Text("Retry") } },
+            dismissButton = { TextButton(onClick = { dismissedCleanupWarning = true }) { Text("Later") } },
+        )
+    }
+
     when (startupState) {
         StartupState.Loading -> {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -252,11 +266,7 @@ fun BonyNavHost() {
                             onCalendar = { navController.navigate(ROUTE_CALENDAR) },
                             onWallet = { navController.navigate(ROUTE_WALLET) },
                             onUpdateCenter = { navController.navigate(ROUTE_UPDATE_CENTER) },
-                            onWebxdc = { navController.navigate(ROUTE_XDC) },
                             onFollowLists = { navController.navigate(ROUTE_FOLLOW_LISTS) },
-                            onOpenXdcTool = { appId ->
-                                navController.navigate("webxdc_player/" + Uri.encode(appId))
-                            },
                             onToolboxSettings = { navController.navigate(ROUTE_TOOLBOX_SETTINGS) },
                         )
                     }
@@ -293,24 +303,17 @@ fun BonyNavHost() {
                 composable(ROUTE_TOOLBOX_SETTINGS) {
                     ToolboxSettingsScreen(onBack = { navController.popBackStack() })
                 }
-                composable(ROUTE_XDC) {
-                    // The tool keeps the shared bottom bar, like the other toolbox screens.
-                    WithBottomBar(current = BottomTab.TOOLS, navController = navController) {
-                        XdcScreen(
-                            onBack = { navController.popBackStack() },
-                            onOpenApp = { appId ->
-                                navController.navigate("webxdc_player/" + Uri.encode(appId))
-                            },
-                        )
+                // Temporary saved-back-stack compatibility only: neither route
+                // contains or launches the retired feature.
+                composable("webxdc") {
+                    LaunchedEffect(Unit) {
+                        if (!navController.popBackStack(ROUTE_TOOLBOX, false)) navController.navigate(ROUTE_TOOLBOX)
                     }
                 }
-                composable(
-                    ROUTE_XDC_PLAYER,
-                    arguments = listOf(navArgument("appId") { type = NavType.StringType }),
-                ) {
-                    // Full screen on purpose: a mini app needs every pixel and
-                    // must not sit under the app's bottom navigation.
-                    XdcPlayerScreen(onBack = { navController.popBackStack() })
+                composable("webxdc_player/{appId}", arguments = listOf(navArgument("appId") { type = NavType.StringType })) {
+                    LaunchedEffect(Unit) {
+                        if (!navController.popBackStack(ROUTE_TOOLBOX, false)) navController.navigate(ROUTE_TOOLBOX)
+                    }
                 }
                 composable(ROUTE_WALLET) {
                     // Keep the shared navigation bar below the wallet relay
@@ -849,7 +852,10 @@ sealed interface StartupState {
 class StartupViewModel @Inject constructor(
     accountRepository: AccountRepository,
     deepLinkHandler: DeepLinkHandler,
+    private val legacyCleanup: social.tbone.migration.LegacyMiniAppCleanup,
 ) : ViewModel() {
+    val cleanupStatus = legacyCleanup.status
+    fun retryLegacyCleanup() = legacyCleanup.retry()
     val startupState: StateFlow<StartupState> = accountRepository.startupStatus
         .map { status ->
             when (status) {

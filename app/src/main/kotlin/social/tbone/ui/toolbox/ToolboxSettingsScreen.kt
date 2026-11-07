@@ -229,7 +229,7 @@ fun ToolboxSettingsScreen(
                     style = BonyType.meta.copy(color = BonyColors.TextMute),
                 )
                 Text(
-                    "Includes decoy notes, saved mini apps and their browser storage. An up-to-date Android System WebView is required; wipe remains pending if browser cleanup fails. Exported or shared copies may remain; deletion is not secure erasure.",
+                    "Includes decoy notes. Pending legacy mini-app browser cleanup must finish before the wipe can complete. Exported or shared copies may remain; deletion is not secure erasure.",
                     style = BonyType.caption.copy(color = BonyColors.TextMute),
                 )
             }

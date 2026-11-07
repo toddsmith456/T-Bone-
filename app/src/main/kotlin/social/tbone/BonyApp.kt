@@ -42,6 +42,7 @@ class BonyApp : Application() {
     @Inject lateinit var noteWrites: social.tbone.notes.NoteWriteCoordinator
     @Inject lateinit var dataWiper: social.tbone.security.DataWiper
     @Inject lateinit var toolboxSecurity: social.tbone.ui.toolbox.ToolboxSecurity
+    @Inject lateinit var legacyCleanup: social.tbone.migration.LegacyMiniAppCleanup
 
     override fun onCreate() {
         super.onCreate()
@@ -76,6 +77,9 @@ class BonyApp : Application() {
             social.tbone.notes.NoteWriteCoordinator.WipeKind.APP in pending -> dataWiper.wipeAndRestart()
             social.tbone.notes.NoteWriteCoordinator.WipeKind.TOOLBOX in pending -> toolboxSecurity.wipeToolbox(discreet = true)
         }
+
+        // Upgrade cleanup is idempotent and retains its pending marker on failure.
+        legacyCleanup.retry()
 
         // Keep fully-offline calendar alarms in sync with the event list:
         // whenever events change (add/edit/delete), re-schedule reminders.

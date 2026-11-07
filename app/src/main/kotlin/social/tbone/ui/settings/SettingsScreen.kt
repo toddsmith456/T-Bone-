@@ -81,6 +81,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val cleanupStatus by viewModel.cleanupStatus.collectAsStateWithLifecycle()
     val torEnabled by viewModel.torEnabled.collectAsStateWithLifecycle()
     val pinEnabled by viewModel.pinEnabled.collectAsStateWithLifecycle()
     val duressPinEnabled by viewModel.duressPinEnabled.collectAsStateWithLifecycle()
@@ -119,6 +120,11 @@ fun SettingsScreen(
             .verticalScroll(rememberScrollState()),
     ) {
         SettingsTopBar(onBack)
+        if (cleanupStatus == social.tbone.migration.CleanupStatus.NeedsAttention) {
+            Text("Old mini-app data cleanup is incomplete. Update Android System WebView, then tap to retry. Exported or shared copies remain outside this app.",
+                modifier = Modifier.fillMaxWidth().clickable { viewModel.retryLegacyCleanup() }.padding(16.dp),
+                style = BonyType.body, color = BonyColors.Danger)
+        }
         SettingsSwitchRow(
             title = "UI declutter",
             description = "compact tabs and make Settings categories collapsible",
@@ -1169,7 +1175,7 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
                 style = BonyType.meta.copy(color = BonyColors.TextMute),
             )
             Text(
-                "Includes mini-app browser storage. An up-to-date Android System WebView is required; wipe remains pending if browser cleanup fails. Exported or shared copies may remain; deletion is not secure erasure.",
+                "Pending legacy mini-app browser cleanup must finish before the wipe can complete. Exported or shared copies may remain; deletion is not secure erasure.",
                 style = BonyType.caption.copy(color = BonyColors.TextMute),
             )
         }

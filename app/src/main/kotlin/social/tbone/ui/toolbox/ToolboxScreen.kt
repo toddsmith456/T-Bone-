@@ -24,14 +24,11 @@ import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.Mic
-import androidx.compose.material.icons.outlined.Widgets
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Update
 import androidx.compose.material3.Icon
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -56,7 +53,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.roundToInt
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
-import social.tbone.ui.toolbox.webxdc.XdcToolIcons
 import social.tbone.updates.LocalUpdateAvailable
 
 /** Uniform tool row height in dp — used for drag math. */
@@ -79,15 +75,12 @@ fun ToolboxScreen(
     onCalendar: () -> Unit,
     onWallet: () -> Unit,
     onUpdateCenter: () -> Unit,
-    onWebxdc: () -> Unit,
     onFollowLists: () -> Unit,
-    onOpenXdcTool: (String) -> Unit,
     onToolboxSettings: () -> Unit,
     viewModel: ToolboxViewModel = hiltViewModel(),
     lockViewModel: ToolboxLockViewModel = hiltViewModel(),
 ) {
     val savedOrder by viewModel.toolOrder.collectAsStateWithLifecycle()
-    val xdcTools by viewModel.xdcCustomTools.collectAsStateWithLifecycle()
     val isLocked by lockViewModel.isLocked.collectAsStateWithLifecycle()
 
     val hasUpdate = LocalUpdateAvailable.current
@@ -98,11 +91,8 @@ fun ToolboxScreen(
     }
 
     // Tools keyed by id, built here so the click handlers are in scope.
-    // Custom webxdc apps promoted to tools use the "xdc_<appId>" id namespace.
     val toolsById: Map<String, ToolEntry> = buildMap {
         // Short descriptions fit the available row width in both themes.
-        put("webxdc", ToolEntry(Icons.Outlined.Widgets, "webxdc",
-            "local, store & nostr apps", onWebxdc))
         put("notes", ToolEntry(Icons.Outlined.EditNote, "encrypted notes",
             "notes, lists & attachments", onNotes))
         put("bookmarks", ToolEntry(Icons.Outlined.BookmarkBorder, "bookmarks",
@@ -119,15 +109,7 @@ fun ToolboxScreen(
             "check & install updates", onUpdateCenter, hasBadge = hasUpdate))
         put("followlists", ToolEntry(Icons.Outlined.Groups, "follow lists",
             "following, followers & blocks", onFollowLists))
-        xdcTools.forEach { tool ->
-            put("xdc_${tool.appId}", ToolEntry(
-                icon = XdcToolIcons.byId(tool.iconId),
-                title = tool.name,
-                subtitle = "webxdc mini app",
-                onClick = { onOpenXdcTool(tool.appId) },
-                onRemove = { viewModel.removeXdcTool(tool.appId) },
-            ))
-        }
+
     }
 
     // Ordered tool list (persisted; falls back to the default until set).
@@ -149,20 +131,9 @@ fun ToolboxScreen(
 
     val tools = currentOrder.mapNotNull { id -> toolsById[id]?.let { id to it } }
 
-    var pendingRemove by remember { mutableStateOf<Pair<String, (() -> Unit)>?>(null) }
 
     fun persist(order: List<String>) {
         viewModel.setToolOrder(order)
-    }
-
-    pendingRemove?.let { (name, action) ->
-        AlertDialog(
-            onDismissRequest = { pendingRemove = null },
-            title = { Text("remove $name?", style = BonyType.body.copy(color = BonyColors.Text)) },
-            text = { Text("This removes it from the toolbox. The saved webxdc app stays in webxdc storage.", style = BonyType.meta.copy(color = BonyColors.TextMute)) },
-            confirmButton = { TextButton(onClick = { action(); pendingRemove = null }) { Text("remove", color = BonyColors.Danger) } },
-            dismissButton = { TextButton(onClick = { pendingRemove = null }) { Text("cancel") } },
-        )
     }
 
     Column(
@@ -260,7 +231,6 @@ fun ToolboxScreen(
                     subtitle = tool.subtitle,
                     onClick = tool.onClick,
                     hasBadge = tool.hasBadge,
-                    onRemove = tool.onRemove?.let { rm -> { pendingRemove = tool.title to rm } },
                 )
             }
             // Drop indicator while dragging.
@@ -294,11 +264,10 @@ private data class ToolEntry(
     val subtitle: String,
     val onClick: () -> Unit,
     val hasBadge: Boolean = false,
-    val onRemove: (() -> Unit)? = null,
 )
 
 @Composable
-internal fun ToolRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit, hasBadge: Boolean = false, onRemove: (() -> Unit)? = null) {
+internal fun ToolRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit, hasBadge: Boolean = false) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -344,17 +313,6 @@ internal fun ToolRow(icon: ImageVector, title: String, subtitle: String, onClick
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-        }
-        if (onRemove != null) {
-            Box(
-                modifier = Modifier
-                    .appBorder(1.dp, BonyColors.Rule)
-                    .clickable(onClick = onRemove)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-            ) {
-                Text("remove", style = BonyType.meta.copy(color = BonyColors.Danger))
-            }
-            Spacer(Modifier.width(8.dp))
         }
         Text("≡", style = BonyType.body.copy(color = BonyColors.TextMute))
     }

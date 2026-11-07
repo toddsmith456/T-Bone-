@@ -45,12 +45,16 @@ class SettingsViewModel @Inject constructor(
     private val offlineLists: social.tbone.lists.OfflineListRepository,
     private val updateManager: UpdateManager,
     private val stealthManager: StealthManager,
+    private val legacyCleanup: social.tbone.migration.LegacyMiniAppCleanup,
     @ApplicationContext context: Context,
 ) : ViewModel() {
 
     /** Whether the active account's offline follow list / block list is switched on. */
     val offlineFollowsEnabled: StateFlow<Boolean> = offlineEnabledFlow(social.tbone.lists.ListType.FOLLOWS)
     val offlineMutesEnabled: StateFlow<Boolean> = offlineEnabledFlow(social.tbone.lists.ListType.MUTES)
+
+    val cleanupStatus = legacyCleanup.status
+    fun retryLegacyCleanup() = legacyCleanup.retry()
 
     val updateState: StateFlow<UpdateState> = updateManager.state
 

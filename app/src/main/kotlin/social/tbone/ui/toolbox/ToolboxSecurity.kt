@@ -23,7 +23,7 @@ import javax.inject.Singleton
 /**
  * Toolbox-only security: a PIN that locks the toolbox and a duress PIN that
  * attempts to clear selected toolbox data (encrypted notes and bookmarks,
- * recordings, mini apps, and toolbox settings); external copies remain. Mirrors the app lock / duress features
+ * recordings and toolbox settings); external copies remain. Mirrors the app lock / duress features
  * but scoped to the Toolbox.
  */
 @Singleton
@@ -37,8 +37,7 @@ class ToolboxSecurity @Inject constructor(
     private val calendarAlarms: social.tbone.calendar.CalendarAlarmScheduler,
     private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
     private val voiceRecordingGate: social.tbone.toolbox.VoiceRecordingGate,
-    private val xdcWebViewWipe: social.tbone.webxdc.XdcWebViewWipe,
-    private val xdcRepository: social.tbone.webxdc.XdcRepository,
+    private val legacyCleanup: social.tbone.migration.LegacyMiniAppCleanup,
 ) {
 
     private val attempts = PinAttemptLimiter(context, "toolbox")
@@ -105,9 +104,8 @@ class ToolboxSecurity @Inject constructor(
      *  - toolbox settings (pin, duress pin, screenshot toggle)
      * The current database cleanup also deletes cached events and profiles,
      * but preserves notifications. Accounts and general app settings remain.
-     * Decoy notes and mini apps, including WebView browsing data, are included.
-     * External copies cannot be recalled; browser cleanup requires a supported
-     * WebView and a completion callback or the wipe stays pending.
+     * Decoy notes are included. Pending legacy browser cleanup must succeed;
+     * external copies cannot be recalled.
      */
     private val wiping = java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -127,18 +125,12 @@ class ToolboxSecurity @Inject constructor(
             steps.run("pause geohash watchers") { geohashMonitor.pauseForWipe() }
             steps.run("stop active voice recording") { voiceRecordingGate.stopForWipe() }
             steps.run("pause and drain note writes") { noteWrites.pauseAndDrain() }
-            steps.run("clear mini-app browser storage") { xdcWebViewWipe.clearForWipe() }
+            steps.run("clear mini-app browser storage") { legacyCleanup.run() }
             steps.run("block and cancel reminders") { calendarAlarms.beginSensitiveWipe() }
             steps.run("disable geohash cache") { appSettings.setGeohashCacheMillis(0L) }
             steps.run("clear geohash cache") { geohashCache.clear() }
             steps.run("clear toolbox tables") {
                 clearToolboxTables(appDatabase)
-            }
-            steps.run("clear mini-app files") { xdcRepository.deleteFilesForWipe() }
-            steps.run("clear mini-app tool settings") { appSettings.setXdcCustomTools(emptyList()) }
-            steps.run("clear mini-app share cache") {
-                val share = java.io.File(context.cacheDir, "webxdc_share")
-                check(!share.exists() || share.deleteRecursively()) { "mini-app share deletion failed" }
             }
             steps.run("clear geohash settings") { appSettings.clearGeohashData() }
             steps.run("clear geohash preferences") {
