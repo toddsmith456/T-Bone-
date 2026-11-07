@@ -222,6 +222,17 @@ class AccountRepositoryTest {
         assertTrue(repository.accounts.first().isEmpty())
     }
 
+    @Test
+    fun `unreadable accounts do not masquerade as wrong hidden pin`() = runBlocking {
+        val key = stringPreferencesKey("accounts")
+        val raw = "bad account json"
+        dataStore.edit { it[key] = raw }
+        var failed = false
+        try { repository.unlockHiddenByPin("1234") } catch (_: Exception) { failed = true }
+        assertTrue(failed)
+        assertEquals(raw, dataStore.data.first()[key])
+    }
+
     private fun account(pubkey: String, relays: List<String> = emptyList()) = Account(
         pubkey = pubkey,
         signerType = SignerType.AMBER,

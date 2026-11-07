@@ -78,7 +78,11 @@ class AccountRepository @Inject constructor(
     /** A PIN can intentionally be shared by several hidden accounts. */
     private suspend fun findHiddenMatches(pin: String): List<Account> {
         val input = pin.trim()
-        val candidates = allAccounts.first()
+        // Unlike the display flow, recovery must distinguish a genuinely empty
+        // account list from unreadable stored data instead of saying "wrong PIN".
+        val candidates = dataStore.data.first()[KEY_ACCOUNTS]
+            ?.let { NostrJson.decodeFromString<List<Account>>(it) }
+            ?: emptyList()
         val found = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
             candidates.filter {
                 it.isHidden && it.hiddenPinHash?.let { stored ->
