@@ -45,7 +45,7 @@ class PinListTest {
         val event = Event("0".repeat(64), "1".repeat(64), 1, EventKind.PIN_LIST, existing, "opaque", "")
         val target = "f".repeat(64)
         val added = pinTagsForToggle(event, target)
-        assertEquals(existing + tag("e", target), added)
+        assertEquals(existing + listOf(tag("e", target)), added)
         assertEquals(existing, pinTagsForToggle(event.copy(tags = added), target))
     }
 
