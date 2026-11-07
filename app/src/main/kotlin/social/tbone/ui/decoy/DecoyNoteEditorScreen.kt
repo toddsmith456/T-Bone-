@@ -120,6 +120,7 @@ fun DecoyNoteEditorScreen(
     // immediately so an early Back or picker result cannot discard input.
     var loaded by remember { mutableStateOf(id.isBlank()) }
     var loadFailed by remember { mutableStateOf(false) }
+    var attachmentLoadFailed by remember { mutableStateOf(false) }
     var builtFromNote by remember { mutableStateOf(false) }
     var focusedIndex by remember { mutableIntStateOf(0) }
     var recording by remember { mutableStateOf(false) }
@@ -212,6 +213,10 @@ fun DecoyNoteEditorScreen(
         android.widget.Toast.makeText(context, "Could not save note; please try again.", android.widget.Toast.LENGTH_LONG).show()
     }, onDone: (String) -> Unit = {}) {
         if (deleted || !loaded || (id.isNotBlank() && !builtOnce)) return
+        if (attachmentLoadFailed) {
+            onError(IllegalStateException("Attachment data unavailable"))
+            return
+        }
         val text = serialize(blocks)
         val submittedTitle = title
         if (!force && savedId == null && text.isBlank() && submittedTitle.isBlank()) return
@@ -235,9 +240,18 @@ fun DecoyNoteEditorScreen(
     var attachmentsMap by remember { mutableStateOf<Map<String, NoteAttachmentUi>>(emptyMap()) }
     attachmentsFlow?.let { flow ->
         LaunchedEffect(flow) {
-            flow.collect { list ->
-                attachmentsMap = list.associateBy { it.id }
-                attachmentsLoaded = true
+            try {
+                flow.collect { list ->
+                    attachmentsMap = list.associateBy { it.id }
+                    attachmentsLoaded = true
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                // Do not treat a decryption/storage error as an empty list and
+                // autosave a potentially destructive reconstruction.
+                attachmentLoadFailed = true
+                loadFailed = true
             }
         }
     }
@@ -497,6 +511,12 @@ fun DecoyNoteEditorScreen(
             .imePadding()
             .navigationBarsPadding(),
     ) {
+        if (attachmentLoadFailed) {
+            Text("Attachment data unavailable. Changes cannot be saved; copy any unsaved text before leaving.",
+                modifier = Modifier.padding(12.dp), color = BonyColors.Danger)
+            Text("← leave without saving", Modifier.clickable { skipDisposeSave = true; onBack() }.padding(12.dp),
+                color = BonyColors.Danger)
+        }
         // ── Top bar ───────────────────────────────────────────────────────────
         Row(
             modifier = Modifier
