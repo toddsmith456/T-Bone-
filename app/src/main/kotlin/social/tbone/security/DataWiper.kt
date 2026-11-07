@@ -52,7 +52,7 @@ class DataWiper @Inject constructor(
         if (!noteWrites.requestWipe(social.tbone.notes.NoteWriteCoordinator.WipeKind.APP)) {
             wiping.set(false)
             scope.launch(Dispatchers.Main) {
-                Toast.makeText(context, "Wipe could not start. Keep the app locked and try again.", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "Unable to unlock. Please try again.", Toast.LENGTH_LONG).show()
             }
             return
         }
@@ -128,7 +128,7 @@ class DataWiper @Inject constructor(
             !steps.failed
             }
             if (!complete) withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Wipe incomplete. Keep the app locked and try again.", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "Unable to unlock. Please try again.", Toast.LENGTH_LONG).show()
             }
           } finally {
               wiping.set(false)

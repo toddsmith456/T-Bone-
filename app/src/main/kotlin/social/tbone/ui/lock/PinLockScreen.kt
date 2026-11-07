@@ -62,8 +62,8 @@ fun PinLockScreen(
         scope.launch {
           try {
             // Duress pin: wipe all app data instead of unlocking. This happens
-            // silently (the app restarts into onboarding) so the duress pin is
-            // indistinguishable from a wrong pin at the moment of entry.
+            // with generic failure feedback rather than naming the wipe.
+            // Timing and other device behavior may still reveal the event.
             if (viewModel.handleDuressPin(attemptedPin)) {
                 return@launch
             }

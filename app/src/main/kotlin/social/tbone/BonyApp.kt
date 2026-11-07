@@ -74,7 +74,7 @@ class BonyApp : Application() {
         when {
             social.tbone.notes.NoteWriteCoordinator.WipeKind.UNKNOWN in pending -> Unit // Preserve data; do not guess a destructive action.
             social.tbone.notes.NoteWriteCoordinator.WipeKind.APP in pending -> dataWiper.wipeAndRestart()
-            social.tbone.notes.NoteWriteCoordinator.WipeKind.TOOLBOX in pending -> toolboxSecurity.wipeToolbox()
+            social.tbone.notes.NoteWriteCoordinator.WipeKind.TOOLBOX in pending -> toolboxSecurity.wipeToolbox(discreet = true)
         }
 
         // Keep fully-offline calendar alarms in sync with the event list:

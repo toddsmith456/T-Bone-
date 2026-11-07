@@ -26,7 +26,7 @@ class ToolboxLockViewModel @Inject constructor(
     suspend fun handleDuressPin(input: String): Boolean =
         social.tbone.security.verifyAndStartDuressWipe(
             verify = { security.isDuressPin(input) },
-            startWipe = { security.wipeToolbox() },
+            startWipe = { security.wipeToolbox(discreet = true) },
         )
 
     fun unlock() {

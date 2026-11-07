@@ -170,12 +170,12 @@ class MainActivity : FragmentActivity() {
                         contentAlignment = androidx.compose.ui.Alignment.Center) {
                         if (invalidWipeState) {
                             androidx.compose.material3.Text(
-                                "Unable to resume cleanup safely. Contact support.",
+                                "Unable to unlock. Please contact support.",
                                 color = androidx.compose.ui.graphics.Color.White,
                             )
                         } else {
                             androidx.compose.material3.Button(onClick = { dataWiper.wipeAndRestart() }) {
-                                androidx.compose.material3.Text("Retry cleanup")
+                                androidx.compose.material3.Text("Try again")
                             }
                         }
                     }

@@ -107,12 +107,12 @@ class ToolboxSecurity @Inject constructor(
      */
     private val wiping = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    fun wipeToolbox() {
+    fun wipeToolbox(discreet: Boolean = false) {
         if (!wiping.compareAndSet(false, true)) return
         if (!noteWrites.requestWipe(social.tbone.notes.NoteWriteCoordinator.WipeKind.TOOLBOX)) {
             wiping.set(false)
             scope.launch(Dispatchers.Main) {
-                Toast.makeText(context, "Toolbox wipe could not start. Keep it locked and try again.", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, if (discreet) "Unable to unlock. Please try again." else "Toolbox wipe could not start. Keep it locked and try again.", Toast.LENGTH_LONG).show()
             }
             return
         }
@@ -156,7 +156,7 @@ class ToolboxSecurity @Inject constructor(
             !steps.failed
             }
             if (!complete) withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Toolbox wipe incomplete. Keep it locked and try again.", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, if (discreet) "Unable to unlock. Please try again." else "Toolbox wipe incomplete. Keep it locked and try again.", Toast.LENGTH_LONG).show()
             }
           } finally {
               wiping.set(false)
