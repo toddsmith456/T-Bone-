@@ -57,7 +57,8 @@ class GeohashPinnedMonitor @Inject constructor(
     private fun lastSeen(code: String) = prefs().getLong("last_seen_$code", 0L)
 
     @Synchronized private fun startWatch(code: String) {
-        if (wipePaused || subIds.containsKey(code)) return
+        if (wipePaused || subIds.containsKey(code) ||
+            appSettings.geohashChannels.value.none { it.code == code && it.pinnedToHome }) return
         val seen = ConcurrentHashMap.newKeySet<String>()
         val liveRelays = ConcurrentHashMap.newKeySet<String>()
         seenPerChannel[code] = seen
@@ -85,14 +86,19 @@ class GeohashPinnedMonitor @Inject constructor(
                 val own = try { event.pubkey in cache.ownPubkeys(code) } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (_: java.io.IOException) { return@collect }
-                if (wipePaused || subIds[code] != subId) return@collect
-                if (openChannel == code) {
-                    markSeen(code)
-                } else if (!own && (poolMessage.relayUrl in liveRelays || event.createdAt > lastSeen(code))) {
-                    _unread.update { it + (code to ((it[code] ?: 0) + 1)) }
+                // Keep the gate check and resulting mutations atomic with pauseForWipe.
+                // Otherwise an in-flight callback could repopulate a badge or enqueue
+                // old content after the monitor has been cleared and resumed.
+                synchronized(this@GeohashPinnedMonitor) {
+                    if (wipePaused || subIds[code] != subId) return@collect
+                    if (openChannel == code) {
+                        markSeen(code)
+                    } else if (!own && (poolMessage.relayUrl in liveRelays || event.createdAt > lastSeen(code))) {
+                        _unread.update { it + (code to ((it[code] ?: 0) + 1)) }
+                    }
+                    cache.enqueue(code, GeohashMessage(event.id, event.pubkey, event.createdAt, event.content,
+                        event.parsedTags.firstOrNull { it.name == "n" }?.value(), own))
                 }
-                cache.enqueue(code, GeohashMessage(event.id, event.pubkey, event.createdAt, event.content,
-                    event.parsedTags.firstOrNull { it.name == "n" }?.value(), own))
             }
         }
     }
