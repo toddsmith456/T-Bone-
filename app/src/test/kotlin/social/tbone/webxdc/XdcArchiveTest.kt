@@ -164,6 +164,7 @@ class XdcArchiveTest {
         assertNull(XdcArchive.normalisePath("C:/windows/system32"))
         assertEquals("a/b.txt", XdcArchive.normalisePath("/a//b.txt"))
         assertEquals("index.html", XdcArchive.normalisePath("./index.html"))
+        assertEquals("a/b", XdcArchive.normalisePath("a/./b"))
     }
 
     @Test
@@ -197,6 +198,12 @@ class XdcArchiveTest {
     @Test fun rejectsOversizedPathSegments() {
         assertNull(XdcArchive.normalisePath("a".repeat(256)))
         assertNull(XdcArchive.normalisePath("nested/" + "é".repeat(128)))
+    }
+
+    @Test fun rejectsDotSegmentAliases() {
+        val bytes = zip(linkedMapOf("index.html" to byteArrayOf(1), "a/b" to byteArrayOf(2), "a/./b" to byteArrayOf(3)))
+        try { XdcArchive.read(bytes); fail("aliased path accepted") }
+        catch (_: XdcException) { }
     }
 
 }

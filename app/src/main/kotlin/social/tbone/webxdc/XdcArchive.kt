@@ -158,7 +158,7 @@ object XdcArchive {
         if (p.contains("..")) return null
         if (p.length >= 2 && p[1] == ':') return null
         // Drop empty segments ("a//b") so the served URL and the map key agree.
-        val segments = p.split('/').filter { it.isNotEmpty() }
+        val segments = p.split('/').filter { it.isNotEmpty() && it != "." }
         if (segments.any { it.toByteArray(Charsets.UTF_8).size > 255 }) return null
         p = segments.joinToString("/")
         return p.ifEmpty { null }
