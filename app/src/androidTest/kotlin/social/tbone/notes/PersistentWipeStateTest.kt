@@ -43,4 +43,29 @@ class PersistentWipeStateTest {
             assertEquals(setOf(NoteWriteCoordinator.WipeKind.APP), PersistentWipeState(context).read())
         } finally { prefs.edit().clear().commit() }
     }
+
+    @Test fun coordinatorRecreationRemainsBlockedUntilCleanupSucceeds() = kotlinx.coroutines.runBlocking {
+        val context = InstrumentationRegistry.getInstrumentation().context
+        val state = PersistentWipeState(context)
+        assertTrue(state.write(emptySet()))
+        val firstScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        val secondScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        try {
+            val first = NoteWriteCoordinator(firstScope, state)
+            assertTrue(first.requestWipe(NoteWriteCoordinator.WipeKind.APP))
+            val restarted = NoteWriteCoordinator(secondScope, PersistentWipeState(context))
+            assertTrue(restarted.pendingAppWipe.value)
+            assertFalse(restarted.available.value)
+            assertFalse(restarted.runWipe(NoteWriteCoordinator.WipeKind.APP) { false })
+            assertTrue(PersistentWipeState(context).read().contains(NoteWriteCoordinator.WipeKind.APP))
+            assertTrue(restarted.runWipe(NoteWriteCoordinator.WipeKind.APP) { true })
+            assertTrue(restarted.available.value)
+            assertTrue(PersistentWipeState(context).read().isEmpty())
+        } finally {
+            firstScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+            secondScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+            state.write(emptySet())
+        }
+    }
+
 }
