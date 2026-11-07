@@ -11,9 +11,20 @@ import social.tbone.calendar.CalendarAlarmScheduler
 
 @RunWith(AndroidJUnit4::class)
 class PersistentWipeStateTest {
+    // The instrumentation APK's context can lack a writable preferences
+    // directory under the target UID. Use unique names in the target test app,
+    // never the actual application's recovery or calendar preferences.
+    private fun isolatedContext(): android.content.Context {
+        val base = InstrumentationRegistry.getInstrumentation().targetContext
+        val prefix = "wipe_test_" + java.util.UUID.randomUUID() + "_"
+        return object : android.content.ContextWrapper(base) {
+            override fun getSharedPreferences(name: String?, mode: Int): android.content.SharedPreferences =
+                base.getSharedPreferences(prefix + name, mode)
+        }
+    }
+
     @Test fun markerSurvivesNewStoreAndBlocksCalendarDelivery() {
-        // Instrumentation package, isolated from the app's real recovery marker.
-        val context = InstrumentationRegistry.getInstrumentation().context
+        val context = isolatedContext()
         val state = PersistentWipeState(context)
         assertTrue(state.write(emptySet()))
         try {
@@ -36,7 +47,7 @@ class PersistentWipeStateTest {
     }
 
     @Test fun invalidMarkerFailsClosed() {
-        val context = InstrumentationRegistry.getInstrumentation().context
+        val context = isolatedContext()
         val prefs = context.getSharedPreferences(PersistentWipeState.PREFS_NAME, 0)
         try {
             assertTrue(prefs.edit().putStringSet("pending_kinds", setOf("UNKNOWN_WIPE")).commit())
@@ -45,7 +56,7 @@ class PersistentWipeStateTest {
     }
 
     @Test fun coordinatorRecreationRemainsBlockedUntilCleanupSucceeds() = kotlinx.coroutines.runBlocking {
-        val context = InstrumentationRegistry.getInstrumentation().context
+        val context = isolatedContext()
         val state = PersistentWipeState(context)
         assertTrue(state.write(emptySet()))
         val firstScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
