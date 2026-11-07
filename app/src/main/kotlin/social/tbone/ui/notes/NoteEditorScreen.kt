@@ -270,7 +270,7 @@ fun NoteEditorScreen(
             loaded = true
             if (id.isBlank()) {
                 delay(120)
-                focusRequesters[0]?.requestFocus()
+                runCatching { focusRequesters[0]?.requestFocus() }
             }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
@@ -348,14 +348,15 @@ fun NoteEditorScreen(
             }
             blocks = coalesce(newBlocks)
             focusedIndex = idx + 2
-            focusRequesters[idx + 2]?.requestFocus()
+            // The new text node is not attached until recomposition. Requesting
+            // focus through an old requester here can throw after mutating the
+            // blocks but before the attachment transaction is enqueued.
         } else {
             blocks = coalesce(
                 blocks.toMutableList().apply { add(this.size, EditorBlock.Att(att)) },
             )
             // focus the trailing text block the coalesce() call guarantees.
             focusedIndex = blocks.lastIndex
-            focusRequesters[blocks.lastIndex]?.requestFocus()
         }
     }
 
@@ -365,7 +366,7 @@ fun NoteEditorScreen(
         val next = blocks.indices.firstOrNull { it > afterIndex && blocks[it] is EditorBlock.Text }
             ?: blocks.lastIndex
         focusedIndex = next
-        focusRequesters[next]?.requestFocus()
+        runCatching { focusRequesters[next]?.requestFocus() }
     }
 
     fun attach(kind: String, mime: String, bytes: ByteArray) {
