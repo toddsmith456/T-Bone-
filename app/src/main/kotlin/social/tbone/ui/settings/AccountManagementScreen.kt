@@ -157,7 +157,7 @@ fun AccountManagementScreen(
                 Text("Hidden account", style = BonyType.caption.copy(color = BonyColors.Accent))
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Enter your special PIN to reveal a hidden account. It will log you in and hide again when you switch away.",
+                    "Enter your special PIN to reveal matching hidden accounts. The first becomes active; switching away hides it again.",
                     style = BonyType.meta.copy(color = BonyColors.TextMute),
                 )
                 Spacer(Modifier.height(10.dp))

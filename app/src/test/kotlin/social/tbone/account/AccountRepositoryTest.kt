@@ -198,6 +198,23 @@ class AccountRepositoryTest {
         assertNull(repository.activeAccount.first())
     }
 
+    @Test
+    fun `shared pin reveals every matching hidden account without revealing others`() = runBlocking {
+        repository.addAccount(account("first"))
+        repository.setHidden("first", true, "1234")
+        repository.addAccount(account("second"))
+        repository.setHidden("second", true, "1234")
+        repository.addAccount(account("other"))
+        repository.setHidden("other", true, "9999")
+        repository.addAccount(account("visible"))
+        assertTrue(repository.unlockHiddenByPin("1234"))
+        assertEquals(setOf("first", "second", "visible"), repository.accounts.first().map { it.pubkey }.toSet())
+        assertEquals("first", repository.activeAccount.first()?.pubkey)
+        repository.setActiveAccount("second")
+        assertEquals("second", repository.activeAccount.first()?.pubkey)
+        assertFalse(repository.accounts.first().any { it.pubkey == "first" })
+    }
+
     private fun account(pubkey: String, relays: List<String> = emptyList()) = Account(
         pubkey = pubkey,
         signerType = SignerType.AMBER,
