@@ -229,6 +229,8 @@ class XdcRepository @Inject constructor(
         // persisted value, and reject/cancel old-mode calls across Tor toggles.
         appSettings.initialized.first { it }
         val useTor = appSettings.torEnabled.value
+        val guard = social.tbone.di.TorCallPolicy.guard
+        val transportEpoch = guard.snapshot(useTor)
         val status = if (useTor) social.tbone.settings.OrbotHelper.getStatus(context) else null
         val proxy = status as? social.tbone.settings.OrbotStatus.InstalledAndConnected
         val client = RelayConnection.buildClient(
@@ -247,8 +249,7 @@ class XdcRepository @Inject constructor(
             .header("Accept", "application/x-webxdc, application/octet-stream, application/json;q=0.9, */*;q=0.5")
             .build()
         val call = client.newCall(request)
-        val guard = social.tbone.di.TorCallPolicy.guard
-        guard.register(call, useTor)
+        guard.registerAtEpoch(call, useTor, transportEpoch)
         try {
             call.execute().use { response ->
                 if (!response.isSuccessful) throw IOException("HTTP ${response.code}")

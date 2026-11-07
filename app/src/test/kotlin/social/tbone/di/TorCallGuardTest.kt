@@ -33,6 +33,22 @@ class TorCallGuardTest {
         assertFalse(proxied.isCanceled())
     }
 
+    @Test fun oldEpochIsRejectedAfterModeCyclesBack() {
+        val guard = TorCallGuard()
+        val epoch = guard.snapshot(false)
+        guard.update(true)
+        guard.update(false)
+        val stale = call()
+        try {
+            guard.registerAtEpoch(stale, false, epoch)
+            fail("stale generation accepted")
+        } catch (_: IOException) { }
+        assertTrue(stale.isCanceled())
+        val fresh = call()
+        guard.registerAtEpoch(fresh, false, guard.snapshot(false))
+        guard.unregister(fresh)
+    }
+
     @Test fun sameModeDoesNotCancelCalls() {
         val guard = TorCallGuard()
         val call = call()

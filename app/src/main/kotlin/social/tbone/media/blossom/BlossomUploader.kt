@@ -102,6 +102,7 @@ class BlossomUploader @Inject constructor(
         for (server in candidates) {
             try {
                 val useTor = appSettings.torEnabled.value
+                val transportEpoch = social.tbone.di.TorCallPolicy.guard.snapshot(useTor)
                 val client = BlossomClient(clientOverride ?: uploadClient(useTor))
                 val result = client.upload(
                     file = file,
@@ -111,6 +112,7 @@ class BlossomUploader @Inject constructor(
                     hash = hash,
                     extension = extension,
                     expectedTor = if (clientOverride == null) useTor else null,
+                    expectedTorEpoch = if (clientOverride == null) transportEpoch else null,
                 )
                 val url = result.url ?: BlossomServerUrl.blob(server, hash, extension)
                 Timber.i("blossom: uploaded to $server -> $url")

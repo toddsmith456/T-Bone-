@@ -66,6 +66,8 @@ class FollowerListRepository @Inject constructor(
         appSettings.initialized.first { it }
         return try {
             val useTor = appSettings.torEnabled.value
+            val guard = social.tbone.di.TorCallPolicy.guard
+            val transportEpoch = guard.snapshot(useTor)
             val proxy = if (useTor) OrbotHelper.getStatus(context) as? OrbotStatus.InstalledAndConnected else null
             val okHttp = RelayConnection.buildClient(useTor = useTor,
                 proxyType = proxy?.proxyType ?: java.net.Proxy.Type.HTTP,
@@ -82,8 +84,7 @@ class FollowerListRepository @Inject constructor(
                 try {
                     val req = Request.Builder().url(url).get().header("Accept", "application/json").build()
                     val call = okHttp.newCall(req)
-                    val guard = social.tbone.di.TorCallPolicy.guard
-                    guard.register(call, useTor)
+                    guard.registerAtEpoch(call, useTor, transportEpoch)
                     try {
                         call.execute().use { resp ->
                             if (!resp.isSuccessful) return@use

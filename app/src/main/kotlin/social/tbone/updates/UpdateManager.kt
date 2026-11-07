@@ -539,19 +539,20 @@ class UpdateManager @Inject constructor(
     }
 
     private suspend fun <T> guardedGithubCall(request: Request, read: (okhttp3.Response) -> T): T {
-        val (client, expectedTor) = githubClient()
+        val (client, expectedTor, transportEpoch) = githubClient()
         val call = client.newCall(request)
         val guard = social.tbone.di.TorCallPolicy.guard
-        guard.register(call, expectedTor)
+        guard.registerAtEpoch(call, expectedTor, transportEpoch)
         try { return call.execute().use(read) }
         finally { guard.unregister(call) }
     }
 
-    private suspend fun githubClient(): Pair<okhttp3.OkHttpClient, Boolean> {
+    private suspend fun githubClient(): Triple<okhttp3.OkHttpClient, Boolean, Long> {
         appSettings.initialized.first { it }
         val useTor = appSettings.torEnabled.value
+        val transportEpoch = social.tbone.di.TorCallPolicy.guard.snapshot(useTor)
         val connected = if (useTor) OrbotHelper.getStatus(context) as? OrbotStatus.InstalledAndConnected else null
-        return RelayConnection.buildClient(
+        val client = RelayConnection.buildClient(
             useTor = useTor,
             proxyType = connected?.proxyType ?: java.net.Proxy.Type.HTTP,
             torPort = connected?.port ?: 8118,
@@ -559,7 +560,8 @@ class UpdateManager @Inject constructor(
             .callTimeout(45, TimeUnit.SECONDS)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
-            .build() to useTor
+            .build()
+        return Triple(client, useTor, transportEpoch)
     }
 
     companion object {
