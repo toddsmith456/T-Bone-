@@ -74,4 +74,43 @@ class VoiceRecordingGateTest {
         } finally { scope.cancel() }
     }
 
+
+    @Test fun renderingFinishesBeforeWipeAndOldEpochCannotRecreateFile() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val dir = kotlin.io.path.createTempDirectory("voice-wipe").toFile()
+        try {
+            val writes = NoteWriteCoordinator(scope)
+            val gate = VoiceRecordingGate(writes, scope)
+            val epoch = writes.currentWipeEpoch()
+            val rendering = CompletableDeferred<Unit>()
+            val continueRender = CompletableDeferred<Unit>()
+            val output = java.io.File(dir, "voice.wav")
+            val render = async(Dispatchers.IO) {
+                writes.runCancellableAtEpoch(epoch) {
+                    rendering.complete(Unit)
+                    continueRender.await()
+                    output.writeText("sensitive")
+                }
+            }
+            rendering.await()
+            val wiped = async(Dispatchers.IO) {
+                writes.runWipe(NoteWriteCoordinator.WipeKind.TOOLBOX) {
+                    gate.stopForWipe()
+                    writes.pauseAndDrain()
+                    output.delete()
+                    true
+                }
+            }
+            withTimeout(3_000) { while (writes.available.value) yield() }
+            assertFalse(wiped.isCompleted)
+            continueRender.complete(Unit)
+            render.await()
+            assertTrue(wiped.await())
+            assertFalse(output.exists())
+            try { writes.runCancellableAtEpoch(epoch) { output.writeText("stale") }; fail("stale render accepted") }
+            catch (_: java.io.IOException) { }
+            assertFalse(output.exists())
+        } finally { scope.cancel(); dir.deleteRecursively() }
+    }
+
 }
