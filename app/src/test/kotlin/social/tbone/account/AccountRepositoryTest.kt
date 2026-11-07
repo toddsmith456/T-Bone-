@@ -254,6 +254,21 @@ class AccountRepositoryTest {
         assertEquals(100, settings.hiddenUnlockedPubkeys.value.size)
     }
 
+    @Test
+    fun `late hidden session transition stays rejected after wipe completes`() {
+        val settings = AppSettings(dataStore, scope)
+        val oldEpoch = settings.hiddenSessionEpoch()
+        settings.addHiddenUnlocked("before")
+        settings.clearSessionUnlocksForWipe()
+        assertFalse(settings.updateHiddenSession(oldEpoch, null, listOf("late")))
+        assertFalse(settings.updateHiddenSession(settings.hiddenSessionEpoch(), null, listOf("during")))
+        settings.resumeHiddenSessionsAfterWipe()
+        assertFalse(settings.updateHiddenSession(oldEpoch, null, listOf("still-late")))
+        assertTrue(settings.hiddenUnlockedPubkeys.value.isEmpty())
+        assertTrue(settings.updateHiddenSession(settings.hiddenSessionEpoch(), null, listOf("fresh")))
+        assertEquals(setOf("fresh"), settings.hiddenUnlockedPubkeys.value)
+    }
+
     private fun account(pubkey: String, relays: List<String> = emptyList()) = Account(
         pubkey = pubkey,
         signerType = SignerType.AMBER,

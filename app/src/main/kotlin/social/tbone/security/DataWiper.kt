@@ -54,6 +54,7 @@ class DataWiper @Inject constructor(
 
     fun wipeAndRestart() {
         if (!wiping.compareAndSet(false, true)) return
+        appSettings.clearSessionUnlocksForWipe()
         if (!noteWrites.requestWipe(social.tbone.notes.NoteWriteCoordinator.WipeKind.APP)) {
             wiping.set(false)
             scope.launch(Dispatchers.Main) {
@@ -81,7 +82,6 @@ class DataWiper @Inject constructor(
             // not only the underlying DataStore on its later flow emission.
             steps.run("clear geohash settings") { appSettings.clearGeohashData() }
             steps.run("clear webxdc memory") { xdcRepository.clearInMemoryForWipe() }
-            steps.run("clear session unlocks") { appSettings.clearSessionUnlocksForWipe() }
             steps.run("clear database") { appDatabase.clearAllTables() }
 
             // The live DataStore file must never be deleted behind its active
@@ -136,6 +136,7 @@ class DataWiper @Inject constructor(
             if (!steps.failed) steps.run("resume geohash watchers") { geohashMonitor.resumeAfterWipe() }
             !steps.failed
             }
+            if (complete) appSettings.resumeHiddenSessionsAfterWipe()
             if (!complete) withContext(Dispatchers.Main) {
                 Toast.makeText(context, "Unable to unlock. Please try again.", Toast.LENGTH_LONG).show()
             }

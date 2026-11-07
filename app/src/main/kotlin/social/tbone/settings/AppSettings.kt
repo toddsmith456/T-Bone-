@@ -399,18 +399,48 @@ class AppSettings @Inject constructor(
     fun setDecoyUnlocked(unlocked: Boolean) { _decoyUnlocked.value = unlocked }
 
     /** Session-only set of hidden pubkeys that have been unlocked via PIN. */
+    private val hiddenSessionLock = Any()
+    private var hiddenSessionGeneration = 0L
+    private var hiddenSessionBlocked = false
     private val _hiddenUnlockedPubkeys = MutableStateFlow<Set<String>>(emptySet())
     val hiddenUnlockedPubkeys = _hiddenUnlockedPubkeys.asStateFlow()
-    fun addHiddenUnlocked(pubkey: String) { _hiddenUnlockedPubkeys.update { it + pubkey } }
-    fun removeHiddenUnlocked(pubkey: String) { _hiddenUnlockedPubkeys.update { it - pubkey } }
-    fun clearHiddenUnlocked() { _hiddenUnlockedPubkeys.value = emptySet() }
+    fun hiddenSessionEpoch(): Long = synchronized(hiddenSessionLock) {
+        if (hiddenSessionBlocked) Long.MIN_VALUE else hiddenSessionGeneration
+    }
 
-    /** The full-app wipe also needs to clear session-only unlocks: restarting
-     * the activity does not restart the application process or these flows. */
-    fun clearSessionUnlocksForWipe() {
+    /** Apply a whole account transition only if it began in this session. */
+    fun updateHiddenSession(epoch: Long, relock: String?, unlock: Collection<String>): Boolean = synchronized(hiddenSessionLock) {
+        if (hiddenSessionBlocked || epoch != hiddenSessionGeneration) return@synchronized false
+        _hiddenUnlockedPubkeys.update { current ->
+            (if (relock == null) current else current - relock) + unlock
+        }
+        true
+    }
+
+    fun addHiddenUnlocked(pubkey: String) {
+        val epoch = hiddenSessionEpoch()
+        updateHiddenSession(epoch, null, listOf(pubkey))
+    }
+    fun removeHiddenUnlocked(pubkey: String) {
+        val epoch = hiddenSessionEpoch()
+        updateHiddenSession(epoch, pubkey, emptyList())
+    }
+    fun clearHiddenUnlocked() = synchronized(hiddenSessionLock) {
+        hiddenSessionGeneration++
+        _hiddenUnlockedPubkeys.value = emptySet()
+    }
+
+    /** Called before the full wipe starts; late callbacks cannot reopen old sessions. */
+    fun clearSessionUnlocksForWipe() = synchronized(hiddenSessionLock) {
+        hiddenSessionBlocked = true
+        hiddenSessionGeneration++
         _hiddenUnlockedPubkeys.value = emptySet()
         _decoyUnlocked.value = false
         _parentalUnlocked.value = false
+    }
+
+    fun resumeHiddenSessionsAfterWipe() = synchronized(hiddenSessionLock) {
+        hiddenSessionBlocked = false
     }
 
     init {

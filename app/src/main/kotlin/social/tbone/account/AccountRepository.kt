@@ -140,17 +140,19 @@ class AccountRepository @Inject constructor(
     }
 
     /** Unlock a hidden account via PIN: reveals it for this session and switches to it. */
-    suspend fun unlockHiddenByPin(pin: String): Boolean = hiddenVerification.withLock {
-        activateHiddenMatches(findHiddenMatches(pin))
+    suspend fun unlockHiddenByPin(pin: String): Boolean {
+        val epoch = appSettings.hiddenSessionEpoch()
+        if (epoch == Long.MIN_VALUE) return false
+        return hiddenVerification.withLock { activateHiddenMatches(findHiddenMatches(pin), epoch) }
     }
 
     /** A verified PIN must not unlock an account whose PIN changed while
      * verification was in flight, or resurrect an account already removed. */
     internal suspend fun activateHiddenIfUnchanged(candidate: Account): Boolean =
-        activateHiddenMatches(listOf(candidate))
+        activateHiddenMatches(listOf(candidate), appSettings.hiddenSessionEpoch())
 
-    private suspend fun activateHiddenMatches(candidates: List<Account>): Boolean {
-        if (candidates.isEmpty()) return false
+    private suspend fun activateHiddenMatches(candidates: List<Account>, sessionEpoch: Long): Boolean {
+        if (candidates.isEmpty() || sessionEpoch == Long.MIN_VALUE) return false
         val unlocked = mutableListOf<String>()
         var hiddenToRelock: String? = null
         dataStore.edit { prefs ->
@@ -171,9 +173,7 @@ class AccountRepository @Inject constructor(
             unlocked.addAll(matches.map { it.pubkey })
         }
         if (unlocked.isEmpty()) return false
-        hiddenToRelock?.let(appSettings::removeHiddenUnlocked)
-        unlocked.forEach(appSettings::addHiddenUnlocked)
-        return true
+        return appSettings.updateHiddenSession(sessionEpoch, hiddenToRelock, unlocked)
     }
 
     private fun hashPin(input: String): String = social.tbone.security.PinHasher.hash(input)
@@ -243,6 +243,8 @@ class AccountRepository @Inject constructor(
     }
 
     suspend fun setActiveAccount(pubkey: String) {
+        val sessionEpoch = appSettings.hiddenSessionEpoch()
+        if (sessionEpoch == Long.MIN_VALUE) return
         var hiddenToRelock: String? = null
         var unlockTarget = false
         dataStore.edit { prefs ->
@@ -257,8 +259,7 @@ class AccountRepository @Inject constructor(
             unlockTarget = target.isHidden
             prefs[KEY_ACTIVE_PUBKEY] = pubkey
         }
-        hiddenToRelock?.let(appSettings::removeHiddenUnlocked)
-        if (unlockTarget) appSettings.addHiddenUnlocked(pubkey)
+        appSettings.updateHiddenSession(sessionEpoch, hiddenToRelock, if (unlockTarget) listOf(pubkey) else emptyList())
     }
 
     suspend fun updateAccount(account: Account) {
