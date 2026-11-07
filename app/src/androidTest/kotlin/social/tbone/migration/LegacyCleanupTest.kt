@@ -80,6 +80,27 @@ class LegacyCleanupTest {
         assertEquals("done", context.getSharedPreferences(LegacyCleanupRunner.PREFS, 0).getString("phase", null))
     }
 
+    @Test fun browserStorageDetectionDoesNotCreateWebView() = isolated { context, _, root ->
+        val isolated = object : ContextWrapper(context) {
+            override fun getApplicationInfo() = android.content.pm.ApplicationInfo(context.applicationInfo).apply { dataDir = root.absolutePath }
+        }
+        val browser = BrowserDeletion()
+        assertFalse(browser.hasData(isolated))
+        val webviewDir = File(root, "app_webview").apply { mkdirs() }
+        assertTrue(browser.hasData(isolated))
+        webviewDir.deleteRecursively()
+        File(context.cacheDir, "WebView").mkdirs()
+        assertTrue(browser.hasData(isolated))
+    }
+
+    @Test fun incompletePendingMarkerNeverSilentlyCompletes() = isolated { context, store, _ ->
+        val marker = context.getSharedPreferences(LegacyCleanupRunner.PREFS, 0)
+        marker.edit().putString("phase", "pending").commit()
+        try { LegacyCleanupRunner(context, store, { false }, {}).run(); fail("expected invalid marker") }
+        catch (_: IllegalStateException) { }
+        assertEquals("pending", marker.getString("phase", null))
+    }
+
     @Test fun cancellationDoesNotMarkBrowserCleanupFinished() = isolated { context, store, _ ->
         val first = LegacyCleanupRunner(context, store, { true }, { throw CancellationException("interrupted") })
         try { first.run(); fail("expected cancellation") } catch (_: CancellationException) { }

@@ -13,7 +13,6 @@ import java.io.File
 import java.io.IOException
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,7 +21,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 
 /** Temporary upgrade-only cleanup; there is no mini-app runtime or writer in this version. */
 @Singleton
@@ -82,6 +80,7 @@ internal class LegacyCleanupRunner(
             val browserRequired = browserHasData(context)
             check(marker.edit().putString(PHASE, "pending").putBoolean(BROWSER, browserRequired).commit())
         }
+        check(marker.contains(BROWSER)) { "Incomplete legacy cleanup marker" }
         val needsBrowser = marker.getBoolean(BROWSER, false)
         listOf(File(context.filesDir, "webxdc"), File(context.cacheDir, "webxdc_share")).forEach {
             check(!it.exists() || it.deleteRecursively()) { "Legacy mini-app file cleanup failed" }
@@ -99,7 +98,7 @@ internal class LegacyCleanupRunner(
 
 /** Platform cleanup is asynchronous. Retain an in-flight callback across retries. */
 internal class BrowserDeletion {
-    private var pending: CompletableDeferred<Unit>? = null
+    private val deletion = CallbackWipeBarrier()
 
     fun hasData(context: Context): Boolean {
         val data = File(context.applicationInfo.dataDir)
@@ -110,24 +109,11 @@ internal class BrowserDeletion {
     }
 
     suspend fun delete() = withContext(Dispatchers.Main) {
-        pending?.let { await(it); pending = null }
-        check(WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)) {
-            "Update Android System WebView to remove legacy browser data"
+        deletion.run { complete ->
+            check(WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)) {
+                "Update Android System WebView to remove legacy browser data"
+            }
+            WebStorageCompat.deleteBrowsingData(WebStorage.getInstance()) { complete() }
         }
-        val current = CompletableDeferred<Unit>()
-        pending = current
-        try {
-            WebStorageCompat.deleteBrowsingData(WebStorage.getInstance()) { current.complete(Unit) }
-        } catch (e: Exception) {
-            pending = null
-            throw e
-        }
-        await(current)
-        pending = null
-    }
-
-    private suspend fun await(operation: CompletableDeferred<Unit>) {
-        if (withTimeoutOrNull(30_000) { operation.await(); true } != true)
-            throw IOException("Legacy browser cleanup timed out")
     }
 }
