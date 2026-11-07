@@ -73,7 +73,7 @@ fun DecoyChecklistEditorScreen(
 ) {
 
     val context = LocalContext.current
-    val editorEpoch = remember(viewModel, id) { viewModel.recordingEpoch() }
+    val editorEpoch = remember(viewModel, id) { viewModel.currentWipeEpoch() }
     var exiting by remember { mutableStateOf(false) }
     var skipDisposeSave by remember { mutableStateOf(false) }
     var title by remember { mutableStateOf("") }

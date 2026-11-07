@@ -128,7 +128,7 @@ fun DecoyNoteEditorScreen(
     val scrollState = rememberScrollState()
 
     val context = LocalContext.current
-    val editorEpoch = remember(viewModel, id) { viewModel.recordingEpoch() }
+    val editorEpoch = remember(viewModel, id) { viewModel.currentWipeEpoch() }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val perm = rememberPermissionRequester()
     val recordingOwner = remember { Any() }
@@ -400,7 +400,7 @@ fun DecoyNoteEditorScreen(
                         }
                         closeRecording
                     }
-                    if (started && epoch == viewModel.recordingEpoch()) created else null
+                    if (started && epoch == viewModel.currentWipeEpoch()) created else null
                 }.getOrNull()
             }
             if (file != null) {
