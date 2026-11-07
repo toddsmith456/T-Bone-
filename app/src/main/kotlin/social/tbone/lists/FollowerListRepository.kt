@@ -59,9 +59,9 @@ class FollowerListRepository @Inject constructor(
     // the public read endpoint is documented as https://primal.net/api/v1/people/<npub>/followers
     // We probe both the primal relay (NIP-45 COUNT is not enough — we need the actual pubkeys) and
     // the HTTP endpoint. Either may be unavailable; we return whatever we get.
-    private suspend fun fetchPrimalHttp(pubkeyHex: String): List<String>? {
+    private suspend fun fetchPrimalHttp(pubkeyHex: String): List<String>? = withContext(kotlinx.coroutines.Dispatchers.IO) {
         appSettings.initialized.first { it }
-        return try {
+        try {
             val useTor = appSettings.torEnabled.value
             val guard = social.tbone.di.TorCallPolicy.guard
             val transportEpoch = guard.snapshot(useTor)
@@ -83,12 +83,9 @@ class FollowerListRepository @Inject constructor(
                     val call = okHttp.newCall(req)
                     guard.registerAtEpoch(call, useTor, transportEpoch)
                     try {
-                        call.execute().use { resp ->
-                            if (!resp.isSuccessful) return@use
-                            val body = resp.body?.byteStream()?.use { it.readBounded(4 * 1024 * 1024).toString(Charsets.UTF_8) } ?: return@use
-                            val list = parsePrimalBody(body)
-                            if (list != null && list.isNotEmpty()) return list
-                        }
+                        val body = call.awaitBoundedFollowerBody(4 * 1024 * 1024)
+                        val list = body?.let(::parsePrimalBody)
+                        if (!list.isNullOrEmpty()) return@withContext list
                     } finally {
                         guard.unregister(call)
                     }
@@ -166,7 +163,7 @@ class FollowerListRepository @Inject constructor(
                                 val e = msg.event
                                 if (e.kind == EventKind.FOLLOW_LIST && e.verify() &&
                                     e.parsedTags.any { it.name == "p" && it.value()?.equals(pubkeyHex, ignoreCase = true) == true }) {
-                                    authors.add(e.pubkey)
+                                    if (authors.size < 5_000) authors.add(e.pubkey)
                                 }
                             }
                         }
