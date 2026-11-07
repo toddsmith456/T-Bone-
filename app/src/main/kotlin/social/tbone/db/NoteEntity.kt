@@ -97,4 +97,13 @@ interface NoteDao {
 
     @Query("UPDATE notes SET folderId = NULL, folderPinned = 0 WHERE folderId = :folderId")
     suspend fun clearFolder(folderId: String)
+
+    @Query("DELETE FROM note_folders WHERE id = :folderId")
+    suspend fun deleteFolderRow(folderId: String)
+
+    @Transaction
+    suspend fun unfileAndDeleteFolder(folderId: String) {
+        clearFolder(folderId)
+        deleteFolderRow(folderId)
+    }
 }

@@ -162,8 +162,7 @@ class DecoyNotesRepository @Inject constructor(
     }
 
     suspend fun deleteFolder(id: String) {
-        dao.clearFolder(id)
-        folderDao.delete(id)
+        dao.unfileAndDeleteFolder(id)
     }
 
     suspend fun setFolderRowPinned(id: String, pinned: Boolean) = folderDao.setPinned(id, pinned)

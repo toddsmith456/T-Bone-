@@ -91,4 +91,13 @@ interface DecoyNoteDao {
 
     @Query("UPDATE decoy_notes SET folderId = NULL, folderPinned = 0 WHERE folderId = :folderId")
     suspend fun clearFolder(folderId: String)
+
+    @Query("DELETE FROM decoy_note_folders WHERE id = :folderId")
+    suspend fun deleteFolderRow(folderId: String)
+
+    @Transaction
+    suspend fun unfileAndDeleteFolder(folderId: String) {
+        clearFolder(folderId)
+        deleteFolderRow(folderId)
+    }
 }

@@ -127,4 +127,25 @@ class NotesIntegrityTest {
         } finally { owner.cancel() }
     }
 
+
+    @Test fun failedFolderDeletionKeepsNotesInTheirOriginalFolders() = runBlocking {
+        val realFolder = real.addFolder("real folder")
+        val decoyFolder = decoy.addFolder("decoy folder")
+        real.saveText("r", "", "body", realFolder)
+        decoy.saveText("d", "", "body", decoyFolder)
+        val sql = db.openHelper.writableDatabase
+        sql.execSQL("CREATE TRIGGER fail_real_folder BEFORE DELETE ON note_folders BEGIN SELECT RAISE(ABORT, 'injected'); END")
+        sql.execSQL("CREATE TRIGGER fail_decoy_folder BEFORE DELETE ON decoy_note_folders BEGIN SELECT RAISE(ABORT, 'injected'); END")
+        var realFailed = false
+        var decoyFailed = false
+        try { real.deleteFolder(realFolder) } catch (_: Exception) { realFailed = true }
+        try { decoy.deleteFolder(decoyFolder) } catch (_: Exception) { decoyFailed = true }
+        assertTrue(realFailed)
+        assertTrue(decoyFailed)
+        assertEquals(realFolder, db.noteDao().getById("r")!!.folderId)
+        assertEquals(decoyFolder, db.decoyNoteDao().getById("d")!!.folderId)
+        assertNotNull(db.noteFolderDao().getById(realFolder))
+        assertNotNull(db.decoyNoteFolderDao().getById(decoyFolder))
+    }
+
 }

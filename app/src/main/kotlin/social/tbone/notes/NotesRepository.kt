@@ -254,8 +254,7 @@ class NotesRepository @Inject constructor(
 
     /** Deletes a folder; its notes/checklists become un-filed (content kept). */
     suspend fun deleteFolder(id: String) {
-        dao.clearFolder(id)
-        folderDao.delete(id)
+        dao.unfileAndDeleteFolder(id)
     }
 
     suspend fun setFolderRowPinned(id: String, pinned: Boolean) = folderDao.setPinned(id, pinned)
