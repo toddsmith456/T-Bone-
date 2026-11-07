@@ -224,12 +224,12 @@ fun ToolboxSettingsScreen(
             Column(modifier = Modifier.weight(1f)) {
                 Text("duress pin", style = BonyType.body.copy(color = BonyColors.Text))
                 Text(
-                    text = if (duressPinEnabled) "entering it attempts to clear notes, bookmarks, calendar, geohash and recordings"
-                    else "attempts to clear notes, bookmarks, calendar, geohash and recordings instead of unlocking",
+                    text = if (duressPinEnabled) "entering it attempts to clear regular notes, bookmarks, calendar, geohash and recordings"
+                    else "attempts to clear regular notes, bookmarks, calendar, geohash and recordings instead of unlocking",
                     style = BonyType.meta.copy(color = BonyColors.TextMute),
                 )
                 Text(
-                    "Mini apps and their browser storage, and exported or shared copies, may remain. Deletion is not guaranteed secure erasure.",
+                    "Decoy notes, mini apps and their browser storage, and exported or shared copies may remain. Deletion is not guaranteed secure erasure.",
                     style = BonyType.caption.copy(color = BonyColors.TextMute),
                 )
             }

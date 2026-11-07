@@ -104,7 +104,9 @@ class ToolboxSecurity @Inject constructor(
      *  - toolbox settings (pin, duress pin, screenshot toggle)
      * The current database cleanup also deletes cached events and profiles,
      * but preserves notifications. Accounts and general app settings remain.
-     * Mini apps, WebView storage and external copies are not cleared here.
+     * Decoy note tables, mini apps, WebView storage and external copies are
+     * not cleared here. Whether decoy notes should be included is a product
+     * decision; changing wipe scope would delete additional user data.
      */
     private val wiping = java.util.concurrent.atomic.AtomicBoolean(false)
 
