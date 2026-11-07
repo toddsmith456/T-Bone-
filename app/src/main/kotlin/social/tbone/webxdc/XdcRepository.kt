@@ -18,10 +18,10 @@ import okhttp3.Request
 import social.tbone.nostr.relay.RelayConnection
 import social.tbone.settings.AppSettings
 import timber.log.Timber
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import social.tbone.util.readBounded
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -248,17 +248,9 @@ class XdcRepository @Inject constructor(
     }
 
     private fun readCapped(input: InputStream, limit: Long = XdcArchive.MAX_ARCHIVE_BYTES): ByteArray {
-        val out = ByteArrayOutputStream()
-        val buffer = ByteArray(32 * 1024)
-        var total = 0L
-        while (true) {
-            val n = input.read(buffer)
-            if (n < 0) break
-            total += n
-            if (total > limit) throw XdcException("file is too large")
-            out.write(buffer, 0, n)
-        }
-        return out.toByteArray()
+        require(limit in 0..Int.MAX_VALUE.toLong())
+        return try { input.readBounded(limit.toInt()) }
+        catch (_: IllegalArgumentException) { throw XdcException("file is too large") }
     }
 
     private fun queryDisplayName(uri: Uri): String? = runCatching {
