@@ -88,7 +88,7 @@ fun ChecklistEditorScreen(
                 val note = viewModel.getNote(id)
                     ?: throw IllegalStateException("Checklist not found")
                 if (note.kind != NoteKind.CHECKLIST) throw IllegalStateException("Not a checklist")
-                val data = note.checklist() ?: throw IllegalStateException("Invalid checklist")
+                val data = ChecklistCodec.decodeOrNull(note.text) ?: throw IllegalStateException("Invalid checklist")
                 title = data.title
                 items = data.items
                 lastSavedJson = ChecklistCodec.encode(ChecklistData(title, items))
