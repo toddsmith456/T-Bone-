@@ -228,6 +228,20 @@ class DecoyNotesRepository @Inject constructor(
         saveText(noteId, title, text, folderId)
     }
 
+    /** Remove an inline reference and its ciphertext in the same transaction. */
+    suspend fun removeAttachmentAndSaveText(
+        noteId: String, attachmentId: String, title: String, text: String, folderId: String?,
+    ) = database.withTransaction {
+        check(dao.getById(noteId) != null) { "Note no longer exists" }
+        val attachment = attachmentDao.getById(attachmentId)
+        check(attachment == null || attachment.noteId == noteId) { "Attachment belongs to another note" }
+        saveText(noteId, title, text, folderId)
+        // The same attachment may be referenced more than once in the body.
+        if (!text.contains("[[image:$attachmentId]]") && !text.contains("[[voice:$attachmentId]]")) {
+            deleteAttachment(attachmentId)
+        }
+    }
+
     suspend fun deleteAttachment(id: String) = attachmentDao.delete(id)
 
     private fun DecoyNoteEntity.toUi(crypto: NotesCrypto, strictTitle: Boolean = false): NoteUi? = runCatching {

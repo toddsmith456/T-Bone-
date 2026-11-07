@@ -250,6 +250,20 @@ class NotesViewModel @Inject constructor(
         }
     }
 
+    fun removeAttachmentAndSaveText(
+        noteId: String, attachmentId: String, title: String, text: String, folderId: String?, epoch: Long,
+        onError: (Exception) -> Unit, onSaved: () -> Unit,
+    ) {
+        val pending = noteWrites.submitAtEpoch(epoch) {
+            repository.removeAttachmentAndSaveText(noteId, attachmentId, title, text, folderId)
+        }
+        viewModelScope.launch {
+            try { pending.await(); onSaved() }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { _error.value = "could not remove attachment (${error.message})"; onError(error) }
+        }
+    }
+
     fun deleteAttachment(id: String, epoch: Long = noteWrites.currentWipeEpoch()) {
         val pending = noteWrites.submitAtEpoch(epoch) { repository.deleteAttachment(id) }
         viewModelScope.launch {
