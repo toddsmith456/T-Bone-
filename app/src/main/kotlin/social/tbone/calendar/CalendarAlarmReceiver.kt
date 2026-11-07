@@ -45,7 +45,7 @@ class CalendarAlarmReceiver : BroadcastReceiver() {
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
                         val event = runCatching { repository.getById(id) }.getOrNull()
-                        if (event != null) {
+                        if (event != null) scheduler.deliverIfAllowed {
                             postNotification(context, id, event.title, start)
                             scheduler.scheduleNextOccurrence(event, start)
                         }

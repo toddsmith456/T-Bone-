@@ -80,16 +80,23 @@ class FollowerListRepository @Inject constructor(
             for (url in urls) {
                 try {
                     val req = Request.Builder().url(url).get().header("Accept", "application/json").build()
-                    okHttp.newCall(req).execute().use { resp ->
-                        if (!resp.isSuccessful) return@use
-                        val body = resp.body?.string() ?: return@use
-                        val list = parsePrimalBody(body)
-                        if (list != null && list.isNotEmpty()) return list
+                    val call = okHttp.newCall(req)
+                    val guard = social.tbone.di.TorCallPolicy.guard
+                    guard.register(call, useTor)
+                    try {
+                        call.execute().use { resp ->
+                            if (!resp.isSuccessful) return@use
+                            val body = resp.body?.string() ?: return@use
+                            val list = parsePrimalBody(body)
+                            if (list != null && list.isNotEmpty()) return list
+                        }
+                    } finally {
+                        guard.unregister(call)
                     }
-                } catch (_: Exception) { continue }
+                } catch (e: CancellationException) { throw e } catch (_: Exception) { continue }
             }
             null
-        } catch (_: Exception) { null }
+        } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
     }
 
     private fun parsePrimalBody(body: String): List<String>? {

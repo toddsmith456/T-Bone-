@@ -101,7 +101,8 @@ class BlossomUploader @Inject constructor(
 
         for (server in candidates) {
             try {
-                val client = BlossomClient(clientOverride ?: uploadClient())
+                val useTor = appSettings.torEnabled.value
+                val client = BlossomClient(clientOverride ?: uploadClient(useTor))
                 val result = client.upload(
                     file = file,
                     mime = mime,
@@ -109,10 +110,13 @@ class BlossomUploader @Inject constructor(
                     authHeader = authHeader,
                     hash = hash,
                     extension = extension,
+                    expectedTor = if (clientOverride == null) useTor else null,
                 )
                 val url = result.url ?: BlossomServerUrl.blob(server, hash, extension)
                 Timber.i("blossom: uploaded to $server -> $url")
                 return@withContext url
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // Keep going: a 413 on one server says nothing about the next.
                 val host = BlossomServerUrl.domain(server).ifEmpty { server }
@@ -126,8 +130,7 @@ class BlossomUploader @Inject constructor(
     }
 
     /** Build a current-mode client with finite upload timeouts. */
-    private suspend fun uploadClient(): OkHttpClient {
-        val useTor = appSettings.torEnabled.value
+    private suspend fun uploadClient(useTor: Boolean): OkHttpClient {
         val proxy = if (useTor) OrbotHelper.getStatus(context) as? OrbotStatus.InstalledAndConnected else null
         if (useTor && appSettings.torKillSwitch.value && proxy == null) {
             error("Orbot is not connected; upload blocked by Tor kill-switch")

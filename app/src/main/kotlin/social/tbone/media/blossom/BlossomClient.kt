@@ -85,6 +85,7 @@ class BlossomClient(private val client: OkHttpClient) {
         authHeader: String,
         hash: String,
         extension: String = "",
+        expectedTor: Boolean? = null,
     ): BlossomUploadResult = withContext(Dispatchers.IO) {
         val endpoint = upload(serverBaseUrl)
         val body = fileBody(file, mime)
@@ -96,7 +97,11 @@ class BlossomClient(private val client: OkHttpClient) {
             .put(body)
             .build()
 
-        client.newCall(request).execute().use { response ->
+        val call = client.newCall(request)
+        val guard = social.tbone.di.TorCallPolicy.guard
+        if (expectedTor != null) guard.register(call, expectedTor)
+        try {
+        call.execute().use { response ->
             val text = runCatching { response.body?.string() }.getOrNull()
             if (!response.isSuccessful) {
                 throw BlossomException(
@@ -120,6 +125,9 @@ class BlossomClient(private val client: OkHttpClient) {
                     type = parsed?.type ?: mime,
                 )
             }
+        }
+        } finally {
+            if (expectedTor != null) guard.unregister(call)
         }
     }
 

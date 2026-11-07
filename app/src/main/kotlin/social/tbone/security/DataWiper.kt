@@ -9,6 +9,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import android.widget.Toast
 import social.tbone.MainActivity
 import social.tbone.db.AppDatabase
 import java.security.KeyStore
@@ -32,6 +34,8 @@ class DataWiper @Inject constructor(
     private val dataStore: DataStore<Preferences>,
     private val scope: CoroutineScope,
     private val calendarAlarms: social.tbone.calendar.CalendarAlarmScheduler,
+    private val appSettings: social.tbone.settings.AppSettings,
+    private val geohashCache: social.tbone.ui.toolbox.geohash.GeohashMessageCache,
 ) {
 
     /**
@@ -40,54 +44,61 @@ class DataWiper @Inject constructor(
      */
     fun wipeAndRestart() {
         scope.launch(Dispatchers.IO) {
-            // Cancel system-owned alarms before their ID registry is cleared.
-            runCatching { calendarAlarms.cancelAll() }.onFailure { timber.log.Timber.e(it, "Could not cancel calendar reminders during wipe") }
-            runCatching { context.getSystemService(android.app.NotificationManager::class.java)?.cancelAll() }
-                .onFailure { timber.log.Timber.e(it, "Could not cancel notifications during wipe") }
-
-            // 1. Room database — every table.
-            runCatching { appDatabase.clearAllTables() }
-
-            // 2. DataStore — all preferences (accounts, settings, pins).
-            runCatching {
-                dataStore.edit { it.clear() }
+            val steps = WipeSteps { name, error -> timber.log.Timber.e(error, "Wipe step failed: $name") }
+            steps.run("block and cancel calendar reminders") { calendarAlarms.beginSensitiveWipe() }
+            steps.run("cancel notifications") {
+                checkNotNull(context.getSystemService(android.app.NotificationManager::class.java)).cancelAll()
             }
+            // Disable queued and future geohash writes before deleting cached rows.
+            steps.run("disable geohash cache") { appSettings.setGeohashCacheMillis(0L) }
+            steps.run("clear geohash cache") { geohashCache.clear() }
+            steps.run("clear database") { appDatabase.clearAllTables() }
 
-            // 3. Internal files (logs, recordings, anything else).
-            runCatching {
-                context.filesDir.listFiles()?.forEach { it.deleteRecursively() }
-            }
-            // 3b. Cache (duress must not leave image_cache, share_cards, updates).
-            runCatching {
-                context.cacheDir.listFiles()?.forEach { it.deleteRecursively() }
-            }
-            runCatching {
-                context.codeCacheDir.listFiles()?.forEach { it.deleteRecursively() }
-            }
-
-            // 4. Keystore keys owned by this app.
-            runCatching {
-                val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-                ks.deleteEntry("tbone_notes_key")
-                ks.deleteEntry("tbone_local_key_encryption")
-                ks.deleteEntry("tbone_calendar_key")
-            }
-
-            // Preferences are distinct from DataStore; clear all app-owned
-            // preference files, including geohash and alarm bookkeeping.
-            runCatching {
-                val prefsDir = java.io.File(context.applicationInfo.dataDir, "shared_prefs")
-                prefsDir.listFiles()?.filter { it.name.endsWith(".xml") }?.forEach { file ->
-                    check(context.getSharedPreferences(file.name.removeSuffix(".xml"), Context.MODE_PRIVATE).edit().clear().commit())
+            // The live DataStore file must never be deleted behind its active
+            // instance. It is cleared atomically through its API below instead.
+            steps.run("clear internal files") {
+                context.filesDir.listFiles()?.filterNot { it.name == "datastore" }?.forEach {
+                    check(it.deleteRecursively()) { "internal file deletion failed" }
                 }
-            }.onFailure { timber.log.Timber.e(it, "Could not clear shared preferences during wipe") }
-
-            // 5. Restart the activity so the app boots into a clean state
-            //    (no account -> onboarding).
-            val intent = Intent(context, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
             }
-            runCatching { context.startActivity(intent) }
+            steps.run("clear cache") {
+                context.cacheDir.listFiles()?.forEach { check(it.deleteRecursively()) { "cache deletion failed" } }
+            }
+            steps.run("clear code cache") {
+                context.codeCacheDir.listFiles()?.forEach { check(it.deleteRecursively()) { "code cache deletion failed" } }
+            }
+            listOf("tbone_notes_key", "tbone_local_key_encryption", "tbone_calendar_key").forEach { alias ->
+                steps.run("remove owned key") {
+                    val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+                    ks.deleteEntry(alias)
+                    check(!ks.containsAlias(alias)) { "key removal failed" }
+                }
+            }
+
+            // Do not claim a clean restart or remove the PIN if an earlier step
+            // failed. Keeping the gate permits a retry without exposing content.
+            if (!steps.failed) {
+                steps.run("clear shared preferences") {
+                    val prefsDir = java.io.File(context.applicationInfo.dataDir, "shared_prefs")
+                    prefsDir.listFiles()?.filter { it.name.endsWith(".xml") }?.forEach { file ->
+                        check(context.getSharedPreferences(file.name.removeSuffix(".xml"), Context.MODE_PRIVATE)
+                            .edit().clear().commit())
+                    }
+                }
+            }
+            if (!steps.failed) steps.run("clear settings and accounts") { dataStore.edit { it.clear() } }
+            if (!steps.failed) steps.run("finish calendar wipe gate") { calendarAlarms.finishSensitiveWipe() }
+            if (!steps.failed) {
+                steps.run("restart") {
+                    val intent = Intent(context, MainActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                    }
+                    context.startActivity(intent)
+                }
+            }
+            if (steps.failed) withContext(Dispatchers.Main) {
+                Toast.makeText(context, "Wipe incomplete. Keep the app locked and try again.", Toast.LENGTH_LONG).show()
+            }
         }
     }
 }

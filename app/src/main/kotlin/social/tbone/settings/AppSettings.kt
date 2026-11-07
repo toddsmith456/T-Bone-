@@ -410,7 +410,10 @@ class AppSettings @Inject constructor(
             dataStore.data.collect { prefs ->
                 _confirmExternalLinks.value = prefs[CONFIRM_LINKS] ?: false
                 _torExplicitlySet.value = prefs[TOR_EXPLICITLY_SET] == true
-                _torEnabled.value = prefs[TOR_ENABLED] ?: false
+                val torMode = prefs[TOR_ENABLED] ?: false
+                // Cancel old-mode tracked calls before publishing the new mode.
+                social.tbone.di.TorCallPolicy.guard.update(torMode)
+                _torEnabled.value = torMode
                 _torKillSwitch.value = prefs[TOR_KILL_SWITCH] ?: false
                 _lastViewedNotificationsAt.value = prefs[LAST_VIEWED_NOTIFICATIONS_AT] ?: 0L
                 _globalAutoLoadEnabled.value = prefs[GLOBAL_AUTO_LOAD_ENABLED] ?: true

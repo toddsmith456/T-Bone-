@@ -4,6 +4,16 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.assertDoesNotExist
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.unit.dp
+import org.junit.Assert.assertTrue
+import social.tbone.nostr.Event
+import social.tbone.nostr.Nip19
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -61,5 +71,34 @@ class IconAndLinkRegressionTest {
                 if (oldSplash == null) remove("splash") else putString("splash", oldSplash)
             }.commit()
         }
+    }
+
+    @Test fun collapsedHeightAppliesAcrossTextAndInlineQuote() {
+        val id = "b".repeat(64)
+        val quote = Event(id, "c".repeat(64), 1_700_000_000, 1, emptyList(), "quoted body", "")
+        val content = "first paragraph\nnostr:${Nip19.hexToNote(id)}\n" + "remaining text ".repeat(20)
+        compose.setContent { BonyTheme {
+            NoteBodyText(content = content, style = TextStyle(fontSize = 18.sp, lineHeight = 24.sp),
+                modifier = Modifier.testTag("outer-note"), maxLines = 3, expandable = true,
+                quotedEvents = mapOf(id to quote))
+        } }
+        val collapsedHeight = compose.onNodeWithTag("outer-note").fetchSemanticsNode().size.height
+        compose.onNodeWithText("show more →").performClick()
+        val expandedHeight = compose.onNodeWithTag("outer-note").fetchSemanticsNode().size.height
+        assertTrue("expanded note should be taller than collapsed note", expandedHeight > collapsedHeight)
+    }
+
+    @Test fun expandAffordanceResetsWhenWidthIncreases() {
+        val wide = mutableStateOf(false)
+        compose.setContent { BonyTheme {
+            NoteBodyText(content = "A moderate length sentence that wraps on narrow screens",
+                style = TextStyle(fontSize = 18.sp, lineHeight = 24.sp),
+                modifier = Modifier.width(if (wide.value) 1000.dp else 100.dp),
+                maxLines = 2, expandable = true)
+        } }
+        compose.onNodeWithText("show more →").assertExists()
+        compose.runOnIdle { wide.value = true }
+        // The activity may constrain width; a single shorter string fits its screen.
+        compose.onNodeWithText("show more →").assertDoesNotExist()
     }
 }

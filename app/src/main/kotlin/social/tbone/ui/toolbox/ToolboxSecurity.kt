@@ -8,6 +8,10 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import android.widget.Toast
+import androidx.room.withTransaction
+import social.tbone.security.WipeSteps
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import social.tbone.security.PinAttemptLimiter
@@ -102,32 +106,39 @@ class ToolboxSecurity @Inject constructor(
      */
     fun wipeToolbox() {
         scope.launch(Dispatchers.IO) {
-            runCatching {
-                calendarAlarms.cancelAll()
-                // Stop new geohash cache writes before deleting private messages.
-                appSettings.setGeohashCacheMillis(0L)
-                geohashCache.clear()
-                // Delete every table except `notifications`. Children first so
-                // any foreign-key ordering is respected.
-                val db = appDatabase.openHelper.writableDatabase
-                listOf("bookmarks", "bookmark_folders", "note_attachments", "note_folders", "calendar_events", "notes", "events", "profiles", "geohash_messages")
-                    .forEach { table ->
-                        db.execSQL("DELETE FROM $table")
-                    }
-                // Geohash identity: channels + nickname + seed live in the
-                // DataStore; per-channel last-seen marks live in prefs.
-                appSettings.clearGeohashData()
-                runCatching {
-                    context.getSharedPreferences("tbone_geohash", Context.MODE_PRIVATE)
-                        .edit().clear().apply()
+            val steps = WipeSteps { name, error -> timber.log.Timber.e(error, "Toolbox wipe step failed: $name") }
+            steps.run("block and cancel reminders") { calendarAlarms.beginSensitiveWipe() }
+            steps.run("disable geohash cache") { appSettings.setGeohashCacheMillis(0L) }
+            steps.run("clear geohash cache") { geohashCache.clear() }
+            steps.run("clear toolbox tables") {
+                appDatabase.withTransaction {
+                    val db = appDatabase.openHelper.writableDatabase
+                    listOf("bookmarks", "bookmark_folders", "note_attachments", "note_folders", "calendar_events", "notes", "events", "profiles", "geohash_messages")
+                        .forEach { table -> db.execSQL("DELETE FROM $table") }
                 }
-                context.filesDir.listFiles()?.filter { it.name == "recordings" }?.forEach { it.deleteRecursively() }
+            }
+            steps.run("clear geohash settings") { appSettings.clearGeohashData() }
+            steps.run("clear geohash preferences") {
+                check(context.getSharedPreferences("tbone_geohash", Context.MODE_PRIVATE).edit().clear().commit())
+            }
+            steps.run("clear recordings") {
+                context.filesDir.listFiles()?.filter { it.name == "recordings" }?.forEach {
+                    check(it.deleteRecursively()) { "recording deletion failed" }
+                }
+            }
+            // Preserve lock credentials until the data-removal steps succeed.
+            if (!steps.failed) steps.run("clear toolbox security settings") {
                 appSettings.setToolboxPinEnabled(false)
                 appSettings.setToolboxPinHash("")
                 appSettings.setToolboxDuressPinEnabled(false)
                 appSettings.setToolboxDuressPinHash("")
                 appSettings.setToolboxScreenshotBlockEnabled(false)
-            }.onFailure { timber.log.Timber.e(it, "Toolbox wipe did not complete") }
+                attempts.reset()
+            }
+            if (!steps.failed) steps.run("finish calendar wipe gate") { calendarAlarms.finishSensitiveWipe() }
+            if (steps.failed) withContext(Dispatchers.Main) {
+                Toast.makeText(context, "Toolbox wipe incomplete. Keep it locked and try again.", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
