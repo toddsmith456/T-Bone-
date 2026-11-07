@@ -40,23 +40,25 @@ class LegacyBrowserCleanupTest {
         }
         server.start()
         val url = server.url("/").toString()
-        var view: WebView? = null
+        var toDispose: WebView? = null
         try {
-            view = createView(url)
-            assertEquals("\"secret\"", evaluate(view, "localStorage.setItem('private', 'secret'); localStorage.getItem('private')"))
+            val first = createView(url)
+            toDispose = first
+            assertEquals("\"secret\"", evaluate(first, "localStorage.setItem('private', 'secret'); localStorage.getItem('private')"))
             withContext(Dispatchers.Main) { CookieManager.getInstance().setCookie(url, "private=secret; Path=/"); CookieManager.getInstance().flush() }
-            evaluate(view, "window.setup='waiting'; Promise.all([navigator.serviceWorker.register('/sw.js'), caches.open('private-cache')]).then(()=>window.setup='ok').catch(e=>window.setup='error:'+e);")
-            awaitValue(view, "window.setup", "\"ok\"")
-            withContext(Dispatchers.Main) { view.destroy() }
-            view = null
+            evaluate(first, "window.setup='waiting'; Promise.all([navigator.serviceWorker.register('/sw.js'), caches.open('private-cache')]).then(()=>window.setup='ok').catch(e=>window.setup='error:'+e);")
+            awaitValue(first, "window.setup", "\"ok\"")
+            withContext(Dispatchers.Main) { first.destroy() }
+            toDispose = null
             BrowserDeletion().delete()
-            view = createView(url)
-            assertEquals("null", evaluate(view, "localStorage.getItem('private')"))
+            val second = createView(url)
+            toDispose = second
+            assertEquals("null", evaluate(second, "localStorage.getItem('private')"))
             assertTrue(withContext(Dispatchers.Main) { CookieManager.getInstance().getCookie(url).isNullOrEmpty() })
-            evaluate(view, "window.remaining='waiting'; Promise.all([navigator.serviceWorker.getRegistrations(), caches.keys()]).then(v=>window.remaining=JSON.stringify([v[0].length,v[1].length]));")
-            awaitValue(view, "window.remaining", "\"[0,0]\"")
+            evaluate(second, "window.remaining='waiting'; Promise.all([navigator.serviceWorker.getRegistrations(), caches.keys()]).then(v=>window.remaining=JSON.stringify([v[0].length,v[1].length]));")
+            awaitValue(second, "window.remaining", "\"[0,0]\"")
         } finally {
-            withContext(Dispatchers.Main) { view?.destroy() }
+            withContext(Dispatchers.Main) { toDispose?.destroy() }
             server.shutdown()
         }
     }
