@@ -706,7 +706,8 @@ fun NoteEditorScreen(
                 active = recording,
                 onClick = { if (recording) stopRecording() else startRecording() },
             )
-            ToolbarChip("image", active = false, onClick = { if (pendingMedia == 0 && !recording) imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, icon = Icons.Default.Image)
+            ToolbarChip(if (pendingMedia > 0) "saving…" else "image", active = false,
+                onClick = { if (pendingMedia == 0 && !recording) imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, icon = Icons.Default.Image)
             Text(
                 text = "permission needed: " + perm.lastDenial.orEmpty(),
                 style = BonyType.caption.copy(color = BonyColors.Danger),
