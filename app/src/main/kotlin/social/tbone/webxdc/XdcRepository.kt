@@ -9,11 +9,11 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import social.tbone.nostr.relay.RelayConnection
 import social.tbone.settings.AppSettings
@@ -207,29 +207,43 @@ class XdcRepository @Inject constructor(
 
     // ── Networking ────────────────────────────────────────────────────────────
 
-    private fun httpClient(): OkHttpClient =
-        RelayConnection.buildClient(useTor = appSettings.torEnabled.value)
-            .newBuilder()
+    private suspend fun httpGetBytes(url: String, limit: Long): ByteArray {
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            throw XdcException("unsupported url")
+        }
+        // The initial settings flow defaults to direct transport; wait for the
+        // persisted value, and reject/cancel old-mode calls across Tor toggles.
+        appSettings.initialized.first { it }
+        val useTor = appSettings.torEnabled.value
+        val status = if (useTor) social.tbone.settings.OrbotHelper.getStatus(context) else null
+        val proxy = status as? social.tbone.settings.OrbotStatus.InstalledAndConnected
+        val client = RelayConnection.buildClient(
+            useTor = useTor,
+            proxyType = proxy?.proxyType ?: java.net.Proxy.Type.HTTP,
+            torPort = proxy?.port ?: social.tbone.Tunables.TOR_HTTP_PROXY_PORT,
+        ).newBuilder()
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .callTimeout(180, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .build()
-
-    private fun httpGetBytes(url: String, limit: Long): ByteArray {
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            throw XdcException("unsupported url")
-        }
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", "T-Bone-Android")
             .header("Accept", "application/x-webxdc, application/octet-stream, application/json;q=0.9, */*;q=0.5")
             .build()
-        httpClient().newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
-            val body = response.body ?: throw IOException("empty response")
-            if (body.contentLength() > limit) throw XdcException("file is too large")
-            return body.byteStream().use { readCapped(it, limit) }
+        val call = client.newCall(request)
+        val guard = social.tbone.di.TorCallPolicy.guard
+        guard.register(call, useTor)
+        try {
+            call.execute().use { response ->
+                if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+                val body = response.body ?: throw IOException("empty response")
+                if (body.contentLength() > limit) throw XdcException("file is too large")
+                return body.byteStream().use { readCapped(it, limit) }
+            }
+        } finally {
+            guard.unregister(call)
         }
     }
 
