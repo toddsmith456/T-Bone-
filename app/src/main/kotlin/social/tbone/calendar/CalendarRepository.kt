@@ -2,6 +2,7 @@ package social.tbone.calendar
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import social.tbone.db.CalendarEventDao
 import social.tbone.db.CalendarEventEntity
@@ -171,11 +172,12 @@ data class CalendarEventUi(
 class CalendarRepository @Inject constructor(
     private val dao: CalendarEventDao,
     private val crypto: CalendarCrypto,
+    private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
 ) {
 
     /** All events, decrypted, sorted by start time. */
-    val events: Flow<List<CalendarEventUi>> = dao.observeAll().map { entities ->
-        entities.mapNotNull { entity -> entity.toUi(crypto) }
+    val events: Flow<List<CalendarEventUi>> = combine(noteWrites.available, dao.observeAll()) { available, entities ->
+        if (available) entities.mapNotNull { entity -> entity.toUi(crypto) } else emptyList()
     }
 
     fun encryptionSelfTest(): Boolean = crypto.selfTest()

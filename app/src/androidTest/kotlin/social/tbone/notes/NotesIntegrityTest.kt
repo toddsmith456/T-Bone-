@@ -25,15 +25,19 @@ class NotesIntegrityTest {
     private lateinit var db: AppDatabase
     private lateinit var real: NotesRepository
     private lateinit var decoy: DecoyNotesRepository
+    private lateinit var owner: CoroutineScope
+    private lateinit var noteWrites: NoteWriteCoordinator
 
     @Before fun setup() {
         db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), AppDatabase::class.java).build()
         val crypto = NotesCrypto()
-        real = NotesRepository(db.noteDao(), db.noteFolderDao(), db.noteAttachmentDao(), crypto)
-        decoy = DecoyNotesRepository(db.decoyNoteDao(), db.decoyNoteFolderDao(), db.decoyNoteAttachmentDao(), crypto)
+        owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        noteWrites = NoteWriteCoordinator(owner)
+        real = NotesRepository(db.noteDao(), db.noteFolderDao(), db.noteAttachmentDao(), crypto, noteWrites)
+        decoy = DecoyNotesRepository(db.decoyNoteDao(), db.decoyNoteFolderDao(), db.decoyNoteAttachmentDao(), crypto, noteWrites)
     }
 
-    @After fun teardown() = db.close()
+    @After fun teardown() { owner.cancel(); db.close() }
 
     @Test fun titleOnlyAndClearedNotesPersistInSeparateVaults() = runBlocking {
         val realId = real.saveText("real", "Only title", "", null)
@@ -154,7 +158,7 @@ class NotesIntegrityTest {
 
 
     @Test fun unreadableCalendarDescriptionIsNotPresentedAsEditableBlank() = runBlocking {
-        val calendar = social.tbone.calendar.CalendarRepository(db.calendarEventDao(), social.tbone.calendar.CalendarCrypto())
+        val calendar = social.tbone.calendar.CalendarRepository(db.calendarEventDao(), social.tbone.calendar.CalendarCrypto(), noteWrites)
         calendar.saveEvent("event", "title", "private description", 1L, 2L, false,
             social.tbone.calendar.RepeatUnit.NONE, 0, null)
         val row = db.calendarEventDao().getById("event")!!
@@ -219,6 +223,27 @@ class NotesIntegrityTest {
             backupFile.delete()
             tamperedFile.delete()
         }
+    }
+
+
+    @Test fun noteAndCalendarFlowsHideDuringWipeAndRecoverAfterwards() = runBlocking {
+        real.saveText("hidden-real", "real", "body", null)
+        decoy.saveText("hidden-decoy", "decoy", "body", null)
+        val calendar = social.tbone.calendar.CalendarRepository(db.calendarEventDao(), social.tbone.calendar.CalendarCrypto(), noteWrites)
+        calendar.saveEvent("hidden-event", "private", "", 1L, 2L, false,
+            social.tbone.calendar.RepeatUnit.NONE, 0, null)
+        assertEquals(1, real.notes.first().size)
+        assertEquals(1, decoy.notes.first().size)
+        assertEquals(1, calendar.events.first().size)
+        assertTrue(noteWrites.requestWipe(NoteWriteCoordinator.WipeKind.TOOLBOX))
+        assertTrue(real.notes.first().isEmpty())
+        assertTrue(decoy.notes.first().isEmpty())
+        assertTrue(calendar.events.first().isEmpty())
+        assertEquals(NotesStats(), real.stats.first())
+        assertTrue(noteWrites.runWipe(NoteWriteCoordinator.WipeKind.TOOLBOX) { true })
+        assertEquals(1, real.notes.first().size)
+        assertEquals(1, decoy.notes.first().size)
+        assertEquals(1, calendar.events.first().size)
     }
 
 }

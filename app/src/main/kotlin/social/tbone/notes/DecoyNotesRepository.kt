@@ -25,14 +25,15 @@ class DecoyNotesRepository @Inject constructor(
     private val folderDao: DecoyNoteFolderDao,
     private val attachmentDao: DecoyNoteAttachmentDao,
     private val crypto: NotesCrypto,
+    private val noteWrites: NoteWriteCoordinator,
 ) {
 
-    val notes: Flow<List<NoteUi>> = dao.observeAll().map { entities ->
-        entities.mapNotNull { it.toUi(crypto) }
+    val notes: Flow<List<NoteUi>> = combine(noteWrites.available, dao.observeAll()) { available, entities ->
+        if (available) entities.mapNotNull { it.toUi(crypto) } else emptyList()
     }
 
-    val folders: Flow<List<NoteFolderUi>> = folderDao.observeAll().map { list ->
-        list.map {
+    val folders: Flow<List<NoteFolderUi>> = combine(noteWrites.available, folderDao.observeAll()) { available, list ->
+        if (!available) emptyList() else list.map {
             NoteFolderUi(
                 id = it.id,
                 name = it.name,
@@ -45,8 +46,8 @@ class DecoyNotesRepository @Inject constructor(
     }
 
     fun attachments(noteId: String): Flow<List<NoteAttachmentUi>> =
-        attachmentDao.observeByNote(noteId).map { list ->
-            list.mapNotNull { entity ->
+        combine(noteWrites.available, attachmentDao.observeByNote(noteId)) { available, list ->
+            if (!available) emptyList() else list.mapNotNull { entity ->
                 runCatching {
                     NoteAttachmentUi(
                         id = entity.id,
@@ -65,8 +66,9 @@ class DecoyNotesRepository @Inject constructor(
         dao.observeNoteCount(),
         dao.observeChecklistCount(),
         dao.observeTotalCiphertextBytes(),
-    ) { notes, checklists, bytes ->
-        NotesStats(notes, checklists, bytes)
+        noteWrites.available,
+    ) { notes, checklists, bytes, available ->
+        if (available) NotesStats(notes, checklists, bytes) else NotesStats()
     }
 
     suspend fun getById(id: String): NoteUi? = dao.getById(id)?.let { it.toUi(crypto, strictTitle = true) }
