@@ -60,7 +60,7 @@ jobs:
           import glob, xml.etree.ElementTree as ET
           paths = glob.glob('/tmp/arena-general-results/**/*.xml', recursive=True)
           cases = [case for path in paths for case in ET.parse(path).getroot().iter('testcase')]
-          for name, expected in [('NewNoteEditorTest', 14), ('HideAccountDialogTest', 1), ('AccountStartupScreenTest', 1), ('OrbotInstallTest', 1), ('MediaMetadataTest', 2), ('NavigationIntentTest', 2), ('RemainingAuditUiTest', 7)]:
+          for name, expected in [('NewNoteEditorTest', 14), ('HideAccountDialogTest', 1), ('AccountStartupScreenTest', 1), ('OrbotInstallTest', 1), ('MediaMetadataTest', 2), ('NavigationIntentTest', 2), ('RemainingAuditUiTest', 8)]:
               selected = [c for c in cases if c.get('classname', '').endswith(name)]
               if len(selected) != expected or any(c.find('skipped') is not None for c in selected):
                   raise SystemExit(f'{name}: expected {expected} executed tests, found {len(selected)} (some may have skipped)')
