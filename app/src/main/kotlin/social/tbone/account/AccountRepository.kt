@@ -106,23 +106,27 @@ class AccountRepository @Inject constructor(
     }
 
     /** Hide / unhide an account. When hiding, [pin] is required and hashed. */
-    suspend fun setHidden(pubkey: String, hidden: Boolean, pin: String? = null) {
+    suspend fun setHidden(pubkey: String, hidden: Boolean, pin: String? = null): Boolean {
         val hash = pin?.takeIf { it.isNotBlank() }?.let { value ->
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { hashPin(value.trim()) }
         }
-        if (hidden && hash == null) return // need a PIN to hide
+        if (hidden && hash == null) return false // need a PIN to hide
+        var changed = false
         dataStore.edit { prefs ->
             val accounts = prefs[KEY_ACCOUNTS]
                 ?.let { NostrJson.decodeFromString<List<Account>>(it) }
                 ?: return@edit
             val updated = accounts.map {
-                if (it.pubkey == pubkey) it.copy(isHidden = hidden, hiddenPinHash = if (hidden) hash else null)
-                else it
+                if (it.pubkey == pubkey) {
+                    changed = true
+                    it.copy(isHidden = hidden, hiddenPinHash = if (hidden) hash else null)
+                } else it
             }
             prefs[KEY_ACCOUNTS] = NostrJson.encodeToString(updated)
         }
         // If we just hid the active account, keep it active for now — it
         // will vanish from the list once the user switches away.
+        return changed
     }
 
     /** Unlock a hidden account via PIN: reveals it for this session and switches to it. */

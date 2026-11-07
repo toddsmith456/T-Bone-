@@ -215,6 +215,13 @@ class AccountRepositoryTest {
         assertFalse(repository.accounts.first().any { it.pubkey == "first" })
     }
 
+    @Test
+    fun `hiding missing account reports failure without creating one`() = runBlocking {
+        assertFalse(repository.setHidden("missing", true, "1234"))
+        assertFalse(repository.setHidden("missing", false))
+        assertTrue(repository.accounts.first().isEmpty())
+    }
+
     private fun account(pubkey: String, relays: List<String> = emptyList()) = Account(
         pubkey = pubkey,
         signerType = SignerType.AMBER,

@@ -428,8 +428,10 @@ class SettingsViewModel @Inject constructor(
 
     fun hideAccount(pubkey: String, pin: String) {
         viewModelScope.launch {
-            accountRepository.setHidden(pubkey, true, pin)
-            _hiddenUnlockMessage.value = "Account hidden — only your PIN will bring it back"
+            val ok = try { accountRepository.setHidden(pubkey, true, pin) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { false }
+            _hiddenUnlockMessage.value = if (ok) "Account hidden — your PIN will bring it back" else "Could not hide account"
             kotlinx.coroutines.delay(2500)
             _hiddenUnlockMessage.value = null
         }
@@ -437,14 +439,20 @@ class SettingsViewModel @Inject constructor(
 
     fun unhideAccount(pubkey: String) {
         viewModelScope.launch {
-            accountRepository.setHidden(pubkey, false)
+            val ok = try { accountRepository.setHidden(pubkey, false) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { false }
+            if (!ok) _hiddenUnlockMessage.value = "Could not unhide account"
         }
     }
 
     fun unlockHiddenAccount(pin: String) {
         viewModelScope.launch {
-            val ok = accountRepository.unlockHiddenByPin(pin)
-            _hiddenUnlockMessage.value = if (ok) "Hidden account unlocked" else "Wrong PIN"
+            val message = try {
+                if (accountRepository.unlockHiddenByPin(pin)) "Matching hidden accounts unlocked" else "Wrong PIN"
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { "Could not unlock account" }
+            _hiddenUnlockMessage.value = message
             kotlinx.coroutines.delay(2000)
             _hiddenUnlockMessage.value = null
         }

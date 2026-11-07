@@ -185,7 +185,7 @@ fun AccountManagementScreen(
                 }
                 hiddenMessage?.let {
                     Spacer(Modifier.height(8.dp))
-                    Text(it, style = BonyType.meta.copy(color = if (it.contains("Wrong")) BonyColors.Danger else BonyColors.Accent))
+                    Text(it, style = BonyType.meta.copy(color = if (it.startsWith("Wrong") || it.startsWith("Could not")) BonyColors.Danger else BonyColors.Accent))
                 }
             }
 
