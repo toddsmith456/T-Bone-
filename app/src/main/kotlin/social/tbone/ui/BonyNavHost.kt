@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import social.tbone.account.AccountRepository
 import social.tbone.notifications.DeepLinkHandler
+import social.tbone.notifications.PendingNavigation
 import social.tbone.security.AppLockManager
 import social.tbone.ui.components.BonyBottomBar
 import social.tbone.ui.components.LocalUiDeclutter
@@ -165,13 +166,12 @@ fun BonyNavHost() {
     LaunchedEffect(startupState, isLocked) {
         if (!isLocked && (startupState as? StartupState.Ready)?.hasAccount == true) {
             navController.currentBackStackEntryFlow.first()
-            viewModel.openThread.collect { eventId -> navController.navigate("thread/$eventId") }
-        }
-    }
-    LaunchedEffect(startupState, isLocked) {
-        if (!isLocked && (startupState as? StartupState.Ready)?.hasAccount == true) {
-            navController.currentBackStackEntryFlow.first()
-            viewModel.openProfile.collect { pubkey -> navController.navigate("profile/$pubkey") }
+            viewModel.pendingNavigation.collect { destination ->
+                when (destination) {
+                    is PendingNavigation.Thread -> navController.navigate("thread/${destination.eventId}")
+                    is PendingNavigation.Profile -> navController.navigate("profile/${destination.pubkey}")
+                }
+            }
         }
     }
     LaunchedEffect(startupState) {
@@ -833,8 +833,7 @@ class StartupViewModel @Inject constructor(
         .map { account -> StartupState.Ready(hasAccount = account != null) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StartupState.Loading)
 
-    val openThread: Flow<String> = deepLinkHandler.openThread
-    val openProfile: Flow<String> = deepLinkHandler.openProfile
+    val pendingNavigation: Flow<PendingNavigation> = deepLinkHandler.destinations
 }
 
 // ── Lock ViewModel ────────────────────────────────────────────────────────────

@@ -6,20 +6,23 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
+sealed interface PendingNavigation {
+    data class Thread(val eventId: String) : PendingNavigation
+    data class Profile(val pubkey: String) : PendingNavigation
+}
+
 @Singleton
 class DeepLinkHandler @Inject constructor() {
-
-    private val _openThread = Channel<String>(capacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-    val openThread = _openThread.receiveAsFlow()
-
-    private val _openProfile = Channel<String>(capacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
-    val openProfile = _openProfile.receiveAsFlow()
+    // One queue preserves the order of mixed notification and URI destinations.
+    // Pending destinations wait until the navigation graph is ready and unlocked.
+    private val pending = Channel<PendingNavigation>(capacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val destinations = pending.receiveAsFlow()
 
     fun navigateToThread(eventId: String) {
-        _openThread.trySend(eventId)
+        pending.trySend(PendingNavigation.Thread(eventId))
     }
 
     fun navigateToProfile(pubkey: String) {
-        _openProfile.trySend(pubkey)
+        pending.trySend(PendingNavigation.Profile(pubkey))
     }
 }
