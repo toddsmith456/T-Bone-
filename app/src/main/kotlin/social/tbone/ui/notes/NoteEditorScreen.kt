@@ -111,11 +111,13 @@ fun NoteEditorScreen(
     }
     var deleted by remember { mutableStateOf(false) }
     var exiting by remember { mutableStateOf(false) }
+    var pendingMedia by remember { mutableIntStateOf(0) }
     var skipDisposeSave by remember { mutableStateOf(false) }
     var savedId by remember { mutableStateOf<String?>(if (id.isBlank()) null else id) }
     var lastSaved by remember { mutableStateOf("") }
     var lastSavedTitle by remember { mutableStateOf("") }
     var loaded by remember { mutableStateOf(false) }
+    var loadFailed by remember { mutableStateOf(false) }
     var builtFromNote by remember { mutableStateOf(false) }
     var focusedIndex by remember { mutableIntStateOf(0) }
     var recording by remember { mutableStateOf(false) }
@@ -251,6 +253,7 @@ fun NoteEditorScreen(
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (error: Exception) {
+            loadFailed = true
             android.widget.Toast.makeText(context, "Could not load note. No changes will be saved.", android.widget.Toast.LENGTH_LONG).show()
         }
     }
@@ -276,6 +279,10 @@ fun NoteEditorScreen(
 
     fun back() {
         if (exiting || deleted) return
+        if (pendingMedia > 0 || recording) {
+            android.widget.Toast.makeText(context, "Finish saving or recording the attachment first.", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
         if (!loaded || (id.isNotBlank() && !builtOnce) ||
             (savedId == null && title.isBlank() && serialize(blocks).isBlank())) {
             skipDisposeSave = true
@@ -340,18 +347,26 @@ fun NoteEditorScreen(
     }
 
     fun attach(kind: String, mime: String, bytes: ByteArray) {
-        fun saveInto(noteId: String) {
-            viewModel.addAttachment(noteId, kind, mime, bytes) { attId ->
+        if (!loaded || deleted || exiting) return
+        pendingMedia++
+        val failed: (Exception) -> Unit = {
+            pendingMedia--
+            android.widget.Toast.makeText(context, "Could not save attachment; please try again.", android.widget.Toast.LENGTH_LONG).show()
+        }
+        // Keep the editor open until both the attachment and its inline marker
+        // are saved. A failed marker save leaves the attachment intact for retry.
+        performSave(force = true, onError = failed) { noteId ->
+            viewModel.addAttachment(noteId, kind, mime, bytes, onError = failed) { attId ->
                 val placeholder = NoteAttachmentUi(attId, noteId, kind, mime, bytes, bytes.size.toLong(), 0L)
                 insertAttachment(placeholder)
+                performSave(force = true, onError = failed) { pendingMedia-- }
             }
         }
-        // Ensure the parent is committed before inserting the attachment, even
-        // when a prior asynchronous save has assigned an ID but not finished.
-        performSave(force = true) { newId -> saveInto(newId) }
     }
 
     fun beginRecording() {
+        if (deleted || exiting || pendingMedia > 0 || recording || !loaded) return
+        pendingMedia++
         scope.launch {
             val file = withContext(Dispatchers.IO) {
                 runCatching {
@@ -371,7 +386,10 @@ fun NoteEditorScreen(
             if (file != null) {
                 recorderFile = file
                 recording = true
+            } else {
+                android.widget.Toast.makeText(context, "Could not start recording.", android.widget.Toast.LENGTH_LONG).show()
             }
+            pendingMedia--
         }
     }
 
@@ -386,6 +404,7 @@ fun NoteEditorScreen(
         recording = false
         val file = recorderFile ?: return
         recorderFile = null
+        pendingMedia++
         scope.launch {
             val bytes = withContext(Dispatchers.IO) {
                 runCatching {
@@ -396,22 +415,28 @@ fun NoteEditorScreen(
                         .also { try { file.delete() } catch (_: Exception) {} }
                 }.getOrNull()
             }
-            if (bytes != null && bytes.isNotEmpty()) attach("voice", "audio/mp4", bytes) else try { file.delete() } catch (_: Exception) {}
+            if (bytes != null && bytes.isNotEmpty()) attach("voice", "audio/mp4", bytes) else {
+                try { file.delete() } catch (_: Exception) {}
+                android.widget.Toast.makeText(context, "Could not save recording (maximum 16 MB).", android.widget.Toast.LENGTH_LONG).show()
+            }
+            pendingMedia--
         }
     }
 
     fun removeAttachment(att: NoteAttachmentUi) {
-        viewModel.deleteAttachment(att.id)
-        // Remove the card AND merge the surrounding text blocks so no empty
-        // gap is left where the image/voice used to be.
+        if (deleted || exiting || !loaded) return
+        // Persist the marker removal before deleting its encrypted bytes. If
+        // saving fails, retaining an orphan is safer than breaking the note.
         blocks = coalesce(blocks.filterNot { it is EditorBlock.Att && it.att.id == att.id })
+        performSave(force = true) { viewModel.deleteAttachment(att.id) }
     }
 
     // Photo picker.
     val imagePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
-        if (uri != null) {
+        if (uri != null && !deleted && !exiting) {
+            pendingMedia++
             scope.launch {
                 val bytes = withContext(Dispatchers.IO) {
                     runCatching {
@@ -427,6 +452,7 @@ fun NoteEditorScreen(
                     }.getOrNull() ?: "image/*"
                     attach("image", mime, bytes)
                 }
+                pendingMedia--
             }
         }
     }
@@ -435,7 +461,7 @@ fun NoteEditorScreen(
     if (id.isNotBlank() && (!loaded || !builtOnce)) {
         Box(Modifier.fillMaxSize().background(BonyColors.Bg), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(if (loaded && rawText == null) "note unavailable" else "loading note…",
+                Text(if (loadFailed) "note unavailable" else "loading note…",
                     color = BonyColors.TextMute)
                 Text("← back", Modifier.clickable { onBack() }.padding(16.dp), color = BonyColors.Accent)
             }
@@ -484,7 +510,9 @@ fun NoteEditorScreen(
                 modifier = Modifier
                     .appBorder(1.dp, BonyColors.Danger)
                     .clickable {
-                        if (!deleted && !exiting) {
+                        if (pendingMedia > 0 || recording) {
+                            android.widget.Toast.makeText(context, "Finish saving or recording the attachment first.", android.widget.Toast.LENGTH_SHORT).show()
+                        } else if (!deleted && !exiting) {
                             deleted = true // disposal must not recreate the deleted note
                             val target = savedId
                             if (target == null) { skipDisposeSave = true; onBack() }

@@ -237,18 +237,24 @@ class NotesViewModel @Inject constructor(
         kind: String,
         mime: String,
         bytes: ByteArray,
+        onError: (Exception) -> Unit = {},
         onSaved: (String) -> Unit = {},
     ) {
+        val pending = noteWrites.submit { repository.addAttachment(noteId, kind, mime, bytes) }
         viewModelScope.launch {
-            runCatching { repository.addAttachment(noteId, kind, mime, bytes) }
-                .onSuccess { onSaved(it) }
-                .onFailure { _error.value = "could not attach (${it.message})" }
+            try { onSaved(pending.await()) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { _error.value = "could not attach (${error.message})"; onError(error) }
         }
     }
 
-    fun deleteAttachment(id: String) = viewModelScope.launch {
-        runCatching { repository.deleteAttachment(id) }
-            .onFailure { _error.value = "could not remove attachment (${it.message})" }
+    fun deleteAttachment(id: String) {
+        val pending = noteWrites.submit { repository.deleteAttachment(id) }
+        viewModelScope.launch {
+            try { pending.await() }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { _error.value = "could not remove attachment (${error.message})" }
+        }
     }
 
     fun clearError() {

@@ -57,4 +57,16 @@ class NoteWriteCoordinatorTest {
             assertEquals("allowed", coordinator.submit { "allowed" }.await())
         } finally { owner.cancel() }
     }
+
+    @Test fun failedOperationDoesNotPreventLaterWrites() = runBlocking {
+        val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val coordinator = NoteWriteCoordinator(owner)
+            val failed = coordinator.submit<String> { throw IOException("disk failure") }
+            val subsequent = coordinator.submit { "still usable" }
+            try { failed.await(); fail("failure was lost") } catch (_: IOException) { }
+            assertEquals("still usable", subsequent.await())
+        } finally { owner.cancel() }
+    }
+
 }

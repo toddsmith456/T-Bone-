@@ -77,6 +77,7 @@ fun ChecklistEditorScreen(
     var savedId by remember { mutableStateOf<String?>(if (id.isBlank()) null else id) }
     var lastSavedJson by remember { mutableStateOf("") }
     var loaded by remember { mutableStateOf(false) }
+    var loadFailed by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
     var editingIndex by remember { mutableStateOf<Int?>(null) }
     var editText by remember { mutableStateOf("") }
@@ -98,6 +99,7 @@ fun ChecklistEditorScreen(
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (error: Exception) {
+            loadFailed = true
             android.widget.Toast.makeText(context, "Could not load checklist. No changes will be saved.", android.widget.Toast.LENGTH_LONG).show()
         }
     }
@@ -156,6 +158,16 @@ fun ChecklistEditorScreen(
         if (t.isEmpty()) return
         items = items + ChecklistItem(text = t)
         draft = ""
+    }
+
+    if (!loaded) {
+        Box(Modifier.fillMaxSize().background(BonyColors.Bg), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(if (loadFailed) "checklist unavailable" else "loading checklist…", color = BonyColors.TextMute)
+                Text("← back", Modifier.clickable { back() }.padding(16.dp), color = BonyColors.Accent)
+            }
+        }
+        return
     }
 
     Column(

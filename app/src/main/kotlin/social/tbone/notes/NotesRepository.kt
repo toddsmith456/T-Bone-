@@ -149,7 +149,7 @@ class NotesRepository @Inject constructor(
         NotesStats(notes, checklists, bytes)
     }
 
-    suspend fun getById(id: String): NoteUi? = dao.getById(id)?.let { it.toUi(crypto) }
+    suspend fun getById(id: String): NoteUi? = dao.getById(id)?.let { it.toUi(crypto, strictTitle = true) }
 
     /** Runs the encrypt→decrypt round-trip; true when the key works. */
     fun encryptionSelfTest(): Boolean = crypto.selfTest()
@@ -295,6 +295,7 @@ class NotesRepository @Inject constructor(
         mime: String,
         bytes: ByteArray,
     ): String {
+        check(dao.getById(noteId) != null) { "Note no longer exists" }
         val id = UUID.randomUUID().toString()
         val (ct, iv) = crypto.encryptBytes(bytes)
         attachmentDao.insert(
@@ -314,7 +315,7 @@ class NotesRepository @Inject constructor(
 
     suspend fun deleteAttachment(id: String) = attachmentDao.delete(id)
 
-    private fun NoteEntity.toUi(crypto: NotesCrypto): NoteUi? = runCatching {
+    private fun NoteEntity.toUi(crypto: NotesCrypto, strictTitle: Boolean = false): NoteUi? = runCatching {
         NoteUi(
             id = id,
             kind = entityKind(kind),
@@ -325,7 +326,10 @@ class NotesRepository @Inject constructor(
             folderPinned = folderPinned,
             sortOrder = sortOrder,
             folderId = folderId,
-            title = runCatching {
+            title = if (strictTitle) {
+                if (titleCiphertext == null && titleIv == null) ""
+                else crypto.decrypt(requireNotNull(titleCiphertext), requireNotNull(titleIv))
+            } else runCatching {
                 val tc = titleCiphertext ?: return@runCatching ""
                 val ti = titleIv ?: return@runCatching ""
                 crypto.decrypt(tc, ti)
