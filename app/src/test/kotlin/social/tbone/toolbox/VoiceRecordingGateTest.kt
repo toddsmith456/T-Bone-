@@ -75,6 +75,63 @@ class VoiceRecordingGateTest {
     }
 
 
+    @Test fun failedInitializationRetainsCleanupWhenReleaseFails() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val writes = NoteWriteCoordinator(scope)
+            val gate = VoiceRecordingGate(writes, scope)
+            var releaseAttempts = 0
+            var deletes = 0
+            try {
+                gate.startRegistered(Any(), writes.currentWipeEpoch()) { register ->
+                    val cleanup = RecordingCleanup(
+                        stop = { fail("not started") },
+                        release = { if (++releaseAttempts == 1) error("injected") },
+                        delete = { deletes++ },
+                    )
+                    register { discard -> cleanup.close(discard); Unit }
+                    error("initialization failed")
+                }
+                fail("failure was swallowed")
+            } catch (error: IllegalStateException) {
+                assertEquals("initialization failed", error.message)
+                assertEquals(1, error.suppressed.size)
+            }
+            assertEquals(1, releaseAttempts)
+            assertEquals(0, deletes)
+            assertFalse(gate.start(Any(), writes.currentWipeEpoch()) { { _ -> } })
+            gate.stopForWipe()
+            assertEquals(2, releaseAttempts)
+            assertEquals(1, deletes)
+        } finally { scope.cancel() }
+    }
+
+    @Test fun deletionFailureRetriesWithoutStoppingOrReleasingTwice() {
+        var stops = 0
+        var releases = 0
+        var deletions = 0
+        val cleanup = RecordingCleanup(
+            stop = { stops++ }, release = { releases++ },
+            delete = { if (++deletions == 1) error("injected deletion failure") },
+        )
+        cleanup.markStarted()
+        try { cleanup.close(true); fail("failure was swallowed") } catch (_: IllegalStateException) { }
+        assertFalse(cleanup.close(true))
+        assertEquals(1, stops)
+        assertEquals(1, releases)
+        assertEquals(2, deletions)
+    }
+
+    @Test fun unfinalizableRecordingIsDeletedEvenOnNormalStop() {
+        var deleted = false
+        val cleanup = RecordingCleanup(
+            stop = { error("recording too short") }, release = {}, delete = { deleted = true },
+        )
+        cleanup.markStarted()
+        assertFalse(cleanup.close(false))
+        assertTrue(deleted)
+    }
+
     @Test fun renderingFinishesBeforeWipeAndOldEpochCannotRecreateFile() = runBlocking {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val dir = kotlin.io.path.createTempDirectory("voice-wipe").toFile()

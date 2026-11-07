@@ -375,29 +375,28 @@ fun NoteEditorScreen(
             val file = withContext(Dispatchers.IO) {
                 runCatching {
                     var created: File? = null
-                    val started = viewModel.recordingGate.start(recordingOwner, epoch) {
+                    val started = viewModel.recordingGate.startRegistered(recordingOwner, epoch) { register ->
                         check(!editorDisposed.get()) { "editor closed" }
-                        val f = File.createTempFile("note_voice_", ".m4a", context.cacheDir)
-                        val r = MediaRecorder(context)
-                        try {
-                            r.setAudioSource(MediaRecorder.AudioSource.MIC)
-                            r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                            r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                            r.setOutputFile(f.absolutePath)
-                            r.prepare()
-                            r.start()
-                        } catch (error: Exception) {
-                            runCatching { r.release() }
-                            f.delete()
-                            throw error
-                        }
-                        created = f
-                        val closeRecording: (Boolean) -> Unit = { discard ->
-                            runCatching { r.stop() }
-                            r.release()
-                            if (discard) f.delete()
-                        }
-                        closeRecording
+                        var f: File? = null
+                        var r: MediaRecorder? = null
+                        val cleanup = social.tbone.toolbox.RecordingCleanup(
+                            stop = { checkNotNull(r).stop() },
+                            release = { r?.release() },
+                            delete = { f?.let { check(!it.exists() || it.delete()) { "recording deletion failed" } } },
+                        )
+                        register { discard -> cleanup.close(discard); Unit }
+                        val file = File.createTempFile("note_voice_", ".m4a", context.cacheDir)
+                        f = file
+                        val recorder = MediaRecorder(context)
+                        r = recorder
+                        recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+                        recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                        recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                        recorder.setOutputFile(file.absolutePath)
+                        recorder.prepare()
+                        recorder.start()
+                        cleanup.markStarted()
+                        created = file
                     }
                     if (started && epoch == viewModel.currentWipeEpoch()) created else null
                 }.getOrNull()

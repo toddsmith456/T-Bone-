@@ -108,44 +108,50 @@ class VoiceRecorderViewModel @Inject constructor(
                 val q = _state.value.quality
                 val ok = withContext(Dispatchers.IO) {
                     runCatching {
-                        recordingGate.start(recordingOwner, epoch) {
+                        recordingGate.startRegistered(recordingOwner, epoch) { register ->
                             check(!disposed.get()) { "recorder closed" }
-                            check(dir.isDirectory || dir.mkdirs()) { "recording directory unavailable" }
-                            val file = File.createTempFile("voice_", ".m4a", dir)
-                            val r = MediaRecorder(context)
-                            try {
-                                r.setAudioSource(MediaRecorder.AudioSource.MIC)
-                                r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                                r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                                r.setAudioSamplingRate(q.sampleRate)
-                                r.setAudioEncodingBitRate(q.bitRate)
-                                r.setOutputFile(file.absolutePath)
-                                r.prepare()
-                                r.start()
-                            } catch (failure: Exception) {
-                                runCatching { r.release() }
-                                file.delete()
-                                throw failure
-                            }
-                            recorder = r
-                            startedAt = System.currentTimeMillis()
-                            _state.update { it.copy(isRecording = true, isPaused = false,
-                                currentFile = file, anonymousFile = null, isAnonymous = false,
-                                isAnonymizing = false, elapsedMs = 0L, error = null) }
-                            startTicker()
-                            val closeRecording: (Boolean) -> Unit = { discard ->
+                            var file: File? = null
+                            var r: MediaRecorder? = null
+                            val cleanup = social.tbone.toolbox.RecordingCleanup(
+                                stop = { checkNotNull(r).stop() },
+                                release = { r?.release() },
+                                delete = { file?.let { check(!it.exists() || it.delete()) { "recording deletion failed" } } },
+                            )
+                            register { discard ->
                                 ticker?.cancel()
-                                runCatching { r.stop() } // A too-short recording may not be finalizable.
-                                r.release() // A release failure keeps the registration for a wipe retry.
+                                val kept = cleanup.close(discard)
                                 recorder = null
                                 if (discard) {
                                     _state.update { VoiceRecorderState(quality = it.quality) }
+                                } else if (!kept) {
+                                    _state.update { it.copy(isRecording = false, isPaused = false, currentFile = null,
+                                        anonymousFile = null, isAnonymous = false, isAnonymizing = false,
+                                        error = "recording could not be finalized") }
                                 } else {
                                     _state.update { it.copy(isRecording = false, isPaused = false,
                                         anonymousFile = null, isAnonymous = false, isAnonymizing = false) }
                                 }
                             }
-                            closeRecording
+                            check(dir.isDirectory || dir.mkdirs()) { "recording directory unavailable" }
+                            val output = File.createTempFile("voice_", ".m4a", dir)
+                            file = output
+                            val active = MediaRecorder(context)
+                            r = active
+                            active.setAudioSource(MediaRecorder.AudioSource.MIC)
+                            active.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                            active.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                            active.setAudioSamplingRate(q.sampleRate)
+                            active.setAudioEncodingBitRate(q.bitRate)
+                            active.setOutputFile(output.absolutePath)
+                            active.prepare()
+                            active.start()
+                            cleanup.markStarted()
+                            recorder = active
+                            startedAt = System.currentTimeMillis()
+                            _state.update { it.copy(isRecording = true, isPaused = false,
+                                currentFile = output, anonymousFile = null, isAnonymous = false,
+                                isAnonymizing = false, elapsedMs = 0L, error = null) }
+                            startTicker()
                         }
                     }.getOrDefault(false)
                 }

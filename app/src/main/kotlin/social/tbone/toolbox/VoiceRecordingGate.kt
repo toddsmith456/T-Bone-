@@ -26,6 +26,26 @@ class VoiceRecordingGate @Inject constructor(
         true
     }
 
+    /** Register cleanup before touching the microphone or creating sensitive files.
+     * If initialization fails, attempt disposal; retain failed cleanup for wipe retry. */
+    fun startRegistered(token: Any, epoch: Long, setup: (register: ((Boolean) -> Unit) -> Unit) -> Unit): Boolean = synchronized(lock) {
+        if (close != null || epoch == Long.MIN_VALUE || epoch != writes.currentWipeEpoch()) return@synchronized false
+        try {
+            setup { closer ->
+                check(close == null) { "recorder cleanup already registered" }
+                owner = token
+                close = closer
+            }
+            check(owner === token && close != null) { "recorder cleanup not registered" }
+            true
+        } catch (failure: Throwable) {
+            if (owner === token) {
+                try { stopLocked(true) } catch (cleanupFailure: Throwable) { failure.addSuppressed(cleanupFailure) }
+            }
+            throw failure
+        }
+    }
+
     fun runIfOwned(token: Any, action: () -> Unit): Boolean = synchronized(lock) {
         if (owner !== token || close == null) return@synchronized false
         action()
