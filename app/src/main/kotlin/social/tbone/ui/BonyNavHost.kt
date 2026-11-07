@@ -831,7 +831,7 @@ internal fun AccountDataUnavailableScreen() {
         Text(
             "Account data could not be read or the active account could not be found. " +
                 "Your saved data has not been intentionally deleted. Close and reopen the app; " +
-                "if the problem continues, try the app version that last worked or seek help before clearing app data or reinstalling.",
+                "if the problem continues, seek help before clearing app data or reinstalling. A compatible newer app version may be needed.",
             color = BonyColors.Text,
         )
     }
