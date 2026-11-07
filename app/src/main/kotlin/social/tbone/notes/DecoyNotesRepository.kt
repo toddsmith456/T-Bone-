@@ -1,6 +1,7 @@
 package social.tbone.notes
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import social.tbone.db.DecoyNoteAttachmentDao
@@ -45,22 +46,21 @@ class DecoyNotesRepository @Inject constructor(
         }
     }
 
+    /** An unreadable attachment is an error, not an absent attachment. */
     fun attachments(noteId: String): Flow<List<NoteAttachmentUi>> =
         combine(noteWrites.available, attachmentDao.observeByNote(noteId)) { available, list ->
-            if (!available) emptyList() else list.mapNotNull { entity ->
-                runCatching {
-                    NoteAttachmentUi(
-                        id = entity.id,
-                        noteId = entity.noteId,
-                        kind = entity.kind,
-                        mime = entity.mime,
-                        data = crypto.decryptBytes(entity.ciphertext, entity.iv),
-                        size = entity.size,
-                        createdAt = entity.createdAt,
-                    )
-                }.getOrNull()
+            if (!available) emptyList() else list.map { entity ->
+                NoteAttachmentUi(
+                    id = entity.id,
+                    noteId = entity.noteId,
+                    kind = entity.kind,
+                    mime = entity.mime,
+                    data = crypto.decryptBytes(entity.ciphertext, entity.iv),
+                    size = entity.size,
+                    createdAt = entity.createdAt,
+                )
             }
-        }
+        }.flowOn(kotlinx.coroutines.Dispatchers.Default)
 
     val stats: Flow<NotesStats> = combine(
         dao.observeNoteCount(),

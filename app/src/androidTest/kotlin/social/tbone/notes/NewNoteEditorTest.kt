@@ -61,6 +61,39 @@ class NewNoteEditorTest {
     @Test fun canceledNormalPickerDoesNotCreateNote() = canceledPicker(false)
     @Test fun canceledDecoyPickerDoesNotCreateNote() = canceledPicker(true)
 
+    @Test fun corruptNormalAttachmentBlocksEditorAndPreservesNote() = corruptAttachment(false)
+    @Test fun corruptDecoyAttachmentBlocksEditorAndPreservesNote() = corruptAttachment(true)
+
+    private fun corruptAttachment(decoy: Boolean) {
+        val f = Fixture()
+        var closed = false
+        try {
+            val id = "corrupt-" + java.util.UUID.randomUUID()
+            val marker = runBlocking {
+                val repo = if (decoy) null else f.normal
+                if (decoy) f.decoy.saveText(id, "secret title", "initial", null)
+                else checkNotNull(repo).saveText(id, "secret title", "initial", null)
+                val attachmentId = if (decoy) f.decoy.addAttachment(id, "image", "image/png", byteArrayOf(1, 2, 3))
+                    else checkNotNull(repo).addAttachment(id, "image", "image/png", byteArrayOf(1, 2, 3))
+                val text = "keep [[image:$attachmentId]] intact"
+                if (decoy) f.decoy.saveText(id, "secret title", text, null)
+                else checkNotNull(repo).saveText(id, "secret title", text, null)
+                val table = if (decoy) "decoy_note_attachments" else "note_attachments"
+                f.db.openHelper.writableDatabase.execSQL("UPDATE $table SET ciphertext = X'00' WHERE id = ?", arrayOf(attachmentId))
+                text
+            }
+            compose.setContent { BonyTheme {
+                if (decoy) DecoyNoteEditorScreen(id, onBack = { closed = true }, onShare = {}, viewModel = f.decoyVm)
+                else NoteEditorScreen(id, onBack = { closed = true }, onShare = {}, viewModel = f.normalVm)
+            } }
+            compose.onNodeWithText("note unavailable").assertIsDisplayed()
+            compose.onNodeWithText("← back").performClick()
+            compose.runOnIdle { assertTrue(closed) }
+            assertEquals(marker, runBlocking { f.get(decoy, id)?.text })
+            assertEquals("secret title", runBlocking { f.get(decoy, id)?.title })
+        } finally { f.close() }
+    }
+
     private class Fixture {
         val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), AppDatabase::class.java).build()
         val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
