@@ -17,6 +17,8 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.performSemanticsAction
@@ -119,6 +121,20 @@ class IconAndLinkRegressionTest {
             assertTrue(open.action())
             assertEquals(1, clicks)
         }
+    }
+
+
+    @Test fun pinKeypadIsDisabledWhileVerificationRuns() {
+        val enabled = mutableStateOf(false)
+        var entered = ""
+        compose.setContent { BonyTheme {
+            social.tbone.ui.lock.PinKeypad(onDigit = { entered += it }, onBackspace = { entered = entered.dropLast(1) }, enabled = enabled.value)
+        } }
+        compose.onNodeWithText("1").assertIsNotEnabled()
+        compose.onNodeWithText("←").assertIsNotEnabled()
+        compose.runOnIdle { enabled.value = true }
+        compose.onNodeWithText("1").assertIsEnabled().performClick()
+        compose.runOnIdle { assertEquals("1", entered) }
     }
 
 }
