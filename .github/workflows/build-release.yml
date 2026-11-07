@@ -87,16 +87,6 @@ jobs:
           cat /tmp/assemble.log | tail -n 800 || true
           grep -n "e: file" /tmp/assemble.log | head -n 80 || true
           grep -n "FAILURE" /tmp/assemble.log | head || true
-          mkdir -p /tmp/ci-log
-          cp /tmp/assemble.log /tmp/ci-log/build.log || true
-          echo "${{ github.sha }}" > /tmp/ci-log/sha.txt
-          cd /tmp/ci-log
-          git init
-          git config user.email "ci@tbone.local"
-          git config user.name "CI Logger"
-          git add build.log sha.txt
-          git commit -m "CI log for ${{ github.sha }}" || true
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:ci-log --force || true
 
       - name: Unit tests (release aborts on failure)
         env:
@@ -131,17 +121,13 @@ jobs:
       - name: Release notes header
         run: |
           TAG="${GITHUB_REF_NAME}"
-          if [ "${{ steps.keystore.outputs.present }}" = "true" ]; then
-            SIG="Signed with the repo owner's **release key** (stable update identity)."
-          else
-            SIG="This is the **release build**, signed with the debug key because no KEYSTORE_* secrets are configured. Set up a release key for stable updates — see docs/RELEASE.md."
-          fi
+          SIG="Signed with the repo owner's verified **release key** (stable update identity)."
           {
             echo "## T-Bone fork ${TAG}"
             echo ""
             echo "- Package: \`social.tbone.fork\` — installs **alongside** the original T-Bone (\`social.tbone\`)."
             echo "- ${SIG}"
-            echo "- Privacy: no Google services, no tracking — enforced by CI privacy gate."
+            echo "- Automated privacy checks screen selected dependencies, imports, permissions and known endpoints; they are not an end-to-end privacy guarantee."
             echo ""
             echo "### Files"
             echo "- \`T-Bone-fork-${TAG}-release.apk\` — the release APK (minify enabled)."

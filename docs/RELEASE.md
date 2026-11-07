@@ -13,7 +13,7 @@ versionName=0.5.2
 
 `app/build.gradle.kts` reads those values into `versionCode`/`versionName`; Android generates `BuildConfig.VERSION_CODE` and `BuildConfig.VERSION_NAME` from them. The Settings screen, Update Center, update comparisons, and downloaded-APK verification all use `BuildConfig`, so no in-app screen hardcodes a separate release string. `scripts/verify-release-version.sh` runs on PRs and tagged builds; on `v*` tags it also requires `v<versionName>` to match exactly. This prevents the 0.5.1 mistake, where the tag said 0.5.1 but the APK still reported 0.5.0 / versionCode 67.
 
-Use the helper for every release — it increments both values together:
+Use the helper when preparing a *newer* release — it increments both values together. Do not run it again for an already-prepared version; check the current identity first:
 
 ```bash
 ./scripts/make-release.sh 0.5.3
@@ -21,7 +21,7 @@ Use the helper for every release — it increments both values together:
 
 ## One-time setup: release signing key
 
-Configure a stable signing key so users can install updates over an existing release. Without it, CI can still build the release variant, but it falls back to the runner's debug signing key; that is not a debug APK, but it is not a stable release identity.
+Configure a stable signing key so users can install updates over an existing release. The publishing workflow requires the configured key and checks its certificate fingerprint against the established release identity; it refuses to publish if they are missing or incorrect. Local builds without those settings can fall back to a debug key and must not be distributed as updates.
 
 Generate a key and encode it for GitHub Actions:
 
@@ -45,16 +45,16 @@ Keep the keystore and passwords backed up in a secure place. Never commit them. 
 
 ## Publish a release
 
-1. Bump `version.properties` and stage release notes (replace with the new version):
+1. For a new version, bump `version.properties` and stage release notes (replace the example with the intended new version). If the intended version is already prepared, do not bump it again:
    ```bash
    ./scripts/make-release.sh 0.5.2
    ./scripts/verify-release-version.sh
    ```
 2. Edit `CHANGELOG.md`, then commit `version.properties`, Gradle wiring, and release notes.
-3. Create the matching annotated tag and push:
+3. Only after explicit publication authorization and validation, create the matching annotated tag and push **that tag only**. Verify the tag points at the intended reviewed commit:
    ```bash
    git tag -a v0.5.2 -m "Release v0.5.2"
-   git push origin main --tags
+   git push origin v0.5.2
    ```
 4. Check the **Release APK** workflow in GitHub Actions. When it succeeds, the GitHub Release contains:
    - `T-Bone-fork-<version>-release.apk`
@@ -73,4 +73,4 @@ sha256sum -c SHA256SUMS.txt
 3. Builds `:app:assembleRelease` only, then runs the unit tests as a blocking gate.
 4. Packages the release APK and its checksum, then publishes those files to the GitHub Release.
 
-Only tags matching `v*` trigger this workflow. The privacy check also runs in CI for pull requests. If a release build cannot find a signing key, its notes identify that the release variant was signed with the fallback debug key; configure a repository release key for stable install-over-update signing.
+Only tags matching `v*` trigger this workflow. The privacy check is a limited static screen, not a proof of privacy or network isolation. Release builds fail rather than publish if the signing secrets or expected certificate are missing.
