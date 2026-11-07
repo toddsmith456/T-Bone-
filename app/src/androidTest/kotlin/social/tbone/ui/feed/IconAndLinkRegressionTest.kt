@@ -14,6 +14,7 @@ import org.junit.Assert.assertTrue
 import social.tbone.nostr.Event
 import social.tbone.nostr.Nip19
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -100,4 +101,24 @@ class IconAndLinkRegressionTest {
         // The activity may constrain width; a single shorter string fits its screen.
         compose.onNodeWithText("show more →").assertDoesNotExist()
     }
+
+    @Test fun hashtagAccessibilityActionTracksCurrentHandler() {
+        val enabled = mutableStateOf(false)
+        var clicks = 0
+        compose.setContent { BonyTheme {
+            val handler: ((String) -> Unit)? = if (enabled.value) ({ clicks++ }) else null
+            NoteBodyText(content = "#example", style = TextStyle(fontSize = 20.sp), onHashtagClick = handler)
+        } }
+        val node = compose.onNodeWithText("#example")
+        val before = node.fetchSemanticsNode().config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.CustomActions).orEmpty()
+        assertTrue(before.none { it.label == "Open hashtag example" })
+        compose.runOnIdle { enabled.value = true }
+        val after = node.fetchSemanticsNode().config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.CustomActions).orEmpty()
+        val open = after.single { it.label == "Open hashtag example" }
+        compose.runOnIdle {
+            assertTrue(open.action())
+            assertEquals(1, clicks)
+        }
+    }
+
 }

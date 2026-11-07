@@ -163,7 +163,7 @@ fun NoteBodyText(
     val effectiveMax = if (expandable && !expanded) maxLines else Int.MAX_VALUE
 
     val bleeped = remember(content, filter.bleepWords) { ContentFilter.bleep(content, filter.bleepWords) }
-    val segmented = remember(bleeped, profiles) {
+    val segmented = remember(bleeped, profiles, onThreadClick, onProfileClick, onHashtagClick, context) {
         val segments = segment(bleeped, profiles)
         buildSegmentedAnnotated(
             segs = segments,
@@ -198,7 +198,7 @@ fun NoteBodyText(
         blocks.forEachIndexed { index, block ->
             when (block) {
                 is BodyBlock.Text -> {
-                    val run = remember(block, profiles) {
+                    val run = remember(block, profiles, onThreadClick, onProfileClick, onHashtagClick, context) {
                         buildSegmentedAnnotated(
                             segs = block.segs,
                             profiles = profiles,
@@ -249,7 +249,9 @@ fun NoteBodyText(
                                 customActions = run.actions.flatMap { action ->
                                     val label = action.accessibilityLabel ?: action.copyText
                                     if (label == null) emptyList() else buildList {
-                                        add(CustomAccessibilityAction("Open $label") { action.action?.invoke(); true })
+                                        action.action?.let { open ->
+                                            add(CustomAccessibilityAction("Open $label") { open(); true })
+                                        }
                                         action.copyText?.let { text ->
                                             add(CustomAccessibilityAction("Copy $text") { copyNoteLink(context, text); true })
                                         }
@@ -356,14 +358,15 @@ private fun buildSegmentedAnnotated(
                     val start = length
                     append(seg.label)
                     addStyle(SpanStyle(color = BonyColors.Accent), start, length)
-                    actions.add(SegAction(start, length, copyText = seg.raw) { onProfileClick?.invoke(seg.hex) })
+                    actions.add(SegAction(start, length, copyText = seg.raw,
+                        action = onProfileClick?.let { open -> { open(seg.hex) } }))
                 }
 
                 is BodySeg.NoteRef -> {
                     val start = length
                     append(seg.label)
                     addStyle(SpanStyle(color = BonyColors.Link, textDecoration = TextDecoration.Underline), start, length)
-                    actions.add(SegAction(start, length) { onThreadClick?.invoke(seg.eventId) })
+                    actions.add(SegAction(start, length, action = onThreadClick?.let { open -> { open(seg.eventId) } }))
                 }
 
                 is BodySeg.AddressRef -> append(seg.raw)
@@ -372,7 +375,8 @@ private fun buildSegmentedAnnotated(
                     val start = length
                     append("#${seg.tag}")
                     addStyle(SpanStyle(color = BonyColors.Accent), start, length)
-                    actions.add(SegAction(start, length, accessibilityLabel = "hashtag ${seg.tag}") { onHashtagClick?.invoke(seg.tag) })
+                    actions.add(SegAction(start, length, accessibilityLabel = "hashtag ${seg.tag}",
+                        action = onHashtagClick?.let { open -> { open(seg.tag) } }))
                 }
             }
         }
