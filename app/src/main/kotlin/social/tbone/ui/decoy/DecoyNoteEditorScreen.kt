@@ -789,16 +789,7 @@ private fun playAttachment(context: Context, att: NoteAttachmentUi, onDone: () -
     player = instance
     try {
         // Feed decrypted bytes directly to the player; no plaintext copy in cache.
-        instance.setDataSource(object : android.media.MediaDataSource() {
-            override fun getSize(): Long = att.data.size.toLong()
-            override fun readAt(position: Long, buffer: ByteArray, offset: Int, size: Int): Int {
-                if (position < 0 || position >= att.data.size) return -1
-                val count = minOf(size, att.data.size - position.toInt())
-                System.arraycopy(att.data, position.toInt(), buffer, offset, count)
-                return count
-            }
-            override fun close() = Unit
-        })
+        instance.setDataSource(social.tbone.notes.NoteAudioSource(att.data))
         instance.setOnCompletionListener { stopPlayback(); onDone() }
         instance.setOnErrorListener { _, _, _ -> stopPlayback(); onDone(); true }
         instance.prepare()
