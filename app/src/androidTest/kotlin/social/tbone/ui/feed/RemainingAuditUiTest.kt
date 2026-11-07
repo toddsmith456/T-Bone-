@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
@@ -39,6 +40,7 @@ import social.tbone.nostr.Nip19
 import social.tbone.ui.StartupGate
 import social.tbone.ui.media.InlineAudioPlayer
 import social.tbone.ui.media.pauseAudioOnStop
+import social.tbone.ui.media.rememberAudioPlayer
 import social.tbone.ui.settings.IconSettings
 import social.tbone.ui.theme.BonyTheme
 
@@ -120,6 +122,23 @@ class RemainingAuditUiTest {
     @Test fun audioPlayControlHasAccessibleLabel() {
         compose.setContent { BonyTheme { InlineAudioPlayer("https://example.com/audio.mp3") } }
         compose.onNodeWithContentDescription("Play audio").assertExists()
+    }
+
+    @Test fun inlinePlayerIsReleasedWhenCompositionIsRemoved() {
+        val shown = mutableStateOf(true)
+        var instance: androidx.media3.exoplayer.ExoPlayer? = null
+        compose.setContent {
+            if (shown.value) {
+                val (player, _) = rememberAudioPlayer("file:///dev/null", 0)
+                SideEffect { if (player != null) instance = player }
+            }
+        }
+        compose.waitForIdle()
+        val created = requireNotNull(instance)
+        assertFalse(created.isReleased)
+        compose.runOnIdle { shown.value = false }
+        compose.waitForIdle()
+        assertTrue(created.isReleased)
     }
 
     @Test fun collapsedTextReevaluatesAtLargerAndSmallerFontScales() {

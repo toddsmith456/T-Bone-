@@ -257,7 +257,7 @@ private fun AudioPlayerCard(
 }
 
 @Composable
-private fun rememberAudioPlayer(url: String, retry: Int): Pair<ExoPlayer?, Boolean> {
+internal fun rememberAudioPlayer(url: String, retry: Int): Pair<ExoPlayer?, Boolean> {
     val context = LocalContext.current
     var player by remember(url, retry) { mutableStateOf<ExoPlayer?>(null) }
     var initializationFailed by remember(url, retry) { mutableStateOf(false) }
