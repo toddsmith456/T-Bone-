@@ -12,6 +12,8 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -48,12 +50,17 @@ class MediaMetadataTest {
         val metadata = "ID3 or container location metadata: private".toByteArray()
         audio.writeBytes(metadata); video.writeBytes(metadata)
         var videoCopy: File? = null
+        var audioCopy: File? = null
         try {
             val audioOutput = checkNotNull(MediaProcessor.prepareAudioMedia(context, Uri.fromFile(audio), compress = false))
+            audioCopy = audioOutput.file
+            assertNotEquals(audio.canonicalPath, audioOutput.file.canonicalPath)
             val videoOutput = checkNotNull(MediaProcessor.prepareVideoMedia(context, Uri.fromFile(video), compress = false))
             videoCopy = videoOutput.file
             assertArrayEquals(metadata, audioOutput.file.readBytes())
             assertArrayEquals(metadata, videoOutput.file.readBytes())
-        } finally { audio.delete(); video.delete(); videoCopy?.delete() }
+            assertTrue(audioOutput.file.delete()) // upload's normal staging cleanup
+            assertArrayEquals(metadata, audio.readBytes()) // original must survive
+        } finally { audio.delete(); video.delete(); audioCopy?.delete(); videoCopy?.delete() }
     }
 }
