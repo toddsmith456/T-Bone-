@@ -123,8 +123,15 @@ class NewNoteEditorTest {
                 }
             } }
             compose.waitUntil(15_000) { compose.onAllNodes(androidx.compose.ui.test.hasText("Before")).fetchSemanticsNodes().isNotEmpty() }
-            val table = if (decoy) "decoy_note_attachments" else "note_attachments"
-            f.db.openHelper.writableDatabase.execSQL("UPDATE $table SET ciphertext = X'00' WHERE id = ?", arrayOf(attachmentId))
+            runBlocking {
+                if (decoy) {
+                    val dao = f.db.decoyNoteAttachmentDao()
+                    dao.insert(checkNotNull(dao.getById(attachmentId)).copy(ciphertext = byteArrayOf(0)))
+                } else {
+                    val dao = f.db.noteAttachmentDao()
+                    dao.insert(checkNotNull(dao.getById(attachmentId)).copy(ciphertext = byteArrayOf(0)))
+                }
+            }
             val warning = "Attachment data unavailable. Changes cannot be saved; copy any unsaved text before leaving."
             compose.waitUntil(15_000) { compose.onAllNodes(androidx.compose.ui.test.hasText(warning)).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Before").performTextReplacement("Unsaved change")
