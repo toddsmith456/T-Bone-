@@ -214,7 +214,6 @@ class FollowerListRepository @Inject constructor(
         }
         var last: FollowersState? = null
         updates.collect { state ->
-            known.put(pubkeyHex, seedRelays, state, generation)
             if (state != last) {
                 last = state
                 emit(state)
@@ -224,9 +223,12 @@ class FollowerListRepository @Inject constructor(
         if (last == null) {
             val empty = FollowersState(followers = emptyList(), loading = false,
                 error = "No results; sources may be unavailable or incomplete", source = "no results")
-            known.put(pubkeyHex, seedRelays, empty, generation)
+            last = empty
             emit(empty)
         }
+        // Cache only after both source jobs finish; otherwise a second screen
+        // could read the first partial emission and never see the other source.
+        last?.let { known.put(pubkeyHex, seedRelays, it, generation) }
     }
 
     fun invalidate(pubkeyHex: String) {
