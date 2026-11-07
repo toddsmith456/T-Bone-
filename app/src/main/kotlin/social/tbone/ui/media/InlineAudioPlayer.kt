@@ -30,6 +30,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -91,11 +94,8 @@ fun InlineAudioPlayer(
         }
         val lifecycleOwner = LocalLifecycleOwner.current
         DisposableEffect(player, lifecycleOwner) {
-            val observer = LifecycleEventObserver { _, event ->
-                if (event == Lifecycle.Event.ON_STOP) player.pause()
-            }
-            lifecycleOwner.lifecycle.addObserver(observer)
-            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+            val detach = pauseAudioOnStop(lifecycleOwner.lifecycle) { player.pause() }
+            onDispose { detach() }
         }
         var isPlaying by remember(player) { mutableStateOf(player.isPlaying) }
         var isBuffering by remember(player) {
@@ -202,10 +202,11 @@ private fun AudioPlayerCard(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(48.dp)
+                    .semantics { contentDescription = if (isPlaying) "Pause audio" else if (error) "Retry audio" else "Play audio" }
                     .clip(CircleShape)
                     .background(BonyColors.AccentBg)
-                    .clickable(onClick = onPlayPause),
+                    .clickable(role = Role.Button, onClick = onPlayPause),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
@@ -317,4 +318,13 @@ private fun formatAudioTime(milliseconds: Long): String {
     val seconds = totalSeconds % 60L
     return if (hours > 0L) "%d:%02d:%02d".format(hours, minutes, seconds)
     else "%02d:%02d".format(minutes, seconds)
+}
+
+/** Backgrounding pauses playback; resuming never automatically restarts it. */
+internal fun pauseAudioOnStop(lifecycle: Lifecycle, pause: () -> Unit): () -> Unit {
+    val observer = LifecycleEventObserver { _, event ->
+        if (event == Lifecycle.Event.ON_STOP) pause()
+    }
+    lifecycle.addObserver(observer)
+    return { lifecycle.removeObserver(observer) }
 }

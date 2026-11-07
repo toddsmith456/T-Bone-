@@ -16,6 +16,19 @@ class MetadataLeasesTest {
         assertEquals(listOf("c"), leases.claim("four", listOf("c")))
     }
 
+    @Test fun completedRequestsCancelTimersAndLateTimerCannotLeak() = kotlinx.coroutines.test.runTest {
+        val leases = MetadataLeases()
+        leases.claim("one", listOf("a"))
+        val timer = kotlinx.coroutines.Job()
+        assertTrue(leases.attachTimeout("one", timer))
+        assertTrue(leases.release("one"))
+        assertTrue(timer.isCancelled)
+        val late = kotlinx.coroutines.Job()
+        assertFalse(leases.attachTimeout("one", late))
+        assertTrue(late.isCancelled)
+        assertEquals(listOf("a"), leases.claim("two", listOf("a")))
+    }
+
     @Test fun concurrentClaimsNeverRequestTheSameAuthorTwice() {
         val leases = MetadataLeases()
         val pool = java.util.concurrent.Executors.newFixedThreadPool(8)

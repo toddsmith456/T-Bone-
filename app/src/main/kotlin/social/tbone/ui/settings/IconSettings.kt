@@ -61,15 +61,15 @@ internal fun IconSettings() {
         FlowRow(modifier = Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             listOf("official" to "Official", "colors" to "Colors", "alternative" to "Alternative").forEach { (id, title) ->
                 Text(if (mode == id) "● $title" else "○ $title", modifier = Modifier
-                    .heightIn(min = 48.dp).selectable(selected = mode == id, role = Role.RadioButton) { mode = id }
+                    .sizeIn(minWidth = 48.dp, minHeight = 48.dp).selectable(selected = mode == id, role = Role.RadioButton) { mode = id }
                     .padding(vertical = 12.dp), color = BonyColors.Text)
             }
         }
         if (mode == "colors") {
             Text("Background", style = BonyType.body, color = BonyColors.TextDim)
-            FlowRow(modifier = Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { bgNames.forEachIndexed { i, name -> Text(if (bg == i) "● $name" else "○ $name", Modifier.heightIn(min = 48.dp).selectable(selected = bg == i, role = Role.RadioButton) { bg = i }.padding(vertical = 12.dp), color = BonyColors.Text) } }
+            FlowRow(modifier = Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { bgNames.forEachIndexed { i, name -> Text(if (bg == i) "● $name" else "○ $name", Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).selectable(selected = bg == i, role = Role.RadioButton) { bg = i }.padding(vertical = 12.dp), color = BonyColors.Text) } }
             Text("Logo", style = BonyType.body, color = BonyColors.TextDim)
-            FlowRow(modifier = Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { logoNames.forEachIndexed { i, name -> Text(if (fg == i) "● $name" else "○ $name", Modifier.heightIn(min = 48.dp).selectable(selected = fg == i, role = Role.RadioButton) { fg = i }.padding(vertical = 12.dp), color = BonyColors.Text) } }
+            FlowRow(modifier = Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { logoNames.forEachIndexed { i, name -> Text(if (fg == i) "● $name" else "○ $name", Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).selectable(selected = fg == i, role = Role.RadioButton) { fg = i }.padding(vertical = 12.dp), color = BonyColors.Text) } }
         }
         val res = when (mode) {
             "alternative" -> social.tbone.R.drawable.icon_alternative_steak

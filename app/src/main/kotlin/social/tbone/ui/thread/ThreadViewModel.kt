@@ -679,10 +679,11 @@ class ThreadViewModel @Inject constructor(
                 closeMetadata(id)
                 throw error
             }
-            viewModelScope.launch {
+            val timeout = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
                 kotlinx.coroutines.delay(15_000)
                 closeMetadata(id)
             }
+            if (metadataLeases.attachTimeout(id, timeout)) timeout.start()
         }
     }
 

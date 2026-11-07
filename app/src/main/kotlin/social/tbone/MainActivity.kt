@@ -215,19 +215,18 @@ class MainActivity : FragmentActivity() {
                             reactWith = { event, emoji -> reactionsRepository.react(event, emoji) },
                         )
                     }
-                    androidx.compose.runtime.CompositionLocalProvider(
-                        social.tbone.ui.reactions.LocalReactionConfig provides reactionConfig,
-                        LocalUpdateAvailable provides updateState.updateAvailable,
-                    ) {
-                        ContentFilterProvider {
-                            BonyNavHost()
-                        }
-                    }
-                    if (starting) {
+                    social.tbone.ui.StartupGate(starting = starting, cover = {
                         Box(Modifier.fillMaxSize().clickable(indication = null,
                             interactionSource = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) {}) {
                             if (showStartupIcon) social.tbone.ui.settings.StartupAppearance(this@MainActivity)
                             else Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xFF0A0A0A)))
+                        }
+                    }) {
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            social.tbone.ui.reactions.LocalReactionConfig provides reactionConfig,
+                            LocalUpdateAvailable provides updateState.updateAvailable,
+                        ) {
+                            ContentFilterProvider { BonyNavHost() }
                         }
                     }
                     // Parental screen-time lock: drawn OVER everything (but under

@@ -1227,47 +1227,18 @@ class FeedViewModel @Inject constructor(
         _uiState.update { it.copy(isLoading = false) }
     }
 
-    /**
-     * One-shot kind-3 fetch for accounts whose follow list is not cached locally.
-     * Resolves the first event that arrives, or an empty list after [timeoutMs].
-     */
+    /** Bounded kind-3 fetch when the account has no locally cached follows. */
     private suspend fun fetchFollowsOnce(account: Account, timeoutMs: Long = 8_000): List<String> {
-        val cached = account.follows
-        if (cached.isNotEmpty()) return cached
-        val best = java.util.concurrent.atomic.AtomicReference<Event?>(null)
-        val id = "clock-follows-" + java.util.UUID.randomUUID().toString().take(8)
-        val ready = kotlinx.coroutines.CompletableDeferred<Unit>()
-        val job = viewModelScope.launch(Dispatchers.Default) {
-            pool.messages.onSubscription {
-                pool.subscribe(listOf(Filter(authors = listOf(account.pubkey), kinds = listOf(EventKind.FOLLOW_LIST), limit = 1)),
-                    id = id, label = "clock-follows")
-                ready.complete(Unit)
-            }.collect { (_, message) ->
-                if (message is RelayMessage.EventMessage && message.subscriptionId == id &&
-                    message.event.pubkey == account.pubkey && message.event.kind == EventKind.FOLLOW_LIST && message.event.verify()) {
-                    val candidate = message.event
-                    best.updateAndGet { old ->
-                        if (old == null || candidate.createdAt > old.createdAt ||
-                            (candidate.createdAt == old.createdAt && candidate.id < old.id)) candidate else old
-                    }
-                }
-            }
+        if (account.follows.isNotEmpty()) return account.follows
+        val id = "clock-follows-" + UUID.randomUUID().toString()
+        val best = kotlinx.coroutines.withContext(Dispatchers.Default) {
+            fetchClockFollowEvent(
+                messages = pool.messages, id = id, author = account.pubkey,
+                subscribe = { pool.subscribe(listOf(Filter(authors = listOf(account.pubkey), kinds = listOf(EventKind.FOLLOW_LIST), limit = 1)), id = id, label = "clock-follows") },
+                unsubscribe = { pool.unsubscribe(id) }, timeoutMs = timeoutMs,
+            )
         }
-        try {
-            ready.await()
-            val start = System.currentTimeMillis()
-            var firstFound = 0L
-            while (System.currentTimeMillis() - start < timeoutMs) {
-                if (best.get() != null && firstFound == 0L) firstFound = System.currentTimeMillis()
-                if (firstFound != 0L && System.currentTimeMillis() - firstFound >= 2_000L) break
-                kotlinx.coroutines.delay(100)
-            }
-        } finally {
-            job.cancel()
-            pool.unsubscribe(id)
-        }
-        val follows = best.get()?.parsedTags?.pubkeys ?: emptyList()
-        return follows
+        return best?.parsedTags?.pubkeys ?: emptyList()
     }
 
     private fun settleGlobalInitial() {
