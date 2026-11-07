@@ -3,6 +3,8 @@ package social.tbone.ui
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -825,11 +827,11 @@ private fun WithBottomBar(
 /** Do not mistake unreadable existing accounts for a fresh installation. */
 @Composable
 internal fun AccountDataUnavailableScreen() {
-    Box(Modifier.fillMaxSize().background(BonyColors.Bg).padding(24.dp), contentAlignment = Alignment.Center) {
+    Box(Modifier.fillMaxSize().background(BonyColors.Bg).padding(24.dp).verticalScroll(rememberScrollState()), contentAlignment = Alignment.Center) {
         Text(
             "Account data could not be read or the active account could not be found. " +
                 "Your saved data has not been intentionally deleted. Close and reopen the app; " +
-                "if the problem continues, seek help before clearing app data or reinstalling.",
+                "if the problem continues, try the app version that last worked or seek help before clearing app data or reinstalling.",
             color = BonyColors.Text,
         )
     }

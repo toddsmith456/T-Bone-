@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -207,11 +209,12 @@ internal fun HideAccountDialog(onCancel: () -> Unit, onHide: (String) -> Unit) {
     var confirmation by remember { mutableStateOf("") }
     val matches = pin.isNotBlank() && pin.trim() == confirmation.trim()
     Box(
-        modifier = Modifier.fillMaxSize().background(BonyColors.Bg.copy(alpha = 0.85f)).clickable { onCancel() },
+        modifier = Modifier.fillMaxSize().background(BonyColors.Bg.copy(alpha = 0.85f))
+            .navigationBarsPadding().imePadding().clickable { onCancel() },
         contentAlignment = Alignment.Center,
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp)
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp).verticalScroll(rememberScrollState())
                 .appBorder(1.dp, BonyColors.RuleStrong).background(BonyColors.Surface)
                 .clickable(enabled = false) {}.padding(16.dp),
         ) {
