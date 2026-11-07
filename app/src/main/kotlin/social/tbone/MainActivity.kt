@@ -46,6 +46,7 @@ import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : FragmentActivity() {
+    private companion object { const val STATE_LINK_PROCESS = "tbone.link.process" }
 
     @Inject lateinit var amberBridge: AmberSignerBridge
     @Inject lateinit var relayAuthManager: RelayAuthManager
@@ -138,7 +139,9 @@ class MainActivity : FragmentActivity() {
 
         relayAuthManager.start(lifecycleScope)
 
-        handleIntent(intent)
+        if (social.tbone.notifications.shouldHandleLaunchIntent(
+                savedInstanceState?.getString(STATE_LINK_PROCESS), deepLinkHandler.processToken
+            )) handleIntent(intent)
 
         // Screenshot blocker: FLAG_SECURE whenever the app-wide toggle OR the
         // toolbox toggle is on. Managed here (the window owner) so it can never
@@ -311,8 +314,14 @@ class MainActivity : FragmentActivity() {
         toolboxLockManager.onAppBackgrounded()
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_LINK_PROCESS, deepLinkHandler.processToken)
+        super.onSaveInstanceState(outState)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         handleIntent(intent)
     }
 

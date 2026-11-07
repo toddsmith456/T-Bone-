@@ -22,4 +22,21 @@ class DeepLinkHandlerTest {
         repeat(70) { handler.navigateToThread(it.toString()) }
         assertEquals(PendingNavigation.Thread("6"), handler.destinations.first())
     }
+    @Test fun activityRecreationDoesNotReplayWhileQueueLivesButProcessRestartCanRecover() {
+        val original = DeepLinkHandler()
+        assertEquals(true, shouldHandleLaunchIntent(null, original.processToken))
+        assertEquals(false, shouldHandleLaunchIntent(original.processToken, original.processToken))
+        val restarted = DeepLinkHandler()
+        assertEquals(true, shouldHandleLaunchIntent(original.processToken, restarted.processToken))
+    }
+
+    @Test fun multipleCollectorsConsumeEachQueuedDestinationOnlyOnce() = runBlocking {
+        val handler = DeepLinkHandler()
+        handler.navigateToThread("first")
+        handler.navigateToProfile("second")
+        assertEquals(PendingNavigation.Thread("first"), handler.destinations.first())
+        assertEquals(PendingNavigation.Profile("second"), handler.destinations.first())
+        val none = kotlinx.coroutines.withTimeoutOrNull(50) { handler.destinations.first() }
+        assertEquals(null, none)
+    }
 }

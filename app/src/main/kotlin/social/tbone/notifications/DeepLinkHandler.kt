@@ -13,6 +13,8 @@ sealed interface PendingNavigation {
 
 @Singleton
 class DeepLinkHandler @Inject constructor() {
+    // Stable across Activity recreation, new after process death.
+    internal val processToken: String = java.util.UUID.randomUUID().toString()
     // One queue preserves the order of mixed notification and URI destinations.
     // Pending destinations wait until the navigation graph is ready and unlocked.
     private val pending = Channel<PendingNavigation>(capacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
@@ -26,3 +28,8 @@ class DeepLinkHandler @Inject constructor() {
         pending.trySend(PendingNavigation.Profile(pubkey))
     }
 }
+
+/** Replay the launch intent after process death, but not while the singleton
+ * queue from the same process already owns that intent. */
+internal fun shouldHandleLaunchIntent(savedProcessToken: String?, currentProcessToken: String): Boolean =
+    savedProcessToken != currentProcessToken
