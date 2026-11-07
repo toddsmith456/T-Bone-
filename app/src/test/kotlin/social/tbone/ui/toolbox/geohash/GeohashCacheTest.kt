@@ -21,7 +21,9 @@ class GeohashCacheTest {
     private lateinit var cache: GeohashMessageCache
     @Before fun setup() {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        file = File.createTempFile("geo-test", ".preferences_pb").also { it.delete() }
+        // Empty protobuf is a valid empty preferences file. Keeping it present
+        // avoids a first-read versus first atomic-write exists/open race.
+        file = File.createTempFile("geo-test", ".preferences_pb")
         val store = PreferenceDataStoreFactory.create(scope = scope) { file }
         settings = AppSettings(store, scope)
         runBlocking { settings.initialized.first { it } }

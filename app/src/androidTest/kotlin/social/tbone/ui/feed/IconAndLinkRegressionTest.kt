@@ -110,10 +110,10 @@ class IconAndLinkRegressionTest {
             NoteBodyText(content = "#example", style = TextStyle(fontSize = 20.sp), onHashtagClick = handler)
         } }
         val node = compose.onNodeWithText("#example")
-        val before = node.fetchSemanticsNode().config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.CustomActions).orEmpty()
+        val before = node.fetchSemanticsNode().config.getOrNull(androidx.compose.ui.semantics.SemanticsActions.CustomActions).orEmpty()
         assertTrue(before.none { it.label == "Open hashtag example" })
         compose.runOnIdle { enabled.value = true }
-        val after = node.fetchSemanticsNode().config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.CustomActions).orEmpty()
+        val after = node.fetchSemanticsNode().config.getOrNull(androidx.compose.ui.semantics.SemanticsActions.CustomActions).orEmpty()
         val open = after.single { it.label == "Open hashtag example" }
         compose.runOnIdle {
             assertTrue(open.action())
