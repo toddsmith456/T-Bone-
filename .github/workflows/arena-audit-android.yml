@@ -51,6 +51,7 @@ jobs:
           script: |
             set -e
             ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=social.tbone.webxdc.XdcBrowserWipeTest --stacktrace --no-configuration-cache
+            python3 -c 'import glob,xml.etree.ElementTree as E; cases=[c for p in glob.glob("app/build/outputs/androidTest-results/**/*.xml",recursive=True) for c in E.parse(p).getroot().iter("testcase") if c.get("classname", "").endswith("XdcBrowserWipeTest")]; assert cases and all(c.find("skipped") is None for c in cases), "Isolated WebView test did not execute (missing or skipped)"; print("Isolated WebView test executed:", len(cases))'
             ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=social.tbone.notes.NoteAudioSourceTest,social.tbone.notes.NotesCryptoConcurrencyTest,social.tbone.notes.PersistentWipeStateTest,social.tbone.notes.NoteEditorSaveTest,social.tbone.ui.toolbox.geohash.GeohashLiveTest,social.tbone.notes.NotesIntegrityTest,social.tbone.security.BackgroundPinTimeoutTest,social.tbone.security.PinAttemptLimiterTest,social.tbone.calendar.CalendarWipeGateTest,social.tbone.ui.feed.FeedScrollTest,social.tbone.ui.feed.IconAndLinkRegressionTest,social.tbone.stealth.StealthManagerTest,social.tbone.stealth.StealthPinExitTest --stacktrace --no-configuration-cache
       - name: Report Android test failures
         if: failure()

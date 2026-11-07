@@ -23,7 +23,7 @@ import javax.inject.Singleton
 /**
  * Toolbox-only security: a PIN that locks the toolbox and a duress PIN that
  * attempts to clear selected toolbox data (encrypted notes and bookmarks,
- * recordings, and toolbox settings); mini apps and external copies remain. Mirrors the app lock / duress features
+ * recordings, mini apps, and toolbox settings); external copies remain. Mirrors the app lock / duress features
  * but scoped to the Toolbox.
  */
 @Singleton
@@ -105,9 +105,9 @@ class ToolboxSecurity @Inject constructor(
      *  - toolbox settings (pin, duress pin, screenshot toggle)
      * The current database cleanup also deletes cached events and profiles,
      * but preserves notifications. Accounts and general app settings remain.
-     * Decoy note tables, mini apps, WebView storage and external copies are
-     * not cleared here. Whether decoy notes should be included is a product
-     * decision; changing wipe scope would delete additional user data.
+     * Decoy notes and mini apps, including WebView browsing data, are included.
+     * External copies cannot be recalled; browser cleanup requires a supported
+     * WebView and a completion callback or the wipe stays pending.
      */
     private val wiping = java.util.concurrent.atomic.AtomicBoolean(false)
 

@@ -10,13 +10,15 @@ import java.util.IdentityHashMap
  * A call is registered before it can start; changing mode cancels all calls
  * started under the old mode, and stale callers may not register new ones.
  */
-internal class TorCallGuard {
-    private var torEnabled = false
+internal class TorCallGuard(initialTor: Boolean = false) {
+    private var torEnabled = initialTor
+    private var epoch = 0L
     private val calls = Collections.newSetFromMap(IdentityHashMap<Call, Boolean>())
 
     @Synchronized fun update(enabled: Boolean) {
         if (enabled == torEnabled) return
         torEnabled = enabled
+        epoch++
         calls.forEach { it.cancel() }
         calls.clear()
     }
@@ -29,10 +31,23 @@ internal class TorCallGuard {
         calls.add(call)
     }
 
+    /** Bind reusable clients to the settings generation they were created for. */
+    @Synchronized fun snapshot(expectedTor: Boolean): Long =
+        if (expectedTor == torEnabled) epoch else Long.MIN_VALUE
+
+    @Synchronized fun registerAtEpoch(call: Call, expectedTor: Boolean, expectedEpoch: Long) {
+        if (expectedTor != torEnabled || expectedEpoch != epoch) {
+            call.cancel()
+            throw IOException("Tor setting changed; request cancelled")
+        }
+        calls.add(call)
+    }
+
     @Synchronized fun unregister(call: Call) { calls.remove(call) }
 }
 
 /** Shared by the settings collector and the requests which opt into this guard. */
 internal object TorCallPolicy {
-    val guard = TorCallGuard()
+    // Unknown persisted settings are treated as proxy-only at startup.
+    val guard = TorCallGuard(initialTor = true)
 }

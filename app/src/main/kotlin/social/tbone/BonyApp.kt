@@ -123,10 +123,10 @@ class BonyApp : Application() {
                     proxyType = connected?.proxyType ?: java.net.Proxy.Type.HTTP,
                     torPort = connected?.port ?: 8118,
                 )
-                ImageClientProvider.update(client)
+                ImageClientProvider.update(client, useTor)
                 Coil.setImageLoader(
                     ImageLoader.Builder(this@BonyApp)
-                        .okHttpClient(client)
+                        .okHttpClient(ImageClientProvider.client)
                         .diskCache {
                             DiskCache.Builder()
                                 .directory(this@BonyApp.cacheDir.resolve("image_cache"))
