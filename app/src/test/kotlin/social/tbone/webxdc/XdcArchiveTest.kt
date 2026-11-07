@@ -171,4 +171,20 @@ class XdcArchiveTest {
         assertTrue(XdcArchive.looksLikeXdc(sample()))
         assertFalse(XdcArchive.looksLikeXdc(byteArrayOf(0, 1, 2)))
     }
+
+    @Test fun rejectsNormalizedDuplicatePaths() {
+        val bytes = zip(linkedMapOf("index.html" to byteArrayOf(1), "./index.html" to byteArrayOf(2)))
+        try { XdcArchive.read(bytes); fail("duplicate accepted") }
+        catch (e: XdcException) { assertTrue(e.message!!.contains("duplicate")) }
+    }
+
+    @Test fun rejectsEntryBeforeExceedingRemainingExpansionBudget() {
+        val archive = zip(mapOf("data" to ByteArray(25)))
+        java.util.zip.ZipInputStream(archive.inputStream()).use { stream ->
+            stream.nextEntry
+            try { XdcArchive.readCapped(stream, 24); fail("budget exceeded") }
+            catch (e: XdcException) { assertTrue(e.message!!.contains("too large")) }
+        }
+    }
+
 }

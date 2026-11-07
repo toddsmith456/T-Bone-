@@ -88,7 +88,8 @@ object XdcArchive {
                     // The spec requires `index.html`; tolerate a capitalised name
                     // and store it under the canonical key so `/` can serve it.
                     val path = if (raw.equals(INDEX_HTML, ignoreCase = true)) INDEX_HTML else raw
-                    val data = readCapped(zip)
+                    if (files.containsKey(path)) throw XdcException("duplicate path in archive")
+                    val data = readCapped(zip, minOf(MAX_ARCHIVE_BYTES, MAX_UNCOMPRESSED_BYTES - total))
                     total += data.size
                     if (total > MAX_UNCOMPRESSED_BYTES) throw XdcException("archive expands too large")
                     files[path] = data
@@ -128,21 +129,22 @@ object XdcArchive {
 
     private val ICON_NAMES = setOf("icon.png", "icon.jpg", "icon.jpeg")
 
-    private fun readCapped(zip: ZipInputStream): ByteArray {
+    internal fun readCapped(zip: ZipInputStream, limit: Long): ByteArray {
         val out = ByteArrayOutputStream()
         val buf = ByteArray(16 * 1024)
         while (true) {
             val n = zip.read(buf)
             if (n < 0) break
+            if (n.toLong() > limit - out.size()) throw XdcException("archive expands too large")
             out.write(buf, 0, n)
-            if (out.size() > MAX_ARCHIVE_BYTES) throw XdcException("entry is too large")
         }
         return out.toByteArray()
     }
 
     /**
      * Normalises a zip entry path and rejects anything that could escape the
-     * app's private directory: absolute paths, `..`, NUL bytes, drive letters.
+     * app's private directory: `..`, NUL bytes, and drive letters. Leading
+     * slashes are stripped so absolute-style paths remain sandboxed.
      */
     internal fun normalisePath(raw: String): String? {
         if (raw.isEmpty() || raw.contains('\u0000')) return null
