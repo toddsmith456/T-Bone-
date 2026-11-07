@@ -56,10 +56,13 @@ jobs:
           grep -Ei '^(Signer #1|V3\.0 Signer): certificate SHA-256 digest: 0e37601f5716b1476b26a0aed023df97ca8c2ab0c1500cb2d3a7237337f65678$' /tmp/beta-signature.txt
           "$(dirname "$TOOLS")/aapt" dump badging "$APK" | tee /tmp/beta-badging.txt
           grep "package: name='social.tbone.fork.beta' versionCode='70' versionName='0.5.4-beta'" /tmp/beta-badging.txt
-          "$(dirname "$TOOLS")/aapt" dump badging app/build/outputs/apk/release/app-release.apk | grep "package: name='social.tbone.fork'"
+          RELEASE=app/build/outputs/apk/release/app-release.apk
+          "$TOOLS" verify --verbose --print-certs "$RELEASE" | tee /tmp/release-signature.txt
+          grep -Ei '^(Signer #1|V3\.0 Signer): certificate SHA-256 digest: 0e37601f5716b1476b26a0aed023df97ca8c2ab0c1500cb2d3a7237337f65678$' /tmp/release-signature.txt
+          "$(dirname "$TOOLS")/aapt" dump badging "$RELEASE" | grep "package: name='social.tbone.fork' versionCode='70' versionName='0.5.4'"
           mkdir -p beta-preflight
-          cp "$APK" beta-preflight/
-          (cd beta-preflight && sha256sum app-beta.apk > SHA256SUMS.txt)
+          cp "$APK" "$RELEASE" beta-preflight/
+          (cd beta-preflight && sha256sum app-beta.apk app-release.apk > SHA256SUMS.txt)
       - uses: actions/upload-artifact@v4
         with:
           name: signed-beta-preflight
@@ -79,6 +82,9 @@ jobs:
         run: |
           curl -fLsS --retry 3 -o /tmp/previous-beta.apk https://github.com/toddsmith456/T-Bone-/releases/download/beta-0.5.3-23/T-Bone-beta-ed5dda9d7a8c.apk
           echo 'c3c96fcc4241e2582f280ea93e66781771bd4016c36f5069edb83d0f747c78af  /tmp/previous-beta.apk' | sha256sum -c -
+          curl -fLsS --retry 3 -o /tmp/previous-release.apk https://github.com/toddsmith456/T-Bone-/releases/download/v0.5.3/T-Bone-fork-v0.5.3-release.apk
+          echo 'd671d3917bab110886c449a9272f3126edf67ba8a70990965bda04565bba3333  /tmp/previous-release.apk' | sha256sum -c -
+          (cd beta-preflight && sha256sum -c SHA256SUMS.txt)
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -91,4 +97,4 @@ jobs:
           arch: x86_64
           target: google_apis
           disable-animations: true
-          script: bash .github/arena-ci/beta-upgrade-smoke.sh
+          script: bash .github/arena-ci/beta-upgrade-smoke.sh beta && bash .github/arena-ci/beta-upgrade-smoke.sh release
