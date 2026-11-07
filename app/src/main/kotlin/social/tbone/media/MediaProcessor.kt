@@ -373,39 +373,52 @@ object MediaProcessor {
             var bmp = context.contentResolver.openInputStream(uri)?.use {
                 BitmapFactory.decodeStream(it, null, opts)
             } ?: return@runCatching null
-            bmp = applyOrientation(bmp, orientation)
+            var out: File? = null
+            try {
+                bmp = applyOrientation(bmp, orientation)
+                val result = File.createTempFile("tbone_media_", ".jpg", context.cacheDir)
+                out = result
+                var quality = if (compress) 88 else 100
 
-            val out = File(context.cacheDir, "tbone_media_${System.currentTimeMillis()}.jpg")
-            var quality = if (compress) 88 else 100
-            val targetBytes: Long? = maxBytes
-
-            // Compress loop: lower quality until under the cap (or min quality).
-            while (true) {
-                FileOutputStream(out).use { fos ->
-                    bmp.compress(Bitmap.CompressFormat.JPEG, quality, fos)
-                }
-                val size = out.length()
-                if (targetBytes == null || size <= targetBytes || quality <= 55) break
-                quality -= 8
-            }
-            if (out.length() > (maxBytes ?: Long.MAX_VALUE)) {
-                // Still too big at min quality — downscale and retry.
-                var maxDim = 1600
-                while (maxDim >= 400) {
-                    val scale = maxDim.toFloat() / maxOf(bmp.width, bmp.height)
-                    val scaled = Bitmap.createScaledBitmap(
-                        bmp, (bmp.width * scale).toInt().coerceAtLeast(1),
-                        (bmp.height * scale).toInt().coerceAtLeast(1), true,
-                    )
-                    FileOutputStream(out).use { fos ->
-                        scaled.compress(Bitmap.CompressFormat.JPEG, 70, fos)
+                // Compress loop: lower quality until under the cap (or min quality).
+                while (true) {
+                    FileOutputStream(result).use { fos ->
+                        check(bmp.compress(Bitmap.CompressFormat.JPEG, quality, fos))
                     }
-                    if (out.length() <= (maxBytes ?: Long.MAX_VALUE)) break
-                    maxDim -= 300
+                    val size = result.length()
+                    if (maxBytes == null || size <= maxBytes || quality <= 55) break
+                    quality -= 8
                 }
+                if (result.length() > (maxBytes ?: Long.MAX_VALUE)) {
+                    // Still too big at min quality — downscale and retry.
+                    var maxDim = 1600
+                    while (maxDim >= 400) {
+                        val scale = (maxDim.toFloat() / maxOf(bmp.width, bmp.height)).coerceAtMost(1f)
+                        val scaled = Bitmap.createScaledBitmap(
+                            bmp, (bmp.width * scale).toInt().coerceAtLeast(1),
+                            (bmp.height * scale).toInt().coerceAtLeast(1), true,
+                        )
+                        try {
+                            FileOutputStream(result).use { fos ->
+                                check(scaled.compress(Bitmap.CompressFormat.JPEG, 70, fos))
+                            }
+                        } finally {
+                            if (scaled !== bmp) scaled.recycle()
+                        }
+                        if (result.length() <= (maxBytes ?: Long.MAX_VALUE)) break
+                        maxDim -= 300
+                    }
+                }
+                check(result.length() > 0 && (maxBytes == null || result.length() <= maxBytes)) {
+                    "Could not fit image within the requested size"
+                }
+                result
+            } catch (failure: Throwable) {
+                out?.delete()
+                throw failure
+            } finally {
+                if (!bmp.isRecycled) bmp.recycle()
             }
-            bmp.recycle()
-            out
         }.getOrNull()
     }
 

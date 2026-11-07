@@ -174,4 +174,30 @@ class IconAndLinkRegressionTest {
         }
     }
 
+
+    @Test fun imagePreparationUsesSeparateFilesAndHonorsSizeCap() = kotlinx.coroutines.runBlocking {
+        val context = compose.activity.applicationContext
+        val input = java.io.File(context.cacheDir, "prepare-test-" + java.util.UUID.randomUUID() + ".png")
+        val results = mutableListOf<java.io.File>()
+        try {
+            val bitmap = android.graphics.Bitmap.createBitmap(256, 128, android.graphics.Bitmap.Config.ARGB_8888)
+            bitmap.eraseColor(android.graphics.Color.BLUE)
+            input.outputStream().use { assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) }
+            bitmap.recycle()
+            val uri = android.net.Uri.fromFile(input)
+            val first = social.tbone.media.MediaProcessor.prepareImageMedia(context, uri)
+            val second = social.tbone.media.MediaProcessor.prepareImageMedia(context, uri)
+            assertTrue(first != null && second != null)
+            results.add(first!!.file); results.add(second!!.file)
+            assertTrue(first.file.absolutePath != second.file.absolutePath)
+            assertEquals("image/jpeg", first.mime)
+            assertTrue(first.file.length() > 0)
+            val tooSmall = social.tbone.media.MediaProcessor.prepareImageMedia(context, uri, maxBytes = 1)
+            assertEquals(null, tooSmall)
+        } finally {
+            input.delete()
+            results.forEach { it.delete() }
+        }
+    }
+
 }
