@@ -177,4 +177,48 @@ class NotesIntegrityTest {
         } finally { owner.cancel() }
     }
 
+
+    @Test fun encryptedBackupRestoreRoundTripAndTamperRollback() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val owner = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val backupFile = java.io.File(context.cacheDir, "integrity-${java.util.UUID.randomUUID()}.tbbackup")
+        val tamperedFile = java.io.File(context.cacheDir, "integrity-${java.util.UUID.randomUUID()}-bad.tbbackup")
+        try {
+            val coordinator = NoteWriteCoordinator(owner)
+            val backups = social.tbone.backup.EncryptedBackupRepository(
+                context, db, db.noteDao(), db.noteFolderDao(), db.noteAttachmentDao(), db.calendarEventDao(),
+                NotesCrypto(), social.tbone.calendar.CalendarCrypto(),
+                social.tbone.calendar.CalendarAlarmScheduler(context), coordinator,
+            )
+            real.saveText("r", "original title", "original body", null)
+            val attachment = real.addAttachment("r", "image", "image/png", byteArrayOf(3, 2, 1))
+            backups.exportTo(android.net.Uri.fromFile(backupFile), "test passphrase")
+            real.saveText("r", "changed title", "changed body", null)
+            val corrupted = backupFile.readBytes()
+            corrupted[corrupted.lastIndex] = (corrupted.last().toInt() xor 1).toByte()
+            tamperedFile.writeBytes(corrupted)
+            var failed = false
+            try { backups.importFrom(android.net.Uri.fromFile(tamperedFile), "test passphrase") }
+            catch (_: Exception) { failed = true }
+            assertTrue("tampered backup must be rejected", failed)
+            assertEquals("changed body", real.getById("r")?.text)
+            assertNotNull(db.noteAttachmentDao().getById(attachment))
+            coordinator.pauseAndDrain()
+            var blocked = false
+            try { backups.importFrom(android.net.Uri.fromFile(backupFile), "test passphrase") }
+            catch (_: java.io.IOException) { blocked = true }
+            assertTrue("restore should be blocked during wipe", blocked)
+            assertEquals("changed body", real.getById("r")?.text)
+            coordinator.resumeAfterWipe()
+            backups.importFrom(android.net.Uri.fromFile(backupFile), "test passphrase")
+            assertEquals("original body", real.getById("r")?.text)
+            assertEquals("original title", real.getById("r")?.title)
+            assertArrayEquals(byteArrayOf(3, 2, 1), real.attachments("r").first().single().data)
+        } finally {
+            owner.cancel()
+            backupFile.delete()
+            tamperedFile.delete()
+        }
+    }
+
 }
