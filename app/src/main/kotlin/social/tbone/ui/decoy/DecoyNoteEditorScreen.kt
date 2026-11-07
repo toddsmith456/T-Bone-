@@ -116,7 +116,9 @@ fun DecoyNoteEditorScreen(
     var savedId by remember { mutableStateOf<String?>(if (id.isBlank()) null else id) }
     var lastSaved by remember { mutableStateOf("") }
     var lastSavedTitle by remember { mutableStateOf("") }
-    var loaded by remember { mutableStateOf(false) }
+    // A new note has no asynchronous load to wait for. Treat it as ready
+    // immediately so an early Back or picker result cannot discard input.
+    var loaded by remember { mutableStateOf(id.isBlank()) }
     var loadFailed by remember { mutableStateOf(false) }
     var builtFromNote by remember { mutableStateOf(false) }
     var focusedIndex by remember { mutableIntStateOf(0) }
