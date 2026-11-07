@@ -56,4 +56,22 @@ class VoiceRecordingGateTest {
             assertTrue(gate.start(Any(), coordinator.currentWipeEpoch()) { { _ -> } })
         } finally { scope.cancel() }
     }
+
+    @Test fun disposedRecorderClosesAsynchronouslyAndCannotCloseAnotherOwner() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val coordinator = NoteWriteCoordinator(scope)
+            val gate = VoiceRecordingGate(coordinator, scope)
+            val owner = Any()
+            val closed = CompletableDeferred<Boolean>()
+            assertTrue(gate.start(owner, coordinator.currentWipeEpoch()) {
+                { discard -> closed.complete(discard); Unit }
+            })
+            gate.stopAfterDispose(Any())
+            assertFalse(closed.isCompleted)
+            gate.stopAfterDispose(owner)
+            assertTrue(withTimeout(3_000) { closed.await() })
+        } finally { scope.cancel() }
+    }
+
 }
