@@ -344,6 +344,40 @@ class AccountRepositoryTest {
         assertEquals(setOf("a", "b", "visible"), repository.accounts.first().map { it.pubkey }.toSet())
     }
 
+    @Test
+    fun `unknown future account fields are not erased by older app mutations`() = runBlocking {
+        val key = stringPreferencesKey("accounts")
+        val active = stringPreferencesKey("active_pubkey")
+        val raw = """[{"pubkey":"existing","signerType":"AMBER","futurePrivateSetting":{"value":7}}]"""
+        dataStore.edit { it[key] = raw; it[active] = "existing" }
+        assertEquals(AccountStartupStatus.UNREADABLE, repository.startupStatus.first())
+        var failed = false
+        try { repository.updateAccount("existing") { it.copy(displayName = "changed") } } catch (_: Exception) { failed = true }
+        assertTrue(failed)
+        assertEquals(raw, dataStore.data.first()[key])
+    }
+
+    @Test
+    fun `older account records with omitted optional fields remain usable`() = runBlocking {
+        val key = stringPreferencesKey("accounts")
+        dataStore.edit { it[key] = """[{"pubkey":"legacy","signerType":"AMBER"}]"""; it[stringPreferencesKey("active_pubkey")] = "legacy" }
+        assertEquals(AccountStartupStatus.READY, repository.startupStatus.first())
+        repository.updateAccount("legacy") { it.copy(displayName = "Legacy account") }
+        assertEquals("Legacy account", repository.activeAccount.first()?.displayName)
+    }
+
+    @Test
+    fun `unknown nested account fields are preserved by rejecting mutations`() = runBlocking {
+        val key = stringPreferencesKey("accounts")
+        val raw = """[{"pubkey":"legacy","signerType":"AMBER","followEntries":[{"pubkey":"friend","futureField":true}]}]"""
+        dataStore.edit { it[key] = raw; it[stringPreferencesKey("active_pubkey")] = "legacy" }
+        assertEquals(AccountStartupStatus.UNREADABLE, repository.startupStatus.first())
+        var failed = false
+        try { repository.removeAccount("legacy") } catch (_: Exception) { failed = true }
+        assertTrue(failed)
+        assertEquals(raw, dataStore.data.first()[key])
+    }
+
     private fun account(pubkey: String, relays: List<String> = emptyList()) = Account(
         pubkey = pubkey,
         signerType = SignerType.AMBER,

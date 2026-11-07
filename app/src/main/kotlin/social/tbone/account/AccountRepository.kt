@@ -20,6 +20,10 @@ import javax.inject.Singleton
 private val KEY_ACCOUNTS = stringPreferencesKey("accounts")
 private val KEY_ACTIVE_PUBKEY = stringPreferencesKey("active_pubkey")
 private val KEY_ENCRYPTED_KEYS = stringPreferencesKey("encrypted_keys") // pubkey → base64(encrypted privkey)
+// Account records are rewritten after most edits. Ignoring unknown fields here
+// would silently erase data from a newer/incompatible app version on the next
+// mutation. Fail closed and keep the original JSON for a compatible version.
+private val AccountStorageJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = false }
 
 /** Distinguishes a new install from unreadable or inconsistent account data. */
 internal enum class AccountStartupStatus { EMPTY, READY, UNREADABLE }
@@ -28,7 +32,7 @@ internal fun accountStartupStatus(prefs: Preferences): AccountStartupStatus {
     val raw = prefs[KEY_ACCOUNTS]
     val active = prefs[KEY_ACTIVE_PUBKEY]?.takeIf { it.isNotBlank() }
     if (raw == null) return if (active == null) AccountStartupStatus.EMPTY else AccountStartupStatus.UNREADABLE
-    val accounts = try { NostrJson.decodeFromString<List<Account>>(raw) }
+    val accounts = try { AccountStorageJson.decodeFromString<List<Account>>(raw) }
         catch (_: kotlinx.serialization.SerializationException) { return AccountStartupStatus.UNREADABLE }
         catch (_: IllegalArgumentException) { return AccountStartupStatus.UNREADABLE }
     if (accounts.isEmpty() && active == null) return AccountStartupStatus.EMPTY
@@ -57,7 +61,7 @@ class AccountRepository @Inject constructor(
     // Raw, unfiltered — used internally for hidden PIN lookup and migration.
     private val allAccounts: Flow<List<Account>> = dataStore.data.map { prefs ->
         prefs[KEY_ACCOUNTS]
-            ?.let { runCatching { NostrJson.decodeFromString<List<Account>>(it) }.getOrDefault(emptyList()) }
+            ?.let { runCatching { AccountStorageJson.decodeFromString<List<Account>>(it) }.getOrDefault(emptyList()) }
             ?: emptyList()
     }
 
@@ -77,7 +81,7 @@ class AccountRepository @Inject constructor(
     val activeAccount: Flow<Account?> = dataStore.data.map { prefs ->
         val pubkey = prefs[KEY_ACTIVE_PUBKEY] ?: return@map null
         prefs[KEY_ACCOUNTS]
-            ?.let { runCatching { NostrJson.decodeFromString<List<Account>>(it) }.getOrDefault(emptyList()) }
+            ?.let { runCatching { AccountStorageJson.decodeFromString<List<Account>>(it) }.getOrDefault(emptyList()) }
             ?.find { it.pubkey == pubkey }
     }
 
@@ -98,7 +102,7 @@ class AccountRepository @Inject constructor(
         // Unlike the display flow, recovery must distinguish a genuinely empty
         // account list from unreadable stored data instead of saying "wrong PIN".
         val candidates = dataStore.data.first()[KEY_ACCOUNTS]
-            ?.let { NostrJson.decodeFromString<List<Account>>(it) }
+            ?.let { AccountStorageJson.decodeFromString<List<Account>>(it) }
             ?: emptyList()
         val found = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
             candidates.filter {
@@ -116,7 +120,7 @@ class AccountRepository @Inject constructor(
         val migrated = mutableMapOf<String, String>()
         dataStore.edit { prefs ->
             val raw = prefs[KEY_ACCOUNTS] ?: return@edit
-            val accounts = NostrJson.decodeFromString<List<Account>>(raw)
+            val accounts = AccountStorageJson.decodeFromString<List<Account>>(raw)
             prefs[KEY_ACCOUNTS] = NostrJson.encodeToString(accounts.map { current ->
                 val previous = found.firstOrNull { it.pubkey == current.pubkey }
                 val upgraded = upgrades[current.pubkey]
@@ -141,7 +145,7 @@ class AccountRepository @Inject constructor(
         var changed = false
         dataStore.edit { prefs ->
             val accounts = prefs[KEY_ACCOUNTS]
-                ?.let { NostrJson.decodeFromString<List<Account>>(it) }
+                ?.let { AccountStorageJson.decodeFromString<List<Account>>(it) }
                 ?: return@edit
             val updated = accounts.map {
                 if (it.pubkey == pubkey) {
@@ -174,7 +178,7 @@ class AccountRepository @Inject constructor(
         var hiddenToRelock: String? = null
         dataStore.edit { prefs ->
             val accounts = prefs[KEY_ACCOUNTS]
-                ?.let { NostrJson.decodeFromString<List<Account>>(it) }
+                ?.let { AccountStorageJson.decodeFromString<List<Account>>(it) }
                 ?: return@edit
             val matches = accounts.filter { current ->
                 current.isHidden && current.hiddenPinHash != null && candidates.any {
@@ -202,7 +206,7 @@ class AccountRepository @Inject constructor(
     suspend fun addAccount(account: Account, encryptedPrivkey: ByteArray? = null) {
         dataStore.edit { prefs ->
             val current = prefs[KEY_ACCOUNTS]
-                ?.let { NostrJson.decodeFromString<List<Account>>(it) }
+                ?.let { AccountStorageJson.decodeFromString<List<Account>>(it) }
                 ?.toMutableList()
                 ?: mutableListOf()
 
@@ -238,7 +242,7 @@ class AccountRepository @Inject constructor(
     suspend fun removeAccount(pubkey: String) {
         dataStore.edit { prefs ->
             val updated = prefs[KEY_ACCOUNTS]
-                ?.let { NostrJson.decodeFromString<List<Account>>(it) }
+                ?.let { AccountStorageJson.decodeFromString<List<Account>>(it) }
                 ?.filter { it.pubkey != pubkey }
                 ?: emptyList()
             prefs[KEY_ACCOUNTS] = NostrJson.encodeToString(updated)
@@ -266,7 +270,7 @@ class AccountRepository @Inject constructor(
         var unlockTarget = false
         dataStore.edit { prefs ->
             val accounts = prefs[KEY_ACCOUNTS]
-                ?.let { NostrJson.decodeFromString<List<Account>>(it) }
+                ?.let { AccountStorageJson.decodeFromString<List<Account>>(it) }
                 ?: return@edit
             val target = accounts.firstOrNull { it.pubkey == pubkey } ?: return@edit
             val previous = prefs[KEY_ACTIVE_PUBKEY]
@@ -282,7 +286,7 @@ class AccountRepository @Inject constructor(
     suspend fun updateAccount(account: Account) {
         dataStore.edit { prefs ->
             val updated = prefs[KEY_ACCOUNTS]
-                ?.let { NostrJson.decodeFromString<List<Account>>(it) }
+                ?.let { AccountStorageJson.decodeFromString<List<Account>>(it) }
                 ?.map { if (it.pubkey == account.pubkey) account else it }
                 ?: return@edit
             prefs[KEY_ACCOUNTS] = NostrJson.encodeToString(updated)
@@ -297,7 +301,7 @@ class AccountRepository @Inject constructor(
     suspend fun updateAccount(pubkey: String, transform: (Account) -> Account) {
         dataStore.edit { prefs ->
             val accounts = prefs[KEY_ACCOUNTS]
-                ?.let { NostrJson.decodeFromString<List<Account>>(it) }
+                ?.let { AccountStorageJson.decodeFromString<List<Account>>(it) }
                 ?: return@edit
             val updated = accounts.map { if (it.pubkey == pubkey) transform(it) else it }
             prefs[KEY_ACCOUNTS] = NostrJson.encodeToString(updated)
