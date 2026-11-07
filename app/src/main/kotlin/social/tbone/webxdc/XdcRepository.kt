@@ -92,24 +92,32 @@ class XdcRepository @Inject constructor(
             val meta = File(dir, "meta.json")
             if (!meta.exists()) return@mapNotNull null
             runCatching { json.decodeFromString<SavedXdcApp>(meta.readText()) }.getOrNull()
-                ?.takeIf { it.id == dir.name }
+                ?.takeIf { it.id == dir.name && validXdcId(it.id) }
         }.sortedByDescending { it.importedAt }
     }
 
-    fun appDir(appId: String): File = File(appsDir, appId)
+    fun appDir(appId: String): File {
+        require(validXdcId(appId)) { "invalid mini app id" }
+        return File(appsDir, appId)
+    }
     fun filesDir(appId: String): File = File(appDir(appId), "files")
 
     fun iconFile(app: SavedXdcApp): File? {
-        val name = app.iconFile ?: return null
+        val name = app.iconFile?.takeIf(::validXdcIconName) ?: return null
         val file = File(filesDir(app.id), name)
         return file.takeIf { it.isFile }
     }
 
-    fun updateStore(appId: String): XdcUpdateStore = XdcUpdateStore(File(updatesDir, "$appId.log"), noteWrites)
+    private fun updateFile(appId: String): File {
+        require(validXdcId(appId)) { "invalid mini app id" }
+        return File(updatesDir, "$appId.log")
+    }
+
+    fun updateStore(appId: String): XdcUpdateStore = XdcUpdateStore(updateFile(appId), noteWrites)
 
     suspend fun delete(appId: String) = noteWrites.runCancellable { withContext(Dispatchers.IO) {
-        File(appsDir, appId).deleteRecursively()
-        File(updatesDir, "$appId.log").delete()
+        appDir(appId).deleteRecursively()
+        updateFile(appId).delete()
         val remaining = appSettings.xdcCustomTools.value.filterNot { it.appId == appId }
         if (remaining.size != appSettings.xdcCustomTools.value.size) {
             appSettings.setXdcCustomTools(remaining)
