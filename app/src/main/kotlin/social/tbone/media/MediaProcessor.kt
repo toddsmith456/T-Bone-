@@ -51,12 +51,12 @@ data class PreparedMedia(
 
 /**
  * Prepares media before upload:
- *  - IMAGES: re-encoded as JPEG (which strips all EXIF/embedded metadata),
+ *  - IMAGES: decoded and re-encoded as JPEG (which removes source EXIF),
  *    orientation applied, optionally compressed — with a quality loop that
  *    keeps the file under an optional byte cap (used for the 800 KB
  *    avatar/banner limit).
- *  - VIDEOS: optionally transcoded with Media3 Transformer (re-encode also
- *    drops embedded metadata); unsupported sources fall back to a raw copy
+ *  - VIDEOS: optionally transcoded with Media3 Transformer (metadata removal
+ *    is not guaranteed); unsupported sources fall back to a raw copy
  *    with their original MIME type and extension.
  *  - AUDIO: copied unchanged by default; opt-in AAC/M4A compression is kept only
  *    when smaller, otherwise the original bytes, MIME type and extension win.

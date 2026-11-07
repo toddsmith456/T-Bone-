@@ -134,8 +134,8 @@ class BlossomUploader @Inject constructor(
     /** Build a current-mode client with finite upload timeouts. */
     private suspend fun uploadClient(useTor: Boolean): OkHttpClient {
         val proxy = if (useTor) OrbotHelper.getStatus(context) as? OrbotStatus.InstalledAndConnected else null
-        if (useTor && appSettings.torKillSwitch.value && proxy == null) {
-            error("Orbot is not connected; upload blocked by Tor kill-switch")
+        if (shouldBlockUploadPreflight(useTor, appSettings.torKillSwitch.value, proxy != null)) {
+            error("Orbot is not connected; upload blocked by the pre-upload check")
         }
         // Resolve from current settings at request time, not from a potentially
         // stale asynchronously updated process-wide client. Never fall back to
@@ -166,3 +166,7 @@ class BlossomUploadException(
         "Upload failed on every server — ${failures.joinToString(" | ")}"
     },
 )
+
+/** This check is a preflight, not continuous monitoring or a global kill switch. */
+internal fun shouldBlockUploadPreflight(useTor: Boolean, checkEnabled: Boolean, orbotConnected: Boolean): Boolean =
+    useTor && checkEnabled && !orbotConnected

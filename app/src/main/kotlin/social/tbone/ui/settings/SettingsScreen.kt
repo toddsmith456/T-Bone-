@@ -43,7 +43,7 @@ import social.tbone.nostr.identity.Phrase
 import social.tbone.settings.AvatarMode
 import social.tbone.settings.ImageLoadMode
 import social.tbone.settings.VideoQuality
-import social.tbone.settings.ORBOT_ZAPSTORE_URL
+import social.tbone.settings.openOrbotInstallPage
 import social.tbone.settings.ThemeMode
 import social.tbone.settings.UiTheme
 import dev.youniversal.theme.YouniversalBackgroundStyle
@@ -1040,8 +1040,8 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
             .then(
                 if (!viewModel.orbotInstalled)
                     Modifier.clickable {
-                        if (ORBOT_ZAPSTORE_URL.startsWith("https://")) {
-                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ORBOT_ZAPSTORE_URL))) }
+                        if (!openOrbotInstallPage(context)) {
+                            android.widget.Toast.makeText(context, "No app could open the Orbot installation page", android.widget.Toast.LENGTH_LONG).show()
                         }
                     }
                 else Modifier,
@@ -1074,8 +1074,8 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text("tor kill-switch", style = BonyType.body.copy(color = BonyColors.Text))
-            Text("check Orbot before each upload attempt; active uploads are not monitored", style = BonyType.meta.copy(color = BonyColors.TextMute))
+            Text("check Orbot before upload", style = BonyType.body.copy(color = BonyColors.Text))
+            Text("checks Orbot before Blossom uploads; not a network-wide kill switch and active uploads are not monitored", style = BonyType.meta.copy(color = BonyColors.TextMute))
         }
         val killSwitch by viewModel.torKillSwitch.collectAsStateWithLifecycle()
         BonyToggle(checked = killSwitch, enabled = torEnabled, onCheckedChange = viewModel::setTorKillSwitch)
