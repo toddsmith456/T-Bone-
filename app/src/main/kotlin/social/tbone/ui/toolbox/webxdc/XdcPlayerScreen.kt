@@ -145,8 +145,20 @@ fun XdcPlayerScreen(
             }
 
             override fun importFiles(requestId: Int, filterJson: String) {
-                pendingImportId = requestId
-                importLauncher.launch(arrayOf("*/*"))
+                // JavascriptInterface callbacks arrive on WebView's bridge thread;
+                // ActivityResult launchers and Compose state belong on Main.
+                scope.launch {
+                    if (pendingImportId != null) {
+                        bridgeState.value?.reject(requestId, "another file picker is already open")
+                    } else {
+                        pendingImportId = requestId
+                        try { importLauncher.launch(arrayOf("*/*")) }
+                        catch (error: Exception) {
+                            pendingImportId = null
+                            bridgeState.value?.reject(requestId, "could not open file picker")
+                        }
+                    }
+                }
             }
 
             override fun sendToChat(requestId: Int, messageJson: String) {
@@ -313,17 +325,10 @@ fun XdcPlayerScreen(
                                 progress = newProgress
                             }
 
+                            // Mini apps may log private content. Do not persist it to app logs.
                             override fun onConsoleMessage(
                                 consoleMessage: android.webkit.ConsoleMessage?,
-                            ): Boolean {
-                                Timber.d(
-                                    "webxdc console: %s (%s:%d)",
-                                    consoleMessage?.message(),
-                                    consoleMessage?.sourceId(),
-                                    consoleMessage?.lineNumber() ?: 0,
-                                )
-                                return true
-                            }
+                            ): Boolean = true
 
                             override fun onJsAlert(
                                 view: WebView?,

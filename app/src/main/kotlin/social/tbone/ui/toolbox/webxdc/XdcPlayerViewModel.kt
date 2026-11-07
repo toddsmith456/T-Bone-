@@ -62,8 +62,9 @@ class XdcPlayerViewModel @Inject constructor(
 
     /** Promotes this app to a toolbox tool, replacing any previous icon/name. */
     fun addAsTool(app: SavedXdcApp, name: String, iconId: String) {
+        val epoch = noteWrites.currentWipeEpoch()
         viewModelScope.launch {
-            try { noteWrites.runCancellable {
+            try { noteWrites.runCancellableAtEpoch(epoch) {
             val tools = appSettings.xdcCustomTools.value.filterNot { it.appId == app.id }
             appSettings.setXdcCustomTools(
                 tools + XdcCustomTool(
