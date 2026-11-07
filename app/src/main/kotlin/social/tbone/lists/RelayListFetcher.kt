@@ -80,7 +80,7 @@ class RelayListFetcher @Inject constructor(
                             if (m.subscriptionId == subId) {
                                 val e = m.event
                                 if (e.pubkey == pubkey && e.kind == kind && e.verify()) {
-                                    best.updateAndGet { cur -> if (cur == null || e.createdAt > cur.createdAt) e else cur }
+                                    best.updateAndGet { cur -> newestListEvent(cur, e) }
                                 }
                             }
                         }
@@ -115,3 +115,8 @@ class RelayListFetcher @Inject constructor(
         private const val POLL_MS = 100L
     }
 }
+
+/** Nostr replaceable events break equal-timestamp ties using the lowest ID. */
+internal fun newestListEvent(current: Event?, candidate: Event): Event =
+    if (current == null || candidate.createdAt > current.createdAt ||
+        (candidate.createdAt == current.createdAt && candidate.id < current.id)) candidate else current

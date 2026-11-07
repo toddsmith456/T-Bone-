@@ -523,9 +523,25 @@ class ProfileViewModel @Inject constructor(
 
                 // Base the new list on the NEWEST list on the relays rather than the cached
                 // mirror, which can be stale (e.g. after a long stretch in offline mode).
-                val latest = runCatching {
-                    listFetcher.fetchLatest(account.pubkey, EventKind.FOLLOW_LIST, account.relays)
-                }.getOrNull()?.event
+                if (signer.pubkey != account.pubkey || account.effectiveRelays().isEmpty()) {
+                    _messages.tryEmit("No signer or configured relays — follow list not changed")
+                    return@launch
+                }
+                val fetched = listFetcher.fetchLatest(account.pubkey, EventKind.FOLLOW_LIST, account.effectiveRelays())
+                if (!fetched.allRelaysAnswered) {
+                    _messages.tryEmit("Couldn't read the follow list from every relay — nothing changed")
+                    return@launch
+                }
+                val latest = fetched.event
+                if ((latest?.createdAt ?: 0L) > System.currentTimeMillis() / 1000 + 59) {
+                    _messages.tryEmit("Existing follow list has a future timestamp — nothing changed")
+                    return@launch
+                }
+                if (accountRepository.activeAccount.first()?.pubkey != account.pubkey ||
+                    offlineLists.snapshot(ListType.FOLLOWS, account.pubkey).enabled) {
+                    _messages.tryEmit("Account or list mode changed — try again")
+                    return@launch
+                }
 
                 val existingEntries: List<FollowEntry> = latest?.let { ev ->
                     OfflineListRepository.entriesFromEvent(ev).map { FollowEntry(it.pubkey, it.relay, it.petname) }
@@ -560,7 +576,16 @@ class ProfileViewModel @Inject constructor(
 
                 signer.signEvent(unsigned)
                     .onSuccess { event ->
-                        pool.publish(event)
+                        if (accountRepository.activeAccount.first()?.pubkey != account.pubkey ||
+                            offlineLists.snapshot(ListType.FOLLOWS, account.pubkey).enabled) {
+                            _messages.tryEmit("Account or list mode changed — nothing published")
+                            return@onSuccess
+                        }
+                        val targets = account.effectiveRelays().map(RelayPool::normalize).toSet()
+                        if (pool.publishTo(event, targets) == 0) {
+                            _messages.tryEmit("No connected relays — nothing published")
+                            return@onSuccess
+                        }
                         accountRepository.updateAccount(account.pubkey) {
                             it.copy(
                                 follows = newEntries.map { e -> e.pubkey },

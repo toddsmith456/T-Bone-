@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -209,7 +210,21 @@ class FollowListsViewModel @Inject constructor(
                 _onlineLoading.value = true
                 try {
                     val signer = signerFactory.forActiveAccount() ?: run { say("No signer"); return@launch }
-                    val latest = listFetcher.fetchLatest(acct.pubkey, EventKind.FOLLOW_LIST, acct.relays).event
+                    val fetched = listFetcher.fetchLatest(acct.pubkey, EventKind.FOLLOW_LIST, acct.effectiveRelays())
+                    if (!fetched.allRelaysAnswered || acct.effectiveRelays().isEmpty()) {
+                        say("Couldn't read the follow list from every configured relay — nothing changed")
+                        return@launch
+                    }
+                    if (signer.pubkey != acct.pubkey || accountRepository.activeAccount.first()?.pubkey != acct.pubkey ||
+                        offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
+                        say("Account or list mode changed — try again")
+                        return@launch
+                    }
+                    val latest = fetched.event
+                    if ((latest?.createdAt ?: 0L) > System.currentTimeMillis() / 1000 + 59) {
+                        say("Existing follow list has a future timestamp — nothing changed")
+                        return@launch
+                    }
                     val existing = latest?.let { OfflineListRepository.entriesFromEvent(it, acct.pubkey).map { FollowEntry(it.pubkey, it.relay, it.petname) } }
                         ?: acct.followEntries.ifEmpty { acct.follows.map { FollowEntry(it) } }
                     if (existing.none { it.pubkey == pubkeyHex }) { say("Not following"); return@launch }
@@ -230,7 +245,16 @@ class FollowListsViewModel @Inject constructor(
                         tags = pTags + keptTags,
                     )
                     signer.signEvent(unsigned).onSuccess { ev ->
-                        relayPool.publish(ev)
+                        if (accountRepository.activeAccount.first()?.pubkey != acct.pubkey ||
+                        offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
+                        say("Account or list mode changed — nothing published")
+                        return@onSuccess
+                    }
+                    val targets = acct.effectiveRelays().map(social.tbone.nostr.relay.RelayPool::normalize).toSet()
+                    if (relayPool.publishTo(ev, targets) == 0) {
+                        say("No connected relays — nothing published")
+                        return@onSuccess
+                    }
                         accountRepository.updateAccount(acct.pubkey) {
                             it.copy(follows = newEntries.map { e -> e.pubkey }, followEntries = newEntries)
                         }
@@ -264,7 +288,21 @@ class FollowListsViewModel @Inject constructor(
             _onlineLoading.value = true
             try {
                 val signer = signerFactory.forActiveAccount() ?: run { say("No signer"); return@launch }
-                val latest = listFetcher.fetchLatest(acct.pubkey, EventKind.FOLLOW_LIST, acct.relays).event
+                val fetched = listFetcher.fetchLatest(acct.pubkey, EventKind.FOLLOW_LIST, acct.effectiveRelays())
+                    if (!fetched.allRelaysAnswered || acct.effectiveRelays().isEmpty()) {
+                        say("Couldn't read the follow list from every configured relay — nothing changed")
+                        return@launch
+                    }
+                    if (signer.pubkey != acct.pubkey || accountRepository.activeAccount.first()?.pubkey != acct.pubkey ||
+                        offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
+                        say("Account or list mode changed — try again")
+                        return@launch
+                    }
+                    val latest = fetched.event
+                    if ((latest?.createdAt ?: 0L) > System.currentTimeMillis() / 1000 + 59) {
+                        say("Existing follow list has a future timestamp — nothing changed")
+                        return@launch
+                    }
                 val existing = latest?.let { OfflineListRepository.entriesFromEvent(it, acct.pubkey).map { FollowEntry(it.pubkey, it.relay, it.petname) } }
                     ?: acct.followEntries.ifEmpty { acct.follows.map { FollowEntry(it) } }
                 if (existing.any { it.pubkey == pubkeyHex }) { say("Already following"); return@launch }
@@ -285,7 +323,16 @@ class FollowListsViewModel @Inject constructor(
                     tags = pTags + keptTags,
                 )
                 signer.signEvent(unsigned).onSuccess { ev ->
-                    relayPool.publish(ev)
+                    if (accountRepository.activeAccount.first()?.pubkey != acct.pubkey ||
+                        offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
+                        say("Account or list mode changed — nothing published")
+                        return@onSuccess
+                    }
+                    val targets = acct.effectiveRelays().map(social.tbone.nostr.relay.RelayPool::normalize).toSet()
+                    if (relayPool.publishTo(ev, targets) == 0) {
+                        say("No connected relays — nothing published")
+                        return@onSuccess
+                    }
                     accountRepository.updateAccount(acct.pubkey) {
                         it.copy(follows = newEntries.map { it.pubkey }, followEntries = newEntries)
                     }
@@ -482,11 +529,27 @@ class FollowListsViewModel @Inject constructor(
                 }
             } else {
                 // Online import: publish merged/replaced to relays
-                val current = _onlineFollowing.value
+                val signer = signerFactory.forActiveAccount() ?: run { say("No signer"); return@launch }
+                val fetched = listFetcher.fetchLatest(acct.pubkey, EventKind.FOLLOW_LIST, acct.effectiveRelays())
+                    if (!fetched.allRelaysAnswered || acct.effectiveRelays().isEmpty()) {
+                        say("Couldn't read the follow list from every configured relay — nothing changed")
+                        return@launch
+                    }
+                    if (signer.pubkey != acct.pubkey || accountRepository.activeAccount.first()?.pubkey != acct.pubkey ||
+                        offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
+                        say("Account or list mode changed — try again")
+                        return@launch
+                    }
+                    val latest = fetched.event
+                    if ((latest?.createdAt ?: 0L) > System.currentTimeMillis() / 1000 + 59) {
+                        say("Existing follow list has a future timestamp — nothing changed")
+                        return@launch
+                    }
+                val current = latest?.let { OfflineListRepository.entriesFromEvent(it, acct.pubkey) }
+                    ?: acct.followEntries.map { ListEntry(it.pubkey, it.relay, it.petname) }
+                        .ifEmpty { acct.follows.map { ListEntry(it) } }
                 val incoming = if (replace) parsed.entries else (current + parsed.entries).distinctBy { it.pubkey }
                 val newEntries = incoming.map { FollowEntry(it.pubkey, it.relay, it.petname) }
-                val signer = signerFactory.forActiveAccount() ?: run { say("No signer"); return@launch }
-                val latest = listFetcher.fetchLatest(acct.pubkey, EventKind.FOLLOW_LIST, acct.relays).event
                 val keptTags = latest?.tags?.filter { (it.firstOrNull() as? kotlinx.serialization.json.JsonPrimitive)?.content != "p" }.orEmpty()
                 val pTags = newEntries.map { e ->
                     kotlinx.serialization.json.buildJsonArray {
@@ -503,7 +566,16 @@ class FollowListsViewModel @Inject constructor(
                     tags = pTags + keptTags,
                 )
                 signer.signEvent(unsigned).onSuccess { ev ->
-                    relayPool.publish(ev)
+                    if (accountRepository.activeAccount.first()?.pubkey != acct.pubkey ||
+                        offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
+                        say("Account or list mode changed — nothing published")
+                        return@onSuccess
+                    }
+                    val targets = acct.effectiveRelays().map(social.tbone.nostr.relay.RelayPool::normalize).toSet()
+                    if (relayPool.publishTo(ev, targets) == 0) {
+                        say("No connected relays — nothing published")
+                        return@onSuccess
+                    }
                     accountRepository.updateAccount(acct.pubkey) { it.copy(follows = newEntries.map { it.pubkey }, followEntries = newEntries) }
                     _onlineFollowing.value = newEntries.map { ListEntry(it.pubkey, it.relay, it.petname) }
                     say("Imported & published ${newEntries.size} follows")
