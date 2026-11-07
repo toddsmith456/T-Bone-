@@ -65,10 +65,19 @@ class IconAndLinkRegressionTest {
         val actions = node.fetchSemanticsNode().config.getOrNull(androidx.compose.ui.semantics.SemanticsActions.CustomActions).orEmpty()
         assertTrue(actions.any { it.label == "Copy $raw" })
         val open = actions.single { it.label == "Open $raw" }
-        compose.runOnIdle {
-            assertTrue(open.action())
-            assertEquals(android.content.Intent.ACTION_VIEW, opened?.action)
-            assertEquals(clean, opened?.data.toString())
+        val copy = actions.single { it.label == "Copy $raw" }
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val previous = clipboard.primaryClip
+        try {
+            compose.runOnIdle {
+                assertTrue(open.action())
+                assertEquals(android.content.Intent.ACTION_VIEW, opened?.action)
+                assertEquals(clean, opened?.data.toString())
+                assertTrue(copy.action())
+                assertEquals(raw, clipboard.primaryClip?.getItemAt(0)?.text.toString())
+            }
+        } finally {
+            if (previous != null) clipboard.setPrimaryClip(previous) else clipboard.clearPrimaryClip()
         }
     }
 
