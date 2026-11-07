@@ -36,7 +36,10 @@ object PinHasher {
         // New format: v1$iter$saltHex$hashHex
         val parts = stored.split("$")
         if (parts.size != 4 || parts[0] != VERSION) return false
-        val iter = parts[1].toIntOrNull() ?: return false
+        val iter = parts[1].toIntOrNull()?.takeIf { it in 1..1_000_000 } ?: return false
+        // Stored values can be corrupt. Bound work and allocations before
+        // decoding or entering PBKDF2; app-generated hashes use 120k / 16 / 32.
+        if (parts[2].length !in 16..128 || parts[3].length != 64) return false
         val salt = parts[2].hexToBytes() ?: return false
         val expected = parts[3].hexToBytes() ?: return false
         val computed = pbkdf2(pin, salt, iter)
