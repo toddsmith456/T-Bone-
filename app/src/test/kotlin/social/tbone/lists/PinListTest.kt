@@ -27,6 +27,28 @@ class PinListTest {
         assertEquals(listOf(first, second), pinEventIds(list))
     }
 
+    @Test fun unpinsBeyond256WithoutDiscardingUnknownTagsOrContent() {
+        fun tag(vararg values: String) = JsonArray(values.map(::JsonPrimitive))
+        val ids = (0..300).map { it.toString(16).padStart(64, '0') }
+        val tags = ids.map { tag("e", it, "wss://relay.example", "extension") } +
+            listOf(tag("x", "retain", "additional"), tag("e", "invalid"), tag("e", ids.last(), "other"))
+        val event = Event("0".repeat(64), "1".repeat(64), 123, EventKind.PIN_LIST, tags, "encrypted content", "")
+        val result = pinTagsForToggle(event, ids.last())
+        assertEquals(tags.filterNot { it.size >= 2 && it[0] == JsonPrimitive("e") && it[1] == JsonPrimitive(ids.last()) }, result)
+        assertEquals(300, pinEventIds(event.copy(tags = result)).size)
+        assertEquals("encrypted content", event.content)
+    }
+
+    @Test fun pinToggleAppendsOnlyOnceAndPreservesEverythingElse() {
+        fun tag(vararg values: String) = JsonArray(values.map(::JsonPrimitive))
+        val existing = listOf(tag("x", "keep"), tag("e", "invalid"))
+        val event = Event("0".repeat(64), "1".repeat(64), 1, EventKind.PIN_LIST, existing, "opaque", "")
+        val target = "f".repeat(64)
+        val added = pinTagsForToggle(event, target)
+        assertEquals(existing + tag("e", target), added)
+        assertEquals(existing, pinTagsForToggle(event.copy(tags = added), target))
+    }
+
     @Test fun partialRelayReadCannotReplaceOfflineList() {
         val owner = "1".repeat(64)
         val event = Event("0".repeat(64), owner, 123, EventKind.FOLLOW_LIST,

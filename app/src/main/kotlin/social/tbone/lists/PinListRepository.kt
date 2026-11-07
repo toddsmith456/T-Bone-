@@ -57,11 +57,7 @@ class PinListRepository @Inject constructor(
             compareBy<Event> { it.createdAt }.thenByDescending { it.id }
         )
         val pinned = target.id in ids(old)
-        val tags = old?.tags.orEmpty().filterNot { tag ->
-            val parsed = social.tbone.nostr.Tag.fromJsonArray(tag)
-            parsed.name == "e" && parsed.value() == target.id
-        }.toMutableList()
-        if (!pinned) tags.add(buildJsonArray { add("e"); add(target.id) })
+        val tags = pinTagsForToggle(old, target.id)
         val now = System.currentTimeMillis() / 1000
         val createdAt = maxOf(now, (old?.createdAt ?: 0L) + 1)
         if (createdAt > now + 60) return@withLock "Existing pin list has a future timestamp; nothing changed"
@@ -81,3 +77,15 @@ internal fun pinEventIds(event: Event?): List<String> = event?.parsedTags.orEmpt
     .filter { it.name == "e" }.mapNotNull { it.value() }
     .filter { it.length == 64 && it.all { c -> c in '0'..'9' || c in 'a'..'f' } }
     .distinct()
+
+/** Modify only the target event tag, retaining order, duplicate unrelated tags,
+ * relay hints, unknown extensions and malformed tags verbatim. */
+internal fun pinTagsForToggle(event: Event?, targetId: String): List<kotlinx.serialization.json.JsonArray> {
+    val pinned = targetId in pinEventIds(event)
+    val tags = event?.tags.orEmpty().filterNot { raw ->
+        val tag = social.tbone.nostr.Tag.fromJsonArray(raw)
+        tag.name == "e" && tag.value() == targetId
+    }.toMutableList()
+    if (!pinned) tags.add(buildJsonArray { add("e"); add(targetId) })
+    return tags
+}
