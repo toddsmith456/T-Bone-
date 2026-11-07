@@ -81,6 +81,7 @@ class DataWiper @Inject constructor(
             // not only the underlying DataStore on its later flow emission.
             steps.run("clear geohash settings") { appSettings.clearGeohashData() }
             steps.run("clear webxdc memory") { xdcRepository.clearInMemoryForWipe() }
+            steps.run("clear session unlocks") { appSettings.clearSessionUnlocksForWipe() }
             steps.run("clear database") { appDatabase.clearAllTables() }
 
             // The live DataStore file must never be deleted behind its active

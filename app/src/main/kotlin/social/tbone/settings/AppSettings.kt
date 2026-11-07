@@ -18,6 +18,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -400,9 +401,17 @@ class AppSettings @Inject constructor(
     /** Session-only set of hidden pubkeys that have been unlocked via PIN. */
     private val _hiddenUnlockedPubkeys = MutableStateFlow<Set<String>>(emptySet())
     val hiddenUnlockedPubkeys = _hiddenUnlockedPubkeys.asStateFlow()
-    fun addHiddenUnlocked(pubkey: String) { _hiddenUnlockedPubkeys.value += pubkey }
-    fun removeHiddenUnlocked(pubkey: String) { _hiddenUnlockedPubkeys.value -= pubkey }
+    fun addHiddenUnlocked(pubkey: String) { _hiddenUnlockedPubkeys.update { it + pubkey } }
+    fun removeHiddenUnlocked(pubkey: String) { _hiddenUnlockedPubkeys.update { it - pubkey } }
     fun clearHiddenUnlocked() { _hiddenUnlockedPubkeys.value = emptySet() }
+
+    /** The full-app wipe also needs to clear session-only unlocks: restarting
+     * the activity does not restart the application process or these flows. */
+    fun clearSessionUnlocksForWipe() {
+        _hiddenUnlockedPubkeys.value = emptySet()
+        _decoyUnlocked.value = false
+        _parentalUnlocked.value = false
+    }
 
     init {
         scope.launch {

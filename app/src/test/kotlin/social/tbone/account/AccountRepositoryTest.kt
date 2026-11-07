@@ -233,6 +233,27 @@ class AccountRepositoryTest {
         assertEquals(raw, dataStore.data.first()[key])
     }
 
+    @Test
+    fun `full wipe session reset clears hidden decoy and parental unlocks`() {
+        val settings = AppSettings(dataStore, scope)
+        settings.addHiddenUnlocked("first")
+        settings.addHiddenUnlocked("second")
+        settings.setDecoyUnlocked(true)
+        settings.setParentalUnlocked(true)
+        settings.clearSessionUnlocksForWipe()
+        assertTrue(settings.hiddenUnlockedPubkeys.value.isEmpty())
+        assertFalse(settings.decoyUnlocked.value)
+        assertFalse(settings.parentalUnlocked.value)
+    }
+
+    @Test
+    fun `concurrent hidden session unlocks do not overwrite one another`() = runBlocking {
+        val settings = AppSettings(dataStore, scope)
+        val work = (0 until 100).map { n -> async(Dispatchers.Default) { settings.addHiddenUnlocked("account-$n") } }
+        work.forEach { it.await() }
+        assertEquals(100, settings.hiddenUnlockedPubkeys.value.size)
+    }
+
     private fun account(pubkey: String, relays: List<String> = emptyList()) = Account(
         pubkey = pubkey,
         signerType = SignerType.AMBER,
