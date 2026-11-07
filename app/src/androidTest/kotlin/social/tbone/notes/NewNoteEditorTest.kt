@@ -289,10 +289,20 @@ class NewNoteEditorTest {
                 // Error publication can precede the UI callback that clears
                 // its in-flight guard; wait until retry is actually enabled.
                 compose.waitUntil(15_000) { compose.onAllNodes(androidx.compose.ui.test.hasText("image")).fetchSemanticsNodes().isNotEmpty() }
+                if (decoy) f.decoyVm.clearError() else f.normalVm.clearError()
                 compose.onNodeWithText("image").performClick()
             }
-            compose.waitUntil(15_000) {
-                runBlocking { val id = f.rows(decoy).singleOrNull(); id != null && f.get(decoy, id)?.text?.contains("[[image:") == true && f.attachments(decoy, id).size == 1 }
+            try {
+                compose.waitUntil(15_000) {
+                    runBlocking { val id = f.rows(decoy).singleOrNull(); id != null && f.get(decoy, id)?.text?.contains("[[image:") == true && f.attachments(decoy, id).size == 1 }
+                }
+            } catch (e: androidx.compose.ui.test.ComposeTimeoutException) {
+                val ids = runBlocking { f.rows(decoy) }
+                val details = runBlocking { ids.map { id -> "text=${f.get(decoy, id)?.text}, attachments=${f.attachments(decoy, id).size}" } }
+                val error = if (decoy) f.decoyVm.error.value else f.normalVm.error.value
+                val busy = compose.onAllNodes(androidx.compose.ui.test.hasText("saving…")).fetchSemanticsNodes().size
+                val unavailable = compose.onAllNodes(androidx.compose.ui.test.hasText("note unavailable")).fetchSemanticsNodes().size
+                throw AssertionError("Retry timed out: error=$error busy=$busy unavailable=$unavailable ids=${ids.size} details=$details", e)
             }
             val id = runBlocking { f.rows(decoy).single() }
             val attachment = runBlocking { f.attachments(decoy, id).single() }
