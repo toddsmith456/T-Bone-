@@ -23,4 +23,17 @@ jobs:
           GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleDebug :app:testDebugUnitTest --stacktrace --no-configuration-cache
+          set +e
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest --stacktrace --no-configuration-cache > /tmp/audit-build.log 2>&1
+          status=$?
+          tail -250 /tmp/audit-build.log
+          if [ "$status" -ne 0 ]; then
+            while IFS= read -r line; do
+              echo "::error::$line"
+            done < <(grep -E '(^e:| FAILED|[0-9]+ tests completed|Compilation error|What went wrong)' /tmp/audit-build.log | head -35)
+            for xml in app/build/test-results/testDebugUnitTest/TEST-*.xml; do
+              [ -f "$xml" ] || continue
+              grep -o '<failure[^>]*' "$xml" | head -10 | while IFS= read -r line; do echo "::error::$line"; done
+            done
+          fi
+          exit "$status"
