@@ -69,24 +69,29 @@ class AccountRepository @Inject constructor(
     /** Find a hidden account by its PIN (hashed). Null if no match. */
     suspend fun findHiddenByPin(pin: String): Account? {
         val input = pin.trim()
-        val found = allAccounts.first().firstOrNull {
-            it.isHidden && it.hiddenPinHash?.let { stored ->
-                social.tbone.security.PinHasher.verify(input, stored)
-            } == true
+        val candidates = allAccounts.first()
+        val found = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            candidates.firstOrNull {
+                it.isHidden && it.hiddenPinHash?.let { stored ->
+                    social.tbone.security.PinHasher.verify(input, stored)
+                } == true
+            }
         } ?: return null
         val oldHash = found.hiddenPinHash ?: return null
-        if (social.tbone.security.PinHasher.isLegacy(oldHash)) {
-            val upgraded = hashPin(input)
-            dataStore.edit { prefs ->
-                val raw = prefs[KEY_ACCOUNTS] ?: return@edit
-                val accounts = NostrJson.decodeFromString<List<Account>>(raw)
-                prefs[KEY_ACCOUNTS] = NostrJson.encodeToString(accounts.map {
-                    if (it.pubkey == found.pubkey && it.hiddenPinHash == oldHash)
-                        it.copy(hiddenPinHash = upgraded) else it
-                })
-            }
+        if (!social.tbone.security.PinHasher.isLegacy(oldHash)) return found
+        val upgraded = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { hashPin(input) }
+        var migrated = false
+        dataStore.edit { prefs ->
+            val raw = prefs[KEY_ACCOUNTS] ?: return@edit
+            val accounts = NostrJson.decodeFromString<List<Account>>(raw)
+            prefs[KEY_ACCOUNTS] = NostrJson.encodeToString(accounts.map {
+                if (it.pubkey == found.pubkey && it.isHidden && it.hiddenPinHash == oldHash) {
+                    migrated = true
+                    it.copy(hiddenPinHash = upgraded)
+                } else it
+            })
         }
-        return found
+        return if (migrated) found.copy(hiddenPinHash = upgraded) else null
     }
 
     /** Hide / unhide an account. When hiding, [pin] is required and hashed. */
@@ -110,8 +115,32 @@ class AccountRepository @Inject constructor(
     /** Unlock a hidden account via PIN: reveals it for this session and switches to it. */
     suspend fun unlockHiddenByPin(pin: String): Boolean {
         val account = findHiddenByPin(pin) ?: return false
-        appSettings.addHiddenUnlocked(account.pubkey)
-        setActiveAccount(account.pubkey)
+        return activateHiddenIfUnchanged(account)
+    }
+
+    /** A verified PIN must not unlock an account whose PIN changed while
+     * verification was in flight, or resurrect an account already removed. */
+    internal suspend fun activateHiddenIfUnchanged(candidate: Account): Boolean {
+        var switched = false
+        var hiddenToRelock: String? = null
+        dataStore.edit { prefs ->
+            val accounts = prefs[KEY_ACCOUNTS]
+                ?.let { NostrJson.decodeFromString<List<Account>>(it) }
+                ?: return@edit
+            val match = accounts.firstOrNull {
+                it.pubkey == candidate.pubkey && it.isHidden &&
+                    it.hiddenPinHash != null && it.hiddenPinHash == candidate.hiddenPinHash
+            } ?: return@edit
+            val previous = prefs[KEY_ACTIVE_PUBKEY]
+            if (previous != null && previous != match.pubkey && accounts.any { it.pubkey == previous && it.isHidden }) {
+                hiddenToRelock = previous
+            }
+            prefs[KEY_ACTIVE_PUBKEY] = match.pubkey
+            switched = true
+        }
+        if (!switched) return false
+        hiddenToRelock?.let(appSettings::removeHiddenUnlocked)
+        appSettings.addHiddenUnlocked(candidate.pubkey)
         return true
     }
 

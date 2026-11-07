@@ -175,6 +175,29 @@ class AccountRepositoryTest {
         assertTrue(repository.accounts.first().isEmpty())
     }
 
+    @Test
+    fun `verified hidden account cannot unlock after its pin is changed`() = runBlocking {
+        repository.addAccount(account("hidden"))
+        repository.setHidden("hidden", true, "1234")
+        repository.addAccount(account("visible"))
+        val verified = repository.findHiddenByPin("1234")!!
+        repository.setHidden("hidden", true, "5678")
+        assertFalse(repository.activateHiddenIfUnchanged(verified))
+        assertEquals("visible", repository.activeAccount.first()?.pubkey)
+        assertTrue(repository.unlockHiddenByPin("5678"))
+        assertEquals("hidden", repository.activeAccount.first()?.pubkey)
+    }
+
+    @Test
+    fun `verified hidden account cannot unlock after removal`() = runBlocking {
+        repository.addAccount(account("hidden"))
+        repository.setHidden("hidden", true, "1234")
+        val verified = repository.findHiddenByPin("1234")!!
+        repository.removeAccount("hidden")
+        assertFalse(repository.activateHiddenIfUnchanged(verified))
+        assertNull(repository.activeAccount.first())
+    }
+
     private fun account(pubkey: String, relays: List<String> = emptyList()) = Account(
         pubkey = pubkey,
         signerType = SignerType.AMBER,
