@@ -15,6 +15,8 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: ''
       - name: Build instrumentation
         run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace --no-configuration-cache
       - name: Enable KVM
@@ -26,7 +28,7 @@ jobs:
         id: browser
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: 36
           arch: x86_64
           target: google_apis
           disable-animations: true
