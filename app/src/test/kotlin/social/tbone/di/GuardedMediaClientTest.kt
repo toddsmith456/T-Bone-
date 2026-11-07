@@ -56,7 +56,7 @@ class GuardedMediaClientTest {
         val guard = TorCallGuard()
         val client = guardedMediaClient(OkHttpClient(), false, guard)
         val server = MockWebServer()
-        server.enqueue(MockResponse().setBody("private media").setBodyDelay(10, TimeUnit.SECONDS))
+        server.enqueue(MockResponse().setBody("private media").setBodyDelay(2, TimeUnit.SECONDS))
         server.start()
         try {
             val call = client.newCall(Request.Builder().url(server.url("/stream")).build())
