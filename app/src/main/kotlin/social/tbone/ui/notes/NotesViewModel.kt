@@ -234,6 +234,22 @@ class NotesViewModel @Inject constructor(
         }
     }
 
+    /** Atomically store attachment bytes and the text containing their marker. */
+    fun addAttachmentAndSaveText(
+        noteId: String, attachmentId: String, kind: String, mime: String, bytes: ByteArray,
+        title: String, text: String, folderId: String?, epoch: Long,
+        onError: (Exception) -> Unit, onSaved: () -> Unit,
+    ) {
+        val pending = noteWrites.submitAtEpoch(epoch) {
+            repository.addAttachmentAndSaveText(noteId, attachmentId, kind, mime, bytes, title, text, folderId)
+        }
+        viewModelScope.launch {
+            try { pending.await(); onSaved() }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { _error.value = "could not attach (${error.message})"; onError(error) }
+        }
+    }
+
     fun deleteAttachment(id: String, epoch: Long = noteWrites.currentWipeEpoch()) {
         val pending = noteWrites.submitAtEpoch(epoch) { repository.deleteAttachment(id) }
         viewModelScope.launch {

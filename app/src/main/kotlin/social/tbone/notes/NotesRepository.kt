@@ -1,5 +1,8 @@
 package social.tbone.notes
 
+import androidx.room.withTransaction
+import social.tbone.db.AppDatabase
+
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.combine
@@ -103,6 +106,7 @@ class NotesRepository @Inject constructor(
     private val attachmentDao: NoteAttachmentDao,
     private val crypto: NotesCrypto,
     private val noteWrites: NoteWriteCoordinator,
+    private val database: AppDatabase,
 ) {
 
     /** All notes + checklists, ordered pinned-first then manual order. */
@@ -295,9 +299,9 @@ class NotesRepository @Inject constructor(
         kind: String,
         mime: String,
         bytes: ByteArray,
+        id: String = UUID.randomUUID().toString(),
     ): String {
         check(dao.getById(noteId) != null) { "Note no longer exists" }
-        val id = UUID.randomUUID().toString()
         val (ct, iv) = crypto.encryptBytes(bytes)
         attachmentDao.insert(
             NoteAttachmentEntity(
@@ -312,6 +316,16 @@ class NotesRepository @Inject constructor(
             )
         )
         return id
+    }
+
+    /** Commit the encrypted bytes and their inline marker together or neither. */
+    suspend fun addAttachmentAndSaveText(
+        noteId: String, attachmentId: String, kind: String, mime: String, bytes: ByteArray,
+        title: String, text: String, folderId: String?,
+    ) = database.withTransaction {
+        check(text.contains("[[$kind:$attachmentId]]")) { "Attachment marker missing" }
+        addAttachment(noteId, kind, mime, bytes, attachmentId)
+        saveText(noteId, title, text, folderId)
     }
 
     suspend fun deleteAttachment(id: String) = attachmentDao.delete(id)
