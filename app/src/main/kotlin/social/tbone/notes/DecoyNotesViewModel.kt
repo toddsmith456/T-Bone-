@@ -19,7 +19,9 @@ class DecoyNotesViewModel @Inject constructor(
     private val repository: DecoyNotesRepository,
     private val crypto: NotesCrypto,
     private val noteWrites: NoteWriteCoordinator,
+    val recordingGate: social.tbone.toolbox.VoiceRecordingGate,
 ) : ViewModel() {
+    fun recordingEpoch(): Long = noteWrites.currentWipeEpoch()
 
     val notes: StateFlow<List<NoteUi>> = repository.notes
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())

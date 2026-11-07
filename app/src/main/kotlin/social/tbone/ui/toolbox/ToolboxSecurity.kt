@@ -144,6 +144,11 @@ class ToolboxSecurity @Inject constructor(
                     check(it.deleteRecursively()) { "recording deletion failed" }
                 }
             }
+            steps.run("clear note audio cache") {
+                checkNotNull(context.cacheDir.listFiles()) { "cannot enumerate cache" }
+                    .filter { it.name.startsWith("note_voice_") || it.name.startsWith("play_") }
+                    .forEach { check(it.deleteRecursively()) { "note audio cache deletion failed" } }
+            }
             // A toolbox-only wipe cannot finalize a previously failed full wipe.
             if (noteWrites.hasFailedAppWipe()) steps.run("check previous app wipe") {
                 error("Previous full app wipe requires retry")

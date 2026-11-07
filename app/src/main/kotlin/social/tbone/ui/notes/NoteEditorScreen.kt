@@ -129,7 +129,8 @@ fun NoteEditorScreen(
     val context = LocalContext.current
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val perm = rememberPermissionRequester()
-    val recorderRef = remember { arrayOfNulls<MediaRecorder>(1) }
+    val recordingOwner = remember { Any() }
+    val editorDisposed = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
 
     // ── helpers ───────────────────────────────────────────────────────────────
     fun markerOf(att: NoteAttachmentUi) =
@@ -368,20 +369,36 @@ fun NoteEditorScreen(
     fun beginRecording() {
         if (deleted || exiting || pendingMedia > 0 || recording || !loaded) return
         pendingMedia++
+        val epoch = viewModel.recordingEpoch()
         scope.launch {
             val file = withContext(Dispatchers.IO) {
                 runCatching {
-                    val f = File(context.cacheDir, "note_voice_${System.currentTimeMillis()}.m4a")
-                    val r = MediaRecorder(context).apply {
-                        setAudioSource(MediaRecorder.AudioSource.MIC)
-                        setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                        setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                        setOutputFile(f.absolutePath)
-                        prepare()
-                        start()
+                    var created: File? = null
+                    val started = viewModel.recordingGate.start(recordingOwner, epoch) {
+                        check(!editorDisposed.get()) { "editor closed" }
+                        val f = File.createTempFile("note_voice_", ".m4a", context.cacheDir)
+                        val r = MediaRecorder(context)
+                        try {
+                            r.setAudioSource(MediaRecorder.AudioSource.MIC)
+                            r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                            r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                            r.setOutputFile(f.absolutePath)
+                            r.prepare()
+                            r.start()
+                        } catch (error: Exception) {
+                            runCatching { r.release() }
+                            f.delete()
+                            throw error
+                        }
+                        created = f
+                        val closeRecording: (Boolean) -> Unit = { discard ->
+                            runCatching { r.stop() }
+                            r.release()
+                            if (discard) f.delete()
+                        }
+                        closeRecording
                     }
-                    recorderRef[0] = r
-                    f
+                    if (started && epoch == viewModel.recordingEpoch()) created else null
                 }.getOrNull()
             }
             if (file != null) {
@@ -408,16 +425,13 @@ fun NoteEditorScreen(
         pendingMedia++
         scope.launch {
             val bytes = withContext(Dispatchers.IO) {
-                runCatching {
-                    recorderRef[0]?.stop()
-                    recorderRef[0]?.release()
-                    recorderRef[0] = null
+                try {
+                    viewModel.recordingGate.stop(recordingOwner)
                     file.inputStream().use { it.readBounded(16 * 1024 * 1024) }
-                        .also { try { file.delete() } catch (_: Exception) {} }
-                }.getOrNull()
+                } catch (_: Exception) { null }
+                finally { file.delete() }
             }
             if (bytes != null && bytes.isNotEmpty()) attach("voice", "audio/mp4", bytes) else {
-                try { file.delete() } catch (_: Exception) {}
                 android.widget.Toast.makeText(context, "Could not save recording (maximum 16 MB).", android.widget.Toast.LENGTH_LONG).show()
             }
             pendingMedia--
@@ -647,7 +661,8 @@ fun NoteEditorScreen(
 
     DisposableEffect(Unit) {
         onDispose {
-            runCatching { recorderRef[0]?.release() }
+            editorDisposed.set(true)
+            runCatching { viewModel.recordingGate.stop(recordingOwner, discard = true) }
             stopPlayback()
         }
     }
