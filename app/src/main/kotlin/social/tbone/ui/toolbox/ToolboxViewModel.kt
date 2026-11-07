@@ -14,6 +14,7 @@ import javax.inject.Inject
 @HiltViewModel
 class ToolboxViewModel @Inject constructor(
     private val appSettings: AppSettings,
+    private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
 ) : ViewModel() {
 
     val pinEnabled: StateFlow<Boolean> = appSettings.toolboxPinEnabled
@@ -42,9 +43,15 @@ class ToolboxViewModel @Inject constructor(
     }
 
     fun removeXdcTool(appId: String) {
+        val epoch = noteWrites.currentWipeEpoch()
         viewModelScope.launch {
-            val filtered = appSettings.xdcCustomTools.value.filterNot { it.appId == appId }
-            appSettings.setXdcCustomTools(filtered)
+            try {
+                noteWrites.runCancellableAtEpoch(epoch) {
+                    val filtered = appSettings.xdcCustomTools.value.filterNot { it.appId == appId }
+                    appSettings.setXdcCustomTools(filtered)
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { timber.log.Timber.w(error, "Could not remove webxdc tool") }
         }
     }
 }

@@ -179,6 +179,7 @@ tasks.withType<Test>().configureEach {
 dependencies {
     // AndroidX Core
     implementation(libs.androidx.core.ktx)
+    implementation("androidx.webkit:webkit:1.13.0")
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

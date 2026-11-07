@@ -141,7 +141,11 @@ fun XdcPlayerScreen(
         object : WebxdcBridge.Host {
             override fun post(js: String) {
                 val view = webViewState.value ?: return
-                view.post { view.evaluateJavascript(js, null) }
+                view.post {
+                    if (view === webViewState.value && viewModel.playerEpoch == viewModel.currentWipeEpoch()) {
+                        view.evaluateJavascript(js, null)
+                    }
+                }
             }
 
             override fun importFiles(requestId: Int, filterJson: String) {
@@ -366,15 +370,17 @@ fun XdcPlayerScreen(
                             }
                         }
 
-                        webViewState.value = this
-                        loadUrl("https://$originHost/index.html")
+                        if (viewModel.webViewWipe.register(this, viewModel.playerEpoch) {
+                                if (webViewState.value === this) webViewState.value = null
+                            }) {
+                            webViewState.value = this
+                            loadUrl("https://$originHost/index.html")
+                        }
                     }
                 },
                 onRelease = { view ->
-                    view.removeJavascriptInterface(WebxdcShim.BRIDGE_NAME)
-                    view.loadUrl("about:blank")
-                    view.destroy()
-                    webViewState.value = null
+                    viewModel.webViewWipe.release(view)
+                    if (webViewState.value === view) webViewState.value = null
                 },
             )
         }

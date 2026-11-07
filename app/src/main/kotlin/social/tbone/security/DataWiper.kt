@@ -38,6 +38,7 @@ class DataWiper @Inject constructor(
     private val calendarAlarms: social.tbone.calendar.CalendarAlarmScheduler,
     private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
     private val voiceRecordingGate: social.tbone.toolbox.VoiceRecordingGate,
+    private val xdcWebViewWipe: social.tbone.webxdc.XdcWebViewWipe,
     private val appSettings: social.tbone.settings.AppSettings,
     private val geohashCache: social.tbone.ui.toolbox.geohash.GeohashMessageCache,
     private val geohashMonitor: social.tbone.ui.toolbox.geohash.GeohashPinnedMonitor,
@@ -68,6 +69,7 @@ class DataWiper @Inject constructor(
             steps.run("pause geohash watchers") { geohashMonitor.pauseForWipe() }
             steps.run("stop active voice recording") { voiceRecordingGate.stopForWipe() }
             steps.run("pause and drain note writes") { noteWrites.pauseAndDrain() }
+            steps.run("clear mini-app browser storage") { xdcWebViewWipe.clearForWipe() }
             steps.run("block and cancel calendar reminders") { calendarAlarms.beginSensitiveWipe() }
             steps.run("cancel notifications") {
                 checkNotNull(context.getSystemService(android.app.NotificationManager::class.java)).cancelAll()

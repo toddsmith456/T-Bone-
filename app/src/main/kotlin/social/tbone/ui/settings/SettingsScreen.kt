@@ -1169,7 +1169,7 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
                 style = BonyType.meta.copy(color = BonyColors.TextMute),
             )
             Text(
-                "Mini-app browser storage and exported or shared copies may remain. Deletion is not guaranteed secure erasure.",
+                "Includes mini-app browser storage. An up-to-date Android System WebView is required; wipe remains pending if browser cleanup fails. Exported or shared copies may remain; deletion is not secure erasure.",
                 style = BonyType.caption.copy(color = BonyColors.TextMute),
             )
         }

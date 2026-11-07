@@ -77,6 +77,7 @@ class XdcViewModel @Inject constructor(
     private val repository: XdcRepository,
     private val pool: RelayPool,
     private val appSettings: AppSettings,
+    private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
 ) : ViewModel() {
 
     companion object {
@@ -304,7 +305,9 @@ class XdcViewModel @Inject constructor(
     // ── Add as tool ───────────────────────────────────────────────────────────
 
     fun addAsTool(app: SavedXdcApp, name: String, iconId: String) {
+        val epoch = noteWrites.currentWipeEpoch()
         viewModelScope.launch {
+            try { noteWrites.runCancellableAtEpoch(epoch) {
             val tools = appSettings.xdcCustomTools.value.filterNot { it.appId == app.id }
             appSettings.setXdcCustomTools(
                 tools + XdcCustomTool(
@@ -315,13 +318,19 @@ class XdcViewModel @Inject constructor(
                 ),
             )
             _state.update { s -> s.copy(message = "\"${name.ifBlank { app.name }}\" added to the toolbox") }
+            } } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { Timber.w(error, "Could not add webxdc tool") }
         }
     }
 
     fun removeTool(appId: String) {
+        val epoch = noteWrites.currentWipeEpoch()
         viewModelScope.launch {
-            appSettings.setXdcCustomTools(appSettings.xdcCustomTools.value.filterNot { it.appId == appId })
-            _state.update { s -> s.copy(message = "removed from the toolbox") }
+            try { noteWrites.runCancellableAtEpoch(epoch) {
+                appSettings.setXdcCustomTools(appSettings.xdcCustomTools.value.filterNot { it.appId == appId })
+                _state.update { s -> s.copy(message = "removed from the toolbox") }
+            } } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { Timber.w(error, "Could not remove webxdc tool") }
         }
     }
 

@@ -38,6 +38,8 @@ class ToolboxSecurity @Inject constructor(
     private val calendarAlarms: social.tbone.calendar.CalendarAlarmScheduler,
     private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
     private val voiceRecordingGate: social.tbone.toolbox.VoiceRecordingGate,
+    private val xdcWebViewWipe: social.tbone.webxdc.XdcWebViewWipe,
+    private val xdcRepository: social.tbone.webxdc.XdcRepository,
 ) {
 
     private val attempts = PinAttemptLimiter(context, "toolbox")
@@ -126,15 +128,22 @@ class ToolboxSecurity @Inject constructor(
             steps.run("pause geohash watchers") { geohashMonitor.pauseForWipe() }
             steps.run("stop active voice recording") { voiceRecordingGate.stopForWipe() }
             steps.run("pause and drain note writes") { noteWrites.pauseAndDrain() }
+            steps.run("clear mini-app browser storage") { xdcWebViewWipe.clearForWipe() }
             steps.run("block and cancel reminders") { calendarAlarms.beginSensitiveWipe() }
             steps.run("disable geohash cache") { appSettings.setGeohashCacheMillis(0L) }
             steps.run("clear geohash cache") { geohashCache.clear() }
             steps.run("clear toolbox tables") {
                 appDatabase.withTransaction {
                     val db = appDatabase.openHelper.writableDatabase
-                    listOf("bookmarks", "bookmark_folders", "note_attachments", "note_folders", "calendar_events", "notes", "events", "profiles", "geohash_messages")
+                    listOf("bookmarks", "bookmark_folders", "note_attachments", "note_folders", "calendar_events", "notes", "decoy_note_attachments", "decoy_note_folders", "decoy_notes", "events", "profiles", "geohash_messages")
                         .forEach { table -> db.execSQL("DELETE FROM $table") }
                 }
+            }
+            steps.run("clear mini-app files") { xdcRepository.deleteFilesForWipe() }
+            steps.run("clear mini-app tool settings") { appSettings.setXdcCustomTools(emptyList()) }
+            steps.run("clear mini-app share cache") {
+                val share = java.io.File(context.cacheDir, "webxdc_share")
+                check(!share.exists() || share.deleteRecursively()) { "mini-app share deletion failed" }
             }
             steps.run("clear geohash settings") { appSettings.clearGeohashData() }
             steps.run("clear geohash preferences") {

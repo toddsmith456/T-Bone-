@@ -34,9 +34,11 @@ class XdcPlayerViewModel @Inject constructor(
     profileRepository: ProfileRepository,
     private val appSettings: AppSettings,
     private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
+    val webViewWipe: social.tbone.webxdc.XdcWebViewWipe,
 ) : ViewModel() {
 
-    private val playerEpoch = noteWrites.currentWipeEpoch()
+    val playerEpoch = noteWrites.currentWipeEpoch()
+    fun currentWipeEpoch(): Long = noteWrites.currentWipeEpoch()
 
     suspend fun <T> runForCurrentPlayer(action: suspend () -> T): T =
         noteWrites.runCancellableAtEpoch(playerEpoch, action)

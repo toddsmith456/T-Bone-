@@ -79,11 +79,17 @@ class XdcRepository @Inject constructor(
         _loaded.value = true
     }
 
-    /** Called after full-wipe writers have drained, before files are removed. */
+    /** Called after wipe writers have drained, before files are removed. */
     fun clearInMemoryForWipe() {
         _savedApps.value = emptyList()
         busyTracker.clear()
         _loaded.value = true
+    }
+
+    /** Wipe callers close/drain the coordinator before invoking this method. */
+    fun deleteFilesForWipe() {
+        clearInMemoryForWipe()
+        check(!rootDir.exists() || rootDir.deleteRecursively()) { "mini-app deletion failed" }
     }
 
     private fun readAll(): List<SavedXdcApp> {
