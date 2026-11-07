@@ -398,6 +398,18 @@ fun NoteEditorScreen(
         }
     }
 
+    // Do not let typing race with the one-time rebuild of an existing note.
+    if (id.isNotBlank() && (!loaded || !builtOnce)) {
+        Box(Modifier.fillMaxSize().background(BonyColors.Bg), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(if (loaded && rawText == null) "note unavailable" else "loading note…",
+                    color = BonyColors.TextMute)
+                Text("← back", Modifier.clickable { onBack() }.padding(16.dp), color = BonyColors.Accent)
+            }
+        }
+        return
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()

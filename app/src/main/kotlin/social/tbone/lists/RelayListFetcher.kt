@@ -42,8 +42,9 @@ class RelayListFetcher @Inject constructor(
      *                       all — relays unreachable — so "no event" must NOT be read as
      *                       "the list is empty".
      */
-    data class Result(val event: Event?, val eoseRelays: Int) {
+    data class Result(val event: Event?, val eoseRelays: Int, val targetRelays: Int) {
         val reachedRelays: Boolean get() = eoseRelays > 0
+        val allRelaysAnswered: Boolean get() = targetRelays > 0 && eoseRelays >= targetRelays
     }
 
     suspend fun fetchLatest(
@@ -106,7 +107,7 @@ class RelayListFetcher @Inject constructor(
             targets.forEach(pool::releaseRelay)
         }
         Timber.d("List fetch kind=$kind: event=${best.get()?.id?.take(8)} eose=${eose.size}")
-        Result(best.get(), eose.size)
+        Result(best.get(), eose.size, targets.size)
     }
 
     companion object {

@@ -48,7 +48,7 @@ class PinListRepository @Inject constructor(
         if (signer.pubkey != account.pubkey) return@withLock "Account changed; try again"
         val relays = account.effectiveRelays().map(RelayPool::normalize).toSet()
         val result = fetcher.fetchLatest(account.pubkey, EventKind.PIN_LIST, relays.toList())
-        if (!result.reachedRelays) return@withLock "Couldn't read your pin list from relays; nothing changed"
+        if (!result.allRelaysAnswered) return@withLock "Couldn't read your pin list from every configured relay; nothing changed"
         if (accounts.activeAccount.first()?.pubkey != account.pubkey) return@withLock "Account changed; try again"
         val remote = result.event
         val cached = _lists.value[account.pubkey]
