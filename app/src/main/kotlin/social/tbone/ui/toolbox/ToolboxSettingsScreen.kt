@@ -224,9 +224,13 @@ fun ToolboxSettingsScreen(
             Column(modifier = Modifier.weight(1f)) {
                 Text("duress pin", style = BonyType.body.copy(color = BonyColors.Text))
                 Text(
-                    text = if (duressPinEnabled) "entering it on the toolbox lock wipes the toolbox"
-                    else "wipes the toolbox instead of unlocking",
+                    text = if (duressPinEnabled) "entering it attempts to clear regular notes, bookmarks, calendar, geohash and recordings"
+                    else "attempts to clear regular notes, bookmarks, calendar, geohash and recordings instead of unlocking",
                     style = BonyType.meta.copy(color = BonyColors.TextMute),
+                )
+                Text(
+                    "Includes decoy notes. Pending legacy mini-app browser cleanup must finish before the wipe can complete. Exported or shared copies may remain; deletion is not secure erasure.",
+                    style = BonyType.caption.copy(color = BonyColors.TextMute),
                 )
             }
             BonyToggle(

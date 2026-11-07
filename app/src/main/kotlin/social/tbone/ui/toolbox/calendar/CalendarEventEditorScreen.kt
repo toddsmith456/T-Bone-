@@ -7,6 +7,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -109,15 +110,20 @@ fun CalendarEventEditorScreen(
 
     var form by remember { mutableStateOf(CalendarEditorForm()) }
     var savedId by remember { mutableStateOf<String?>(if (id.isBlank()) null else id) }
-    var saved by remember { mutableStateOf(false) }
+    var lastSavedForm by remember { mutableStateOf<CalendarEditorForm?>(null) }
+    var loaded by remember { mutableStateOf(false) }
+    var loadFailed by remember { mutableStateOf(false) }
+    var deleted by remember { mutableStateOf(false) }
+    var exiting by remember { mutableStateOf(false) }
+    var skipDisposeSave by remember { mutableStateOf(false) }
     var showPermDialog by remember { mutableStateOf(false) }
     var showRepeatPicker by remember { mutableStateOf(false) }
     var showEndDatePicker by remember { mutableStateOf(false) }
-    var saveInFlight by remember { mutableStateOf(false) }
     var showDatePicker by remember { mutableStateOf(false) }
     var clockTarget by remember { mutableStateOf<TimeTarget?>(null) }
 
     val context = LocalContext.current
+    val editorEpoch = remember(viewModel, id) { viewModel.currentWipeEpoch() }
     val permPromptDone = remember {
         context.getSharedPreferences("tbone_calendar", Context.MODE_PRIVATE)
             .getBoolean("perm_prompt_done", false)
@@ -127,8 +133,9 @@ fun CalendarEventEditorScreen(
     ) { }
 
     LaunchedEffect(id, dateMillis) {
+        try {
         if (id.isNotBlank()) {
-            viewModel.getEvent(id)?.let { event ->
+            (viewModel.getEvent(id) ?: throw IllegalStateException("Event not found")).let { event ->
                 val zone = ZoneId.systemDefault()
                 val start = Instant.ofEpochMilli(event.startMillis).atZone(zone)
                 form = form.copy(
@@ -145,57 +152,88 @@ fun CalendarEventEditorScreen(
                     },
                 )
                 savedId = event.id
+                lastSavedForm = form
             }
         } else if (dateMillis > 0) {
             form = form.copy(
                 eventDate = Instant.ofEpochMilli(dateMillis).atZone(ZoneId.systemDefault()).toLocalDate(),
             )
         }
+            loaded = true
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            loadFailed = true
+        }
     }
 
-    fun performSave() {
-        if (form.title.isBlank()) return
-        // Re-entrancy guard: reserve the row id synchronously so a second save
-        // upserts the same row rather than creating a duplicate event.
-        if (saveInFlight) return
-        saveInFlight = true
+    fun performSave(onError: (Exception) -> Unit = {}, onDone: () -> Unit = {}) {
+        if (deleted || !loaded || form.title.isBlank()) return
+        val submitted = form
         val isNew = savedId.isNullOrBlank()
         if (isNew) savedId = java.util.UUID.randomUUID().toString()
         val targetId = savedId!!
         viewModel.saveEvent(
             id = targetId,
-            title = form.title,
-            description = form.description,
-            startMillis = eventStartMillis(form),
-            endMillis = eventEndMillis(form),
-            allDay = form.allDay,
-            repeatUnit = form.repeatUnit,
-            repeatInterval = form.repeatInterval,
-            repeatEndMillis = form.repeatEndDate
+            title = submitted.title,
+            description = submitted.description,
+            startMillis = eventStartMillis(submitted),
+            endMillis = eventEndMillis(submitted),
+            allDay = submitted.allDay,
+            repeatUnit = submitted.repeatUnit,
+            repeatInterval = submitted.repeatInterval,
+            repeatEndMillis = submitted.repeatEndDate
                 ?.atStartOfDay(ZoneId.systemDefault())
                 ?.toInstant()?.toEpochMilli(),
+            epoch = editorEpoch,
+            onError = onError,
         ) { newId ->
             savedId = newId
-            saved = true
-            saveInFlight = false
-            // Offer reminder permissions once, after the first saved event.
+            lastSavedForm = submitted
             if (isNew && !permPromptDone) {
                 context.getSharedPreferences("tbone_calendar", Context.MODE_PRIVATE)
                     .edit().putBoolean("perm_prompt_done", true).apply()
                 showPermDialog = true
             }
+            onDone()
         }
     }
 
-    // Save on leave too (back button / system back) — never lose an event.
-    val saveOnExit by rememberUpdatedState({ if (!saved) performSave() })
-    DisposableEffect(Unit) {
-        onDispose { saveOnExit() }
-    }
+    val saveOnExit by rememberUpdatedState({ if (!skipDisposeSave && !deleted && form != lastSavedForm) performSave() })
+    DisposableEffect(Unit) { onDispose { saveOnExit() } }
 
     fun back() {
-        saveOnExit()
-        onBack()
+        if (exiting || deleted) return
+        if (!loaded || (savedId == null && form.title.isBlank())) { skipDisposeSave = true; onBack(); return }
+        if (form.title.isBlank()) {
+            android.widget.Toast.makeText(context, "An event needs a title before it can be saved.", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
+        exiting = true
+        fun saveBeforeLeaving() {
+            if (form.title.isBlank()) {
+                exiting = false
+                android.widget.Toast.makeText(context, "An event needs a title before it can be saved.", android.widget.Toast.LENGTH_LONG).show()
+                return
+            }
+            val submitted = form
+            performSave(onError = { exiting = false }) {
+                if (form != submitted) saveBeforeLeaving()
+                else { skipDisposeSave = true; onBack() }
+            }
+        }
+        saveBeforeLeaving()
+    }
+    BackHandler { back() }
+
+    if (!loaded) {
+        Box(Modifier.fillMaxSize().background(BonyColors.Bg), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(if (loadFailed) "event unavailable" else "loading event…", color = BonyColors.TextMute)
+                Text("← back", Modifier.clickable { back() }.padding(16.dp), color = BonyColors.Accent)
+            }
+        }
+        return
     }
 
     Column(
@@ -211,13 +249,17 @@ fun CalendarEventEditorScreen(
             encryptionVerified = encryptionVerified,
             onBack = { back() },
             onDelete = {
-                savedId?.let { viewModel.deleteEvent(it) }
-                onBack()
+                if (!deleted && !exiting) {
+                    deleted = true
+                    val target = savedId
+                    if (target == null) { skipDisposeSave = true; onBack() }
+                    else viewModel.deleteEvent(target, epoch = editorEpoch, onError = { deleted = false }) {
+                        skipDisposeSave = true
+                        onBack()
+                    }
+                }
             },
-            onSave = {
-                performSave()
-                back()
-            },
+            onSave = { back() },
         )
         error?.let { CalendarEditorErrorBanner(it) }
         CalendarEditorFields(

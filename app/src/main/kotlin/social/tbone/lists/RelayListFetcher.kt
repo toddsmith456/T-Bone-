@@ -42,8 +42,9 @@ class RelayListFetcher @Inject constructor(
      *                       all — relays unreachable — so "no event" must NOT be read as
      *                       "the list is empty".
      */
-    data class Result(val event: Event?, val eoseRelays: Int) {
-        val reachedRelays: Boolean get() = eoseRelays > 0 || event != null
+    data class Result(val event: Event?, val eoseRelays: Int, val targetRelays: Int) {
+        val reachedRelays: Boolean get() = eoseRelays > 0
+        val allRelaysAnswered: Boolean get() = targetRelays > 0 && eoseRelays >= targetRelays
     }
 
     suspend fun fetchLatest(
@@ -79,12 +80,12 @@ class RelayListFetcher @Inject constructor(
                             if (m.subscriptionId == subId) {
                                 val e = m.event
                                 if (e.pubkey == pubkey && e.kind == kind && e.verify()) {
-                                    best.updateAndGet { cur -> if (cur == null || e.createdAt > cur.createdAt) e else cur }
+                                    best.updateAndGet { cur -> newestListEvent(cur, e) }
                                 }
                             }
                         }
                         is RelayMessage.EndOfStoredEvents -> if (m.subscriptionId == subId) eose.add(pm.relayUrl)
-                        is RelayMessage.Closed -> if (m.subscriptionId == subId) eose.add(pm.relayUrl)
+                        is RelayMessage.Closed -> Unit // Rejection is not a successful read.
                         else -> Unit
                     }
                 }
@@ -93,16 +94,11 @@ class RelayListFetcher @Inject constructor(
         try {
             ready.await()
             val start = System.currentTimeMillis()
-            var graceStart = 0L
             while (true) {
                 delay(POLL_MS)
                 val now = System.currentTimeMillis()
                 val expected = targets.size.coerceAtLeast(1)
                 if (eose.size >= expected) break                 // everyone answered
-                if (eose.isNotEmpty()) {
-                    if (graceStart == 0L) graceStart = now
-                    if (now - graceStart >= GRACE_AFTER_FIRST_EOSE_MS) break // stragglers: stop waiting
-                }
                 if (now - start >= timeoutMs) break
             }
         } finally {
@@ -111,12 +107,16 @@ class RelayListFetcher @Inject constructor(
             targets.forEach(pool::releaseRelay)
         }
         Timber.d("List fetch kind=$kind: event=${best.get()?.id?.take(8)} eose=${eose.size}")
-        Result(best.get(), eose.size)
+        Result(best.get(), eose.size, targets.size)
     }
 
     companion object {
         const val DEFAULT_TIMEOUT_MS = 10_000L
         private const val POLL_MS = 100L
-        private const val GRACE_AFTER_FIRST_EOSE_MS = 3_000L
     }
 }
+
+/** Nostr replaceable events break equal-timestamp ties using the lowest ID. */
+internal fun newestListEvent(current: Event?, candidate: Event): Event =
+    if (current == null || candidate.createdAt > current.createdAt ||
+        (candidate.createdAt == current.createdAt && candidate.id < current.id)) candidate else current

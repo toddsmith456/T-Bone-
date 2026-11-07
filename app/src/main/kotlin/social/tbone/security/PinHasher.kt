@@ -13,7 +13,7 @@ import javax.crypto.spec.PBEKeySpec
  * This is not “unbreakable” for a 4-digit PIN (10k space), but PBKDF2 with 120k iterations +
  * random 16-byte salt raises offline brute-force from <1 ms to seconds per guess and defeats rainbow tables.
  *
- * Rate limiting in AppLockManager/ToolboxSecurity adds the remaining wall.
+ * Online retry throttling is separate; offline attacks on a four-digit PIN remain feasible.
  */
 object PinHasher {
 
@@ -29,6 +29,7 @@ object PinHasher {
     }
 
     fun verify(pin: String, stored: String): Boolean {
+        if (stored.length > 256) return false
         // Legacy SHA-256 (64 hex, no $)
         if (!stored.contains("$")) {
             return sha256(pin) == stored
@@ -36,7 +37,10 @@ object PinHasher {
         // New format: v1$iter$saltHex$hashHex
         val parts = stored.split("$")
         if (parts.size != 4 || parts[0] != VERSION) return false
-        val iter = parts[1].toIntOrNull() ?: return false
+        val iter = parts[1].toIntOrNull()?.takeIf { it in 1..1_000_000 } ?: return false
+        // Stored values can be corrupt. Bound work and allocations before
+        // decoding or entering PBKDF2; app-generated hashes use 120k / 16 / 32.
+        if (parts[2].length !in 16..128 || parts[3].length != 64) return false
         val salt = parts[2].hexToBytes() ?: return false
         val expected = parts[3].hexToBytes() ?: return false
         val computed = pbkdf2(pin, salt, iter)
@@ -47,8 +51,12 @@ object PinHasher {
 
     private fun pbkdf2(pin: String, salt: ByteArray, iterations: Int): ByteArray {
         val spec = PBEKeySpec(pin.toCharArray(), salt, iterations, HASH_BITS)
-        val skf = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-        return skf.generateSecret(spec).encoded
+        return try {
+            val skf = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+            skf.generateSecret(spec).encoded
+        } finally {
+            spec.clearPassword()
+        }
     }
 
     private fun sha256(input: String): String {

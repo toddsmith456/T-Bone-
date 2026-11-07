@@ -5,6 +5,18 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.4] — 2026-11-07 (beta preparation)
+
+### Removed
+- Removed the Webxdc mini-app feature and its toolbox, player, bridge, import/export and discovery code. On upgrade, app-owned mini-app files and tool settings are removed. Legacy browser data cleanup is retried if the installed WebView does not support it; the app warns when cleanup remains incomplete. Exported and shared copies cannot be recalled.
+
+### Changed
+- Clarified media metadata and Tor upload preflight limitations; follower views disclose incomplete coverage.
+- Improved notes, hidden accounts, list replacement safety, links, notifications, accessibility, and player lifecycle. Duress deletion and Tor protections have scope limitations and are not forensic or universal network guarantees.
+
+### Verification limits
+- Device upgrade, process-death, live relay, physical-device TalkBack and end-to-end Tor isolation checks remain necessary. This section describes beta preparation, not a production release.
+
 ## [0.5.3] — 2026-11-01
 
 ### Added

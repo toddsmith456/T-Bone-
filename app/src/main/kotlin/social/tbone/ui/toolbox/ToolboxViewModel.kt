@@ -8,7 +8,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import social.tbone.settings.AppSettings
-import social.tbone.webxdc.XdcCustomTool
 import javax.inject.Inject
 
 @HiltViewModel
@@ -29,22 +28,12 @@ class ToolboxViewModel @Inject constructor(
     val toolOrder: StateFlow<List<String>> = appSettings.toolboxToolOrder
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** Tools backed by saved webxdc mini apps. */
-    val xdcCustomTools: StateFlow<List<XdcCustomTool>> = appSettings.xdcCustomTools
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
     /** Default order used until the user reorders. */
     val defaultToolOrder: List<String> =
-        listOf("webxdc", "notes", "bookmarks", "voice", "geohash", "calendar", "wallet", "updates", "followlists")
+        listOf("notes", "bookmarks", "voice", "geohash", "calendar", "wallet", "updates", "followlists")
 
     fun setToolOrder(order: List<String>) {
         viewModelScope.launch { appSettings.setToolboxToolOrder(order) }
     }
 
-    fun removeXdcTool(appId: String) {
-        viewModelScope.launch {
-            val filtered = appSettings.xdcCustomTools.value.filterNot { it.appId == appId }
-            appSettings.setXdcCustomTools(filtered)
-        }
-    }
 }

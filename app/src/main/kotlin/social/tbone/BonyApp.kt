@@ -7,6 +7,7 @@ import coil.disk.DiskCache
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import social.tbone.BuildConfig
 import social.tbone.di.ImageClientProvider
@@ -38,9 +39,23 @@ class BonyApp : Application() {
     @Inject lateinit var calendarScheduler: CalendarAlarmScheduler
     @Inject lateinit var updateManager: UpdateManager
     @Inject lateinit var geohashPinnedMonitor: social.tbone.ui.toolbox.geohash.GeohashPinnedMonitor
+    @Inject lateinit var noteWrites: social.tbone.notes.NoteWriteCoordinator
+    @Inject lateinit var dataWiper: social.tbone.security.DataWiper
+    @Inject lateinit var toolboxSecurity: social.tbone.ui.toolbox.ToolboxSecurity
+    @Inject lateinit var legacyCleanup: social.tbone.migration.LegacyMiniAppCleanup
 
     override fun onCreate() {
         super.onCreate()
+
+        // Install a proxy-only bootstrap loader synchronously. Until persisted
+        // settings load, the default Coil client must not make direct requests.
+        // Its disk cache is disabled so it cannot overlap the configured loader.
+        Coil.setImageLoader(
+            ImageLoader.Builder(this)
+                .okHttpClient(ImageClientProvider.client)
+                .diskCache(null)
+                .build()
+        )
 
         val logFile = File(filesDir, "logs/$LOG_FILE_NAME")
 
@@ -52,6 +67,19 @@ class BonyApp : Application() {
 
         createNotificationChannels(this)
         Phrase.init(this)
+
+        // A previously requested wipe must continue after process death. Its
+        // durable marker closes the note gate before this application starts.
+        val pending = noteWrites.pendingWipes()
+        if (pending.isNotEmpty()) geohashPinnedMonitor.pauseForWipe()
+        when {
+            social.tbone.notes.NoteWriteCoordinator.WipeKind.UNKNOWN in pending -> Unit // Preserve data; do not guess a destructive action.
+            social.tbone.notes.NoteWriteCoordinator.WipeKind.APP in pending -> dataWiper.wipeAndRestart()
+            social.tbone.notes.NoteWriteCoordinator.WipeKind.TOOLBOX in pending -> toolboxSecurity.wipeToolbox(discreet = true)
+        }
+
+        // Upgrade cleanup is idempotent and retains its pending marker on failure.
+        legacyCleanup.retry()
 
         // Keep fully-offline calendar alarms in sync with the event list:
         // whenever events change (add/edit/delete), re-schedule reminders.
@@ -89,6 +117,7 @@ class BonyApp : Application() {
         // Keep Coil's image loader in sync with Tor + lightweight cache toggle.
         // Lightweight = 64 MB cap; otherwise Coil default (~250 MB).
         applicationScope.launch {
+            appSettings.initialized.first { it }
             combine(appSettings.torEnabled, appSettings.imageCacheLightweight) { tor, lightweight -> tor to lightweight }
                 .collect { (useTor, lightweight) ->
                 val status = if (useTor) OrbotHelper.getStatus(this@BonyApp) else null
@@ -98,10 +127,10 @@ class BonyApp : Application() {
                     proxyType = connected?.proxyType ?: java.net.Proxy.Type.HTTP,
                     torPort = connected?.port ?: 8118,
                 )
-                ImageClientProvider.update(client)
+                ImageClientProvider.update(client, useTor)
                 Coil.setImageLoader(
                     ImageLoader.Builder(this@BonyApp)
-                        .okHttpClient(client)
+                        .okHttpClient(ImageClientProvider.client)
                         .diskCache {
                             DiskCache.Builder()
                                 .directory(this@BonyApp.cacheDir.resolve("image_cache"))

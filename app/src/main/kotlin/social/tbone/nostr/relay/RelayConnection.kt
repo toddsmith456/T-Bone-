@@ -5,6 +5,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
 import okhttp3.OkHttpClient
+import okhttp3.Call
+import okhttp3.Interceptor
+import social.tbone.di.TorCallGuard
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
@@ -12,8 +15,6 @@ import okhttp3.WebSocketListener
 import timber.log.Timber
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
-
-private const val NORMAL_CLOSURE = 1000
 
 /**
  * A single WebSocket connection to one Nostr relay.
@@ -31,38 +32,71 @@ class RelayConnection(
     // AtomicReference ensures the WebSocket reference is visible across threads:
     // the OkHttp callback thread writes it; coroutines calling send() read it.
     private val webSocket = AtomicReference<WebSocket?>(null)
+    private data class TransportGuard(val guard: TorCallGuard, val tor: Boolean, val epoch: Long)
+    private var transportGuard: TransportGuard? = null
+
+    /** Set before this connection is published or collected. */
+    internal fun guardedBy(guard: TorCallGuard, tor: Boolean): RelayConnection = apply {
+        transportGuard = TransportGuard(guard, tor, guard.snapshot(tor))
+    }
 
     val messages: Flow<RelayMessage> = callbackFlow {
         val request = Request.Builder().url(url).build()
+        val policy = transportGuard
+        val handshake = AtomicReference<Call?>(null)
+        val connectClient = if (policy == null) client else client.newBuilder()
+            .addInterceptor(Interceptor { chain ->
+                val call = chain.call()
+                handshake.set(call)
+                policy.guard.registerAtEpoch(call, policy.tor, policy.epoch)
+                try { chain.proceed(chain.request()) }
+                catch (error: Throwable) { policy.guard.unregister(call); throw error }
+            }).build()
+        fun forgetHandshake() { handshake.getAndSet(null)?.let { policy?.guard?.unregister(it) } }
 
         val listener = object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) {
+                if (policy != null && !policy.guard.registerSocket(ws, policy.tor, policy.epoch)) {
+                    forgetHandshake()
+                    close()
+                    return
+                }
+                forgetHandshake()
                 Timber.d("Connected: $url")
                 webSocket.set(ws)
                 trySend(RelayMessage.Connected)
             }
 
             override fun onMessage(ws: WebSocket, text: String) {
+                if (policy != null && !policy.guard.isCurrent(policy.tor, policy.epoch)) return
                 trySend(RelayMessage.parse(text))
             }
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
+                forgetHandshake()
+                policy?.guard?.unregisterSocket(ws)
+                webSocket.compareAndSet(ws, null)
                 Timber.w("Failure on $url: ${t.message}")
                 close(t)
             }
 
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
+                forgetHandshake()
+                policy?.guard?.unregisterSocket(ws)
                 Timber.d("Closed: $url — $reason")
-                webSocket.set(null)
+                webSocket.compareAndSet(ws, null)
                 close()
             }
         }
 
-        val ws = client.newWebSocket(request, listener)
+        val ws = connectClient.newWebSocket(request, listener)
 
         awaitClose {
-            ws.close(NORMAL_CLOSURE, "collector cancelled")
-            webSocket.set(null)
+            // Abort rather than flush queued messages after a mode change.
+            ws.cancel()
+            forgetHandshake()
+            policy?.guard?.unregisterSocket(ws)
+            webSocket.compareAndSet(ws, null)
         }
     }.catch { t ->
         Timber.e(t, "Flow error on $url")
@@ -74,7 +108,10 @@ class RelayConnection(
     fun send(message: ClientMessage): Boolean {
         val json = message.toJson()
         Timber.d("→ ${url.substringAfter("://").substringBefore("/")} [${message::class.simpleName}]")
-        return webSocket.get()?.send(json) ?: false
+        val socket = webSocket.get() ?: return false
+        val policy = transportGuard
+        return if (policy == null) socket.send(json)
+        else policy.guard.sendIfCurrent(socket, json, policy.tor, policy.epoch)
     }
 
     companion object {

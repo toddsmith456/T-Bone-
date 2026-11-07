@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import social.tbone.util.readBounded
 import okhttp3.RequestBody
 import okio.BufferedSink
 import okio.source
@@ -85,6 +86,8 @@ class BlossomClient(private val client: OkHttpClient) {
         authHeader: String,
         hash: String,
         extension: String = "",
+        expectedTor: Boolean? = null,
+        expectedTorEpoch: Long? = null,
     ): BlossomUploadResult = withContext(Dispatchers.IO) {
         val endpoint = upload(serverBaseUrl)
         val body = fileBody(file, mime)
@@ -96,8 +99,17 @@ class BlossomClient(private val client: OkHttpClient) {
             .put(body)
             .build()
 
-        client.newCall(request).execute().use { response ->
-            val text = runCatching { response.body?.string() }.getOrNull()
+        val call = client.newCall(request)
+        val guard = social.tbone.di.TorCallPolicy.guard
+        if (expectedTor != null) {
+            if (expectedTorEpoch == null) guard.register(call, expectedTor)
+            else guard.registerAtEpoch(call, expectedTor, expectedTorEpoch)
+        }
+        try {
+        call.execute().use { response ->
+            val text = response.body?.byteStream()?.use {
+                it.readBounded(1024 * 1024).toString(Charsets.UTF_8)
+            }
             if (!response.isSuccessful) {
                 throw BlossomException(
                     server = serverBaseUrl,
@@ -120,6 +132,9 @@ class BlossomClient(private val client: OkHttpClient) {
                     type = parsed?.type ?: mime,
                 )
             }
+        }
+        } finally {
+            if (expectedTor != null) guard.unregister(call)
         }
     }
 

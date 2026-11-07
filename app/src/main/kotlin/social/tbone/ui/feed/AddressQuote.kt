@@ -44,7 +44,9 @@ internal fun AddressQuote(
     val context = LocalContext.current
     var event by remember(address) { mutableStateOf<Event?>(null) }
     var finished by remember(address) { mutableStateOf(false) }
-    LaunchedEffect(address) {
+    LaunchedEffect(address, depth) {
+        if (depth >= 2) { finished = true; return@LaunchedEffect }
+        finished = false
         val pool = runCatching {
             EntryPointAccessors.fromApplication(context.applicationContext, AddressQuoteEntryPoint::class.java).relayPool()
         }.getOrNull()
@@ -77,9 +79,21 @@ internal fun AddressQuote(
             quotedEvents = quotedEvents, onThreadClick = onThreadClick, onProfileClick = onProfileClick,
             onHashtagClick = onHashtagClick, nestingDepth = depth, quoteAncestors = ancestors)
     } else {
-        Text(if (finished) "addressed note unavailable" else "loading quoted note…",
+        val canOpen = resolved != null && onThreadClick != null
+        Text(addressQuoteFallbackLabel(depth, resolved?.id, ancestors, finished, canOpen),
             style = BonyType.tag.copy(color = BonyColors.Accent),
-            modifier = Modifier.combinedClickable(onClick = { resolved?.let { onThreadClick?.invoke(it.id) } },
-                onLongClick = { copyNoteLink(context, raw) }).padding(vertical = 2.dp))
+            modifier = Modifier.combinedClickable(onClick = {
+                if (canOpen) onThreadClick?.invoke(resolved!!.id) else copyNoteLink(context, raw)
+            }, onLongClick = { copyNoteLink(context, raw) }).padding(vertical = 2.dp))
     }
+}
+
+/** Fallbacks never advertise an unavailable open action. */
+internal fun addressQuoteFallbackLabel(
+    depth: Int, resolvedId: String?, ancestors: Set<String>, finished: Boolean, canOpen: Boolean,
+): String = when {
+    depth >= 2 || (resolvedId != null && resolvedId in ancestors) ->
+        if (canOpen) "open quoted note" else "nested quote hidden · tap to copy"
+    finished -> "addressed note unavailable · tap to copy"
+    else -> "loading quoted note… · tap to copy"
 }

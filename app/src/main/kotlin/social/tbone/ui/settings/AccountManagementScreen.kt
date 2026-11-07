@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -59,7 +61,6 @@ fun AccountManagementScreen(
     val hiddenMessage by viewModel.hiddenUnlockMessage.collectAsStateWithLifecycle()
 
     var showHideDialogFor by remember { mutableStateOf<String?>(null) }
-    var hidePin by remember { mutableStateOf("") }
     var hiddenPinInput by remember { mutableStateOf("") }
 
     Scaffold(
@@ -157,7 +158,7 @@ fun AccountManagementScreen(
                 Text("Hidden account", style = BonyType.caption.copy(color = BonyColors.Accent))
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Enter your special PIN to reveal a hidden account. It will log you in and hide again when you switch away.",
+                    "Enter your special PIN to reveal matching hidden accounts. The first becomes active; switching away hides it again.",
                     style = BonyType.meta.copy(color = BonyColors.TextMute),
                 )
                 Spacer(Modifier.height(10.dp))
@@ -185,7 +186,7 @@ fun AccountManagementScreen(
                 }
                 hiddenMessage?.let {
                     Spacer(Modifier.height(8.dp))
-                    Text(it, style = BonyType.meta.copy(color = if (it.contains("Wrong")) BonyColors.Danger else BonyColors.Accent))
+                    Text(it, style = BonyType.meta.copy(color = if (it.startsWith("Wrong") || it.startsWith("Could not")) BonyColors.Danger else BonyColors.Accent))
                 }
             }
 
@@ -193,62 +194,64 @@ fun AccountManagementScreen(
         }
     }
 
-    // Hide dialog — ask for PIN
     showHideDialogFor?.let { pubkey ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(BonyColors.Bg.copy(alpha = 0.85f))
-                .clickable { showHideDialogFor = null },
-            contentAlignment = Alignment.Center,
+        HideAccountDialog(
+            onCancel = { showHideDialogFor = null },
+            onHide = { pin -> viewModel.hideAccount(pubkey, pin); showHideDialogFor = null },
+        )
+    }
+}
+
+/** Confirmation avoids hiding the only account behind a mistyped PIN. */
+@Composable
+internal fun HideAccountDialog(onCancel: () -> Unit, onHide: (String) -> Unit) {
+    var pin by remember { mutableStateOf("") }
+    var confirmation by remember { mutableStateOf("") }
+    val matches = pin.isNotBlank() && pin.trim() == confirmation.trim()
+    Box(
+        modifier = Modifier.fillMaxSize().background(BonyColors.Bg.copy(alpha = 0.85f))
+            .navigationBarsPadding().imePadding().clickable { onCancel() },
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp).verticalScroll(rememberScrollState())
+                .appBorder(1.dp, BonyColors.RuleStrong).background(BonyColors.Surface)
+                .clickable(enabled = false) {}.padding(16.dp),
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 32.dp)
-                    .appBorder(1.dp, BonyColors.RuleStrong)
-                    .background(BonyColors.Surface)
-                    .clickable(enabled = false) {}
-                    .padding(16.dp),
-            ) {
-                Text("Hide account", style = BonyType.body.copy(color = BonyColors.Text))
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "Set a special PIN. This account will disappear from the list and only reappear when you enter this PIN. Switching away hides it again.",
-                    style = BonyType.meta.copy(color = BonyColors.TextMute),
-                )
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = hidePin,
-                    onValueChange = { hidePin = it },
-                    placeholder = { Text("PIN (any length)", style = BonyType.meta.copy(color = BonyColors.TextMute)) },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                    textStyle = BonyType.body.copy(color = BonyColors.Text),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(12.dp))
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "cancel",
-                        style = BonyType.tag.copy(color = BonyColors.TextMute),
-                        modifier = Modifier.clickable { showHideDialogFor = null; hidePin = "" }.padding(10.dp),
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Text(
-                        "HIDE",
-                        style = BonyType.tag.copy(color = if (hidePin.isBlank()) BonyColors.TextMute else BonyColors.Accent),
-                        modifier = Modifier
-                            .appBorder(1.dp, if (hidePin.isBlank()) BonyColors.Rule else BonyColors.AccentDim)
-                            .clickable(enabled = hidePin.isNotBlank()) {
-                                viewModel.hideAccount(pubkey, hidePin)
-                                showHideDialogFor = null
-                                hidePin = ""
-                            }
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                    )
-                }
+            Text("Hide account", style = BonyType.body.copy(color = BonyColors.Text))
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Set a special PIN. This account will disappear from the list and only reappear when you enter this PIN. Switching away hides it again.",
+                style = BonyType.meta.copy(color = BonyColors.TextMute),
+            )
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = pin, onValueChange = { pin = it },
+                label = { Text("PIN (any length)") }, singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                textStyle = BonyType.body.copy(color = BonyColors.Text), modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = confirmation, onValueChange = { confirmation = it },
+                label = { Text("Confirm PIN") }, singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                textStyle = BonyType.body.copy(color = BonyColors.Text), modifier = Modifier.fillMaxWidth(),
+            )
+            if (confirmation.isNotEmpty() && !matches) {
+                Text("PINs do not match", style = BonyType.meta.copy(color = BonyColors.Danger))
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("cancel", style = BonyType.tag.copy(color = BonyColors.TextMute),
+                    modifier = Modifier.clickable { onCancel() }.padding(10.dp))
+                Spacer(Modifier.weight(1f))
+                Text("HIDE", style = BonyType.tag.copy(color = if (matches) BonyColors.Accent else BonyColors.TextMute),
+                    modifier = Modifier.appBorder(1.dp, if (matches) BonyColors.AccentDim else BonyColors.Rule)
+                        .clickable(enabled = matches) { onHide(pin.trim()) }
+                        .padding(horizontal = 16.dp, vertical = 10.dp))
             }
         }
     }

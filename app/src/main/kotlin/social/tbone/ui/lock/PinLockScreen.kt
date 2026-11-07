@@ -51,22 +51,29 @@ fun PinLockScreen(
         PinKeypadLayout.digits(scramble = scrambleKeypad)
     }
     var isError by remember { mutableStateOf(false) }
+    var isSubmitting by remember { mutableStateOf(false) }
+    var retryMessage by remember { mutableStateOf("") }
     val shakeOffset = remember { Animatable(0f) }
 
     fun submitPin() {
+        if (isSubmitting || pin.length != 4) return
+        val attemptedPin = pin
+        isSubmitting = true
         scope.launch {
+          try {
             // Duress pin: wipe all app data instead of unlocking. This happens
-            // silently (the app restarts into onboarding) so the duress pin is
-            // indistinguishable from a wrong pin at the moment of entry.
-            if (viewModel.isDuressPin(pin)) {
-                viewModel.wipeData()
+            // with generic failure feedback rather than naming the wipe.
+            // Timing and other device behavior may still reveal the event.
+            if (viewModel.handleDuressPin(attemptedPin)) {
                 return@launch
             }
-            val ok = viewModel.verifyPin(pin)
+            val ok = viewModel.verifyPin(attemptedPin)
             if (ok) {
                 viewModel.unlock()
                 onUnlocked()
             } else {
+                val wait = viewModel.retryAfterMillis()
+                retryMessage = if (wait > 0) "try again in ${(wait + 999) / 1000} seconds" else ""
                 isError = true
                 shakeOffset.animateTo(
                     targetValue = 0f,
@@ -85,6 +92,16 @@ fun PinLockScreen(
                 keypadAttempt++
                 isError = false
             }
+          } catch (cancelled: kotlinx.coroutines.CancellationException) {
+              throw cancelled
+          } catch (error: Exception) {
+              timber.log.Timber.e(error, "PIN verification failed")
+              retryMessage = "couldn't verify pin; try again"
+              pin = ""
+              isError = false
+          } finally {
+              isSubmitting = false
+          }
         }
     }
 
@@ -118,6 +135,7 @@ fun PinLockScreen(
 
             Spacer(Modifier.height(48.dp))
 
+            if (retryMessage.isNotEmpty()) Text(retryMessage, style = BonyType.caption.copy(color = BonyColors.Danger))
             // PIN dot indicators
             Row(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -140,8 +158,9 @@ fun PinLockScreen(
             // Numpad
             PinKeypad(
                 digits = keypadDigits,
-                onDigit = { d -> if (pin.length < 4) pin += d },
-                onBackspace = { if (pin.isNotEmpty()) pin = pin.dropLast(1) },
+                enabled = !isSubmitting,
+                onDigit = { d -> if (!isSubmitting && pin.length < 4) pin += d },
+                onBackspace = { if (!isSubmitting && pin.isNotEmpty()) pin = pin.dropLast(1) },
             )
 
         }
@@ -153,6 +172,7 @@ internal fun PinKeypad(
     onDigit: (String) -> Unit,
     onBackspace: () -> Unit,
     digits: List<String> = PinKeypadLayout.DEFAULT_DIGITS,
+    enabled: Boolean = true,
 ) {
     val rows = PinKeypadLayout.rows(digits)
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -171,10 +191,10 @@ internal fun PinKeypad(
                                     "" -> Modifier
                                     "←" -> Modifier
                                         .appBorder(1.dp, BonyColors.Rule)
-                                        .clickable { onBackspace() }
+                                        .clickable(enabled = enabled) { onBackspace() }
                                     else -> Modifier
                                         .appBorder(1.dp, BonyColors.Rule)
-                                        .clickable { onDigit(key) }
+                                        .clickable(enabled = enabled) { onDigit(key) }
                                 }
                             ),
                         contentAlignment = Alignment.Center,

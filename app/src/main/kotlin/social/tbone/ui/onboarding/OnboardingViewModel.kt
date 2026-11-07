@@ -39,6 +39,7 @@ class OnboardingViewModel @Inject constructor(
     private val signingIndicator: SigningIndicator,
     private val pool: RelayPool,
     private val amberInstallManager: AmberInstallManager,
+    private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(OnboardingUiState())
@@ -49,6 +50,8 @@ class OnboardingViewModel @Inject constructor(
 
     /** NIP-55: ask Amber for the user's public key. */
     fun addAccountWithAmber(callerPackage: String) {
+        if (_uiState.value.isLoading) return
+        val epoch = noteWrites.currentWipeEpoch()
         if (!amberInstallManager.isAmberInstalled()) {
             _uiState.update { it.copy(error = "Amber isn't installed yet. Tap GET AMBER to install it, then try again.") }
             return
@@ -60,25 +63,25 @@ class OnboardingViewModel @Inject constructor(
                 putExtra("type", "get_public_key")
                 putExtra("package", callerPackage)
             }
-            amberBridge.request(intent)
-                .onSuccess { raw ->
-                    val hexPubkey = Nip19.normalisePubkey(raw)
-                    if (hexPubkey == null) {
-                        _uiState.update { it.copy(isLoading = false, error = "Amber returned an unrecognised pubkey format: $raw") }
-                        return@onSuccess
-                    }
-                    val account = Account(pubkey = hexPubkey, signerType = SignerType.AMBER)
-                    accountRepository.addAccount(account)
-                    _uiState.update { it.copy(isLoading = false, success = true) }
-                }
-                .onFailure { e ->
-                    _uiState.update { it.copy(isLoading = false, error = e.message) }
-                }
+            try {
+                val raw = amberBridge.request(intent).getOrThrow()
+                val hexPubkey = Nip19.normalisePubkey(raw)
+                    ?: error("Amber returned an unrecognised pubkey format")
+                val account = Account(pubkey = hexPubkey, signerType = SignerType.AMBER)
+                noteWrites.runCancellableAtEpoch(epoch) { accountRepository.addAccount(account) }
+                _uiState.update { it.copy(isLoading = false, success = true) }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _uiState.update { it.copy(isLoading = false, error = error.message ?: "Could not add account") }
+            }
         }
     }
 
     /** NIP-46: connect to an nsecBunker via a bunker:// URI. */
     fun addAccountWithNsecBunker(bunkerUrl: String) {
+        if (_uiState.value.isLoading) return
+        val epoch = noteWrites.currentWipeEpoch()
         _uiState.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
             runCatching {
@@ -91,7 +94,7 @@ class OnboardingViewModel @Inject constructor(
                 val secret = uri.getQueryParameter("secret") ?: ""
 
                 // Generate ephemeral session keypair for the NIP-46 channel
-                val (sessionSigner, encryptedSessionKey) = LocalKeySigner.generate()
+                val (sessionSigner, encryptedSessionKey) = noteWrites.runCancellableAtEpoch(epoch) { LocalKeySigner.generate() }
                 val config = NsecBunkerConfig(
                     bunkerPubkey = bunkerPubkey,
                     relayUrl = relayUrl,
@@ -109,10 +112,11 @@ class OnboardingViewModel @Inject constructor(
                     nsecBunkerConfig = config,
                 )
                 // Store account; encrypted session key persisted under the user's pubkey
-                accountRepository.addAccount(account, encryptedSessionKey)
+                noteWrites.runCancellableAtEpoch(epoch) { accountRepository.addAccount(account, encryptedSessionKey) }
             }.onSuccess {
                 _uiState.update { it.copy(isLoading = false, success = true) }
             }.onFailure { e ->
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 _uiState.update { it.copy(isLoading = false, error = e.message ?: "Connection failed") }
             }
         }
@@ -120,17 +124,22 @@ class OnboardingViewModel @Inject constructor(
 
     /** Last resort: generate a local secp256k1 keypair stored in Android Keystore. */
     fun addLocalKeyAccount() {
+        if (_uiState.value.isLoading) return
+        val epoch = noteWrites.currentWipeEpoch()
         _uiState.update { it.copy(isLoading = true, error = null) }
         viewModelScope.launch {
             runCatching {
-                val (signer, encryptedPrivkey) = LocalKeySigner.generate()
-                val account = Account(
-                    pubkey = signer.pubkey,
-                    signerType = SignerType.LOCAL_KEY,
-                )
-                accountRepository.addAccount(account, encryptedPrivkey)
+                noteWrites.runCancellableAtEpoch(epoch) {
+                    val (signer, encryptedPrivkey) = LocalKeySigner.generate()
+                    val account = Account(
+                        pubkey = signer.pubkey,
+                        signerType = SignerType.LOCAL_KEY,
+                    )
+                    accountRepository.addAccount(account, encryptedPrivkey)
+                }
                 _uiState.update { it.copy(isLoading = false, success = true) }
             }.onFailure { e ->
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 _uiState.update { it.copy(isLoading = false, error = e.message) }
             }
         }

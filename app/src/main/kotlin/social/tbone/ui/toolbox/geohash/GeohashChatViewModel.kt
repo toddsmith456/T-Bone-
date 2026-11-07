@@ -57,6 +57,7 @@ class GeohashChatViewModel @Inject constructor(
     private val appSettings: AppSettings,
     private val pinnedMonitor: GeohashPinnedMonitor,
     private val cache: GeohashMessageCache,
+    private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
 ) : ViewModel() {
 
     private val _messages = MutableStateFlow<List<GeohashMessage>>(emptyList())
@@ -152,7 +153,9 @@ class GeohashChatViewModel @Inject constructor(
     fun send(text: String) {
         val g = currentGeohash
         if (g.isEmpty() || text.isBlank()) return
-        viewModelScope.launch {
+        // Capture this request before any asynchronous dispatch. The wipe
+        // barrier waits for an accepted send and rejects later ones.
+        val request = noteWrites.submit<Unit> {
             val seed = appSettings.geohashIdentitySeed()
             val priv = withContext(Dispatchers.Default) { GeohashKeyDerivation.derivePrivateKey(seed, g) }
             val pub = GeohashKeyDerivation.pubkeyBytesFromPrivkey(priv).toHex()
@@ -180,14 +183,23 @@ class GeohashChatViewModel @Inject constructor(
             val event = Event(id, pub, unsigned.createdAt, 20000, unsigned.tags, unsigned.content, sig)
             if (!event.verify()) {
                 _error.value = "failed to verify anonymous message"
-                return@launch
+                return@submit
             }
             val relays = GeohashRelays.closestRelays(g).toSet()
-            if (currentGeohash != g) return@launch
+            if (currentGeohash != g) return@submit
             // Mark before publish, so a fast relay echo cannot be mistaken for another sender.
             seen.add(event.id)
             appendMessage(g, GeohashMessage(event.id, event.pubkey, event.createdAt, event.content, nick, own = true))
             pool.publishTo(event, relays)
+            Unit
+        }
+        viewModelScope.launch {
+            try { request.await() }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                timber.log.Timber.e(error, "Could not send geohash message")
+                _error.value = "could not send anonymous message"
+            }
         }
     }
 

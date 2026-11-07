@@ -170,15 +170,12 @@ android {
 // stays skipped — for normal builds and CI.
 tasks.withType<Test>().configureEach {
     systemProperty("blossomLive", System.getProperty("blossomLive") ?: "")
-    // Opt-in compatibility check against a directory of real .xdc packages.
-    systemProperty("xdcFixtures", System.getProperty("xdcFixtures") ?: "")
-    // Opt-in export of the served mini-app tree (screenshots/compatibility checks).
-    systemProperty("xdcHarnessOut", System.getProperty("xdcHarnessOut") ?: "")
 }
 
 dependencies {
     // AndroidX Core
     implementation(libs.androidx.core.ktx)
+    implementation("androidx.webkit:webkit:1.13.0")
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)

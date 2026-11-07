@@ -27,9 +27,6 @@ object CacheCleaner {
         // 1) Share cards (PNG + MP4) — directory pruned by age
         cleanDir(File(cacheDir, "share_cards"), now, SHARE_CARDS_TTL_MS)
 
-        // 2) Webxdc share sheet cache
-        cleanDir(File(cacheDir, "webxdc_share"), now, SHARE_CARDS_TTL_MS)
-
         // 3) Flat cacheDir files by known prefixes
         val prefixes = listOf(
             "tbone_media_",

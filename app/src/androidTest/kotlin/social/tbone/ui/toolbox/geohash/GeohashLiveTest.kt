@@ -40,7 +40,7 @@ class GeohashLiveTest {
         val file = File(context.cacheDir, "test-${System.nanoTime()}.preferences_pb")
         val settings = AppSettings(PreferenceDataStoreFactory.create(scope = scope) { file }, scope)
         val database = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
-        val cache = GeohashMessageCache(database.geohashMessageDao(), settings, scope)
+        val cache = GeohashMessageCache(database.geohashMessageDao(), settings, scope, social.tbone.notes.NoteWriteCoordinator(scope))
         val server = MockWebServer()
         val subscriptions = CopyOnWriteArrayList<Pair<WebSocket, String>>()
         val sockets = CopyOnWriteArrayList<WebSocket>()
@@ -97,12 +97,21 @@ class GeohashLiveTest {
             val own = signed(settings.geohashIdentitySeed(), "own")
             send(own)
             withTimeout(15_000) { while (cache.load(code).none { it.id == own.id && it.own }) delay(50) }
+            monitor.pauseForWipe()
+            withTimeout(10_000) { while (pool.relayUrls().isNotEmpty()) delay(50) }
+            val geohashPrefs = context.getSharedPreferences("tbone_geohash", 0)
+            assertTrue(geohashPrefs.edit().clear().commit())
+            monitor.markSeen(code)
+            assertFalse(geohashPrefs.contains("last_seen_$code"))
+            settings.setGeohashChannels(emptyList())
+            monitor.resumeAfterWipe()
             settings.setGeohashCacheMillis(0)
             cache.prune()
             assertTrue(cache.load(code).isEmpty())
             settings.setGeohashChannels(emptyList())
             withTimeout(10_000) { while (pool.relayUrls().isNotEmpty()) delay(50) }
         } finally {
+            monitor.pauseForWipe()
             scope.coroutineContext[Job]?.cancelAndJoin()
             sockets.forEach { runCatching { it.close(1000, "test complete") } }
             client.dispatcher.cancelAll()

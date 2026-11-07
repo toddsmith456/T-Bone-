@@ -153,12 +153,7 @@ class OfflineListRepository @Inject constructor(
      */
     suspend fun fetchOnline(type: ListType, pubkey: String, seedRelays: List<String>): OnlineFetch {
         val result = fetcher.fetchLatest(pubkey, type.kind, seedRelays)
-        val event = result.event
-        return when {
-            event != null -> OnlineFetch.Found(entriesFromEvent(event, pubkey), event.createdAt)
-            result.eoseRelays > 0 -> OnlineFetch.Empty
-            else -> OnlineFetch.Unreachable
-        }
+        return classifyOnlineFetch(result, pubkey)
     }
 
     /**
@@ -224,4 +219,11 @@ class OfflineListRepository @Inject constructor(
             return out.values.toList()
         }
     }
+}
+
+/** A partial read must not replace a complete local list with a partial copy. */
+internal fun classifyOnlineFetch(result: RelayListFetcher.Result, pubkey: String): OnlineFetch {
+    if (!result.allRelaysAnswered) return OnlineFetch.Unreachable
+    val event = result.event ?: return OnlineFetch.Empty
+    return OnlineFetch.Found(OfflineListRepository.entriesFromEvent(event, pubkey), event.createdAt)
 }

@@ -46,7 +46,7 @@ import social.tbone.ui.theme.BonyType
  * Edit the active account's profile picture and banner.
  *
  * Images are automatically compressed / quality-reduced to fit the 800 KB
- * cap and every embedded EXIF/metadata field is stripped before upload.
+ * cap and source EXIF is not copied into the re-encoded upload.
  * The picture is stored on a Blossom server and a kind-0 event is published.
  */
 @Composable
@@ -164,7 +164,7 @@ fun ProfileEditScreen(
             }
 
             Text(
-                text = "images are re-encoded (all EXIF & metadata removed) and compressed to fit the 800 KB cap before uploading.",
+                text = "images are re-encoded without source EXIF and compressed to fit the 800 KB cap before uploading.",
                 style = BonyType.metaDim.copy(color = BonyColors.TextMute),
             )
         }

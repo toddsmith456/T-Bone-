@@ -10,14 +10,13 @@ import androidx.datastore.preferences.core.stringSetPreferencesKey
 import social.tbone.media.blossom.BlossomServerUrl
 import social.tbone.nostr.geohash.GeohashChannelEntry
 import social.tbone.nostr.geohash.GeohashChannelStore
-import social.tbone.webxdc.XdcCustomTool
-import social.tbone.webxdc.XdcCustomToolsCodec
 import androidx.datastore.preferences.core.edit
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -85,8 +84,6 @@ class AppSettings @Inject constructor(
         private val TOOLBOX_PIN_AUTO_LOCK_MINUTES = intPreferencesKey("toolbox_pin_auto_lock_minutes")
         private val TOOLBOX_PIN_LAST_UNLOCK_MILLIS = longPreferencesKey("toolbox_pin_last_unlock_millis")
         private val TOOLBOX_TOOL_ORDER = stringPreferencesKey("toolbox_tool_order")
-        // Saved webxdc mini apps promoted to toolbox tools (JSON array).
-        private val XDC_CUSTOM_TOOLS = stringPreferencesKey("xdc_custom_tools")
         // Geohash identity seed (base64, 32 bytes) — random per install, like Amethyst's remote-signer path.
         private val GEOHASH_IDENTITY_SEED = stringPreferencesKey("geohash_identity_seed")
         private val GEOHASH_CHANNELS = stringPreferencesKey("geohash_channels")
@@ -279,10 +276,6 @@ class AppSettings @Inject constructor(
     private val _toolboxToolOrder = MutableStateFlow<List<String>>(emptyList())
     val toolboxToolOrder = _toolboxToolOrder.asStateFlow()
 
-    /** User-created tools backed by saved webxdc apps. */
-    private val _xdcCustomTools = MutableStateFlow<List<XdcCustomTool>>(emptyList())
-    val xdcCustomTools = _xdcCustomTools.asStateFlow()
-
     /** Saved geohash channels (messenger contact list), in display order. */
     private val _geohashChannels = MutableStateFlow<List<GeohashChannelEntry>>(emptyList())
     val geohashChannels = _geohashChannels.asStateFlow()
@@ -398,11 +391,49 @@ class AppSettings @Inject constructor(
     fun setDecoyUnlocked(unlocked: Boolean) { _decoyUnlocked.value = unlocked }
 
     /** Session-only set of hidden pubkeys that have been unlocked via PIN. */
+    private val hiddenSessionLock = Any()
+    private var hiddenSessionGeneration = 0L
+    private var hiddenSessionBlocked = false
     private val _hiddenUnlockedPubkeys = MutableStateFlow<Set<String>>(emptySet())
     val hiddenUnlockedPubkeys = _hiddenUnlockedPubkeys.asStateFlow()
-    fun addHiddenUnlocked(pubkey: String) { _hiddenUnlockedPubkeys.value += pubkey }
-    fun removeHiddenUnlocked(pubkey: String) { _hiddenUnlockedPubkeys.value -= pubkey }
-    fun clearHiddenUnlocked() { _hiddenUnlockedPubkeys.value = emptySet() }
+    fun hiddenSessionEpoch(): Long = synchronized(hiddenSessionLock) {
+        if (hiddenSessionBlocked) Long.MIN_VALUE else hiddenSessionGeneration
+    }
+
+    /** Apply a whole account transition only if it began in this session. */
+    fun updateHiddenSession(epoch: Long, relock: String?, unlock: Collection<String>): Boolean = synchronized(hiddenSessionLock) {
+        if (hiddenSessionBlocked || epoch != hiddenSessionGeneration) return@synchronized false
+        _hiddenUnlockedPubkeys.update { current ->
+            (if (relock == null) current else current - relock) + unlock
+        }
+        true
+    }
+
+    fun addHiddenUnlocked(pubkey: String) {
+        val epoch = hiddenSessionEpoch()
+        updateHiddenSession(epoch, null, listOf(pubkey))
+    }
+    fun removeHiddenUnlocked(pubkey: String) {
+        val epoch = hiddenSessionEpoch()
+        updateHiddenSession(epoch, pubkey, emptyList())
+    }
+    fun clearHiddenUnlocked() = synchronized(hiddenSessionLock) {
+        hiddenSessionGeneration++
+        _hiddenUnlockedPubkeys.value = emptySet()
+    }
+
+    /** Called before the full wipe starts; late callbacks cannot reopen old sessions. */
+    fun clearSessionUnlocksForWipe() = synchronized(hiddenSessionLock) {
+        hiddenSessionBlocked = true
+        hiddenSessionGeneration++
+        _hiddenUnlockedPubkeys.value = emptySet()
+        _decoyUnlocked.value = false
+        _parentalUnlocked.value = false
+    }
+
+    fun resumeHiddenSessionsAfterWipe() = synchronized(hiddenSessionLock) {
+        hiddenSessionBlocked = false
+    }
 
     init {
         scope.launch {
@@ -410,7 +441,10 @@ class AppSettings @Inject constructor(
             dataStore.data.collect { prefs ->
                 _confirmExternalLinks.value = prefs[CONFIRM_LINKS] ?: false
                 _torExplicitlySet.value = prefs[TOR_EXPLICITLY_SET] == true
-                _torEnabled.value = prefs[TOR_ENABLED] ?: false
+                val torMode = prefs[TOR_ENABLED] ?: false
+                // Cancel old-mode tracked calls before publishing the new mode.
+                social.tbone.di.TorCallPolicy.guard.update(torMode)
+                _torEnabled.value = torMode
                 _torKillSwitch.value = prefs[TOR_KILL_SWITCH] ?: false
                 _lastViewedNotificationsAt.value = prefs[LAST_VIEWED_NOTIFICATIONS_AT] ?: 0L
                 _globalAutoLoadEnabled.value = prefs[GLOBAL_AUTO_LOAD_ENABLED] ?: true
@@ -442,7 +476,6 @@ class AppSettings @Inject constructor(
                 _toolboxDuressPinEnabled.value = prefs[TOOLBOX_DURESS_PIN_ENABLED] ?: false
                 _toolboxToolOrder.value = prefs[TOOLBOX_TOOL_ORDER]
                     ?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
-                _xdcCustomTools.value = XdcCustomToolsCodec.decode(prefs[XDC_CUSTOM_TOOLS])
                 _geohashChannels.value = prefs[GEOHASH_CHANNELS]?.let { GeohashChannelStore.decode(it) } ?: emptyList()
                 _geohashNickname.value = prefs[GEOHASH_NICKNAME] ?: ""
                 _geohashCacheMillis.value = prefs[GEOHASH_CACHE_MILLIS]?.takeIf { it in GEOHASH_CACHE_OPTIONS } ?: 0L
@@ -639,13 +672,19 @@ class AppSettings @Inject constructor(
         dataStore.edit { it[TOOLBOX_TOOL_ORDER] = order.joinToString(",") }
     }
 
-    suspend fun setXdcCustomTools(tools: List<XdcCustomTool>) {
-        _xdcCustomTools.value = tools
-        dataStore.edit { it[XDC_CUSTOM_TOOLS] = XdcCustomToolsCodec.encode(tools) }
-    }
-
     suspend fun setToolboxScreenshotBlockEnabled(enabled: Boolean) {
         dataStore.edit { it[TOOLBOX_SCREENSHOT_BLOCK_ENABLED] = enabled }
+    }
+
+    /** Clear toolbox credentials as one atomic finalization after a successful wipe. */
+    suspend fun clearToolboxSecurity() {
+        dataStore.edit { prefs ->
+            prefs.remove(TOOLBOX_PIN_ENABLED)
+            prefs.remove(TOOLBOX_PIN_HASH)
+            prefs.remove(TOOLBOX_DURESS_PIN_ENABLED)
+            prefs.remove(TOOLBOX_DURESS_PIN_HASH)
+            prefs.remove(TOOLBOX_SCREENSHOT_BLOCK_ENABLED)
+        }
     }
 
     suspend fun getToolboxPinEnabled(): Boolean =

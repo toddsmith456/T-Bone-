@@ -1,6 +1,9 @@
 package social.tbone.notes
 
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
@@ -49,35 +52,53 @@ enum class BookmarkSaveResult { SAVED, ALREADY_SAVED }
 class BookmarksRepository @Inject constructor(
     private val dao: BookmarkDao,
     private val crypto: NotesCrypto,
+    private val noteWrites: NoteWriteCoordinator,
 ) {
     private val defaultFolderMutex = Mutex()
 
-    val folders: Flow<List<BookmarkFolderUi>> = flow {
-        ensureDefaultFolder()
-        emitAll(
-            dao.observeFolders().map { rows ->
-                rows.mapNotNull(::decryptFolder)
-            },
-        )
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val folders: Flow<List<BookmarkFolderUi>> = noteWrites.available.flatMapLatest { available ->
+        if (!available) flowOf(emptyList()) else flow {
+            try {
+                coordinated { ensureDefaultFolder() }
+            } catch (error: java.io.IOException) {
+                if (noteWrites.available.value) throw error
+                emit(emptyList())
+                return@flow
+            }
+            emitAll(dao.observeFolders().map { rows -> rows.mapNotNull(::decryptFolder) })
+        }
     }
 
-    suspend fun getFolders(): List<BookmarkFolderUi> {
+    suspend fun getFolders(): List<BookmarkFolderUi> = coordinated { getFoldersInternal() }
+
+    private suspend fun getFoldersInternal(): List<BookmarkFolderUi> {
         ensureDefaultFolder()
         return dao.getFolders().mapNotNull(::decryptFolder)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun observeBookmarks(folderId: String): Flow<List<BookmarkUi>> =
-        dao.observeBookmarks(folderId).map { rows -> rows.mapNotNull(::decryptBookmark) }
+        noteWrites.available.flatMapLatest { available ->
+            if (!available) flowOf(emptyList())
+            else dao.observeBookmarks(folderId).map { rows -> rows.mapNotNull(::decryptBookmark) }
+        }
 
-    suspend fun getBookmarks(folderId: String): List<BookmarkUi> =
+    suspend fun getBookmarks(folderId: String): List<BookmarkUi> = coordinated {
         dao.getBookmarks(folderId).mapNotNull(::decryptBookmark)
+    }
 
-    suspend fun createFolder(name: String): BookmarkFolderUi {
+    fun currentWipeEpoch(): Long = noteWrites.currentWipeEpoch()
+
+    suspend fun createFolder(name: String, epoch: Long = noteWrites.currentWipeEpoch()): BookmarkFolderUi =
+        noteWrites.submitAtEpoch(epoch) { createFolderInternal(name) }.await()
+
+    private suspend fun createFolderInternal(name: String): BookmarkFolderUi {
         val cleanName = name.trim()
         require(cleanName.isNotEmpty()) { "Enter a folder name." }
         require(cleanName.length <= MAX_FOLDER_NAME_LENGTH) { "Folder names can be at most $MAX_FOLDER_NAME_LENGTH characters." }
         ensureDefaultFolder()
-        val existingNames = getFolders().map { it.name.trim().lowercase() }.toSet()
+        val existingNames = getFoldersInternal().map { it.name.trim().lowercase() }.toSet()
         require(cleanName.lowercase() !in existingNames) { "A folder with that name already exists." }
         val now = System.currentTimeMillis()
         val (ciphertext, iv) = crypto.encrypt(cleanName)
@@ -93,26 +114,35 @@ class BookmarksRepository @Inject constructor(
         return decryptFolder(folder) ?: error("Could not decrypt the new folder.")
     }
 
-    suspend fun renameFolder(folderId: String, name: String) {
+    suspend fun renameFolder(folderId: String, name: String): Unit =
+        coordinated { renameFolderInternal(folderId, name) }
+
+    private suspend fun renameFolderInternal(folderId: String, name: String) {
         val cleanName = name.trim()
         require(cleanName.isNotEmpty()) { "Enter a folder name." }
         require(cleanName.length <= MAX_FOLDER_NAME_LENGTH) { "Folder names can be at most $MAX_FOLDER_NAME_LENGTH characters." }
         val folder = dao.getFolder(folderId) ?: error("That folder no longer exists.")
-        val duplicate = getFolders().any { it.id != folderId && it.name.trim().equals(cleanName, ignoreCase = true) }
+        val duplicate = getFoldersInternal().any { it.id != folderId && it.name.trim().equals(cleanName, ignoreCase = true) }
         require(!duplicate) { "A folder with that name already exists." }
         val (ciphertext, iv) = crypto.encrypt(cleanName)
         dao.upsertFolder(folder.copy(encryptedName = ciphertext, iv = iv, updatedAt = System.currentTimeMillis()))
     }
 
     /** Returns false when deleting this folder would remove the last folder. */
-    suspend fun deleteFolder(folderId: String): Boolean {
+    suspend fun deleteFolder(folderId: String): Boolean =
+        coordinated { deleteFolderInternal(folderId) }
+
+    private suspend fun deleteFolderInternal(folderId: String): Boolean {
         ensureDefaultFolder()
         if (dao.folderCount() <= 1) return false
         dao.deleteFolder(folderId)
         return true
     }
 
-    suspend fun addBookmark(event: Event, folderId: String): BookmarkSaveResult {
+    suspend fun addBookmark(event: Event, folderId: String, epoch: Long = noteWrites.currentWipeEpoch()): BookmarkSaveResult =
+        noteWrites.submitAtEpoch(epoch) { addBookmarkInternal(event, folderId) }.await()
+
+    private suspend fun addBookmarkInternal(event: Event, folderId: String): BookmarkSaveResult {
         require(event.verify()) { "This event failed signature verification and was not bookmarked." }
         ensureDefaultFolder()
         val folder = dao.getFolder(folderId) ?: error("That folder no longer exists.")
@@ -136,10 +166,13 @@ class BookmarksRepository @Inject constructor(
         return BookmarkSaveResult.SAVED
     }
 
-    suspend fun deleteBookmark(bookmarkId: String) = dao.deleteBookmark(bookmarkId)
+    suspend fun deleteBookmark(bookmarkId: String) = coordinated { dao.deleteBookmark(bookmarkId) }
 
     /** Moving between folders reuses encrypted bytes; it never writes plaintext to disk. */
-    suspend fun moveBookmark(bookmarkId: String, targetFolderId: String) {
+    suspend fun moveBookmark(bookmarkId: String, targetFolderId: String): Unit =
+        coordinated { moveBookmarkInternal(bookmarkId, targetFolderId) }
+
+    private suspend fun moveBookmarkInternal(bookmarkId: String, targetFolderId: String) {
         val source = dao.getAllBookmarks().firstOrNull { it.id == bookmarkId }
             ?: error("That bookmark no longer exists.")
         if (source.folderId == targetFolderId) return
@@ -160,7 +193,10 @@ class BookmarksRepository @Inject constructor(
         )
     }
 
-    suspend fun reorder(folderId: String, orderedBookmarkIds: List<String>) {
+    suspend fun reorder(folderId: String, orderedBookmarkIds: List<String>): Unit =
+        coordinated { reorderInternal(folderId, orderedBookmarkIds) }
+
+    private suspend fun reorderInternal(folderId: String, orderedBookmarkIds: List<String>) {
         val currentIds = dao.getBookmarks(folderId).map { it.id }.toSet()
         val ordered = orderedBookmarkIds.filter { it in currentIds }.distinct() +
             currentIds.filterNot { it in orderedBookmarkIds.toSet() }
@@ -168,11 +204,14 @@ class BookmarksRepository @Inject constructor(
     }
 
     /** Local search for a saved event; decryption happens only in memory. */
-    suspend fun findEvent(eventId: String): Event? =
+    suspend fun findEvent(eventId: String): Event? = coordinated {
         dao.getAllBookmarks().asSequence()
             .mapNotNull(::decryptBookmark)
             .firstOrNull { it.event.id.equals(eventId, ignoreCase = true) }
             ?.event
+    }
+
+    private suspend fun <T> coordinated(action: suspend () -> T): T = noteWrites.submit(action).await()
 
     private suspend fun ensureDefaultFolder() {
         defaultFolderMutex.withLock {

@@ -43,7 +43,7 @@ import social.tbone.nostr.identity.Phrase
 import social.tbone.settings.AvatarMode
 import social.tbone.settings.ImageLoadMode
 import social.tbone.settings.VideoQuality
-import social.tbone.settings.ORBOT_ZAPSTORE_URL
+import social.tbone.settings.openOrbotInstallPage
 import social.tbone.settings.ThemeMode
 import social.tbone.settings.UiTheme
 import dev.youniversal.theme.YouniversalBackgroundStyle
@@ -81,6 +81,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val cleanupStatus by viewModel.cleanupStatus.collectAsStateWithLifecycle()
     val torEnabled by viewModel.torEnabled.collectAsStateWithLifecycle()
     val pinEnabled by viewModel.pinEnabled.collectAsStateWithLifecycle()
     val duressPinEnabled by viewModel.duressPinEnabled.collectAsStateWithLifecycle()
@@ -119,6 +120,11 @@ fun SettingsScreen(
             .verticalScroll(rememberScrollState()),
     ) {
         SettingsTopBar(onBack)
+        if (cleanupStatus == social.tbone.migration.CleanupStatus.NeedsAttention) {
+            Text("Old mini-app data cleanup is incomplete. Update Android System WebView, then tap to retry. Exported or shared copies remain outside this app.",
+                modifier = Modifier.fillMaxWidth().clickable { viewModel.retryLegacyCleanup() }.padding(16.dp),
+                style = BonyType.body, color = BonyColors.Danger)
+        }
         SettingsSwitchRow(
             title = "UI declutter",
             description = "compact tabs and make Settings categories collapsible",
@@ -1040,8 +1046,8 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
             .then(
                 if (!viewModel.orbotInstalled)
                     Modifier.clickable {
-                        if (ORBOT_ZAPSTORE_URL.startsWith("https://")) {
-                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ORBOT_ZAPSTORE_URL))) }
+                        if (!openOrbotInstallPage(context)) {
+                            android.widget.Toast.makeText(context, "No app could open the Orbot installation page", android.widget.Toast.LENGTH_LONG).show()
                         }
                     }
                 else Modifier,
@@ -1053,7 +1059,7 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
             Text("route via tor", style = BonyType.body.copy(color = BonyColors.Text))
             if (!viewModel.orbotInstalled) {
                 Text(
-                    "install orbot on zapstore",
+                    "install orbot from its official download page",
                     style = BonyType.meta.copy(color = BonyColors.Link),
                 )
             }
@@ -1066,7 +1072,7 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
     }
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
-    // Tor kill-switch: block direct traffic when Tor is on but Orbot died (opt-in, off by default so no UX hurt)
+    // This is a preflight check, not continuous monitoring of active requests.
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1074,8 +1080,8 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text("tor kill-switch", style = BonyType.body.copy(color = BonyColors.Text))
-            Text("when Tor is on, block uploads if Orbot disconnects", style = BonyType.meta.copy(color = BonyColors.TextMute))
+            Text("check Orbot before upload", style = BonyType.body.copy(color = BonyColors.Text))
+            Text("checks Orbot before Blossom uploads; not a network-wide kill switch and active uploads are not monitored", style = BonyType.meta.copy(color = BonyColors.TextMute))
         }
         val killSwitch by viewModel.torKillSwitch.collectAsStateWithLifecycle()
         BonyToggle(checked = killSwitch, enabled = torEnabled, onCheckedChange = viewModel::setTorKillSwitch)
@@ -1163,10 +1169,14 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
             Text("duress pin", style = BonyType.body.copy(color = BonyColors.Text))
             Text(
                 text = when {
-                    duressPinEnabled -> "entering it on the lock screen wipes all app data · tap to disable"
-                    else -> "a 4-digit pin that wipes all app data instead of unlocking · tap to set"
+                    duressPinEnabled -> "entering it attempts to clear local app data · tap to disable"
+                    else -> "a 4-digit pin that attempts to clear local app data instead of unlocking · tap to set"
                 },
                 style = BonyType.meta.copy(color = BonyColors.TextMute),
+            )
+            Text(
+                "Pending legacy mini-app browser cleanup must finish before the wipe can complete. Exported or shared copies may remain; deletion is not secure erasure.",
+                style = BonyType.caption.copy(color = BonyColors.TextMute),
             )
         }
         BonyToggle(

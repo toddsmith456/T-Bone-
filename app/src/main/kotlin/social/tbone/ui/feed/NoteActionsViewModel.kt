@@ -75,8 +75,9 @@ class NoteActionsViewModel @Inject constructor(
     }
 
     fun saveBookmark(event: Event, folderId: String, onFinished: (String) -> Unit) {
+        val epoch = bookmarksRepository.currentWipeEpoch()
         viewModelScope.launch {
-            val message = runCatching { bookmarksRepository.addBookmark(event, folderId) }
+            val message = runCatching { bookmarksRepository.addBookmark(event, folderId, epoch) }
                 .fold(
                     onSuccess = { result ->
                         when (result) {

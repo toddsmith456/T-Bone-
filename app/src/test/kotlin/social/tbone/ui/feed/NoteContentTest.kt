@@ -59,6 +59,19 @@ class NoteContentTest {
         assertTrue(parsed.text.contains("https://example.com/page"))
     }
 
+    @Test fun mediaUrlsUseSharedProseBoundariesAndPreservePunctuation() {
+        val parsed = parseNoteContent("Photo (https://cdn.example/a(b).jpg), gif https://cdn.example/a.gif?x=1! video https://cdn.example/v.mp4. audio https://cdn.example/v.m4a;")
+        assertEquals(listOf("https://cdn.example/a(b).jpg", "https://cdn.example/a.gif?x=1", "https://cdn.example/v.mp4", "https://cdn.example/v.m4a"), parsed.mediaItems.map { when (it) { is MediaItem.Image -> it.url; is MediaItem.Video -> it.url; is MediaItem.Audio -> it.url } })
+        assertEquals("Photo (), gif ! video . audio ;", parsed.text)
+    }
+
+    @Test fun mediaExtensionComesFromPathNotHostQueryOrFragment() {
+        assertTrue(parseNoteContent("https://host.jpg/page?next=picture.png").mediaItems.isEmpty())
+        assertTrue(parseNoteContent("https://host.test/page#picture.png").mediaItems.isEmpty())
+        assertEquals("https://host.test/photo.JPG?next=thing.mp4#fragment", (parseNoteContent("https://host.test/photo.JPG?next=thing.mp4#fragment").mediaItems.single() as MediaItem.Image).url)
+        assertEquals("https://host.test/photo%29.png", (parseNoteContent("<https://host.test/photo%29.png>").mediaItems.single() as MediaItem.Image).url)
+    }
+
     @Test fun inlineQuoteReferenceIsExtracted() {
         val id = "ab".repeat(32)
         val note = Nip19.hexToNote(id)

@@ -12,12 +12,18 @@ const val ORBOT_PACKAGE = "org.torproject.android"
 private const val PROXY_HOST = "127.0.0.1"
 private const val CONNECT_TIMEOUT_MS = 2_000
 
-/**
- * NOTE: Fill in the correct Zapstore deep-link URL for Orbot before shipping.
- * Expected format: something like "https://zapstore.dev/app/org.torproject.android"
- * — verify against the live Zapstore app/website.
- */
-const val ORBOT_ZAPSTORE_URL = "TODO_ZAPSTORE_URL_FOR_ORBOT"
+/** Official Orbot download page, including Guardian Project F-Droid setup. */
+const val ORBOT_DOWNLOAD_URL = "https://orbot.app/en/download/"
+
+/** Returns false when no app can handle the HTTPS installation page. */
+fun openOrbotInstallPage(context: Context): Boolean = try {
+    context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(ORBOT_DOWNLOAD_URL)))
+    true
+} catch (_: android.content.ActivityNotFoundException) {
+    false
+} catch (_: SecurityException) {
+    false
+}
 
 sealed class OrbotStatus {
     /**
@@ -28,7 +34,7 @@ sealed class OrbotStatus {
     data class InstalledAndConnected(val proxyType: Proxy.Type, val port: Int) : OrbotStatus()
     /** Orbot is installed but not running — user needs to start it. */
     object InstalledNotRunning : OrbotStatus()
-    /** Orbot is not installed — offer the Zapstore install link. */
+    /** Orbot is not installed — offer the official download page. */
     object NotInstalled : OrbotStatus()
 }
 

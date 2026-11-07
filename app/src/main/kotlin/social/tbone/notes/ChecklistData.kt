@@ -42,7 +42,9 @@ object ChecklistCodec {
 
     fun encode(data: ChecklistData): String = json.encodeToString(data)
 
-    fun decode(text: String): ChecklistData = runCatching {
+    fun decodeOrNull(text: String): ChecklistData? = runCatching {
         json.decodeFromString<ChecklistData>(text)
-    }.getOrDefault(ChecklistData())
+    }.getOrNull()
+
+    fun decode(text: String): ChecklistData = decodeOrNull(text) ?: ChecklistData()
 }

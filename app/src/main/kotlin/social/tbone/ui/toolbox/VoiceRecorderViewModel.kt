@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withLock
 import social.tbone.toolbox.VoiceAnonymizer
 import java.io.File
 import javax.inject.Inject
@@ -59,9 +60,17 @@ data class VoiceRecorderState(
 @HiltViewModel
 class VoiceRecorderViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val recordingGate: social.tbone.toolbox.VoiceRecordingGate,
+    private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
 ) : ViewModel() {
 
     private val anonymizer = VoiceAnonymizer()
+    private val recordingOwner = Any()
+    private val previewOwner = Any()
+    private val previewSerial = kotlinx.coroutines.sync.Mutex()
+    private val previewGeneration = java.util.concurrent.atomic.AtomicLong()
+    private val starting = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val disposed = java.util.concurrent.atomic.AtomicBoolean(false)
 
     private val _state = MutableStateFlow(VoiceRecorderState())
     val state: StateFlow<VoiceRecorderState> = _state.asStateFlow()
@@ -70,7 +79,7 @@ class VoiceRecorderViewModel @Inject constructor(
     private var startedAt: Long = 0L
     private var ticker: Job? = null
 
-    private var player: MediaPlayer? = null
+    @Volatile private var player: MediaPlayer? = null
     private var previewTicker: Job? = null
 
     fun setSpeed(value: Float) {
@@ -95,45 +104,63 @@ class VoiceRecorderViewModel @Inject constructor(
 
     /** Begins a new recording into [dir]. Assumes microphone permission granted. */
     fun startRecording(dir: File) {
-        if (_state.value.isRecording || _state.value.isAnonymizing) return
+        if (_state.value.isRecording || _state.value.isAnonymizing || !starting.compareAndSet(false, true)) return
+        val epoch = noteWrites.currentWipeEpoch()
+        stopPreview()
         viewModelScope.launch {
-            val q = _state.value.quality
-            val ok = withContext(Dispatchers.IO) {
-                runCatching {
-                    dir.mkdirs()
-                    val file = File(dir, "voice_${System.currentTimeMillis()}.m4a")
-                    val r = MediaRecorder(context).apply {
-                        setAudioSource(MediaRecorder.AudioSource.MIC)
-                        setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                        setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                        setAudioSamplingRate(q.sampleRate)
-                        setAudioEncodingBitRate(q.bitRate)
-                        setOutputFile(file.absolutePath)
-                        prepare()
-                        start()
-                    }
-                    recorder = r
-                    startedAt = System.currentTimeMillis()
-                    stopPreview()
-                    _state.update {
-                        it.copy(
-                            isRecording = true,
-                            isPaused = false,
-                            currentFile = file,
-                            anonymousFile = null,
-                            isAnonymous = false,
-                            isAnonymizing = false,
-                            elapsedMs = 0L,
-                            error = null,
-                        )
-                    }
-                    startTicker()
-                    true
-                }.getOrDefault(false)
-            }
-            if (!ok) {
-                _state.update { it.copy(isRecording = false, error = "could not start recording — check microphone permission") }
-            }
+            try {
+                val q = _state.value.quality
+                val ok = withContext(Dispatchers.IO) {
+                    runCatching {
+                        recordingGate.startRegistered(recordingOwner, epoch) { register ->
+                            check(!disposed.get()) { "recorder closed" }
+                            var file: File? = null
+                            var r: MediaRecorder? = null
+                            val cleanup = social.tbone.toolbox.RecordingCleanup(
+                                stop = { checkNotNull(r).stop() },
+                                release = { r?.release() },
+                                delete = { file?.let { check(!it.exists() || it.delete()) { "recording deletion failed" } } },
+                            )
+                            register { discard ->
+                                ticker?.cancel()
+                                val kept = cleanup.close(discard)
+                                recorder = null
+                                if (discard) {
+                                    _state.update { VoiceRecorderState(quality = it.quality) }
+                                } else if (!kept) {
+                                    _state.update { it.copy(isRecording = false, isPaused = false, currentFile = null,
+                                        anonymousFile = null, isAnonymous = false, isAnonymizing = false,
+                                        error = "recording could not be finalized") }
+                                } else {
+                                    _state.update { it.copy(isRecording = false, isPaused = false,
+                                        anonymousFile = null, isAnonymous = false, isAnonymizing = false) }
+                                }
+                            }
+                            check(dir.isDirectory || dir.mkdirs()) { "recording directory unavailable" }
+                            val output = File.createTempFile("voice_", ".m4a", dir)
+                            file = output
+                            val active = MediaRecorder(context)
+                            r = active
+                            active.setAudioSource(MediaRecorder.AudioSource.MIC)
+                            active.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                            active.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                            active.setAudioSamplingRate(q.sampleRate)
+                            active.setAudioEncodingBitRate(q.bitRate)
+                            active.setOutputFile(output.absolutePath)
+                            active.prepare()
+                            active.start()
+                            cleanup.markStarted()
+                            recorder = active
+                            startedAt = System.currentTimeMillis()
+                            _state.update { it.copy(isRecording = true, isPaused = false,
+                                currentFile = output, anonymousFile = null, isAnonymous = false,
+                                isAnonymizing = false, elapsedMs = 0L, error = null) }
+                            startTicker()
+                        }
+                    }.getOrDefault(false)
+                }
+                if (!ok) _state.update { it.copy(error = "could not start recording") }
+            } finally { starting.set(false) }
         }
     }
 
@@ -141,12 +168,13 @@ class VoiceRecorderViewModel @Inject constructor(
         if (!_state.value.isRecording || _state.value.isPaused) return
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) {
-                runCatching { recorder?.pause(); true }.getOrDefault(false)
+                runCatching { recordingGate.runIfOwned(recordingOwner) {
+                    recorder?.pause()
+                    ticker?.cancel()
+                    _state.update { it.copy(isPaused = true) }
+                } }.getOrDefault(false)
             }
-            if (ok) {
-                ticker?.cancel()
-                _state.update { it.copy(isPaused = true) }
-            }
+            if (!ok && _state.value.isRecording) _state.update { it.copy(error = "could not pause recording") }
         }
     }
 
@@ -154,39 +182,24 @@ class VoiceRecorderViewModel @Inject constructor(
         if (!_state.value.isRecording || !_state.value.isPaused) return
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) {
-                runCatching { recorder?.resume(); true }.getOrDefault(false)
+                runCatching { recordingGate.runIfOwned(recordingOwner) {
+                    recorder?.resume()
+                    _state.update { it.copy(isPaused = false) }
+                    startTicker()
+                } }.getOrDefault(false)
             }
-            if (ok) {
-                _state.update { it.copy(isPaused = false) }
-                startTicker()
-            }
+            if (!ok && _state.value.isRecording) _state.update { it.copy(error = "could not resume recording") }
         }
     }
 
-    /** Stops recording and finalizes the file. Share/save options appear after this. */
+    /** Stops recording and finalizes the file. */
     fun stopRecording() {
         if (!_state.value.isRecording) return
-        ticker?.cancel()
         viewModelScope.launch {
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    recorder?.apply {
-                        runCatching { stop() }
-                        release()
-                    }
-                    recorder = null
-                }
+            val ok = withContext(Dispatchers.IO) {
+                runCatching { recordingGate.stop(recordingOwner) }.isSuccess
             }
-            // Starting a new recording after this resets the anonymized state.
-            _state.update {
-                it.copy(
-                    isRecording = false,
-                    isPaused = false,
-                    anonymousFile = null,
-                    isAnonymous = false,
-                    isAnonymizing = false,
-                )
-            }
+            if (!ok) _state.update { it.copy(error = "could not stop recording") }
         }
     }
 
@@ -199,14 +212,23 @@ class VoiceRecorderViewModel @Inject constructor(
         val snapshot = _state.value
         val src = snapshot.currentFile ?: return
         if (snapshot.isRecording || snapshot.isPaused || snapshot.isAnonymizing) return
+        val epoch = noteWrites.currentWipeEpoch()
         val speed = snapshot.speed
         val pitch = snapshot.pitch
         val drive = snapshot.drive
         _state.update { it.copy(isAnonymizing = true, error = null) }
 
         viewModelScope.launch {
-            val anon = withContext(Dispatchers.IO) {
-                anonymizer.anonymize(src, speed, pitch, drive)
+            val anon = try {
+                noteWrites.runCancellableAtEpoch(epoch) {
+                    withContext(Dispatchers.IO) { anonymizer.anonymize(src, speed, pitch, drive) }
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) { null }
+            if (epoch != noteWrites.currentWipeEpoch()) {
+                _state.update { VoiceRecorderState(quality = it.quality) }
+                return@launch
             }
             if (anon != null) {
                 stopPreview()
@@ -247,80 +269,117 @@ class VoiceRecorderViewModel @Inject constructor(
     }
 
     private fun playPreview(file: File) {
+        val request = previewGeneration.incrementAndGet()
+        val epoch = noteWrites.currentWipeEpoch()
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) {
-                runCatching {
-                    val p = MediaPlayer().apply {
-                        setDataSource(file.absolutePath)
-                        setOnCompletionListener {
-                            previewTicker?.cancel()
-                            _state.update { it.copy(isPreviewPlaying = false, previewPositionMs = 0L) }
+                previewSerial.withLock {
+                    if (disposed.get() || previewGeneration.get() != request) return@withLock false
+                    try {
+                        recordingGate.stopPlayback(previewOwner)
+                        recordingGate.startPlayback(previewOwner, epoch) { register ->
+                            var instance: MediaPlayer? = null
+                            register {
+                                instance?.release()
+                                if (player === instance) player = null
+                                previewTicker?.cancel()
+                                if (previewGeneration.get() == request) {
+                                    _state.update { it.copy(isPreviewPlaying = false, previewPositionMs = 0L) }
+                                }
+                            }
+                            val p = MediaPlayer()
+                            instance = p
+                            p.setDataSource(file.absolutePath)
+                            p.setOnCompletionListener {
+                                if (previewGeneration.get() == request) {
+                                    previewTicker?.cancel()
+                                    _state.update { it.copy(isPreviewPlaying = false, previewPositionMs = 0L) }
+                                }
+                            }
+                            p.prepare()
+                            check(!disposed.get() && previewGeneration.get() == request) { "preview closed" }
+                            player = p
+                            p.start()
+                            _state.update { it.copy(isPreviewPlaying = true, previewPositionMs = 0L,
+                                previewDurationMs = p.duration.toLong().coerceAtLeast(0L)) }
                         }
-                        prepare()
-                    }
-                    player = p
-                    p.start()
-                    _state.update {
-                        it.copy(
-                            isPreviewPlaying = true,
-                            previewPositionMs = 0L,
-                            previewDurationMs = p.duration.toLong().coerceAtLeast(0L),
-                        )
-                    }
-                    true
-                }.getOrDefault(false)
+                    } catch (_: Exception) { false }
+                }
             }
             if (!ok) {
-                _state.update { it.copy(error = "could not play recording") }
+                if (!disposed.get() && previewGeneration.get() == request) _state.update { it.copy(error = "could not play recording") }
                 return@launch
             }
-            previewTicker = viewModelScope.launch {
-                while (true) {
-                    delay(250)
-                    val p = player ?: break
-                    _state.update { it.copy(previewPositionMs = p.currentPosition.toLong().coerceAtLeast(0L)) }
-                }
+            startPreviewTicker(request)
+        }
+    }
+
+    private fun startPreviewTicker(request: Long) {
+        previewTicker?.cancel()
+        previewTicker = viewModelScope.launch {
+            while (previewGeneration.get() == request) {
+                delay(250)
+                val position = withContext(Dispatchers.IO) {
+                    var value: Long? = null
+                    runCatching { recordingGate.runIfPlaybackOwned(previewOwner) {
+                        value = player?.currentPosition?.toLong()?.coerceAtLeast(0L)
+                    } }
+                    value
+                } ?: break
+                _state.update { it.copy(previewPositionMs = position) }
             }
         }
     }
 
     private fun pausePreview() {
-        runCatching { player?.pause() }
-        previewTicker?.cancel()
-        _state.update { it.copy(isPreviewPlaying = false) }
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) { runCatching {
+                recordingGate.runIfPlaybackOwned(previewOwner) { player?.pause() }
+            }.getOrDefault(false) }
+            if (ok) {
+                previewTicker?.cancel()
+                _state.update { it.copy(isPreviewPlaying = false) }
+            }
+        }
     }
 
     private fun resumePreview() {
-        runCatching { player?.start() }
-        _state.update { it.copy(isPreviewPlaying = true) }
-        previewTicker?.cancel()
-        previewTicker = viewModelScope.launch {
-            while (true) {
-                delay(250)
-                val p = player ?: break
-                _state.update { it.copy(previewPositionMs = p.currentPosition.toLong().coerceAtLeast(0L)) }
+        val request = previewGeneration.get()
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) { runCatching {
+                recordingGate.runIfPlaybackOwned(previewOwner) { player?.start() }
+            }.getOrDefault(false) }
+            if (ok && request == previewGeneration.get()) {
+                _state.update { it.copy(isPreviewPlaying = true) }
+                startPreviewTicker(request)
             }
         }
     }
 
     fun seekPreview(positionMs: Long) {
-        runCatching { player?.seekTo(positionMs.toInt()) }
-        _state.update { it.copy(previewPositionMs = positionMs) }
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) { runCatching {
+                recordingGate.runIfPlaybackOwned(previewOwner) { player?.seekTo(positionMs.coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()) }
+            }.getOrDefault(false) }
+            if (ok) _state.update { it.copy(previewPositionMs = positionMs) }
+        }
     }
 
     fun stopPreview() {
+        val request = previewGeneration.incrementAndGet()
         previewTicker?.cancel()
-        runCatching { player?.release() }
-        player = null
         _state.update { it.copy(isPreviewPlaying = false, previewPositionMs = 0L) }
+        viewModelScope.launch(Dispatchers.IO) {
+            previewSerial.withLock {
+                if (previewGeneration.get() == request) {
+                    try { recordingGate.stopPlayback(previewOwner) }
+                    catch (error: Exception) { timber.log.Timber.w(error, "Preview release failed") }
+                }
+            }
+        }
     }
 
     /** Reads the recorded file bytes (for save-to-device / sharing). */
-    suspend fun readBytes(file: File): ByteArray? =
-        withContext(Dispatchers.IO) {
-            runCatching { file.readBytes() }.getOrNull()
-        }
-
     private fun startTicker() {
         ticker?.cancel()
         ticker = viewModelScope.launch {
@@ -332,11 +391,11 @@ class VoiceRecorderViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        disposed.set(true)
         ticker?.cancel()
         previewTicker?.cancel()
-        runCatching { recorder?.release() }
-        recorder = null
-        runCatching { player?.release() }
-        player = null
+        recordingGate.stopAfterDispose(recordingOwner)
+        previewGeneration.incrementAndGet()
+        recordingGate.stopPlaybackAfterDispose(previewOwner)
     }
 }

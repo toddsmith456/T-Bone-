@@ -49,6 +49,7 @@ class EncryptedBackupRepository @Inject constructor(
     private val notesCrypto: NotesCrypto,
     private val calendarCrypto: CalendarCrypto,
     private val alarmScheduler: CalendarAlarmScheduler,
+    private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
 ) {
     private val json = Json {
         encodeDefaults = true
@@ -57,7 +58,11 @@ class EncryptedBackupRepository @Inject constructor(
     }
 
     /** Writes one consistent database snapshot via a temporary encrypted cache file. */
-    suspend fun exportTo(uri: Uri, passphrase: String) {
+    suspend fun exportTo(uri: Uri, passphrase: String) = noteWrites.runCancellable {
+        exportToInternal(uri, passphrase)
+    }
+
+    private suspend fun exportToInternal(uri: Uri, passphrase: String) {
         require(passphrase.isNotBlank()) { "Enter a backup passphrase." }
         val temporary = File(context.cacheDir, "${UUID.randomUUID()}.tbbackup.tmp")
         try {
@@ -116,7 +121,11 @@ class EncryptedBackupRepository @Inject constructor(
      * transaction commits. Any wrong passphrase, truncation, bad tag, invalid
      * relation or storage error rolls the transaction back to the old vault.
      */
-    suspend fun importFrom(uri: Uri, passphrase: String) {
+    suspend fun importFrom(uri: Uri, passphrase: String) = noteWrites.runCancellable {
+        importFromInternal(uri, passphrase)
+    }
+
+    private suspend fun importFromInternal(uri: Uri, passphrase: String) {
         require(passphrase.isNotBlank()) { "Enter the backup passphrase." }
         val source = context.contentResolver.openInputStream(uri)
             ?: throw IOException("Could not open the selected backup file.")

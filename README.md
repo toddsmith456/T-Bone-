@@ -13,7 +13,6 @@ A privacy-focused Nostr client for Android. No Google Play Services, analytics, 
 - **Wallet hand-offs:** Lightning zaps (NIP-57) request and validate invoices before opening an external Lightning wallet; Monero xaps use NIP-A3 kind-10133 payment targets and hand off to an external Monero wallet. T-Bone never marks a wallet hand-off as a confirmed payment.
 - **Privacy and safety:** Optional Tor routing through Orbot; local-only follow and block lists; content filters and screen-time limits; app lock, screenshot blocking, and a duress PIN.
 - **Private toolbox:** Notes, checklists, folders, attachments, and calendar events encrypted on-device with AES-256-GCM and Android Keystore. Also includes geohash chat and a voice recorder with voice anonymization.
-- **webxdc mini apps:** A single-player [webxdc](https://webxdc.org/) player in the toolbox. Import `.xdc` files, browse the official webxdc.org store, or discover apps over Nostr (kind 1063, `#m application/x-webxdc`) from the T-Bone npub or every author. Saved apps run offline in a sandboxed WebView with no network access, and any saved app can be promoted to a toolbox tool with one of 20 icons. See [docs/WEBXDC.md](docs/WEBXDC.md).
 - **Appearance:** Youniversal offers light, dark, cream, and automatic themes, accent and Material You colors, rounded-by-default adjustable corners, app-wide text scaling, and two fonts (standard sans-serif by default or Nunito Sans).
 
 See the [NIP compatibility guide](docs/nip-compatibility.md) for protocol details.

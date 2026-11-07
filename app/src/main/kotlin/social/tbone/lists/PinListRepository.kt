@@ -47,20 +47,17 @@ class PinListRepository @Inject constructor(
         val signer = signerFactory.forActiveAccount() ?: return@withLock "No signer available"
         if (signer.pubkey != account.pubkey) return@withLock "Account changed; try again"
         val relays = account.effectiveRelays().map(RelayPool::normalize).toSet()
+        if (relays.isEmpty()) return@withLock "No configured relays; pin list not changed"
         val result = fetcher.fetchLatest(account.pubkey, EventKind.PIN_LIST, relays.toList())
-        if (!result.reachedRelays) return@withLock "Couldn't read your pin list from relays; nothing changed"
-        if (accounts.activeAccount.first()?.pubkey != account.pubkey) return@withLock "Account changed; try again"
+        if (!result.allRelaysAnswered) return@withLock "Couldn't read your pin list from every configured relay; nothing changed"
+        if (!sameListWriteContext(account, accounts.activeAccount.first())) return@withLock "Account or relays changed; try again"
         val remote = result.event
         val cached = _lists.value[account.pubkey]
         val old = listOfNotNull(remote, cached).maxWithOrNull(
             compareBy<Event> { it.createdAt }.thenByDescending { it.id }
         )
         val pinned = target.id in ids(old)
-        val tags = old?.tags.orEmpty().filterNot { tag ->
-            val parsed = social.tbone.nostr.Tag.fromJsonArray(tag)
-            parsed.name == "e" && parsed.value() == target.id
-        }.toMutableList()
-        if (!pinned) tags.add(buildJsonArray { add("e"); add(target.id) })
+        val tags = pinTagsForToggle(old, target.id)
         val now = System.currentTimeMillis() / 1000
         val createdAt = maxOf(now, (old?.createdAt ?: 0L) + 1)
         if (createdAt > now + 60) return@withLock "Existing pin list has a future timestamp; nothing changed"
@@ -68,6 +65,7 @@ class PinListRepository @Inject constructor(
             kind = EventKind.PIN_LIST, tags = tags, content = old?.content.orEmpty())).getOrElse {
             return@withLock "Could not sign pin list"
         }
+        if (!sameListWriteContext(account, accounts.activeAccount.first())) return@withLock "Account or relays changed; nothing published"
         if (pool.publishTo(signed, relays) == 0) return@withLock "No connected relays; pin list not sent"
         consume(signed)
         if (pinned) "Unpin sent to relays" else "Pin sent to relays"
@@ -78,4 +76,16 @@ class PinListRepository @Inject constructor(
 internal fun pinEventIds(event: Event?): List<String> = event?.parsedTags.orEmpty()
     .filter { it.name == "e" }.mapNotNull { it.value() }
     .filter { it.length == 64 && it.all { c -> c in '0'..'9' || c in 'a'..'f' } }
-    .distinct().take(256)
+    .distinct()
+
+/** Modify only the target event tag, retaining order, duplicate unrelated tags,
+ * relay hints, unknown extensions and malformed tags verbatim. */
+internal fun pinTagsForToggle(event: Event?, targetId: String): List<kotlinx.serialization.json.JsonArray> {
+    val pinned = targetId in pinEventIds(event)
+    val tags = event?.tags.orEmpty().filterNot { raw ->
+        val tag = social.tbone.nostr.Tag.fromJsonArray(raw)
+        tag.name == "e" && tag.value() == targetId
+    }.toMutableList()
+    if (!pinned) tags.add(buildJsonArray { add("e"); add(targetId) })
+    return tags
+}

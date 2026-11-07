@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -149,6 +150,7 @@ class ThreadViewModel @Inject constructor(
     private var collectJob: Job? = null
     private val activeSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val quoteSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val metadataLeases = MetadataLeases()
 
     /** Every event known to be part of this thread, keyed by id. */
     private val threadEvents = ConcurrentHashMap<String, Event>()
@@ -182,7 +184,7 @@ class ThreadViewModel @Inject constructor(
         // Two coroutines on purpose: the message collector must be running while
         // load() is waiting for relays, otherwise the EndOfStoredEvents that
         // releases each wait could only arrive after loading had finished.
-        collectJob = viewModelScope.launch(Dispatchers.Default) {
+        collectJob = viewModelScope.launch(Dispatchers.Default, start = CoroutineStart.UNDISPATCHED) {
             pool.messages.collect { handlePoolMessage(it) }
         }
         viewModelScope.launch(Dispatchers.Default) { load() }
@@ -371,20 +373,25 @@ class ThreadViewModel @Inject constructor(
 
     private suspend fun fetchOnce(id: String, relays: Set<String>?, timeoutMs: Long = EOSE_TIMEOUT_MS): Event? {
         fetchedById[id]?.let { return it }
-        val subId = pool.subscribeTo(listOf(Filter(ids = listOf(id))), label = "thread-fetch", relays = relays)
+        val subId = "thread-fetch-" + java.util.UUID.randomUUID().toString()
         fetchSubIds += subId
         activeSubIds += subId
-        withTimeoutOrNull(timeoutMs) {
-            merge(flowOf(Unit), eoseSignals).first {
-                fetchedById.containsKey(id) ||
-                    (relays == null && eoseCount(subId) >= expectedEose()) ||
-                    (relays != null && eoseCount(subId) >= relays.size)
+        try {
+            pool.subscribeTo(listOf(Filter(ids = listOf(id))), id = subId, label = "thread-fetch", relays = relays)
+            withTimeoutOrNull(timeoutMs) {
+                merge(flowOf(Unit), eoseSignals).first {
+                    fetchedById.containsKey(id) ||
+                        (relays == null && eoseCount(subId) >= expectedEose()) ||
+                        (relays != null && eoseCount(subId) >= relays.size)
+                }
             }
+            return fetchedById[id] ?: eventRepository.getById(id)
+        } finally {
+            fetchSubIds -= subId
+            activeSubIds -= subId
+            eoseRelays.remove(subId)
+            pool.unsubscribe(subId)
         }
-        fetchSubIds -= subId
-        activeSubIds -= subId
-        pool.unsubscribe(subId)
-        return fetchedById[id] ?: eventRepository.getById(id)
     }
 
     /**
@@ -396,7 +403,9 @@ class ThreadViewModel @Inject constructor(
         repliesRequested += chainIds
         repliesRequested += rootId
         val ids = (chainIds + rootId).distinct()
-        val repliesSubId = pool.subscribe(
+        val repliesSubId = "thread-replies-" + java.util.UUID.randomUUID().toString()
+        activeSubIds += repliesSubId
+        pool.subscribe(
             listOf(
                 // Plain replies and poll replies hang off a lowercase #e tag...
                 Filter(
@@ -418,9 +427,9 @@ class ThreadViewModel @Inject constructor(
                     limit = THREAD_REPLY_LIMIT,
                 ),
             ),
+            id = repliesSubId,
             label = "thread-replies",
         )
-        activeSubIds += repliesSubId
         viewModelScope.launch {
             awaitEose(repliesSubId)
             Timber.d("thread: replies EOSE ($repliesSubId)")
@@ -535,20 +544,20 @@ class ThreadViewModel @Inject constructor(
             is RelayMessage.EndOfStoredEvents -> {
                 // One EOSE per relay: record who answered, then release whichever
                 // awaitEose() is waiting on this subscription.
+                if (msg.subscriptionId !in activeSubIds && msg.subscriptionId !in quoteSubIds) return
                 eoseRelays
                     .getOrPut(msg.subscriptionId) { ConcurrentHashMap.newKeySet() }
                     .add(poolMsg.relayUrl)
                 eoseSignals.tryEmit(msg.subscriptionId)
 
+                if (metadataLeases.contains(msg.subscriptionId) && eoseCount(msg.subscriptionId) >= expectedEose()) {
+                    closeMetadata(msg.subscriptionId)
+                }
                 // Close the one-shot quote lookups once every relay has answered.
                 if (msg.subscriptionId in quoteSubIds &&
                     eoseCount(msg.subscriptionId) >= expectedEose()
                 ) {
-                    quoteSubIds -= msg.subscriptionId
-                    pool.unsubscribe(msg.subscriptionId)
-                    // Every relay has answered: whatever is still missing is
-                    // unavailable rather than still loading.
-                    refreshUnresolvedQuotes()
+                    closeQuote(msg.subscriptionId)
                 }
             }
 
@@ -567,8 +576,7 @@ class ThreadViewModel @Inject constructor(
     private fun fetchProfiles(events: List<Event>) {
         val pubkeys = events.map { it.pubkey }.distinct().filter { it.isNotBlank() }
         if (pubkeys.isEmpty()) return
-        pool.subscribe(listOf(Filter(authors = pubkeys, kinds = listOf(EventKind.METADATA))))
-            .also { activeSubIds += it }
+        subscribeMetadata(pubkeys)
     }
 
     private fun fetchPollsFor(events: List<Event>) {
@@ -627,18 +635,63 @@ class ThreadViewModel @Inject constructor(
             if (stillMissing.isEmpty()) return@launch
             val providers = stillMissing.chunked(MAX_FILTER_BATCH)
             providers.forEach { batch ->
-                val subId = pool.subscribe(listOf(Filter(ids = batch)))
+                val subId = "thread-quote-" + java.util.UUID.randomUUID().toString()
                 quoteSubIds += subId
                 activeSubIds += subId
+                try {
+                    pool.subscribe(listOf(Filter(ids = batch)), id = subId, label = "thread-quote")
+                } catch (error: Exception) {
+                    closeQuote(subId)
+                    throw error
+                }
+                viewModelScope.launch {
+                    kotlinx.coroutines.delay(15_000)
+                    closeQuote(subId)
+                }
             }
         }
+    }
+
+    private fun closeQuote(id: String) {
+        if (!quoteSubIds.remove(id)) return
+        activeSubIds.remove(id)
+        eoseRelays.remove(id)
+        pool.unsubscribe(id)
+        // A timeout or all-relay EOSE ends loading for unresolved quotes.
+        refreshUnresolvedQuotes()
     }
 
     private fun fetchMetadataForAuthors(pubkeys: List<String>) {
         val unknown = pubkeys.distinct().filter { profileRepository.profiles.value[it] == null }
         if (unknown.isEmpty()) return
-        pool.subscribe(listOf(Filter(authors = unknown, kinds = listOf(EventKind.METADATA))))
-            .also { activeSubIds += it }
+        subscribeMetadata(unknown)
+    }
+
+    private fun subscribeMetadata(pubkeys: List<String>) {
+        pubkeys.distinct().chunked(MAX_FILTER_BATCH).forEach { batch ->
+            val id = "thread-metadata-" + java.util.UUID.randomUUID().toString()
+            val authors = metadataLeases.claim(id, batch)
+            if (authors.isEmpty()) return@forEach
+            activeSubIds += id // register before REQ so fast EOSE is not missed
+            try {
+                pool.subscribe(listOf(Filter(authors = authors, kinds = listOf(EventKind.METADATA))), id = id, label = "thread-metadata")
+            } catch (error: Exception) {
+                closeMetadata(id)
+                throw error
+            }
+            val timeout = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+                kotlinx.coroutines.delay(15_000)
+                closeMetadata(id)
+            }
+            if (metadataLeases.attachTimeout(id, timeout)) timeout.start()
+        }
+    }
+
+    private fun closeMetadata(id: String) {
+        if (!metadataLeases.release(id)) return
+        activeSubIds.remove(id)
+        eoseRelays.remove(id)
+        pool.unsubscribe(id)
     }
 
     /**

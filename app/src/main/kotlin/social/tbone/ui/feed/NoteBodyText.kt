@@ -5,7 +5,10 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -13,10 +16,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
@@ -28,6 +38,8 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.TextUnitType
 import social.tbone.nostr.Event
 import social.tbone.nostr.Nip19
 import social.tbone.nostr.ProfileContent
@@ -36,7 +48,6 @@ import social.tbone.settings.LocalContentFilter
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 
-private val HTTP_REGEX = Regex("""https?://[^\s<>"')\]]+""")
 private val NPUB_REGEX = Regex("""nostr:(npub1|nprofile1)[a-z0-9]+""")
 private val NOTE_REGEX = Regex("""nostr:(note1|nevent1|naddr1)[a-z0-9]+""")
 // A #tag: must not be preceded by a word character so URLs (…/#frag) and
@@ -55,7 +66,7 @@ private sealed interface BodySeg {
 private data class SegRange(val start: Int, val end: Int, val kind: Int, val value: String)
 
 /** A clickable region inside the annotated note text. */
-private data class SegAction(val start: Int, val end: Int, val copyText: String? = null, val action: (() -> Unit)?)
+private data class SegAction(val start: Int, val end: Int, val copyText: String? = null, val accessibilityLabel: String? = null, val action: (() -> Unit)?)
 
 /** The styled note text plus the click regions that go with it. */
 private data class SegmentedBody(
@@ -145,13 +156,13 @@ fun NoteBodyText(
     val context = LocalContext.current
     val filter = LocalContentFilter.current
     var expanded by remember(content) { mutableStateOf(false) }
-    // True when the layout actually cut the note off — the exact same
-    // condition that decides not to show the full note.
-    var truncated by remember(content) { mutableStateOf(false) }
+    // Each text run owns its current overflow state; later layout changes can
+    // therefore clear it again without erasing overflow from other runs.
+    var contentHeightPx by remember(content, style, maxLines) { mutableIntStateOf(0) }
     val effectiveMax = if (expandable && !expanded) maxLines else Int.MAX_VALUE
 
     val bleeped = remember(content, filter.bleepWords) { ContentFilter.bleep(content, filter.bleepWords) }
-    val segmented = remember(bleeped, profiles) {
+    val segmented = remember(bleeped, profiles, onThreadClick, onProfileClick, onHashtagClick, context) {
         val segments = segment(bleeped, profiles)
         buildSegmentedAnnotated(
             segs = segments,
@@ -164,12 +175,29 @@ fun NoteBodyText(
     }
 
     val blocks = remember(segmented) { toBlocks(segmented.segments) }
+    val runOverflow = remember(blocks, style, maxLines) { mutableStateMapOf<Int, Boolean>() }
+    val density = LocalDensity.current
+    val lineHeight = when {
+        style.lineHeight.type == TextUnitType.Sp -> style.lineHeight
+        style.fontSize.type == TextUnitType.Sp -> style.fontSize * 1.4f
+        else -> 22.sp
+    }
+    val collapsed = expandable && !expanded && maxLines != Int.MAX_VALUE
+    val maxHeight = if (collapsed) with(density) { (lineHeight * maxLines.coerceAtLeast(1).toFloat()).toDp() } else null
+    val maxHeightPx = maxHeight?.let { with(density) { it.toPx() } }
 
     Column(modifier = modifier.fillMaxWidth()) {
-        blocks.forEach { block ->
+        Box((if (maxHeight != null) Modifier.heightIn(max = maxHeight).clipToBounds() else Modifier)
+            .fillMaxWidth().testTag("note-body-content")) {
+          // Measure the complete body, including inline quote cards, before
+          // clipping it to the collapsed budget. A per-run maxLines alone lets
+          // several runs each consume the entire budget.
+          Column(Modifier.wrapContentHeight(align = Alignment.Top, unbounded = true)
+              .onSizeChanged { contentHeightPx = it.height }) {
+        blocks.forEachIndexed { index, block ->
             when (block) {
                 is BodyBlock.Text -> {
-                    val run = remember(block, profiles) {
+                    val run = remember(block, profiles, onThreadClick, onProfileClick, onHashtagClick, context) {
                         buildSegmentedAnnotated(
                             segs = block.segs,
                             profiles = profiles,
@@ -214,14 +242,19 @@ fun NoteBodyText(
                             overflow = TextOverflow.Ellipsis,
                             onTextLayout = { result ->
                                 layout = result
-                                if (result.hasVisualOverflow || result.lineCount > effectiveMax) truncated = true
+                                runOverflow[index] = result.hasVisualOverflow || result.lineCount > effectiveMax
                             },
                             modifier = Modifier.semantics {
-                                customActions = run.actions.filter { it.copyText != null }.flatMap { action ->
-                                    listOf(
-                                        CustomAccessibilityAction("Open ${action.copyText}") { action.action?.invoke(); true },
-                                        CustomAccessibilityAction("Copy ${action.copyText}") { copyNoteLink(context, action.copyText!!); true },
-                                    )
+                                customActions = run.actions.flatMap { action ->
+                                    val label = action.accessibilityLabel ?: action.copyText
+                                    if (label == null) emptyList() else buildList {
+                                        action.action?.let { open ->
+                                            add(CustomAccessibilityAction("Open $label") { open(); true })
+                                        }
+                                        action.copyText?.let { text ->
+                                            add(CustomAccessibilityAction("Copy $text") { copyNoteLink(context, text); true })
+                                        }
+                                    }
                                 }
                             }.pointerInput(run, onOpenNote, onLongPressText) {
                                 detectTapGestures(
@@ -279,7 +312,9 @@ fun NoteBodyText(
                 }
             }
         }
-        if (expandable && !expanded && truncated) {
+          }
+        }
+        if (collapsed && ((maxHeightPx != null && contentHeightPx > maxHeightPx) || runOverflow.values.any { it })) {
             Text(
                 text = "show more →",
                 style = BonyType.tag.copy(color = BonyColors.Accent),
@@ -322,14 +357,15 @@ private fun buildSegmentedAnnotated(
                     val start = length
                     append(seg.label)
                     addStyle(SpanStyle(color = BonyColors.Accent), start, length)
-                    actions.add(SegAction(start, length, copyText = seg.raw) { onProfileClick?.invoke(seg.hex) })
+                    actions.add(SegAction(start, length, copyText = seg.raw,
+                        action = onProfileClick?.let { open -> { open(seg.hex) } }))
                 }
 
                 is BodySeg.NoteRef -> {
                     val start = length
                     append(seg.label)
                     addStyle(SpanStyle(color = BonyColors.Link, textDecoration = TextDecoration.Underline), start, length)
-                    actions.add(SegAction(start, length) { onThreadClick?.invoke(seg.eventId) })
+                    actions.add(SegAction(start, length, action = onThreadClick?.let { open -> { open(seg.eventId) } }))
                 }
 
                 is BodySeg.AddressRef -> append(seg.raw)
@@ -338,7 +374,8 @@ private fun buildSegmentedAnnotated(
                     val start = length
                     append("#${seg.tag}")
                     addStyle(SpanStyle(color = BonyColors.Accent), start, length)
-                    actions.add(SegAction(start, length) { onHashtagClick?.invoke(seg.tag) })
+                    actions.add(SegAction(start, length, accessibilityLabel = "hashtag ${seg.tag}",
+                        action = onHashtagClick?.let { open -> { open(seg.tag) } }))
                 }
             }
         }
@@ -348,7 +385,9 @@ private fun buildSegmentedAnnotated(
 
 private fun segment(text: String, profiles: Map<String, ProfileContent>): List<BodySeg> {
     val segs = mutableListOf<SegRange>()
-    HTTP_REGEX.findAll(text).forEach { m -> segs.add(SegRange(m.range.first, m.range.last + 1, 1, m.value)) }
+    social.tbone.util.httpUrlTokens(text).forEach { token ->
+        segs.add(SegRange(token.start, token.endExclusive, 1, token.url))
+    }
     NPUB_REGEX.findAll(text).forEach { m -> segs.add(SegRange(m.range.first, m.range.last + 1, 2, m.value)) }
     NOTE_REGEX.findAll(text).forEach { m -> segs.add(SegRange(m.range.first, m.range.last + 1, 3, m.value)) }
     HASHTAG_REGEX.findAll(text).forEach { m ->

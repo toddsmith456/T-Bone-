@@ -105,11 +105,9 @@ jobs:
           body: |
             Public beta for testing. Package: `social.tbone.fork.beta` (installed alongside the public release).
 
-            - Choose bundled official color combinations or the supplied alternative launcher icon. Uploads apply to the in-app loading display, not the Android launcher or system splash.
-            - New installations can request unrestricted background battery usage; approval is optional and may increase battery use.
-            - Improves inline link hit testing and synchronizes PIN locking on exit from the notepad disguise.
-
-            Launcher refresh behavior varies by device. Please report icon, link, battery-prompt and disguise/PIN issues. This is not a full physical-device security audit.
+            - Removes Webxdc mini apps and migrates app-owned files and settings. Browser data cleanup may require an updated Android System WebView; the app reports and retries incomplete cleanup. Previously exported or shared copies remain outside the app.
+            - Improves account recovery, note saves, list handling, links, accessibility and media lifecycle; clarifies metadata and Tor upload limitations.
+            - Duress wiping is not forensic erasure, and Tor settings do not establish a universal network kill switch. Physical-device upgrade, TalkBack, process-death and live-network checks remain outstanding.
           files: |
             beta-artifact/*.apk
             beta-artifact/SHA256SUMS.txt

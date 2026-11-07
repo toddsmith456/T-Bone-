@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.update
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
@@ -82,6 +83,7 @@ class ProfileViewModel @Inject constructor(
     private val offlineLists: OfflineListRepository,
     private val muteRepository: MuteListRepository,
     private val listFetcher: RelayListFetcher,
+    private val followMutations: social.tbone.lists.FollowMutationCoordinator,
     private val pins: social.tbone.lists.PinListRepository,
 ) : ViewModel() {
 
@@ -506,6 +508,13 @@ class ProfileViewModel @Inject constructor(
 
     private fun toggleFollow(add: Boolean) {
         viewModelScope.launch {
+          followMutations.mutex.withLock {
+            val mutationJob = checkNotNull(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job])
+            if (!followMutations.begin(mutationJob)) {
+                _messages.tryEmit("Follow list unavailable during a wipe")
+                return@launch
+            }
+            try {
             _isFollowLoading.update { true }
             try {
                 val account = accountRepository.activeAccount.first() ?: return@launch
@@ -523,9 +532,25 @@ class ProfileViewModel @Inject constructor(
 
                 // Base the new list on the NEWEST list on the relays rather than the cached
                 // mirror, which can be stale (e.g. after a long stretch in offline mode).
-                val latest = runCatching {
-                    listFetcher.fetchLatest(account.pubkey, EventKind.FOLLOW_LIST, account.relays)
-                }.getOrNull()?.event
+                if (signer.pubkey != account.pubkey || account.effectiveRelays().isEmpty()) {
+                    _messages.tryEmit("No signer or configured relays — follow list not changed")
+                    return@launch
+                }
+                val fetched = listFetcher.fetchLatest(account.pubkey, EventKind.FOLLOW_LIST, account.effectiveRelays())
+                if (!fetched.allRelaysAnswered) {
+                    _messages.tryEmit("Couldn't read the follow list from every relay — nothing changed")
+                    return@launch
+                }
+                val latest = followMutations.newest(account.pubkey, fetched.event)
+                if ((latest?.createdAt ?: 0L) > System.currentTimeMillis() / 1000 + 59) {
+                    _messages.tryEmit("Existing follow list has a future timestamp — nothing changed")
+                    return@launch
+                }
+                if (!social.tbone.lists.sameListWriteContext(account, accountRepository.activeAccount.first()) ||
+                    offlineLists.snapshot(ListType.FOLLOWS, account.pubkey).enabled) {
+                    _messages.tryEmit("Account or list mode changed — try again")
+                    return@launch
+                }
 
                 val existingEntries: List<FollowEntry> = latest?.let { ev ->
                     OfflineListRepository.entriesFromEvent(ev).map { FollowEntry(it.pubkey, it.relay, it.petname) }
@@ -538,29 +563,29 @@ class ProfileViewModel @Inject constructor(
                 else
                     existingEntries.filter { it.pubkey != pubkey }
 
-                // Keep whatever else the existing kind-3 carried (content, non-p tags).
-                val keptTags = latest?.tags?.filter { (it.firstOrNull() as? JsonPrimitive)?.content != "p" }.orEmpty()
-                val pTags = newEntries.map { entry ->
-                    buildJsonArray {
-                        add(JsonPrimitive("p"))
-                        add(JsonPrimitive(entry.pubkey))
-                        // NIP-02 positional fields: a petname needs the relay slot filled.
-                        if (entry.relay.isNotEmpty() || entry.petname.isNotEmpty()) add(JsonPrimitive(entry.relay))
-                        if (entry.petname.isNotEmpty()) add(JsonPrimitive(entry.petname))
-                    }
-                }
+                val tags = social.tbone.lists.followTagsForToggle(latest, existingEntries, pubkey, add)
                 val unsigned = UnsignedEvent(
                     pubkey = signer.pubkey,
                     // Replaceable event: must be strictly newer than the one it replaces.
                     createdAt = maxOf(System.currentTimeMillis() / 1000, (latest?.createdAt ?: 0L) + 1),
                     kind = EventKind.FOLLOW_LIST,
                     content = latest?.content ?: "",
-                    tags = pTags + keptTags,
+                    tags = tags,
                 )
 
                 signer.signEvent(unsigned)
                     .onSuccess { event ->
-                        pool.publish(event)
+                        if (!social.tbone.lists.sameListWriteContext(account, accountRepository.activeAccount.first()) ||
+                            offlineLists.snapshot(ListType.FOLLOWS, account.pubkey).enabled) {
+                            _messages.tryEmit("Account or list mode changed — nothing published")
+                            return@onSuccess
+                        }
+                        val targets = account.effectiveRelays().map(RelayPool::normalize).toSet()
+                        if (pool.publishTo(event, targets) == 0) {
+                            _messages.tryEmit("No connected relays — nothing published")
+                            return@onSuccess
+                        }
+                        followMutations.published(account.pubkey, event)
                         accountRepository.updateAccount(account.pubkey) {
                             it.copy(
                                 follows = newEntries.map { e -> e.pubkey },
@@ -572,6 +597,8 @@ class ProfileViewModel @Inject constructor(
             } finally {
                 _isFollowLoading.update { false }
             }
+            } finally { followMutations.finish(mutationJob) }
+          }
         }
     }
 

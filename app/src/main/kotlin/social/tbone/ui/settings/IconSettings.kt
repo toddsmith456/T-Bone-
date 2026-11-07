@@ -9,6 +9,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -31,6 +34,7 @@ private val bgNames = listOf("Black", "Cream", "Plum", "Blue")
 private val logoNames = listOf("White", "Gold", "Mint", "Dark")
 
 /** The saved choice is separate from notepad disguise; leaving disguise restores it. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun IconSettings() {
     val context = LocalContext.current
@@ -54,16 +58,18 @@ internal fun IconSettings() {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("CUSTOMIZE ICON", style = BonyType.meta, color = BonyColors.Accent)
         Text("Android supports bundled launcher icons. Uploaded images are for the in-app loading screen only; the system splash may differ.", style = BonyType.body, color = BonyColors.TextDim)
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        FlowRow(modifier = Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             listOf("official" to "Official", "colors" to "Colors", "alternative" to "Alternative").forEach { (id, title) ->
-                Text(if (mode == id) "● $title" else "○ $title", modifier = Modifier.clickable { mode = id }.padding(vertical = 8.dp), color = BonyColors.Text)
+                Text(if (mode == id) "● $title" else "○ $title", modifier = Modifier
+                    .sizeIn(minWidth = 48.dp, minHeight = 48.dp).selectable(selected = mode == id, role = Role.RadioButton) { mode = id }
+                    .padding(vertical = 12.dp), color = BonyColors.Text)
             }
         }
         if (mode == "colors") {
             Text("Background", style = BonyType.body, color = BonyColors.TextDim)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { bgNames.forEachIndexed { i, name -> Text(if (bg == i) "● $name" else "○ $name", Modifier.clickable { bg = i }.padding(vertical = 6.dp), color = BonyColors.Text) } }
+            FlowRow(modifier = Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { bgNames.forEachIndexed { i, name -> Text(if (bg == i) "● $name" else "○ $name", Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).selectable(selected = bg == i, role = Role.RadioButton) { bg = i }.padding(vertical = 12.dp), color = BonyColors.Text) } }
             Text("Logo", style = BonyType.body, color = BonyColors.TextDim)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { logoNames.forEachIndexed { i, name -> Text(if (fg == i) "● $name" else "○ $name", Modifier.clickable { fg = i }.padding(vertical = 6.dp), color = BonyColors.Text) } }
+            FlowRow(modifier = Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { logoNames.forEachIndexed { i, name -> Text(if (fg == i) "● $name" else "○ $name", Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).selectable(selected = fg == i, role = Role.RadioButton) { fg = i }.padding(vertical = 12.dp), color = BonyColors.Text) } }
         }
         val res = when (mode) {
             "alternative" -> social.tbone.R.drawable.icon_alternative_steak
@@ -85,10 +91,10 @@ internal fun IconSettings() {
 }
 
 /** Decode at bounded dimensions without keeping a permission to a foreign URI. */
-private fun saveSplashImage(context: Context, uri: Uri) {
+internal fun saveSplashImage(context: Context, uri: Uri) {
     val resolver = context.contentResolver
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: error("No image")
+    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds); Unit } ?: error("No image")
     require(bounds.outWidth in 1..100000 && bounds.outHeight in 1..100000)
     var sample = 1
     while (bounds.outWidth / sample > 1024 || bounds.outHeight / sample > 1024) sample *= 2

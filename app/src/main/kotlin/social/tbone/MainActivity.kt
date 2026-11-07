@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
@@ -27,8 +28,7 @@ import social.tbone.settings.AppSettings
 import social.tbone.settings.ContentFilterProvider
 import social.tbone.updates.LocalUpdateAvailable
 import social.tbone.updates.UpdateManager
-import social.tbone.notifications.EXTRA_EVENT_ID
-import social.tbone.nostr.Nip19
+import social.tbone.notifications.dispatchNavigationIntent
 import social.tbone.ui.BonyNavHost
 import social.tbone.ui.SigningOverlay
 import social.tbone.ui.theme.ThemeHost
@@ -45,6 +45,7 @@ import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : FragmentActivity() {
+    private companion object { const val STATE_LINK_PROCESS = "tbone.link.process" }
 
     @Inject lateinit var amberBridge: AmberSignerBridge
     @Inject lateinit var relayAuthManager: RelayAuthManager
@@ -55,6 +56,8 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var stealthManager: social.tbone.stealth.StealthManager
     @Inject lateinit var appSettings: AppSettings
     @Inject lateinit var updateManager: UpdateManager
+    @Inject lateinit var noteWrites: social.tbone.notes.NoteWriteCoordinator
+    @Inject lateinit var dataWiper: social.tbone.security.DataWiper
     @Inject lateinit var reactionsRepository: social.tbone.reactions.ReactionsRepository
 
     private val amberLauncher = registerForActivityResult(
@@ -96,6 +99,12 @@ class MainActivity : FragmentActivity() {
                     }
                     .show()
             }
+        } else if (external) {
+            // External handlers can disappear between intent resolution and
+            // launch, including after the asynchronous settings-load wait.
+            runCatching { launchExternalIntent(intent, options) }.onFailure {
+                android.widget.Toast.makeText(this, "No app could open this link", android.widget.Toast.LENGTH_SHORT).show()
+            }
         } else {
             launchExternalIntent(intent, options)
         }
@@ -117,6 +126,11 @@ class MainActivity : FragmentActivity() {
             if (!appSettings.notepadFrontEnabled.value) maybeAskBatteryExemption()
         }
 
+        // Until saved screenshot preferences are loaded, assume protection is
+        // enabled. Otherwise a returning protected session could briefly expose
+        // its first frame or task preview while the default false values load.
+        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+
         // Opaque window background so not even the very first frame (or a
         // returning process) can flash a previous screen behind the lock.
         window.decorView.setBackgroundColor(android.graphics.Color.parseColor("#0A0A0A"))
@@ -130,13 +144,16 @@ class MainActivity : FragmentActivity() {
 
         relayAuthManager.start(lifecycleScope)
 
-        handleIntent(intent)
+        if (social.tbone.notifications.shouldHandleLaunchIntent(
+                savedInstanceState?.getString(STATE_LINK_PROCESS), deepLinkHandler.processToken
+            )) handleIntent(intent)
 
         // Screenshot blocker: FLAG_SECURE whenever the app-wide toggle OR the
         // toolbox toggle is on. Managed here (the window owner) so it can never
         // be cleared mid-navigation between toolbox screens and reliably covers
         // every screen inside the toolbox.
         lifecycleScope.launch {
+            appSettings.initialized.first { it }
             combine(
                 appSettings.screenshotBlockEnabled,
                 appSettings.toolboxScreenshotBlockEnabled,
@@ -154,6 +171,23 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             ThemeHost {
+                val pendingWipe by noteWrites.pendingAppWipe.collectAsStateWithLifecycle()
+                val invalidWipeState by noteWrites.invalidWipeState.collectAsStateWithLifecycle()
+                if (pendingWipe) {
+                    Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xFF0A0A0A)),
+                        contentAlignment = androidx.compose.ui.Alignment.Center) {
+                        if (invalidWipeState) {
+                            androidx.compose.material3.Text(
+                                "Unable to unlock. Please contact support.",
+                                color = androidx.compose.ui.graphics.Color.White,
+                            )
+                        } else {
+                            androidx.compose.material3.Button(onClick = { dataWiper.wipeAndRestart() }) {
+                                androidx.compose.material3.Text("Try again")
+                            }
+                        }
+                    }
+                } else {
                 val brightness by social.tbone.ui.media.ScreenBrightness.level
                     .collectAsStateWithLifecycle()
                 val screenTimeLocked by screenTimeManager.locked.collectAsStateWithLifecycle()
@@ -181,17 +215,19 @@ class MainActivity : FragmentActivity() {
                             reactWith = { event, emoji -> reactionsRepository.react(event, emoji) },
                         )
                     }
-                    androidx.compose.runtime.CompositionLocalProvider(
-                        social.tbone.ui.reactions.LocalReactionConfig provides reactionConfig,
-                        LocalUpdateAvailable provides updateState.updateAvailable,
-                    ) {
-                        ContentFilterProvider {
-                            BonyNavHost()
+                    social.tbone.ui.StartupGate(starting = starting, cover = {
+                        Box(Modifier.fillMaxSize().clickable(indication = null,
+                            interactionSource = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() }) {}) {
+                            if (showStartupIcon) social.tbone.ui.settings.StartupAppearance(this@MainActivity)
+                            else Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xFF0A0A0A)))
                         }
-                    }
-                    if (starting) {
-                        if (showStartupIcon) social.tbone.ui.settings.StartupAppearance(this@MainActivity)
-                        else Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xFF0A0A0A)))
+                    }) {
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            social.tbone.ui.reactions.LocalReactionConfig provides reactionConfig,
+                            LocalUpdateAvailable provides updateState.updateAvailable,
+                        ) {
+                            ContentFilterProvider { BonyNavHost() }
+                        }
                     }
                     // Parental screen-time lock: drawn OVER everything (but under
                     // the brightness dim) once the daily allowance is used up.
@@ -224,6 +260,7 @@ class MainActivity : FragmentActivity() {
                                 .background(overlayColor),
                         )
                     }
+                }
                 }
             }
         }
@@ -281,29 +318,18 @@ class MainActivity : FragmentActivity() {
         toolboxLockManager.onAppBackgrounded()
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_LINK_PROCESS, deepLinkHandler.processToken)
+        super.onSaveInstanceState(outState)
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         handleIntent(intent)
     }
 
     private fun handleIntent(intent: Intent?) {
-        // From in-app notification tap (EXTRA_EVENT_ID set by NotificationHelper)
-        intent?.getStringExtra(EXTRA_EVENT_ID)?.let { eventId ->
-            deepLinkHandler.navigateToThread(eventId)
-            return
-        }
-
-        // From nostr: URI (Pokey, browsers, other Nostr apps)
-        val data = intent?.data ?: return
-        if (data.scheme != "nostr") return
-        val entity = data.schemeSpecificPart ?: return
-        when {
-            entity.startsWith("note1") || entity.startsWith("nevent1") ->
-                Nip19.nostrUriToEventId(entity)?.let { deepLinkHandler.navigateToThread(it) }
-            entity.startsWith("npub1") ->
-                Nip19.npubToHex(entity)?.let { deepLinkHandler.navigateToProfile(it) }
-            entity.startsWith("nprofile1") ->
-                Nip19.nprofileToHex(entity)?.let { deepLinkHandler.navigateToProfile(it) }
-        }
+        dispatchNavigationIntent(intent, deepLinkHandler)
     }
 }

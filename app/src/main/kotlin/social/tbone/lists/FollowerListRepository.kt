@@ -19,18 +19,22 @@ import timber.log.Timber
 import java.time.Duration
 import javax.inject.Inject
 import javax.inject.Singleton
-import okhttp3.OkHttpClient
-import social.tbone.di.ImageClientProvider
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.first
+import social.tbone.settings.AppSettings
+import social.tbone.settings.OrbotHelper
+import social.tbone.settings.OrbotStatus
+import social.tbone.nostr.relay.RelayConnection
 import okhttp3.Request
+import social.tbone.util.readBounded
 import org.json.JSONObject
 
 /**
  * Follower list — who follows you.
  *
- * Monostr-style: followers are the largest answer among relays (lower-bound).
- * Each relay only knows the contact lists it stores, so the largest set wins.
- * For T-Bone we also try Primal's centralized index (https://primal.net) via HTTP,
- * but the relay result remains the fallback and wins when larger.
+ * Collects bounded, potentially stale samples from relays and Primal's centralized
+ * index. A merged sample is not a verified current count or complete list.
  *
  * Disabled by default (AppSettings.followersEnabled). When enabled a one-time
  * popup warns that the list comes from Primal's centralized cache.
@@ -38,7 +42,8 @@ import org.json.JSONObject
 @Singleton
 class FollowerListRepository @Inject constructor(
     private val pool: RelayPool,
-    private val okHttp: OkHttpClient, // central: if Tor enabled, ImageClientProvider.client is Tor-aware; injected client should be ImageClientProvider.client (see NetworkModule)
+    private val appSettings: AppSettings,
+    @ApplicationContext private val context: Context,
 ) {
     data class FollowersState(
         val followers: List<String>? = null, // null = still loading / unknown
@@ -47,16 +52,23 @@ class FollowerListRepository @Inject constructor(
         val source: String = "relays",
     )
 
-    private val known = HashMap<String, FollowersState>()
-    private val mutex = Mutex()
+    private val known = FollowerSnapshotCache()
 
     // Primal's public caching service: followers list via HTTP.
     // Primal web app uses wss://cache2.primal.net/v1 with method "contacts_list";
     // the public read endpoint is documented as https://primal.net/api/v1/people/<npub>/followers
     // We probe both the primal relay (NIP-45 COUNT is not enough — we need the actual pubkeys) and
     // the HTTP endpoint. Either may be unavailable; we return whatever we get.
-    private suspend fun fetchPrimalHttp(pubkeyHex: String): List<String>? {
-        return try {
+    private suspend fun fetchPrimalHttp(pubkeyHex: String): List<String>? = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        appSettings.initialized.first { it }
+        try {
+            val useTor = appSettings.torEnabled.value
+            val guard = social.tbone.di.TorCallPolicy.guard
+            val transportEpoch = guard.snapshot(useTor)
+            val proxy = if (useTor) OrbotHelper.getStatus(context) as? OrbotStatus.InstalledAndConnected else null
+            val okHttp = RelayConnection.buildClient(useTor = useTor,
+                proxyType = proxy?.proxyType ?: java.net.Proxy.Type.HTTP,
+                torPort = proxy?.port ?: 8118)
             // Primal's caching API: POST https://cache2.primal.net/v1 with ["contacts_list", pubkey]
             // The simpler public endpoint is https://primal.net/api/v1/contacts/followers?pubkey=...
             // Try the documented primal.net cache endpoint first.
@@ -68,16 +80,19 @@ class FollowerListRepository @Inject constructor(
             for (url in urls) {
                 try {
                     val req = Request.Builder().url(url).get().header("Accept", "application/json").build()
-                    okHttp.newCall(req).execute().use { resp ->
-                        if (!resp.isSuccessful) return@use
-                        val body = resp.body?.string() ?: return@use
-                        val list = parsePrimalBody(body)
-                        if (list != null && list.isNotEmpty()) return list
+                    val call = okHttp.newCall(req)
+                    guard.registerAtEpoch(call, useTor, transportEpoch)
+                    try {
+                        val body = call.awaitBoundedFollowerBody(4 * 1024 * 1024)
+                        val list = body?.let(::parsePrimalBody)
+                        if (!list.isNullOrEmpty()) return@withContext list
+                    } finally {
+                        guard.unregister(call)
                     }
-                } catch (_: Exception) { continue }
+                } catch (e: CancellationException) { throw e } catch (_: Exception) { continue }
             }
             null
-        } catch (_: Exception) { null }
+        } catch (e: CancellationException) { throw e } catch (_: Exception) { null }
     }
 
     private fun parsePrimalBody(body: String): List<String>? {
@@ -127,79 +142,75 @@ class FollowerListRepository @Inject constructor(
 
     /**
      * Relay-based followers: all kind 3 events that contain p = pubkey.
-     * Asked of every count relay + user's own relays at once. Largest set wins.
+     * Asked of every count relay + user's own relays at once, with a per-relay limit.
      */
-    private suspend fun fetchRelayFollowers(pubkeyHex: String, seedRelays: List<String>): List<String> {
+    private suspend fun fetchRelayFollowers(pubkeyHex: String, seedRelays: List<String>): List<String> = withContext(kotlinx.coroutines.Dispatchers.Default) {
         val relays = (COUNT_RELAYS + seedRelays).map { it.trim().trimEnd('/') }.distinct()
-        // Ensure relays are attached for the query
-        relays.forEach { withContext(NonCancellable) { pool.acquireRelay(it) } }
-        val filter = Filter(
-            kinds = listOf(EventKind.FOLLOW_LIST),
-            pTags = listOf(pubkeyHex),
-            limit = 1000,
-        )
-        val subId = pool.subscribeTo(listOf(filter), label = "followers:$pubkeyHex", relays = relays.toSet())
+        val acquired = mutableListOf<String>()
         val authors = mutableSetOf<String>()
+        val subId = "followers-" + java.util.UUID.randomUUID().toString()
         try {
-            kotlinx.coroutines.withTimeoutOrNull(Duration.ofSeconds(8).toMillis()) {
-                pool.messages.collect { pm ->
-                    val msg = pm.message
-                    if (msg is RelayMessage.EventMessage && msg.subscriptionId == subId) {
-                        val e = msg.event
-                        if (e.kind == EventKind.FOLLOW_LIST && e.verify()) {
-                            // The author of this kind 3 is a follower (they list pubkeyHex as p)
-                            if (e.parsedTags.any { it.name == "p" && it.value()?.lowercase() == pubkeyHex.lowercase() }) {
-                                authors.add(e.pubkey)
+            relays.forEach { pool.acquireRelay(it); acquired.add(it) }
+            val filter = Filter(kinds = listOf(EventKind.FOLLOW_LIST), pTags = listOf(pubkeyHex), limit = 1000)
+            kotlinx.coroutines.coroutineScope {
+                // Install the collector before sending REQ; a fast relay may
+                // otherwise answer before SharedFlow has a subscriber.
+                val collector = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                    withTimeoutOrNull(Duration.ofSeconds(8).toMillis()) {
+                        pool.messages.collect { pm ->
+                            val msg = pm.message
+                            if (msg is RelayMessage.EventMessage && msg.subscriptionId == subId) {
+                                val e = msg.event
+                                if (e.kind == EventKind.FOLLOW_LIST && e.verify() &&
+                                    e.parsedTags.any { it.name == "p" && it.value()?.equals(pubkeyHex, ignoreCase = true) == true }) {
+                                    if (authors.size < 5_000) authors.add(e.pubkey)
+                                }
                             }
                         }
                     }
-                    if (msg is RelayMessage.EndOfStoredEvents && msg.subscriptionId == subId) {
-                        // Don't return@collect immediately — keep listening for delayed relays
-                    }
                 }
+                try {
+                    pool.subscribeTo(listOf(filter), id = subId, label = "followers:$pubkeyHex", relays = relays.toSet())
+                    collector.join()
+                } finally { collector.cancel() }
             }
-        } catch (e: CancellationException) { throw e } catch (_: Exception) {}
+        } catch (e: CancellationException) { throw e } catch (_: Exception) { }
         finally {
             pool.unsubscribe(subId)
-            relays.forEach { pool.releaseRelay(it) }
+            acquired.forEach { pool.releaseRelay(it) }
         }
-        return authors.toList()
+        authors.toList()
     }
 
     fun followers(pubkeyHex: String, seedRelays: List<String> = emptyList()): Flow<FollowersState> = flow {
-        val memo = synchronized(known) { known[pubkeyHex] }
+        val generation = known.generation()
+        val memo = known.get(pubkeyHex, seedRelays)
         if (memo != null && memo.followers != null && !memo.loading) {
             emit(memo)
             return@flow
         }
         emit(FollowersState(loading = true))
-        // Fetch both sources in parallel (channelFlow like Monostr)
+        // Fetch both sources in parallel and merge their bounded samples.
         val updates = channelFlow {
-            var current: List<String>? = null
-            var currentSource = "relays"
+            val samples = FollowerSamples()
             fun publish(next: List<String>, source: String) {
-                if (next.size > (current?.size ?: -1)) {
-                    current = next
-                    currentSource = source
-                    trySend(FollowersState(followers = next, loading = false, source = source))
-                }
+                synchronized(samples) { samples.merge(next, source)?.let { trySend(it) } }
             }
             launch {
                 try {
                     val relayList = fetchRelayFollowers(pubkeyHex, seedRelays)
                     if (relayList.isNotEmpty()) publish(relayList, "relays")
-                } catch (e: Exception) { Timber.w(e, "Relay followers fetch failed") }
+                } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.w(e, "Relay followers fetch failed") }
             }
             launch {
                 try {
                     val primal = fetchPrimalHttp(pubkeyHex)
                     if (!primal.isNullOrEmpty()) publish(primal, "primal.net")
-                } catch (e: Exception) { Timber.w(e, "Primal followers fetch failed") }
+                } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.w(e, "Primal followers fetch failed") }
             }
         }
         var last: FollowersState? = null
         updates.collect { state ->
-            synchronized(known) { known[pubkeyHex] = state }
             if (state != last) {
                 last = state
                 emit(state)
@@ -207,18 +218,22 @@ class FollowerListRepository @Inject constructor(
         }
         // If nothing arrived, emit empty
         if (last == null) {
-            val empty = FollowersState(followers = emptyList(), loading = false)
-            synchronized(known) { known[pubkeyHex] = empty }
+            val empty = FollowersState(followers = emptyList(), loading = false,
+                error = "No results; sources may be unavailable or incomplete", source = "no results")
+            last = empty
             emit(empty)
         }
+        // Cache only after both source jobs finish; otherwise a second screen
+        // could read the first partial emission and never see the other source.
+        last?.let { known.put(pubkeyHex, seedRelays, it, generation) }
     }
 
     fun invalidate(pubkeyHex: String) {
-        synchronized(known) { known.remove(pubkeyHex) }
+        known.invalidate(pubkeyHex)
     }
 
     fun invalidateAll() {
-        synchronized(known) { known.clear() }
+        known.clear()
     }
 
     companion object {

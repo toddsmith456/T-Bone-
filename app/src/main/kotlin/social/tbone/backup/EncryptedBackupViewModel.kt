@@ -34,7 +34,7 @@ class EncryptedBackupViewModel @Inject constructor(
 
     fun restore(uri: Uri, passphrase: String) = runBackupOperation(
         successText = "Backup restored. Notes, folders and calendar were replaced.",
-        failureText = "Backup could not be restored. Check the passphrase and file; your existing data was left unchanged",
+        failureText = "Backup restore did not finish. Check your notes and calendar before retrying",
     ) {
         backupRepository.importFrom(uri, passphrase)
     }
@@ -51,7 +51,13 @@ class EncryptedBackupViewModel @Inject constructor(
         if (_uiState.value.busy) return
         viewModelScope.launch {
             _uiState.value = EncryptedBackupUiState(busy = true)
-            val result = runCatching { withContext(Dispatchers.IO) { operation() } }
+            val result = try {
+                Result.success(withContext(Dispatchers.IO) { operation() })
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Result.failure(error)
+            }
             _uiState.value = result.fold(
                 onSuccess = { EncryptedBackupUiState(status = successText) },
                 onFailure = { error ->

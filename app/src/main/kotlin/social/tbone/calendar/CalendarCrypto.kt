@@ -25,18 +25,19 @@ import javax.inject.Singleton
  * affects calendar events and vice versa.
  */
 @Singleton
-class CalendarCrypto @Inject constructor() {
+class CalendarCrypto internal constructor(private val alias: String) {
+    @Inject constructor() : this(KEY_ALIAS)
 
     private val keyStore: KeyStore by lazy {
         KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
     }
 
-    private fun getOrCreateKey(): SecretKey {
-        (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+    private fun getOrCreateKey(): SecretKey = synchronized(KEY_CREATION_LOCK) {
+        (keyStore.getKey(alias, null) as? SecretKey)?.let { return@synchronized it }
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
         generator.init(
             KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
+                alias,
                 KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
             )
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
@@ -45,7 +46,7 @@ class CalendarCrypto @Inject constructor() {
                 .setRandomizedEncryptionRequired(true)
                 .build()
         )
-        return generator.generateKey()
+        generator.generateKey()
     }
 
     /** Encrypts plaintext → (ciphertext, iv). Throws on failure. */
@@ -61,7 +62,8 @@ class CalendarCrypto @Inject constructor() {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(
             Cipher.DECRYPT_MODE,
-            getOrCreateKey(),
+            (keyStore.getKey(alias, null) as? SecretKey
+                ?: throw java.security.KeyStoreException("Encryption key is unavailable")),
             GCMParameterSpec(GCM_TAG_BITS, iv),
         )
         return String(cipher.doFinal(ciphertext), Charsets.UTF_8)
@@ -82,6 +84,7 @@ class CalendarCrypto @Inject constructor() {
     }.getOrDefault(false)
 
     companion object {
+        private val KEY_CREATION_LOCK = Any()
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val KEY_ALIAS = "tbone_calendar_key"
         const val TRANSFORMATION = "AES/GCM/NoPadding"

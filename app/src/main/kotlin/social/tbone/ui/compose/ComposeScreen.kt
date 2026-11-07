@@ -464,6 +464,13 @@ fun ComposeScreen(
                 }
             }
 
+            // Media can upload immediately after selection, so disclose this
+            // before the picker is opened, not only in compression settings.
+            Text(
+                "Video and audio uploads may include embedded metadata, including location.",
+                style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 5.dp),
+            )
             // ── Toolbar ───────────────────────────────────────────────────────
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
             Row(

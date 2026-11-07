@@ -248,7 +248,7 @@ fun FollowListsScreen(
                     Text(
                         "Follower list on Nostr is decentralized — relays don't reliably know who follows who. " +
                         "When you turn this on, T-Bone will ask Primal's centralized cache (relay.primal.net + cache2.primal.net) for your followers.\n\n" +
-                        "Primal sees your pubkey when you use this, just like any relay. No additional tracking. You can turn it off anytime.",
+                        "Primal and queried relays receive your pubkey and may log requests. You can turn this feature off anytime.",
                         style = BonyType.meta.copy(color = BonyColors.TextDim)
                     )
                 },
@@ -461,9 +461,9 @@ private fun FollowersTab(
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("followers (Primal cache)", style = BonyType.body.copy(color = BonyColors.Text))
+                        Text("followers (sample)", style = BonyType.body.copy(color = BonyColors.Text))
                         Text(
-                            if (followersEnabled) "on · from relay.primal.net + counting relays" else "off · tap to enable",
+                            if (followersEnabled) "on · Primal and relay samples" else "off · tap to enable",
                             style = BonyType.meta.copy(color = if (followersEnabled) BonyColors.Accent else BonyColors.TextMute)
                         )
                     }
@@ -471,14 +471,14 @@ private fun FollowersTab(
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Off by default. When on, T-Bone asks Primal's centralized cache for who follows you (cached 5 min). The list may be incomplete; relays are the lower bound.",
+                    "Off by default. When on, T-Bone asks Primal and relays for follower samples (cached up to 5 minutes). Results are bounded, may be incomplete or outdated, and are not an exact follower count.",
                     style = BonyType.metaDim.copy(color = BonyColors.TextMute)
                 )
                 if (followersEnabled) {
                     Spacer(Modifier.height(10.dp))
                     BonyButton(label = "↻ REFRESH FOLLOWERS", primary = false, enabled = !followersBusy, onClick = { viewModel.refreshFollowers() }, modifier = Modifier.fillMaxWidth())
-                    if (followersState?.source != null) {
-                        Text("source: ${followersState.source} · ${followersState.followers?.size ?: 0} followers", style = BonyType.metaDim.copy(color = BonyColors.TextMute), modifier = Modifier.padding(top = 6.dp))
+                    if (followersState?.followers != null) {
+                        Text("source: ${followersState.source} · ${followersState.followers?.size ?: 0} found (incomplete, may be outdated)", style = BonyType.metaDim.copy(color = BonyColors.TextMute), modifier = Modifier.padding(top = 6.dp))
                     }
                 }
             }

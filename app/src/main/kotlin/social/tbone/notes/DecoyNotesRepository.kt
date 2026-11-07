@@ -25,14 +25,15 @@ class DecoyNotesRepository @Inject constructor(
     private val folderDao: DecoyNoteFolderDao,
     private val attachmentDao: DecoyNoteAttachmentDao,
     private val crypto: NotesCrypto,
+    private val noteWrites: NoteWriteCoordinator,
 ) {
 
-    val notes: Flow<List<NoteUi>> = dao.observeAll().map { entities ->
-        entities.mapNotNull { it.toUi(crypto) }
+    val notes: Flow<List<NoteUi>> = combine(noteWrites.available, dao.observeAll()) { available, entities ->
+        if (available) entities.mapNotNull { it.toUi(crypto) } else emptyList()
     }
 
-    val folders: Flow<List<NoteFolderUi>> = folderDao.observeAll().map { list ->
-        list.map {
+    val folders: Flow<List<NoteFolderUi>> = combine(noteWrites.available, folderDao.observeAll()) { available, list ->
+        if (!available) emptyList() else list.map {
             NoteFolderUi(
                 id = it.id,
                 name = it.name,
@@ -45,8 +46,8 @@ class DecoyNotesRepository @Inject constructor(
     }
 
     fun attachments(noteId: String): Flow<List<NoteAttachmentUi>> =
-        attachmentDao.observeByNote(noteId).map { list ->
-            list.mapNotNull { entity ->
+        combine(noteWrites.available, attachmentDao.observeByNote(noteId)) { available, list ->
+            if (!available) emptyList() else list.mapNotNull { entity ->
                 runCatching {
                     NoteAttachmentUi(
                         id = entity.id,
@@ -65,11 +66,12 @@ class DecoyNotesRepository @Inject constructor(
         dao.observeNoteCount(),
         dao.observeChecklistCount(),
         dao.observeTotalCiphertextBytes(),
-    ) { notes, checklists, bytes ->
-        NotesStats(notes, checklists, bytes)
+        noteWrites.available,
+    ) { notes, checklists, bytes, available ->
+        if (available) NotesStats(notes, checklists, bytes) else NotesStats()
     }
 
-    suspend fun getById(id: String): NoteUi? = dao.getById(id)?.let { it.toUi(crypto) }
+    suspend fun getById(id: String): NoteUi? = dao.getById(id)?.let { it.toUi(crypto, strictTitle = true) }
 
     fun encryptionSelfTest(): Boolean = crypto.selfTest()
     fun isHardwareBacked(): Boolean = crypto.isHardwareBacked()
@@ -80,13 +82,13 @@ class DecoyNotesRepository @Inject constructor(
         text: String,
         folderId: String?,
     ): String {
-        val trimmed = text.trim()
         val eid = id ?: UUID.randomUUID().toString()
         val existing = dao.getById(eid)
-        if (trimmed.isEmpty() && existing == null) return eid
         val now = System.currentTimeMillis()
-        val (ct, iv) = crypto.encrypt(trimmed)
-        val (tct, tiv) = if (title.isBlank()) null to null else crypto.encrypt(title.trim())
+        // Whitespace can be meaningful in notes (indentation, blank lines,
+        // and spaces beside attachment markers); store the exact edit.
+        val (ct, iv) = crypto.encrypt(text)
+        val (tct, tiv) = if (title.isBlank()) null to null else crypto.encrypt(title)
         dao.upsert(
             DecoyNoteEntity(
                 id = eid,
@@ -139,8 +141,7 @@ class DecoyNotesRepository @Inject constructor(
     }
 
     suspend fun delete(id: String) {
-        attachmentDao.deleteByNote(id)
-        dao.delete(id)
+        dao.deleteWithAttachments(id)
     }
 
     suspend fun addFolder(name: String): String {
@@ -164,8 +165,7 @@ class DecoyNotesRepository @Inject constructor(
     }
 
     suspend fun deleteFolder(id: String) {
-        dao.clearFolder(id)
-        folderDao.delete(id)
+        dao.unfileAndDeleteFolder(id)
     }
 
     suspend fun setFolderRowPinned(id: String, pinned: Boolean) = folderDao.setPinned(id, pinned)
@@ -196,6 +196,7 @@ class DecoyNotesRepository @Inject constructor(
         mime: String,
         bytes: ByteArray,
     ): String {
+        check(dao.getById(noteId) != null) { "Note no longer exists" }
         val id = UUID.randomUUID().toString()
         val (ct, iv) = crypto.encryptBytes(bytes)
         attachmentDao.insert(
@@ -215,7 +216,7 @@ class DecoyNotesRepository @Inject constructor(
 
     suspend fun deleteAttachment(id: String) = attachmentDao.delete(id)
 
-    private fun DecoyNoteEntity.toUi(crypto: NotesCrypto): NoteUi? = runCatching {
+    private fun DecoyNoteEntity.toUi(crypto: NotesCrypto, strictTitle: Boolean = false): NoteUi? = runCatching {
         NoteUi(
             id = id,
             kind = entityKind(kind),
@@ -226,7 +227,10 @@ class DecoyNotesRepository @Inject constructor(
             folderPinned = folderPinned,
             sortOrder = sortOrder,
             folderId = folderId,
-            title = runCatching {
+            title = if (strictTitle) {
+                if (titleCiphertext == null && titleIv == null) ""
+                else crypto.decrypt(requireNotNull(titleCiphertext), requireNotNull(titleIv))
+            } else runCatching {
                 val tc = titleCiphertext ?: return@runCatching ""
                 val ti = titleIv ?: return@runCatching ""
                 crypto.decrypt(tc, ti)

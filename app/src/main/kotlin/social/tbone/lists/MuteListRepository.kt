@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
@@ -172,7 +173,7 @@ class MuteListRepository @Inject constructor(
         _relay.update { cur ->
             val have = cur?.takeIf { it.pubkey == pk }
             val take = have == null || e.createdAt > have.createdAt ||
-                (e.createdAt == have.createdAt && have.event == null)
+                (e.createdAt == have.createdAt && (have.event == null || e.id < have.event.id))
             accepted = take
             if (take) RelayMute(pk, publicMuted(e, pk), e.createdAt, e) else cur
         }
@@ -188,7 +189,12 @@ class MuteListRepository @Inject constructor(
      * NIP-51 mute list that is based on the LATEST list read from the relays
      * (existing tags and the encrypted private part are preserved untouched).
      */
-    suspend fun setMuted(target: String, muted: Boolean): MuteOutcome {
+    private val mutationMutex = kotlinx.coroutines.sync.Mutex()
+
+    suspend fun setMuted(target: String, muted: Boolean): MuteOutcome =
+        mutationMutex.withLock { setMutedLocked(target, muted) }
+
+    private suspend fun setMutedLocked(target: String, muted: Boolean): MuteOutcome {
         val account = accountRepository.activeAccount.first() ?: return MuteOutcome.NO_ACCOUNT
         val owner = account.pubkey
 
@@ -214,15 +220,26 @@ class MuteListRepository @Inject constructor(
         if (!muted && hadLegacy) appSettings.setBlockedPubkeys(appSettings.blockedPubkeys.value - target)
 
         val signer = signerFactory.forActiveAccount() ?: return MuteOutcome.NO_SIGNER
+        if (signer.pubkey != owner) return MuteOutcome.NO_SIGNER
 
         // Always re-read the newest list from the relays right before changing it, so a stale
         // cache can never overwrite the user's real list.
-        val fetched = fetcher.fetchLatest(owner, KIND, account.relays)
-        if (!fetched.reachedRelays) {
+        if (account.effectiveRelays().isEmpty()) return MuteOutcome.RELAYS_UNREACHABLE
+        val fetched = fetcher.fetchLatest(owner, KIND, account.effectiveRelays())
+        if (!fetched.allRelaysAnswered) {
             return if (!muted && hadLegacy) MuteOutcome.SAVED_LOCAL else MuteOutcome.RELAYS_UNREACHABLE
         }
         val base: Event? = listOfNotNull(fetched.event, _relay.value?.takeIf { it.pubkey == owner }?.event)
-            .maxByOrNull { it.createdAt }
+            .reduceOrNull { current, candidate -> newestListEvent(current, candidate) }
+
+        // A newer disk-only cache does not contain the full event (including
+        // encrypted/private and unknown tags); never replace it with older data.
+        val known = _relay.value?.takeIf { it.pubkey == owner }
+        if (known != null && known.event == null && known.createdAt > (base?.createdAt ?: 0L)) {
+            return if (!muted && hadLegacy) MuteOutcome.SAVED_LOCAL else MuteOutcome.RELAYS_UNREACHABLE
+        }
+        if (!sameListWriteContext(account, accountRepository.activeAccount.first()) ||
+            offline.snapshot(ListType.MUTES, owner).enabled) return MuteOutcome.REJECTED
 
         val baseTags: List<JsonArray> = base?.tags ?: emptyList()
         val alreadyMuted = base?.let { target in publicMuted(it, owner) } ?: false
@@ -236,6 +253,7 @@ class MuteListRepository @Inject constructor(
         }
 
         val now = System.currentTimeMillis() / 1000
+        if ((base?.createdAt ?: 0L) > now + 59) return MuteOutcome.REJECTED
         val unsigned = UnsignedEvent(
             pubkey = signer.pubkey,
             // Replaceable event: must be strictly newer than the one it replaces.
@@ -248,7 +266,10 @@ class MuteListRepository @Inject constructor(
             Timber.w(it, "Mute list signing failed")
             return MuteOutcome.SIGN_FAILED
         }
-        pool.publish(signed)
+        if (!sameListWriteContext(account, accountRepository.activeAccount.first()) ||
+            offline.snapshot(ListType.MUTES, owner).enabled) return MuteOutcome.REJECTED
+        val targets = account.effectiveRelays().map(RelayPool::normalize).toSet()
+        if (pool.publishTo(signed, targets) == 0) return MuteOutcome.RELAYS_UNREACHABLE
 
         // Reflect immediately in the UI instead of waiting for the relay echo.
         _relay.update { RelayMute(owner, publicMuted(signed, owner), signed.createdAt, signed) }

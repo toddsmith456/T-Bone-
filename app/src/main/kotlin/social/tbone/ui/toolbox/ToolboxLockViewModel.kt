@@ -2,6 +2,8 @@ package social.tbone.ui.toolbox
 
 import androidx.lifecycle.ViewModel
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import dagger.hilt.android.lifecycle.HiltViewModel
 import social.tbone.security.ToolboxLockManager
 import social.tbone.settings.AppSettings
@@ -17,13 +19,18 @@ class ToolboxLockViewModel @Inject constructor(
     val keypadScrambled: StateFlow<Boolean> = appSettings.toolboxPinKeypadScrambled
     val isLocked: StateFlow<Boolean> = toolboxLockManager.isLocked
 
-    suspend fun verifyPin(input: String): Boolean = security.verifyPin(input)
+    fun retryAfterMillis(): Long = security.retryAfterMillis()
 
-    suspend fun isDuressPin(input: String): Boolean = security.isDuressPin(input)
+    suspend fun verifyPin(input: String): Boolean = withContext(Dispatchers.Default) { security.verifyPin(input) }
+
+    suspend fun handleDuressPin(input: String): Boolean =
+        social.tbone.security.verifyAndStartDuressWipe(
+            verify = { security.isDuressPin(input) },
+            startWipe = { security.wipeToolbox(discreet = true) },
+        )
 
     fun unlock() {
         toolboxLockManager.unlock()
     }
 
-    fun wipeToolbox() = security.wipeToolbox()
 }

@@ -41,48 +41,54 @@ private const val GCM_TAG_LEN = 128
 class LocalKeySigner(
     override val pubkey: String,
     private val encryptedPrivkey: ByteArray,
+    private val keyAlias: String = KEYSTORE_ALIAS,
 ) : NostrSigner {
 
     override suspend fun signEvent(event: UnsignedEvent): Result<Event> = runCatching {
         val privkey = decryptPrivkey()
-        val id = event.computeId()
-        val sig = schnorrSign(id.hexToBytes(), privkey)
-        Event(
-            id = id,
-            pubkey = pubkey,
-            createdAt = event.createdAt,
-            kind = event.kind,
-            tags = event.tags,
-            content = event.content,
-            sig = sig,
-        ).also {
-            check(it.verify()) { "Self-signed event failed verification" }
-        }
+        try {
+            val id = event.computeId()
+            val sig = schnorrSign(id.hexToBytes(), privkey)
+            Event(
+                id = id,
+                pubkey = pubkey,
+                createdAt = event.createdAt,
+                kind = event.kind,
+                tags = event.tags,
+                content = event.content,
+                sig = sig,
+            ).also {
+                check(it.verify()) { "Self-signed event failed verification" }
+            }
+        } finally { privkey.fill(0) }
     }
 
     override suspend fun nip44Encrypt(plaintext: String, recipientPubkey: String): Result<String> =
         runCatching {
             val privkey = decryptPrivkey()
-            Nip44.encrypt(plaintext, privkey, recipientPubkey.hexToBytes())
+            try { Nip44.encrypt(plaintext, privkey, recipientPubkey.hexToBytes()) }
+            finally { privkey.fill(0) }
         }
 
     override suspend fun nip44Decrypt(ciphertext: String, senderPubkey: String): Result<String> =
         runCatching {
             val privkey = decryptPrivkey()
-            Nip44.decrypt(ciphertext, privkey, senderPubkey.hexToBytes())
+            try { Nip44.decrypt(ciphertext, privkey, senderPubkey.hexToBytes()) }
+            finally { privkey.fill(0) }
         }
 
     /** Synchronous variant used internally by NsecBunkerSigner response parsing. */
     fun nip44DecryptSync(ciphertext: String, senderPubkey: String): String? = runCatching {
         val privkey = decryptPrivkey()
-        Nip44.decrypt(ciphertext, privkey, senderPubkey.hexToBytes())
+        try { Nip44.decrypt(ciphertext, privkey, senderPubkey.hexToBytes()) }
+        finally { privkey.fill(0) }
     }.getOrNull()
 
     // ── Key management ────────────────────────────────────────────────────────
 
     private fun decryptPrivkey(): ByteArray {
         val keyStore = KeyStore.getInstance(KEY_PROVIDER).apply { load(null) }
-        val key = keyStore.getKey(KEYSTORE_ALIAS, null) as? javax.crypto.SecretKey
+        val key = keyStore.getKey(keyAlias, null) as? javax.crypto.SecretKey
             ?: error("Keystore key not found — was this account set up on a different device?")
 
         val iv = encryptedPrivkey.sliceArray(0 until GCM_IV_LEN)
@@ -154,12 +160,17 @@ class LocalKeySigner(
     // ── Factory ───────────────────────────────────────────────────────────────
 
     companion object {
+        private val KEY_CREATION_LOCK = Any()
+
         /**
          * Generates a new secp256k1 keypair, encrypts the private key with the
          * Android Keystore, and returns a [LocalKeySigner] + the encrypted blob
          * to persist in DataStore.
          */
-        fun generate(): Pair<LocalKeySigner, ByteArray> {
+        fun generate(): Pair<LocalKeySigner, ByteArray> = generateWithAlias(KEYSTORE_ALIAS)
+
+        /** Unique alias for isolated concurrency tests. */
+        internal fun generateWithAlias(alias: String): Pair<LocalKeySigner, ByteArray> {
             if (Security.getProvider("BC") == null) Security.addProvider(BouncyCastleProvider())
             val params = SECNamedCurves.getByName("secp256k1")
             val n = params.n
@@ -173,8 +184,8 @@ class LocalKeySigner(
             val pubkeyPoint = params.g.multiply(privkeyInt).normalize()
             val pubkey = pubkeyPoint.affineXCoord.encoded.toHex() // x-only
 
-            val encrypted = encryptPrivkey(privkey)
-            return LocalKeySigner(pubkey, encrypted) to encrypted
+            val encrypted = try { encryptPrivkey(privkey, alias) } finally { privkey.fill(0) }
+            return LocalKeySigner(pubkey, encrypted, alias) to encrypted
         }
 
         private fun BigInteger.toBytes32(): ByteArray {
@@ -186,10 +197,10 @@ class LocalKeySigner(
             }
         }
 
-        private fun encryptPrivkey(privkey: ByteArray): ByteArray {
-            ensureKeystoreKey()
+        private fun encryptPrivkey(privkey: ByteArray, alias: String): ByteArray {
+            ensureKeystoreKey(alias)
             val keyStore = KeyStore.getInstance(KEY_PROVIDER).apply { load(null) }
-            val key = keyStore.getKey(KEYSTORE_ALIAS, null) as javax.crypto.SecretKey
+            val key = keyStore.getKey(alias, null) as javax.crypto.SecretKey
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, key)
             val iv = cipher.iv
@@ -197,13 +208,13 @@ class LocalKeySigner(
             return iv + ciphertext
         }
 
-        private fun ensureKeystoreKey() {
+        private fun ensureKeystoreKey(alias: String) = synchronized(KEY_CREATION_LOCK) {
             val keyStore = KeyStore.getInstance(KEY_PROVIDER).apply { load(null) }
-            if (keyStore.containsAlias(KEYSTORE_ALIAS)) return
+            if (keyStore.containsAlias(alias)) return@synchronized
             KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEY_PROVIDER).apply {
                 init(
                     KeyGenParameterSpec.Builder(
-                        KEYSTORE_ALIAS,
+                        alias,
                         KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
                     )
                         .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
@@ -213,7 +224,7 @@ class LocalKeySigner(
                         .build()
                 )
             }.generateKey()
-            Timber.d("Generated Keystore key: $KEYSTORE_ALIAS")
+            Timber.d("Generated local signer Keystore key")
         }
     }
 }

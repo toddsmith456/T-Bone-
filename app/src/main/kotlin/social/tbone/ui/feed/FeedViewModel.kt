@@ -1227,33 +1227,18 @@ class FeedViewModel @Inject constructor(
         _uiState.update { it.copy(isLoading = false) }
     }
 
-    /**
-     * One-shot kind-3 fetch for accounts whose follow list is not cached locally.
-     * Resolves the first event that arrives, or an empty list after [timeoutMs].
-     */
+    /** Bounded kind-3 fetch when the account has no locally cached follows. */
     private suspend fun fetchFollowsOnce(account: Account, timeoutMs: Long = 8_000): List<String> {
-        val cached = account.follows
-        if (cached.isNotEmpty()) return cached
-        val result = kotlinx.coroutines.CompletableDeferred<List<String>>()
-        val id = pool.subscribe(
-            listOf(Filter(authors = listOf(account.pubkey), kinds = listOf(EventKind.FOLLOW_LIST), limit = 1)),
-            label = "clock-follows",
-        )
-        val job = viewModelScope.launch(Dispatchers.Default) {
-            pool.messages.collect { (_, message) ->
-                if (message is RelayMessage.EventMessage &&
-                    message.subscriptionId == id &&
-                    message.event.kind == EventKind.FOLLOW_LIST &&
-                    message.event.verify()
-                ) {
-                    result.complete(message.event.parsedTags.pubkeys)
-                }
-            }
+        if (account.follows.isNotEmpty()) return account.follows
+        val id = "clock-follows-" + UUID.randomUUID().toString()
+        val best = kotlinx.coroutines.withContext(Dispatchers.Default) {
+            fetchClockFollowEvent(
+                messages = pool.messages, id = id, author = account.pubkey,
+                subscribe = { pool.subscribe(listOf(Filter(authors = listOf(account.pubkey), kinds = listOf(EventKind.FOLLOW_LIST), limit = 1)), id = id, label = "clock-follows") },
+                unsubscribe = { pool.unsubscribe(id) }, timeoutMs = timeoutMs,
+            )
         }
-        val follows = withTimeoutOrNull(timeoutMs) { result.await() } ?: emptyList()
-        job.cancel()
-        pool.unsubscribe(id)
-        return follows
+        return best?.parsedTags?.pubkeys ?: emptyList()
     }
 
     private fun settleGlobalInitial() {

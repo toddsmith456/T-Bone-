@@ -51,12 +51,12 @@ data class PreparedMedia(
 
 /**
  * Prepares media before upload:
- *  - IMAGES: re-encoded as JPEG (which strips all EXIF/embedded metadata),
+ *  - IMAGES: decoded and re-encoded as JPEG (which removes source EXIF),
  *    orientation applied, optionally compressed — with a quality loop that
  *    keeps the file under an optional byte cap (used for the 800 KB
  *    avatar/banner limit).
- *  - VIDEOS: optionally transcoded with Media3 Transformer (re-encode also
- *    drops embedded metadata); unsupported sources fall back to a raw copy
+ *  - VIDEOS: optionally transcoded with Media3 Transformer (metadata removal
+ *    is not guaranteed); unsupported sources fall back to a raw copy
  *    with their original MIME type and extension.
  *  - AUDIO: copied unchanged by default; opt-in AAC/M4A compression is kept only
  *    when smaller, otherwise the original bytes, MIME type and extension win.
@@ -356,12 +356,13 @@ object MediaProcessor {
         compress: Boolean,
     ): File? = withContext(Dispatchers.IO) {
         runCatching {
-            val src = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                ?: return@runCatching null
             val orientation = readExifOrientation(context, uri)
-
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(src, 0, src.size, bounds)
+            context.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, bounds)
+                Unit
+            } ?: return@runCatching null
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
 
             var sample = 1
             while (bounds.outWidth / sample > MAX_IMAGE_DIMENSION ||
@@ -369,40 +370,55 @@ object MediaProcessor {
             ) sample *= 2
 
             val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-            var bmp = BitmapFactory.decodeByteArray(src, 0, src.size, opts) ?: return@runCatching null
-            bmp = applyOrientation(bmp, orientation)
+            var bmp = context.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, opts)
+            } ?: return@runCatching null
+            var out: File? = null
+            try {
+                bmp = applyOrientation(bmp, orientation)
+                val result = File.createTempFile("tbone_media_", ".jpg", context.cacheDir)
+                out = result
+                var quality = if (compress) 88 else 100
 
-            val out = File(context.cacheDir, "tbone_media_${System.currentTimeMillis()}.jpg")
-            var quality = if (compress) 88 else 100
-            val targetBytes: Long? = maxBytes
-
-            // Compress loop: lower quality until under the cap (or min quality).
-            while (true) {
-                FileOutputStream(out).use { fos ->
-                    bmp.compress(Bitmap.CompressFormat.JPEG, quality, fos)
-                }
-                val size = out.length()
-                if (targetBytes == null || size <= targetBytes || quality <= 55) break
-                quality -= 8
-            }
-            if (out.length() > (maxBytes ?: Long.MAX_VALUE)) {
-                // Still too big at min quality — downscale and retry.
-                var maxDim = 1600
-                while (maxDim >= 400) {
-                    val scale = maxDim.toFloat() / maxOf(bmp.width, bmp.height)
-                    val scaled = Bitmap.createScaledBitmap(
-                        bmp, (bmp.width * scale).toInt().coerceAtLeast(1),
-                        (bmp.height * scale).toInt().coerceAtLeast(1), true,
-                    )
-                    FileOutputStream(out).use { fos ->
-                        scaled.compress(Bitmap.CompressFormat.JPEG, 70, fos)
+                // Compress loop: lower quality until under the cap (or min quality).
+                while (true) {
+                    FileOutputStream(result).use { fos ->
+                        check(bmp.compress(Bitmap.CompressFormat.JPEG, quality, fos))
                     }
-                    if (out.length() <= (maxBytes ?: Long.MAX_VALUE)) break
-                    maxDim -= 300
+                    val size = result.length()
+                    if (maxBytes == null || size <= maxBytes || quality <= 55) break
+                    quality -= 8
                 }
+                if (result.length() > (maxBytes ?: Long.MAX_VALUE)) {
+                    // Still too big at min quality — downscale and retry.
+                    var maxDim = 1600
+                    while (maxDim >= 400) {
+                        val scale = (maxDim.toFloat() / maxOf(bmp.width, bmp.height)).coerceAtMost(1f)
+                        val scaled = Bitmap.createScaledBitmap(
+                            bmp, (bmp.width * scale).toInt().coerceAtLeast(1),
+                            (bmp.height * scale).toInt().coerceAtLeast(1), true,
+                        )
+                        try {
+                            FileOutputStream(result).use { fos ->
+                                check(scaled.compress(Bitmap.CompressFormat.JPEG, 70, fos))
+                            }
+                        } finally {
+                            if (scaled !== bmp) scaled.recycle()
+                        }
+                        if (result.length() <= (maxBytes ?: Long.MAX_VALUE)) break
+                        maxDim -= 300
+                    }
+                }
+                check(result.length() > 0 && (maxBytes == null || result.length() <= maxBytes)) {
+                    "Could not fit image within the requested size"
+                }
+                result
+            } catch (failure: Throwable) {
+                out?.delete()
+                throw failure
+            } finally {
+                if (!bmp.isRecycled) bmp.recycle()
             }
-            bmp.recycle()
-            out
         }.getOrNull()
     }
 

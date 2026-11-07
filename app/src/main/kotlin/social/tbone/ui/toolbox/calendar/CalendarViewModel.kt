@@ -21,7 +21,9 @@ import javax.inject.Inject
 class CalendarViewModel @Inject constructor(
     private val repository: CalendarRepository,
     private val crypto: CalendarCrypto,
+    private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
 ) : ViewModel() {
+    fun currentWipeEpoch(): Long = noteWrites.currentWipeEpoch()
 
     val events: StateFlow<List<CalendarEventUi>> = repository.events
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -37,17 +39,21 @@ class CalendarViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            val (verified, hw) = withContext(Dispatchers.IO) {
-                repository.encryptionSelfTest() to repository.isHardwareBacked()
+            try {
+                val (verified, hw) = noteWrites.submit {
+                    repository.encryptionSelfTest() to repository.isHardwareBacked()
+                }.await()
+                _encryptionVerified.value = verified
+                _hardwareBacked.value = hw
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _error.value = "encryption unavailable (${error.message})"
             }
-            _encryptionVerified.value = verified
-            _hardwareBacked.value = hw
         }
     }
 
-    suspend fun getEvent(id: String): CalendarEventUi? = withContext(Dispatchers.IO) {
-        repository.getById(id)
-    }
+    suspend fun getEvent(id: String): CalendarEventUi? = noteWrites.submit { repository.getById(id) }.await()
 
     /**
      * Saves a new or existing event (idempotent by id — the same id always
@@ -63,14 +69,17 @@ class CalendarViewModel @Inject constructor(
         repeatUnit: RepeatUnit,
         repeatInterval: Int,
         repeatEndMillis: Long?,
+        epoch: Long = noteWrites.currentWipeEpoch(),
+        onError: (Exception) -> Unit = {},
         onSaved: (String) -> Unit = {},
     ) {
         if (!_encryptionVerified.value) {
-            _error.value = "encryption not verified — calendar disabled"
+            val error = IllegalStateException("encryption not verified — calendar disabled")
+            _error.value = error.message
+            onError(error)
             return
         }
-        viewModelScope.launch {
-            runCatching {
+        val pending = noteWrites.submitAtEpoch(epoch) {
                 repository.saveEvent(
                     id = id,
                     title = title,
@@ -82,15 +91,21 @@ class CalendarViewModel @Inject constructor(
                     repeatInterval = repeatInterval,
                     repeatEndMillis = repeatEndMillis,
                 )
-            }
-                .onSuccess { onSaved(it) }
-                .onFailure { _error.value = "could not save event (${it.message})" }
+        }
+        viewModelScope.launch {
+            try { onSaved(pending.await()) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { _error.value = "could not save event (${error.message})"; onError(error) }
         }
     }
 
-    fun deleteEvent(id: String) = viewModelScope.launch {
-        runCatching { repository.deleteEvent(id) }
-            .onFailure { _error.value = "could not delete event (${it.message})" }
+    fun deleteEvent(id: String, epoch: Long = noteWrites.currentWipeEpoch(), onError: (Exception) -> Unit = {}, onDeleted: () -> Unit = {}) {
+        val pending = noteWrites.submitAtEpoch(epoch) { repository.deleteEvent(id) }
+        viewModelScope.launch {
+            try { pending.await(); onDeleted() }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { _error.value = "could not delete event (${error.message})"; onError(error) }
+        }
     }
 
     fun clearError() {

@@ -1,5 +1,7 @@
 # T-Bone cache audit — why you saw 3 GB (2026-10-27)
 
+> Historical audit of an earlier version. Webxdc was subsequently removed; references to the feature and its security properties below do not describe the current app.
+
 This is a complete walk of every place T-Bone writes to disk that can keep growing. “Cache” in Android Settings is **only `cacheDir/` + `codeCacheDir/` + Coil’s disk cache folder** — `filesDir/tbone.db` + `filesDir/webxdc` + `filesDir/logs` are counted under **“Data”**, not cache, but users conflate them. On a long-lived install both sides can make the app look 3 GB.
 
 No code was changed — audit only, per your ask.

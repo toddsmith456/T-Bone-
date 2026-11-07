@@ -35,7 +35,7 @@ data class ProfileEditUiState(
 
 /**
  * Edits the active account's profile picture and banner:
- * images are re-encoded (EXIF/metadata removed), compressed to the 800 KB cap,
+ * images are re-encoded without copying source EXIF, compressed to the 800 KB cap,
  * uploaded to Blossom, and a kind-0 metadata event is published.
  */
 @HiltViewModel

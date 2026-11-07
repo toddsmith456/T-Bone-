@@ -1,5 +1,7 @@
 # Privacy & Security Audit — T-Bone (2026-10-27)
 
+> Historical audit of an earlier version. Webxdc was subsequently removed; references to the feature and its security properties below do not describe the current app.
+
 > **Current release note (2026-10-27):** the repository now builds **0.5.2 / versionCode 68** from `version.properties`. The version below is the historical scope of this audit, not the current app version.
 
 **Scope:** full local codebase at the time of the audit (`social.tbone.fork`, versionCode 66 / 0.4.7, branch `main` at `91401ec`). Audit is code-only, offline, no device testing. Nothing was changed in that audit.

@@ -57,19 +57,26 @@ fun ToolboxLockScreen(
         social.tbone.ui.lock.PinKeypadLayout.digits(scramble = scrambleKeypad)
     }
     var isError by remember { mutableStateOf(false) }
+    var isSubmitting by remember { mutableStateOf(false) }
+    var retryMessage by remember { mutableStateOf("") }
     val shakeOffset = remember { Animatable(0f) }
 
     fun submit() {
+        if (isSubmitting || pin.length != 4) return
+        val attemptedPin = pin
+        isSubmitting = true
         scope.launch {
-            if (viewModel.isDuressPin(pin)) {
-                viewModel.wipeToolbox()
+          try {
+            if (viewModel.handleDuressPin(attemptedPin)) {
                 return@launch
             }
-            val ok = viewModel.verifyPin(pin)
+            val ok = viewModel.verifyPin(attemptedPin)
             if (ok) {
                 viewModel.unlock()
                 onUnlocked()
             } else {
+                val wait = viewModel.retryAfterMillis()
+                retryMessage = if (wait > 0) "try again in ${(wait + 999) / 1000} seconds" else ""
                 isError = true
                 shakeOffset.animateTo(
                     targetValue = 0f,
@@ -83,6 +90,16 @@ fun ToolboxLockScreen(
                 keypadAttempt++
                 isError = false
             }
+          } catch (cancelled: kotlinx.coroutines.CancellationException) {
+              throw cancelled
+          } catch (error: Exception) {
+              timber.log.Timber.e(error, "PIN verification failed")
+              retryMessage = "couldn't verify pin; try again"
+              pin = ""
+              isError = false
+          } finally {
+              isSubmitting = false
+          }
         }
     }
 
@@ -112,6 +129,7 @@ fun ToolboxLockScreen(
                 style = BonyType.caption.copy(color = BonyColors.TextMute),
             )
 
+            if (retryMessage.isNotEmpty()) Text(retryMessage, style = BonyType.caption.copy(color = BonyColors.Danger))
             Spacer(Modifier.height(48.dp))
 
             Row(
@@ -134,8 +152,9 @@ fun ToolboxLockScreen(
 
             PinKeypad(
                 digits = keypadDigits,
-                onDigit = { d -> if (pin.length < 4) pin += d },
-                onBackspace = { if (pin.isNotEmpty()) pin = pin.dropLast(1) },
+                enabled = !isSubmitting,
+                onDigit = { d -> if (!isSubmitting && pin.length < 4) pin += d },
+                onBackspace = { if (!isSubmitting && pin.isNotEmpty()) pin = pin.dropLast(1) },
             )
         }
     }

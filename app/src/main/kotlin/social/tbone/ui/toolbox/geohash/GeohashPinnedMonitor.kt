@@ -40,6 +40,7 @@ class GeohashPinnedMonitor @Inject constructor(
     private val collectorJobs = ConcurrentHashMap<String, Job>()
     private val seenPerChannel = ConcurrentHashMap<String, MutableSet<String>>()
     @Volatile private var openChannel: String? = null
+    @Volatile private var wipePaused = false
 
     init {
         scope.launch {
@@ -55,8 +56,9 @@ class GeohashPinnedMonitor @Inject constructor(
     private fun prefs() = context.getSharedPreferences("tbone_geohash", Context.MODE_PRIVATE)
     private fun lastSeen(code: String) = prefs().getLong("last_seen_$code", 0L)
 
-    private fun startWatch(code: String) {
-        if (subIds.containsKey(code)) return
+    @Synchronized private fun startWatch(code: String) {
+        if (wipePaused || subIds.containsKey(code) ||
+            appSettings.geohashChannels.value.none { it.code == code && it.pinnedToHome }) return
         val seen = ConcurrentHashMap.newKeySet<String>()
         val liveRelays = ConcurrentHashMap.newKeySet<String>()
         seenPerChannel[code] = seen
@@ -81,19 +83,27 @@ class GeohashPinnedMonitor @Inject constructor(
                 if (event.kind != 20000 || !event.matchesGeohashChannel(code) || !event.verify()) return@collect
                 if (!seen.add(event.id)) return@collect
                 if (seen.size > 4096) { seen.clear(); seen.add(event.id) }
-                val own = event.pubkey in cache.ownPubkeys(code)
-                if (openChannel == code) {
-                    markSeen(code)
-                } else if (!own && (poolMessage.relayUrl in liveRelays || event.createdAt > lastSeen(code))) {
-                    _unread.update { it + (code to ((it[code] ?: 0) + 1)) }
+                val own = try { event.pubkey in cache.ownPubkeys(code) } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (_: java.io.IOException) { return@collect }
+                // Keep the gate check and resulting mutations atomic with pauseForWipe.
+                // Otherwise an in-flight callback could repopulate a badge or enqueue
+                // old content after the monitor has been cleared and resumed.
+                synchronized(this@GeohashPinnedMonitor) {
+                    if (wipePaused || subIds[code] != subId) return@collect
+                    if (openChannel == code) {
+                        markSeen(code)
+                    } else if (!own && (poolMessage.relayUrl in liveRelays || event.createdAt > lastSeen(code))) {
+                        _unread.update { it + (code to ((it[code] ?: 0) + 1)) }
+                    }
+                    cache.enqueue(code, GeohashMessage(event.id, event.pubkey, event.createdAt, event.content,
+                        event.parsedTags.firstOrNull { it.name == "n" }?.value(), own))
                 }
-                cache.enqueue(code, GeohashMessage(event.id, event.pubkey, event.createdAt, event.content,
-                    event.parsedTags.firstOrNull { it.name == "n" }?.value(), own))
             }
         }
     }
 
-    private fun stopWatch(code: String) {
+    @Synchronized private fun stopWatch(code: String) {
         subIds.remove(code)?.let(pool::unsubscribe)
         collectorJobs.remove(code)?.cancel()
         channelRelays.remove(code)?.forEach(pool::releaseRelay)
@@ -101,9 +111,24 @@ class GeohashPinnedMonitor @Inject constructor(
         _unread.update { it - code }
     }
 
-    fun open(code: String) { openChannel = code; markSeen(code) }
-    fun close(code: String) { if (openChannel == code) { markSeen(code); openChannel = null } }
-    fun markSeen(code: String) {
+    /** Quiesce watchers and their preference writes before a destructive wipe. */
+    @Synchronized fun pauseForWipe() {
+        wipePaused = true
+        subIds.keys.toList().forEach { stopWatch(it) }
+        openChannel = null
+        _unread.value = emptyMap()
+    }
+
+    /** Only call after a successful wipe; a failed wipe remains paused. */
+    @Synchronized fun resumeAfterWipe() {
+        wipePaused = false
+        appSettings.geohashChannels.value.filter { it.pinnedToHome }.forEach { startWatch(it.code) }
+    }
+
+    @Synchronized fun open(code: String) { if (!wipePaused) { openChannel = code; markSeen(code) } }
+    @Synchronized fun close(code: String) { if (!wipePaused && openChannel == code) { markSeen(code); openChannel = null } }
+    @Synchronized fun markSeen(code: String) {
+        if (wipePaused) return
         prefs().edit().putLong("last_seen_$code", System.currentTimeMillis() / 1000L).apply()
         _unread.update { it - code }
     }

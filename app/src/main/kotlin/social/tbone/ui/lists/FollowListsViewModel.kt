@@ -18,11 +18,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withLock
 import social.tbone.account.Account
 import social.tbone.account.AccountRepository
 import social.tbone.account.FollowEntry
@@ -58,6 +60,7 @@ class FollowListsViewModel @Inject constructor(
     private val followerRepo: FollowerListRepository,
     private val signerFactory: NostrSignerFactory,
     private val listFetcher: social.tbone.lists.RelayListFetcher,
+    private val followMutations: social.tbone.lists.FollowMutationCoordinator,
     private val relayPool: social.tbone.nostr.relay.RelayPool,
     private val appSettings: social.tbone.settings.AppSettings,
     profileRepository: ProfileRepository,
@@ -108,6 +111,7 @@ class FollowListsViewModel @Inject constructor(
     private val _followers = MutableStateFlow<FollowerListRepository.FollowersState?>(null)
     val followers: StateFlow<FollowerListRepository.FollowersState?> = _followers.asStateFlow()
 
+    private var followersJob: kotlinx.coroutines.Job? = null
     private val _followersBusy = MutableStateFlow(false)
     val followersBusy: StateFlow<Boolean> = _followersBusy.asStateFlow()
 
@@ -139,6 +143,9 @@ class FollowListsViewModel @Inject constructor(
                 if (acct != null && enabled) {
                     loadFollowers(acct.pubkey, acct.relays)
                 } else {
+                    followersJob?.cancel()
+                    followersJob = null
+                    _followersBusy.value = false
                     _followers.value = null
                 }
             }
@@ -201,6 +208,10 @@ class FollowListsViewModel @Inject constructor(
     fun unfollow(pubkeyHex: String) {
         val acct = account.value ?: return
         viewModelScope.launch {
+          followMutations.mutex.withLock {
+            val mutationJob = checkNotNull(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job])
+            if (!followMutations.begin(mutationJob)) { say("Follow list unavailable during a wipe"); return@launch }
+            try {
             val isOffline = followsOfflineState.value?.enabled == true
             if (isOffline) {
                 val removed = offline.remove(ListType.FOLLOWS, acct.pubkey, pubkeyHex)
@@ -209,29 +220,46 @@ class FollowListsViewModel @Inject constructor(
                 _onlineLoading.value = true
                 try {
                     val signer = signerFactory.forActiveAccount() ?: run { say("No signer"); return@launch }
-                    val latest = listFetcher.fetchLatest(acct.pubkey, EventKind.FOLLOW_LIST, acct.relays).event
+                    val fetched = listFetcher.fetchLatest(acct.pubkey, EventKind.FOLLOW_LIST, acct.effectiveRelays())
+                    if (!fetched.allRelaysAnswered || acct.effectiveRelays().isEmpty()) {
+                        say("Couldn't read the follow list from every configured relay — nothing changed")
+                        return@launch
+                    }
+                    if (signer.pubkey != acct.pubkey || !social.tbone.lists.sameListWriteContext(acct, accountRepository.activeAccount.first()) ||
+                        offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
+                        say("Account or list mode changed — try again")
+                        return@launch
+                    }
+                    val latest = followMutations.newest(acct.pubkey, fetched.event)
+                    if ((latest?.createdAt ?: 0L) > System.currentTimeMillis() / 1000 + 59) {
+                        say("Existing follow list has a future timestamp — nothing changed")
+                        return@launch
+                    }
                     val existing = latest?.let { OfflineListRepository.entriesFromEvent(it, acct.pubkey).map { FollowEntry(it.pubkey, it.relay, it.petname) } }
                         ?: acct.followEntries.ifEmpty { acct.follows.map { FollowEntry(it) } }
                     if (existing.none { it.pubkey == pubkeyHex }) { say("Not following"); return@launch }
                     val newEntries = existing.filter { it.pubkey != pubkeyHex }
-                    val keptTags = latest?.tags?.filter { (it.firstOrNull() as? kotlinx.serialization.json.JsonPrimitive)?.content != "p" }.orEmpty()
-                    val pTags = newEntries.map { e ->
-                        kotlinx.serialization.json.buildJsonArray {
-                            add(kotlinx.serialization.json.JsonPrimitive("p")); add(kotlinx.serialization.json.JsonPrimitive(e.pubkey))
-                            if (e.relay.isNotEmpty() || e.petname.isNotEmpty()) add(kotlinx.serialization.json.JsonPrimitive(e.relay))
-                            if (e.petname.isNotEmpty()) add(kotlinx.serialization.json.JsonPrimitive(e.petname))
-                        }
-                    }
+                    val tags = social.tbone.lists.followTagsForToggle(latest, existing, pubkeyHex, add = false)
                     val unsigned = social.tbone.nostr.UnsignedEvent(
                         pubkey = signer.pubkey,
                         createdAt = maxOf(System.currentTimeMillis()/1000, (latest?.createdAt ?: 0L) + 1),
                         kind = EventKind.FOLLOW_LIST,
                         content = latest?.content ?: "",
-                        tags = pTags + keptTags,
+                        tags = tags,
                     )
                     signer.signEvent(unsigned).onSuccess { ev ->
-                        relayPool.publish(ev)
-                        accountRepository.updateAccount(acct.pubkey) {
+                        if (!social.tbone.lists.sameListWriteContext(acct, accountRepository.activeAccount.first()) ||
+                        offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
+                        say("Account or list mode changed — nothing published")
+                        return@onSuccess
+                    }
+                    val targets = acct.effectiveRelays().map(social.tbone.nostr.relay.RelayPool::normalize).toSet()
+                    if (relayPool.publishTo(ev, targets) == 0) {
+                        say("No connected relays — nothing published")
+                        return@onSuccess
+                    }
+                        followMutations.published(acct.pubkey, ev)
+                    accountRepository.updateAccount(acct.pubkey) {
                             it.copy(follows = newEntries.map { e -> e.pubkey }, followEntries = newEntries)
                         }
                         _onlineFollowing.value = newEntries.map { ListEntry(it.pubkey, it.relay, it.petname) }
@@ -239,6 +267,8 @@ class FollowListsViewModel @Inject constructor(
                     }.onFailure { say("Signing failed") }
                 } finally { _onlineLoading.value = false }
             }
+            } finally { followMutations.finish(mutationJob) }
+          }
         }
     }
 
@@ -261,31 +291,52 @@ class FollowListsViewModel @Inject constructor(
     fun doFollowOnline(pubkeyHex: String) {
         val acct = account.value ?: return
         viewModelScope.launch {
+          followMutations.mutex.withLock {
+            val mutationJob = checkNotNull(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job])
+            if (!followMutations.begin(mutationJob)) { say("Follow list unavailable during a wipe"); return@launch }
+            try {
             _onlineLoading.value = true
             try {
                 val signer = signerFactory.forActiveAccount() ?: run { say("No signer"); return@launch }
-                val latest = listFetcher.fetchLatest(acct.pubkey, EventKind.FOLLOW_LIST, acct.relays).event
+                val fetched = listFetcher.fetchLatest(acct.pubkey, EventKind.FOLLOW_LIST, acct.effectiveRelays())
+                    if (!fetched.allRelaysAnswered || acct.effectiveRelays().isEmpty()) {
+                        say("Couldn't read the follow list from every configured relay — nothing changed")
+                        return@launch
+                    }
+                    if (signer.pubkey != acct.pubkey || !social.tbone.lists.sameListWriteContext(acct, accountRepository.activeAccount.first()) ||
+                        offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
+                        say("Account or list mode changed — try again")
+                        return@launch
+                    }
+                    val latest = followMutations.newest(acct.pubkey, fetched.event)
+                    if ((latest?.createdAt ?: 0L) > System.currentTimeMillis() / 1000 + 59) {
+                        say("Existing follow list has a future timestamp — nothing changed")
+                        return@launch
+                    }
                 val existing = latest?.let { OfflineListRepository.entriesFromEvent(it, acct.pubkey).map { FollowEntry(it.pubkey, it.relay, it.petname) } }
                     ?: acct.followEntries.ifEmpty { acct.follows.map { FollowEntry(it) } }
                 if (existing.any { it.pubkey == pubkeyHex }) { say("Already following"); return@launch }
                 val newEntries = (existing + FollowEntry(pubkeyHex)).distinctBy { it.pubkey }
-                val keptTags = latest?.tags?.filter { (it.firstOrNull() as? kotlinx.serialization.json.JsonPrimitive)?.content != "p" }.orEmpty()
-                val pTags = newEntries.map { e ->
-                    kotlinx.serialization.json.buildJsonArray {
-                        add(kotlinx.serialization.json.JsonPrimitive("p")); add(kotlinx.serialization.json.JsonPrimitive(e.pubkey))
-                        if (e.relay.isNotEmpty() || e.petname.isNotEmpty()) add(kotlinx.serialization.json.JsonPrimitive(e.relay))
-                        if (e.petname.isNotEmpty()) add(kotlinx.serialization.json.JsonPrimitive(e.petname))
-                    }
-                }
+                val tags = social.tbone.lists.followTagsForToggle(latest, existing, pubkeyHex, add = true)
                 val unsigned = social.tbone.nostr.UnsignedEvent(
                     pubkey = signer.pubkey,
                     createdAt = maxOf(System.currentTimeMillis()/1000, (latest?.createdAt ?: 0L) + 1),
                     kind = EventKind.FOLLOW_LIST,
                     content = latest?.content ?: "",
-                    tags = pTags + keptTags,
+                    tags = tags,
                 )
                 signer.signEvent(unsigned).onSuccess { ev ->
-                    relayPool.publish(ev)
+                    if (!social.tbone.lists.sameListWriteContext(acct, accountRepository.activeAccount.first()) ||
+                        offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
+                        say("Account or list mode changed — nothing published")
+                        return@onSuccess
+                    }
+                    val targets = acct.effectiveRelays().map(social.tbone.nostr.relay.RelayPool::normalize).toSet()
+                    if (relayPool.publishTo(ev, targets) == 0) {
+                        say("No connected relays — nothing published")
+                        return@onSuccess
+                    }
+                    followMutations.published(acct.pubkey, ev)
                     accountRepository.updateAccount(acct.pubkey) {
                         it.copy(follows = newEntries.map { it.pubkey }, followEntries = newEntries)
                     }
@@ -293,6 +344,8 @@ class FollowListsViewModel @Inject constructor(
                     say("Followed")
                 }.onFailure { say("Signing failed: ${it.message}") }
             } finally { _onlineLoading.value = false }
+            } finally { followMutations.finish(mutationJob) }
+          }
         }
     }
 
@@ -340,9 +393,6 @@ class FollowListsViewModel @Inject constructor(
                 // For now just set and let UI show dialog
             }
             appSettings.setFollowersEnabled(enabled)
-            if (enabled) {
-                account.value?.let { loadFollowers(it.pubkey, it.relays) }
-            }
         }
     }
 
@@ -350,7 +400,6 @@ class FollowListsViewModel @Inject constructor(
         viewModelScope.launch {
             appSettings.setFollowersDisclaimerShown(true)
             appSettings.setFollowersEnabled(true)
-            account.value?.let { loadFollowers(it.pubkey, it.relays) }
         }
     }
 
@@ -359,16 +408,22 @@ class FollowListsViewModel @Inject constructor(
     }
 
     private fun loadFollowers(pubkey: String, relays: List<String>) {
-        viewModelScope.launch {
+        followersJob?.cancel()
+        _followers.value = null
+        val job = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             _followersBusy.value = true
             try {
-                followerRepo.followers(pubkey, relays).collect { state ->
-                    _followers.value = state
-                }
+                followerRepo.followers(pubkey, relays).collect { state -> _followers.value = state }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 _followers.value = FollowerListRepository.FollowersState(followers = emptyList(), loading = false, error = e.message)
-            } finally { _followersBusy.value = false }
+            } finally {
+                if (followersJob === kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]) _followersBusy.value = false
+            }
         }
+        followersJob = job
+        job.start()
     }
 
     fun refreshFollowers() {
@@ -471,6 +526,10 @@ class FollowListsViewModel @Inject constructor(
     fun applyImport(parsed: ListFileFormat.Parsed, replace: Boolean) {
         val acct = account.value ?: return
         viewModelScope.launch {
+          followMutations.mutex.withLock {
+            val mutationJob = checkNotNull(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job])
+            if (!followMutations.begin(mutationJob)) { say("Follow list unavailable during a wipe"); return@launch }
+            try {
             val isOffline = followsOfflineState.value?.enabled == true
             if (isOffline) {
                 if (replace) {
@@ -482,11 +541,27 @@ class FollowListsViewModel @Inject constructor(
                 }
             } else {
                 // Online import: publish merged/replaced to relays
-                val current = _onlineFollowing.value
+                val signer = signerFactory.forActiveAccount() ?: run { say("No signer"); return@launch }
+                val fetched = listFetcher.fetchLatest(acct.pubkey, EventKind.FOLLOW_LIST, acct.effectiveRelays())
+                    if (!fetched.allRelaysAnswered || acct.effectiveRelays().isEmpty()) {
+                        say("Couldn't read the follow list from every configured relay — nothing changed")
+                        return@launch
+                    }
+                    if (signer.pubkey != acct.pubkey || !social.tbone.lists.sameListWriteContext(acct, accountRepository.activeAccount.first()) ||
+                        offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
+                        say("Account or list mode changed — try again")
+                        return@launch
+                    }
+                    val latest = followMutations.newest(acct.pubkey, fetched.event)
+                    if ((latest?.createdAt ?: 0L) > System.currentTimeMillis() / 1000 + 59) {
+                        say("Existing follow list has a future timestamp — nothing changed")
+                        return@launch
+                    }
+                val current = latest?.let { OfflineListRepository.entriesFromEvent(it, acct.pubkey) }
+                    ?: acct.followEntries.map { ListEntry(it.pubkey, it.relay, it.petname) }
+                        .ifEmpty { acct.follows.map { ListEntry(it) } }
                 val incoming = if (replace) parsed.entries else (current + parsed.entries).distinctBy { it.pubkey }
                 val newEntries = incoming.map { FollowEntry(it.pubkey, it.relay, it.petname) }
-                val signer = signerFactory.forActiveAccount() ?: run { say("No signer"); return@launch }
-                val latest = listFetcher.fetchLatest(acct.pubkey, EventKind.FOLLOW_LIST, acct.relays).event
                 val keptTags = latest?.tags?.filter { (it.firstOrNull() as? kotlinx.serialization.json.JsonPrimitive)?.content != "p" }.orEmpty()
                 val pTags = newEntries.map { e ->
                     kotlinx.serialization.json.buildJsonArray {
@@ -503,12 +578,24 @@ class FollowListsViewModel @Inject constructor(
                     tags = pTags + keptTags,
                 )
                 signer.signEvent(unsigned).onSuccess { ev ->
-                    relayPool.publish(ev)
+                    if (!social.tbone.lists.sameListWriteContext(acct, accountRepository.activeAccount.first()) ||
+                        offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
+                        say("Account or list mode changed — nothing published")
+                        return@onSuccess
+                    }
+                    val targets = acct.effectiveRelays().map(social.tbone.nostr.relay.RelayPool::normalize).toSet()
+                    if (relayPool.publishTo(ev, targets) == 0) {
+                        say("No connected relays — nothing published")
+                        return@onSuccess
+                    }
+                    followMutations.published(acct.pubkey, ev)
                     accountRepository.updateAccount(acct.pubkey) { it.copy(follows = newEntries.map { it.pubkey }, followEntries = newEntries) }
                     _onlineFollowing.value = newEntries.map { ListEntry(it.pubkey, it.relay, it.petname) }
                     say("Imported & published ${newEntries.size} follows")
                 }.onFailure { say("Import publish failed: ${it.message}") }
             }
+            } finally { followMutations.finish(mutationJob) }
+          }
         }
     }
 }

@@ -7,6 +7,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -58,6 +59,15 @@ interface NoteDao {
     @Query("DELETE FROM notes WHERE id = :id")
     suspend fun delete(id: String)
 
+    @Query("DELETE FROM note_attachments WHERE noteId = :id")
+    suspend fun deleteAttachmentsByNote(id: String)
+
+    @Transaction
+    suspend fun deleteWithAttachments(id: String) {
+        deleteAttachmentsByNote(id)
+        delete(id)
+    }
+
     @Query("SELECT COUNT(*) FROM notes WHERE kind = 'note'")
     fun observeNoteCount(): Flow<Int>
 
@@ -87,4 +97,13 @@ interface NoteDao {
 
     @Query("UPDATE notes SET folderId = NULL, folderPinned = 0 WHERE folderId = :folderId")
     suspend fun clearFolder(folderId: String)
+
+    @Query("DELETE FROM note_folders WHERE id = :folderId")
+    suspend fun deleteFolderRow(folderId: String)
+
+    @Transaction
+    suspend fun unfileAndDeleteFolder(folderId: String) {
+        clearFolder(folderId)
+        deleteFolderRow(folderId)
+    }
 }

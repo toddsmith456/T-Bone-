@@ -204,7 +204,7 @@ fun BlossomSettingsScreen(
                     Text("compress uploads", style = BonyType.meta.copy(color = BonyColors.Text))
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        text = "images are re-encoded (EXIF/metadata removed) and videos are transcoded smaller",
+                        text = "images are re-encoded without EXIF. Videos may be uploaded unchanged, including metadata; audio may also retain metadata.",
                         style = BonyType.metaDim.copy(color = BonyColors.TextMute),
                     )
                 }

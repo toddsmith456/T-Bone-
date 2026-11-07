@@ -1,25 +1,35 @@
 package social.tbone.notifications
 
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.receiveAsFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
+sealed interface PendingNavigation {
+    data class Thread(val eventId: String) : PendingNavigation
+    data class Profile(val pubkey: String) : PendingNavigation
+}
+
 @Singleton
 class DeepLinkHandler @Inject constructor() {
-
-    private val _openThread = MutableSharedFlow<String>(extraBufferCapacity = 1)
-    val openThread: SharedFlow<String> = _openThread.asSharedFlow()
-
-    private val _openProfile = MutableSharedFlow<String>(extraBufferCapacity = 1)
-    val openProfile: SharedFlow<String> = _openProfile.asSharedFlow()
+    // Stable across Activity recreation, new after process death.
+    internal val processToken: String = java.util.UUID.randomUUID().toString()
+    // One queue preserves the order of mixed notification and URI destinations.
+    // Pending destinations wait until the navigation graph is ready and unlocked.
+    private val pending = Channel<PendingNavigation>(capacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val destinations = pending.receiveAsFlow()
 
     fun navigateToThread(eventId: String) {
-        _openThread.tryEmit(eventId)
+        pending.trySend(PendingNavigation.Thread(eventId))
     }
 
     fun navigateToProfile(pubkey: String) {
-        _openProfile.tryEmit(pubkey)
+        pending.trySend(PendingNavigation.Profile(pubkey))
     }
 }
+
+/** Replay the launch intent after process death, but not while the singleton
+ * queue from the same process already owns that intent. */
+internal fun shouldHandleLaunchIntent(savedProcessToken: String?, currentProcessToken: String): Boolean =
+    savedProcessToken != currentProcessToken

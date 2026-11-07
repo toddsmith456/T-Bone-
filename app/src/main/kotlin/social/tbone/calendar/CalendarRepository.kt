@@ -2,6 +2,7 @@ package social.tbone.calendar
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import social.tbone.db.CalendarEventDao
 import social.tbone.db.CalendarEventEntity
@@ -171,18 +172,19 @@ data class CalendarEventUi(
 class CalendarRepository @Inject constructor(
     private val dao: CalendarEventDao,
     private val crypto: CalendarCrypto,
+    private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
 ) {
 
     /** All events, decrypted, sorted by start time. */
-    val events: Flow<List<CalendarEventUi>> = dao.observeAll().map { entities ->
-        entities.mapNotNull { entity -> entity.toUi(crypto) }
+    val events: Flow<List<CalendarEventUi>> = combine(noteWrites.available, dao.observeAll()) { available, entities ->
+        if (available) entities.mapNotNull { entity -> entity.toUi(crypto) } else emptyList()
     }
 
     fun encryptionSelfTest(): Boolean = crypto.selfTest()
 
     fun isHardwareBacked(): Boolean = crypto.isHardwareBacked()
 
-    suspend fun getById(id: String): CalendarEventUi? = dao.getById(id)?.let { it.toUi(crypto) }
+    suspend fun getById(id: String): CalendarEventUi? = dao.getById(id)?.let { it.toUi(crypto, strictDescription = true) }
 
     /** One-shot decrypted event list — used by the boot alarm re-scheduler. */
     suspend fun getEventsForScheduling(): List<CalendarEventUi> =
@@ -230,11 +232,14 @@ class CalendarRepository @Inject constructor(
 
     suspend fun deleteEvent(id: String) = dao.delete(id)
 
-    private fun CalendarEventEntity.toUi(crypto: CalendarCrypto): CalendarEventUi? = runCatching {
+    private fun CalendarEventEntity.toUi(crypto: CalendarCrypto, strictDescription: Boolean = false): CalendarEventUi? = runCatching {
         CalendarEventUi(
             id = id,
             title = crypto.decrypt(titleCiphertext, titleIv),
-            description = descriptionCiphertext?.let { ct ->
+            description = if (strictDescription) {
+                if (descriptionCiphertext == null && descriptionIv == null) ""
+                else crypto.decrypt(requireNotNull(descriptionCiphertext), requireNotNull(descriptionIv))
+            } else descriptionCiphertext?.let { ct ->
                 descriptionIv?.let { iv -> runCatching { crypto.decrypt(ct, iv) }.getOrNull() }
             } ?: "",
             startMillis = startMillis,

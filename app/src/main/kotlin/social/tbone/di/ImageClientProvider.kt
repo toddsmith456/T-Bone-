@@ -6,18 +6,18 @@ import social.tbone.nostr.relay.RelayConnection
 /**
  * The single OkHttp client used for fetching media (images) over plain HTTP(S).
  *
- * Kept in sync with the Tor toggle by [social.tbone.BonyApp] so image fetches
- * are routed through the same proxy as relay WebSockets — never bypassing the
- * user's Tor choice. Coil is configured with this client at app start, and the
- * image viewer reuses it for downloads so a download goes through the exact
- * same path as the on-screen fetch.
+ * Updated by [social.tbone.BonyApp] after settings load and on Tor changes.
+ * Calls from the old client are cancelled and old client generations are
+ * rejected; this is not a global network kill switch.
  */
 object ImageClientProvider {
+    // The persisted setting is initially unknown. A proxy-only client prevents
+    // early media requests from going direct before application settings load.
     @Volatile
-    var client: OkHttpClient = RelayConnection.buildClient(useTor = false)
+    var client: OkHttpClient = guardedMediaClient(RelayConnection.buildClient(useTor = true), true, TorCallPolicy.guard)
         private set
 
-    fun update(newClient: OkHttpClient) {
-        client = newClient
+    fun update(newClient: OkHttpClient, useTor: Boolean) {
+        client = guardedMediaClient(newClient, useTor, TorCallPolicy.guard)
     }
 }

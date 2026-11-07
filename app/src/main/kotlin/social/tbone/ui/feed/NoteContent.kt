@@ -80,7 +80,6 @@ private val VIDEO_EXTENSIONS = setOf(
     "divx", "flv", "wmv", "mpeg", "mpg", "m2v", "m2ts", "m2t", "mts", "ts", "vob",
     "asf", "mxf", "rm", "rmvb", "f4v", "f4p", "dv", "264", "h264", "265", "h265", "hevc",
 )
-private val URL_REGEX = Regex("""https?://\S+""")
 
 private val NOSTR_URI_REGEX = Regex("""nostr:(note1|nevent1|npub1|nprofile1|naddr1)[a-z0-9]*""")
 
@@ -153,14 +152,17 @@ fun parseNoteContent(
     // body renderer can make them tappable (@name → profile, note → thread).
     val withoutNostrUris = content
 
-    val text = URL_REGEX.replace(withoutNostrUris) { match ->
-        val url = match.value
-        val ext = url.substringAfterLast('.').lowercase()
-            .substringBefore('?').substringBefore('#')
+    val text = social.tbone.util.HTTP_URL_REGEX.replace(withoutNostrUris) { match ->
+        val url = social.tbone.util.trimUrlPunctuation(match.value)
+        val suffix = match.value.substring(url.length)
+        // Only inspect the final path component, not the host, query or fragment.
+        val path = url.substringBefore('?').substringBefore('#').substringAfter("://").substringAfter('/', "")
+        val file = path.substringAfterLast('/')
+        val ext = if ('.' in file) file.substringAfterLast('.').lowercase() else ""
         when {
-            ext in IMAGE_EXTENSIONS -> { mediaItems.add(MediaItem.Image(url)); "" }
-            ext in AUDIO_EXTENSIONS -> { mediaItems.add(MediaItem.Audio(url)); "" }
-            ext in VIDEO_EXTENSIONS -> { mediaItems.add(MediaItem.Video(url)); "" }
+            ext in IMAGE_EXTENSIONS -> { mediaItems.add(MediaItem.Image(url)); suffix }
+            ext in AUDIO_EXTENSIONS -> { mediaItems.add(MediaItem.Audio(url)); suffix }
+            ext in VIDEO_EXTENSIONS -> { mediaItems.add(MediaItem.Video(url)); suffix }
             else -> match.value
         }
     }.replace(Regex(" {2,}"), " ").replace(Regex("\n{3,}"), "\n\n").trim()

@@ -2,9 +2,14 @@ package social.tbone.media.blossom
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
+import android.content.Context
+import dagger.hilt.android.qualifiers.ApplicationContext
+import social.tbone.settings.OrbotHelper
+import social.tbone.settings.OrbotStatus
+import social.tbone.nostr.relay.RelayConnection
 import okhttp3.OkHttpClient
 import social.tbone.account.signer.NostrSigner
-import social.tbone.di.ImageClientProvider
 import social.tbone.settings.AppSettings
 import timber.log.Timber
 import java.io.File
@@ -35,6 +40,7 @@ import javax.inject.Singleton
 @Singleton
 class BlossomUploader @Inject constructor(
     private val appSettings: AppSettings,
+    @ApplicationContext private val context: Context,
 ) {
 
     /**
@@ -42,10 +48,6 @@ class BlossomUploader @Inject constructor(
      * without touching the process-wide media client. Never set in app code.
      */
     internal var clientOverride: OkHttpClient? = null
-
-    /** Cached derived client; rebuilt whenever the shared media client changes (Tor toggle). */
-    @Volatile private var derivedFrom: OkHttpClient? = null
-    @Volatile private var derived: OkHttpClient? = null
 
     /**
      * Uploads [file] to a member of the enabled pool and returns the public
@@ -68,6 +70,7 @@ class BlossomUploader @Inject constructor(
         extension: String = "",
     ): String = withContext(Dispatchers.IO) {
         require(file.exists() && file.length() > 0) { "nothing to upload" }
+        appSettings.initialized.first { it }
 
         val pool = appSettings.blossomServers.value.toList()
         if (pool.isEmpty()) {
@@ -94,11 +97,13 @@ class BlossomUploader @Inject constructor(
 
         Timber.d("blossom: uploading ${file.name} ($size B, $mime) sha=$hash to $candidates")
 
-        val client = BlossomClient(clientOverride ?: uploadClient())
         val failures = mutableListOf<String>()
 
         for (server in candidates) {
             try {
+                val useTor = appSettings.torEnabled.value
+                val transportEpoch = social.tbone.di.TorCallPolicy.guard.snapshot(useTor)
+                val client = BlossomClient(clientOverride ?: uploadClient(useTor))
                 val result = client.upload(
                     file = file,
                     mime = mime,
@@ -106,10 +111,14 @@ class BlossomUploader @Inject constructor(
                     authHeader = authHeader,
                     hash = hash,
                     extension = extension,
+                    expectedTor = if (clientOverride == null) useTor else null,
+                    expectedTorEpoch = if (clientOverride == null) transportEpoch else null,
                 )
                 val url = result.url ?: BlossomServerUrl.blob(server, hash, extension)
                 Timber.i("blossom: uploaded to $server -> $url")
                 return@withContext url
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // Keep going: a 413 on one server says nothing about the next.
                 val host = BlossomServerUrl.domain(server).ifEmpty { server }
@@ -122,25 +131,23 @@ class BlossomUploader @Inject constructor(
         throw BlossomUploadException(failures)
     }
 
-    /**
-     * The shared media client is configured for WebSockets
-     * (`readTimeout(0)` = block forever), which would leave the compose screen
-     * showing "…uploading" indefinitely if a server accepted the connection
-     * and then stalled. Derive a copy with real timeouts — `newBuilder()` keeps
-     * the proxy, so uploads still honour the user's Tor setting.
-     */
-    private fun uploadClient(): OkHttpClient {
-        val base = ImageClientProvider.client
-        derived?.let { if (derivedFrom === base) return it }
-        val built = base.newBuilder()
+    /** Build a current-mode client with finite upload timeouts. */
+    private suspend fun uploadClient(useTor: Boolean): OkHttpClient {
+        val proxy = if (useTor) OrbotHelper.getStatus(context) as? OrbotStatus.InstalledAndConnected else null
+        if (shouldBlockUploadPreflight(useTor, appSettings.torKillSwitch.value, proxy != null)) {
+            error("Orbot is not connected; upload blocked by the pre-upload check")
+        }
+        // Resolve from current settings at request time, not from a potentially
+        // stale asynchronously updated process-wide client. Never fall back to
+        // a direct client while Tor is enabled.
+        return RelayConnection.buildClient(useTor = useTor,
+            proxyType = proxy?.proxyType ?: java.net.Proxy.Type.HTTP,
+            torPort = proxy?.port ?: 8118).newBuilder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(120, TimeUnit.SECONDS)
             .readTimeout(120, TimeUnit.SECONDS)
             .callTimeout(0, TimeUnit.MILLISECONDS)
             .build()
-        derived = built
-        derivedFrom = base
-        return built
     }
 }
 
@@ -159,3 +166,7 @@ class BlossomUploadException(
         "Upload failed on every server — ${failures.joinToString(" | ")}"
     },
 )
+
+/** This check is a preflight, not continuous monitoring or a global kill switch. */
+internal fun shouldBlockUploadPreflight(useTor: Boolean, checkEnabled: Boolean, orbotConnected: Boolean): Boolean =
+    useTor && checkEnabled && !orbotConnected
