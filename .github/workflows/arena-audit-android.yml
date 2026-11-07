@@ -41,7 +41,22 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Run feed and PIN regression tests
+      - name: Run account, notes, feed and PIN regression tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: |
+            set +e
+            ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=social.tbone.ui.AccountStartupScreenTest,social.tbone.notes.NewNoteEditorTest,social.tbone.notes.NoteAudioSourceTest,social.tbone.notes.NotesCryptoConcurrencyTest,social.tbone.calendar.CalendarCryptoConcurrencyTest,social.tbone.account.LocalKeyConcurrencyTest,social.tbone.notes.PersistentWipeStateTest,social.tbone.notes.NoteEditorSaveTest,social.tbone.ui.toolbox.geohash.GeohashLiveTest,social.tbone.notes.NotesIntegrityTest,social.tbone.security.BackgroundPinTimeoutTest,social.tbone.security.PinAttemptLimiterTest,social.tbone.calendar.CalendarWipeGateTest,social.tbone.ui.feed.FeedScrollTest,social.tbone.ui.feed.IconAndLinkRegressionTest,social.tbone.stealth.StealthManagerTest,social.tbone.stealth.StealthPinExitTest --stacktrace --no-configuration-cache
+            result=$?
+            cp -R app/build/outputs/androidTest-results /tmp/arena-general-results 2>/dev/null || true
+            if [ "$result" -ne 0 ]; then echo "::error::General Android regression suite failed (exit $result)."; fi
+            exit "$result"
+      - name: Run isolated WebView probe (separate result)
+        if: always()
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 29
@@ -52,22 +67,17 @@ jobs:
             set +e
             ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=social.tbone.webxdc.XdcBrowserWipeTest --stacktrace --no-configuration-cache
             web_result=$?
-            if [ "$web_result" -ne 0 ]; then echo "::error::Isolated WebView Android test task failed (exit $web_result)."; fi
             python3 -c 'import glob,xml.etree.ElementTree as E; cases=[c for p in glob.glob("app/build/outputs/androidTest-results/**/*.xml",recursive=True) for c in E.parse(p).getroot().iter("testcase") if c.get("classname", "").endswith("XdcBrowserWipeTest")]; assert cases and all(c.find("skipped") is None for c in cases), "Isolated WebView test did not execute (missing or skipped)"; print("Isolated WebView test executed:", len(cases))'
             execution_result=$?
-            if [ "$execution_result" -ne 0 ]; then echo "::error::Isolated WebView test was missing or skipped; no browser cleanup verification can be claimed."; fi
             cp -R app/build/outputs/androidTest-results /tmp/arena-webview-results 2>/dev/null || true
-            ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=social.tbone.ui.AccountStartupScreenTest,social.tbone.notes.NewNoteEditorTest,social.tbone.notes.NoteAudioSourceTest,social.tbone.notes.NotesCryptoConcurrencyTest,social.tbone.calendar.CalendarCryptoConcurrencyTest,social.tbone.account.LocalKeyConcurrencyTest,social.tbone.notes.PersistentWipeStateTest,social.tbone.notes.NoteEditorSaveTest,social.tbone.ui.toolbox.geohash.GeohashLiveTest,social.tbone.notes.NotesIntegrityTest,social.tbone.security.BackgroundPinTimeoutTest,social.tbone.security.PinAttemptLimiterTest,social.tbone.calendar.CalendarWipeGateTest,social.tbone.ui.feed.FeedScrollTest,social.tbone.ui.feed.IconAndLinkRegressionTest,social.tbone.stealth.StealthManagerTest,social.tbone.stealth.StealthPinExitTest --stacktrace --no-configuration-cache
-            suite_result=$?
-            if [ "$suite_result" -ne 0 ]; then echo "::error::General Android regression suite failed (exit $suite_result)."; fi
-            if [ "$web_result" -ne 0 ] || [ "$execution_result" -ne 0 ] || [ "$suite_result" -ne 0 ]; then exit 1; fi
+            if [ "$web_result" -ne 0 ] || [ "$execution_result" -ne 0 ]; then echo "::error::WebView probe failed or skipped; browser cleanup not verified."; exit 1; fi
       - name: Report Android test failures
         if: failure()
         run: |
           python3 - <<'PYCODE'
           import glob, xml.etree.ElementTree as ET
           errors = []
-          paths = glob.glob('app/build/outputs/androidTest-results/**/*.xml', recursive=True) + glob.glob('/tmp/arena-webview-results/**/*.xml', recursive=True)
+          paths = glob.glob('app/build/outputs/androidTest-results/**/*.xml', recursive=True) + glob.glob('/tmp/arena-webview-results/**/*.xml', recursive=True) + glob.glob('/tmp/arena-general-results/**/*.xml', recursive=True)
           for path in paths:
               try:
                   root = ET.parse(path).getroot()
