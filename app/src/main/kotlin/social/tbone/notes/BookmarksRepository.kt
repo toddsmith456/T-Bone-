@@ -3,6 +3,7 @@ package social.tbone.notes
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
@@ -57,11 +58,13 @@ class BookmarksRepository @Inject constructor(
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val folders: Flow<List<BookmarkFolderUi>> = noteWrites.available.flatMapLatest { available ->
-        flow {
-            if (available) try {
+        if (!available) flowOf(emptyList()) else flow {
+            try {
                 coordinated { ensureDefaultFolder() }
-            } catch (_: java.io.IOException) {
-                // The gate may have closed after the availability emission.
+            } catch (error: java.io.IOException) {
+                if (noteWrites.available.value) throw error
+                emit(emptyList())
+                return@flow
             }
             emitAll(dao.observeFolders().map { rows -> rows.mapNotNull(::decryptFolder) })
         }

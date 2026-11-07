@@ -163,4 +163,18 @@ class NotesIntegrityTest {
         assertArrayEquals(row.descriptionCiphertext, db.calendarEventDao().getById("event")!!.descriptionCiphertext)
     }
 
+
+    @Test fun bookmarkFlowHidesExistingNamesWhileWipeIsPaused() = runBlocking {
+        val owner = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val coordinator = NoteWriteCoordinator(owner)
+            val bookmarks = BookmarksRepository(db.bookmarkDao(), NotesCrypto(), coordinator)
+            bookmarks.createFolder("private folder")
+            coordinator.pauseAndDrain()
+            assertTrue(bookmarks.folders.first().isEmpty())
+            coordinator.resumeAfterWipe()
+            assertTrue(bookmarks.folders.first().any { it.name == "private folder" })
+        } finally { owner.cancel() }
+    }
+
 }
