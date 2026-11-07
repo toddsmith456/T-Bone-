@@ -99,6 +99,12 @@ class MainActivity : FragmentActivity() {
                     }
                     .show()
             }
+        } else if (external) {
+            // External handlers can disappear between intent resolution and
+            // launch, including after the asynchronous settings-load wait.
+            runCatching { launchExternalIntent(intent, options) }.onFailure {
+                android.widget.Toast.makeText(this, "No app could open this link", android.widget.Toast.LENGTH_SHORT).show()
+            }
         } else {
             launchExternalIntent(intent, options)
         }
