@@ -86,6 +86,7 @@ class NewNoteEditorTest {
                 if (decoy) DecoyNoteEditorScreen(id, onBack = { closed = true }, onShare = {}, viewModel = f.decoyVm)
                 else NoteEditorScreen(id, onBack = { closed = true }, onShare = {}, viewModel = f.normalVm)
             } }
+            compose.waitUntil(15_000) { compose.onAllNodes(androidx.compose.ui.test.hasText("note unavailable")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("note unavailable").assertIsDisplayed()
             compose.onNodeWithText("← back").performClick()
             compose.runOnIdle { assertTrue(closed) }
