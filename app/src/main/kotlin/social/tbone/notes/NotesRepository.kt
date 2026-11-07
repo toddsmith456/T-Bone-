@@ -226,8 +226,7 @@ class NotesRepository @Inject constructor(
     }
 
     suspend fun delete(id: String) {
-        attachmentDao.deleteByNote(id)
-        dao.delete(id)
+        dao.deleteWithAttachments(id)
     }
 
     // ── folders ───────────────────────────────────────────────────────────────

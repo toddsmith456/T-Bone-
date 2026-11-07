@@ -138,8 +138,7 @@ class DecoyNotesRepository @Inject constructor(
     }
 
     suspend fun delete(id: String) {
-        attachmentDao.deleteByNote(id)
-        dao.delete(id)
+        dao.deleteWithAttachments(id)
     }
 
     suspend fun addFolder(name: String): String {
