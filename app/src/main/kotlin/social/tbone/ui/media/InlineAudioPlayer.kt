@@ -80,11 +80,13 @@ fun InlineAudioPlayer(
             modifier = modifier,
         )
     } else {
-        val player = rememberAudioPlayer(url)
+        var retry by remember(url) { mutableStateOf(0) }
+        val (player, initializationFailed) = rememberAudioPlayer(url, retry)
         if (player == null) {
-            AudioPlayerCard(format = format, isPlaying = false, isBuffering = true,
-                positionMs = 0L, durationMs = 0L, error = false,
-                onPlayPause = {}, onSeek = {}, onCopyLink = { social.tbone.ui.feed.copyNoteLink(context, url) }, modifier = modifier)
+            AudioPlayerCard(format = format, isPlaying = false, isBuffering = !initializationFailed,
+                positionMs = 0L, durationMs = 0L, error = initializationFailed,
+                onPlayPause = { if (initializationFailed) retry++ }, onSeek = {},
+                onCopyLink = { social.tbone.ui.feed.copyNoteLink(context, url) }, modifier = modifier)
             return
         }
         val lifecycleOwner = LocalLifecycleOwner.current
@@ -135,7 +137,7 @@ fun InlineAudioPlayer(
 
         LaunchedEffect(player, playWhenReady) {
             if (playWhenReady) {
-                player.play()
+                if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) player.play()
                 playWhenReady = false
             }
         }
@@ -254,10 +256,11 @@ private fun AudioPlayerCard(
 }
 
 @Composable
-private fun rememberAudioPlayer(url: String): ExoPlayer? {
+private fun rememberAudioPlayer(url: String, retry: Int): Pair<ExoPlayer?, Boolean> {
     val context = LocalContext.current
-    var player by remember(url) { mutableStateOf<ExoPlayer?>(null) }
-    DisposableEffect(url) {
+    var player by remember(url, retry) { mutableStateOf<ExoPlayer?>(null) }
+    var initializationFailed by remember(url, retry) { mutableStateOf(false) }
+    DisposableEffect(url, retry) {
         var created: ExoPlayer? = null
         try {
             val instance = ExoPlayer.Builder(context)
@@ -273,10 +276,11 @@ private fun rememberAudioPlayer(url: String): ExoPlayer? {
         } catch (_: Exception) {
             created?.release()
             created = null
+            initializationFailed = true
         }
         onDispose { created?.release() }
     }
-    return player
+    return player to initializationFailed
 }
 
 /** Normalize filename MIME aliases (notably `.mpga`) to Media3's canonical audio MIME. */
