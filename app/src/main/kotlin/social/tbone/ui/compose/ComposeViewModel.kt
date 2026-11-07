@@ -209,7 +209,14 @@ class ComposeViewModel @Inject constructor(
                 }
             }
             if (!quoteFolderId.isNullOrEmpty()) {
-                val events = bookmarksRepository.getBookmarks(quoteFolderId).map { it.event }
+                val events = try {
+                    bookmarksRepository.getBookmarks(quoteFolderId).map { it.event }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    _uiState.update { it.copy(error = "Could not read this bookmark folder") }
+                    return@launch
+                }
                 if (events.isNotEmpty()) {
                     val refs = events.joinToString("\n") { "nostr:${Nip19.hexToNevent(it.id, it.pubkey, it.kind)}" }
                     _uiState.update { it.copy(quoteFolderEvents = events, initialText = "\n\n$refs") }

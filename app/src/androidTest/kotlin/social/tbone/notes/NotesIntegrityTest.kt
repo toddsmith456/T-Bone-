@@ -193,6 +193,29 @@ class NotesIntegrityTest {
     }
 
 
+    @Test fun bookmarkContentsAndLookupsAreHiddenDuringWipe() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val coordinator = NoteWriteCoordinator(scope)
+            val crypto = NotesCrypto()
+            val bookmarks = BookmarksRepository(db.bookmarkDao(), crypto, coordinator)
+            val folder = bookmarks.createFolder("private")
+            val eventJson = """{"id":"id","pubkey":"pubkey","created_at":1,"kind":1,"tags":[],"content":"private bookmark","sig":"sig"}"""
+            val (ciphertext, iv) = crypto.encrypt(eventJson)
+            db.bookmarkDao().upsertBookmark(social.tbone.db.BookmarkEntity("b", folder.id, ciphertext, iv, 0.0, 1L))
+            assertEquals("private bookmark", bookmarks.observeBookmarks(folder.id).first().single().event.content)
+            coordinator.pauseAndDrain()
+            assertTrue(bookmarks.observeBookmarks(folder.id).first().isEmpty())
+            try { bookmarks.getBookmarks(folder.id); fail("bookmark read allowed during wipe") }
+            catch (_: java.io.IOException) { }
+            try { bookmarks.findEvent("id"); fail("bookmark lookup allowed during wipe") }
+            catch (_: java.io.IOException) { }
+            coordinator.resumeAfterWipe()
+            assertEquals("private bookmark", bookmarks.getBookmarks(folder.id).single().event.content)
+        } finally { scope.cancel() }
+    }
+
+
     @Test fun encryptedBackupRestoreRoundTripAndTamperRollback() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val owner = CoroutineScope(SupervisorJob() + Dispatchers.IO)

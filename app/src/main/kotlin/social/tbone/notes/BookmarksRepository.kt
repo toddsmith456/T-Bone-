@@ -77,11 +77,16 @@ class BookmarksRepository @Inject constructor(
         return dao.getFolders().mapNotNull(::decryptFolder)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun observeBookmarks(folderId: String): Flow<List<BookmarkUi>> =
-        dao.observeBookmarks(folderId).map { rows -> rows.mapNotNull(::decryptBookmark) }
+        noteWrites.available.flatMapLatest { available ->
+            if (!available) flowOf(emptyList())
+            else dao.observeBookmarks(folderId).map { rows -> rows.mapNotNull(::decryptBookmark) }
+        }
 
-    suspend fun getBookmarks(folderId: String): List<BookmarkUi> =
+    suspend fun getBookmarks(folderId: String): List<BookmarkUi> = coordinated {
         dao.getBookmarks(folderId).mapNotNull(::decryptBookmark)
+    }
 
     suspend fun createFolder(name: String): BookmarkFolderUi =
         coordinated { createFolderInternal(name) }
@@ -197,11 +202,12 @@ class BookmarksRepository @Inject constructor(
     }
 
     /** Local search for a saved event; decryption happens only in memory. */
-    suspend fun findEvent(eventId: String): Event? =
+    suspend fun findEvent(eventId: String): Event? = coordinated {
         dao.getAllBookmarks().asSequence()
             .mapNotNull(::decryptBookmark)
             .firstOrNull { it.event.id.equals(eventId, ignoreCase = true) }
             ?.event
+    }
 
     private suspend fun <T> coordinated(action: suspend () -> T): T = noteWrites.submit(action).await()
 
