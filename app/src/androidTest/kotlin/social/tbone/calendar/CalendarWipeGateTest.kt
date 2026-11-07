@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import kotlinx.coroutines.flow.first
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
@@ -54,4 +55,34 @@ class CalendarWipeGateTest {
         awaitNotificationCount(manager, 0)
         scheduler.finishSensitiveWipe()
     }
+
+    @Test fun staleCalendarEditorEpochCannotRecreateEventAfterWipe() = kotlinx.coroutines.runBlocking {
+        val db = androidx.room.Room.inMemoryDatabaseBuilder(context, social.tbone.db.AppDatabase::class.java).build()
+        val owner = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        try {
+            val writes = social.tbone.notes.NoteWriteCoordinator(owner)
+            val crypto = CalendarCrypto()
+            val repository = CalendarRepository(db.calendarEventDao(), crypto, writes)
+            val vm = social.tbone.ui.toolbox.calendar.CalendarViewModel(repository, crypto, writes)
+            kotlinx.coroutines.withTimeout(10_000) {
+                vm.encryptionVerified.first { it }
+            }
+            val staleEpoch = vm.currentWipeEpoch()
+            assertEquals(true, writes.runWipe(social.tbone.notes.NoteWriteCoordinator.WipeKind.TOOLBOX) {
+                writes.pauseAndDrain()
+                db.clearAllTables()
+                true
+            })
+            val failed = kotlinx.coroutines.CompletableDeferred<Exception>()
+            vm.saveEvent(id = "stale", title = "private", description = "", startMillis = 1L, endMillis = 2L,
+                allDay = false, repeatUnit = RepeatUnit.NONE, repeatInterval = 1, repeatEndMillis = null,
+                epoch = staleEpoch, onError = { failed.complete(it) })
+            kotlinx.coroutines.withTimeout(5_000) { failed.await() }
+            assertEquals(null, repository.getById("stale"))
+        } finally {
+            owner.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+            db.close()
+        }
+    }
+
 }
