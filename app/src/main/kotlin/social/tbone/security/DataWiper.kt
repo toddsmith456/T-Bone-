@@ -34,6 +34,7 @@ class DataWiper @Inject constructor(
     private val dataStore: DataStore<Preferences>,
     private val scope: CoroutineScope,
     private val calendarAlarms: social.tbone.calendar.CalendarAlarmScheduler,
+    private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
     private val appSettings: social.tbone.settings.AppSettings,
     private val geohashCache: social.tbone.ui.toolbox.geohash.GeohashMessageCache,
 ) {
@@ -49,6 +50,7 @@ class DataWiper @Inject constructor(
         scope.launch(Dispatchers.IO) {
           try {
             val steps = WipeSteps { name, error -> timber.log.Timber.e(error, "Wipe step failed: $name") }
+            steps.run("pause and drain note writes") { noteWrites.pauseAndDrain() }
             steps.run("block and cancel calendar reminders") { calendarAlarms.beginSensitiveWipe() }
             steps.run("cancel notifications") {
                 checkNotNull(context.getSystemService(android.app.NotificationManager::class.java)).cancelAll()
@@ -100,6 +102,7 @@ class DataWiper @Inject constructor(
                     context.startActivity(intent)
                 }
             }
+            if (!steps.failed) noteWrites.resumeAfterWipe()
             if (steps.failed) withContext(Dispatchers.Main) {
                 Toast.makeText(context, "Wipe incomplete. Keep the app locked and try again.", Toast.LENGTH_LONG).show()
             }

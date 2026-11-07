@@ -1,5 +1,7 @@
 package social.tbone.ui.notes
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.ui.platform.LocalContext
 import social.tbone.ui.theme.appBorder
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -66,8 +68,12 @@ fun ChecklistEditorScreen(
     viewModel: NotesViewModel = hiltViewModel(),
 ) {
 
+    val context = LocalContext.current
+    var exiting by remember { mutableStateOf(false) }
+    var skipDisposeSave by remember { mutableStateOf(false) }
     var title by remember { mutableStateOf("") }
     var items by remember { mutableStateOf<List<ChecklistItem>>(emptyList()) }
+    var deleted by remember { mutableStateOf(false) }
     var savedId by remember { mutableStateOf<String?>(if (id.isBlank()) null else id) }
     var lastSavedJson by remember { mutableStateOf("") }
     var loaded by remember { mutableStateOf(false) }
@@ -75,34 +81,45 @@ fun ChecklistEditorScreen(
     var editingIndex by remember { mutableStateOf<Int?>(null) }
     var editText by remember { mutableStateOf("") }
 
-    // Load the existing checklist (if editing).
+    // Never overwrite an existing note if loading or decoding failed.
     LaunchedEffect(id) {
-        if (id.isNotBlank()) {
-            viewModel.getNote(id)?.let { note ->
-                if (note.kind == NoteKind.CHECKLIST) {
-                    val data = note.checklist()
-                    title = data?.title ?: ""
-                    items = data?.items ?: emptyList()
-                    lastSavedJson = ChecklistCodec.encode(
-                        ChecklistData(title, items)
-                    )
-                    savedId = note.id
-                }
+        try {
+            if (id.isNotBlank()) {
+                val note = viewModel.getNote(id)
+                    ?: throw IllegalStateException("Checklist not found")
+                if (note.kind != NoteKind.CHECKLIST) throw IllegalStateException("Not a checklist")
+                val data = note.checklist() ?: throw IllegalStateException("Invalid checklist")
+                title = data.title
+                items = data.items
+                lastSavedJson = ChecklistCodec.encode(ChecklistData(title, items))
+                savedId = note.id
             }
+            loaded = true
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            android.widget.Toast.makeText(context, "Could not load checklist. No changes will be saved.", android.widget.Toast.LENGTH_LONG).show()
         }
-        loaded = true
     }
 
     fun currentJson(): String = ChecklistCodec.encode(
         ChecklistData(title, items.filter { it.text.isNotBlank() })
     )
 
-    fun performSave() {
+    fun performSave(force: Boolean = false, onError: (Exception) -> Unit = {
+        android.widget.Toast.makeText(context, "Could not save checklist; please try again.", android.widget.Toast.LENGTH_LONG).show()
+    }, onDone: () -> Unit = {}) {
+        if (deleted || !loaded) return
         val json = currentJson()
-        if (json == lastSavedJson) return
-        viewModel.saveChecklist(savedId, title, items, folderId) { newId ->
+        if ((!force && json == lastSavedJson) || (savedId == null && title.isBlank() && items.none { it.text.isNotBlank() })) {
+            onDone()
+            return
+        }
+        val noteId = savedId ?: java.util.UUID.randomUUID().toString().also { savedId = it }
+        viewModel.saveChecklist(noteId, title, items, folderId, onError = onError) { newId ->
             savedId = newId
             lastSavedJson = json
+            onDone()
         }
     }
 
@@ -113,15 +130,26 @@ fun ChecklistEditorScreen(
         }
     }
 
-    val saveOnExit by rememberUpdatedState({ performSave() })
-    DisposableEffect(Unit) {
-        onDispose { saveOnExit() }
-    }
+    val saveOnExit by rememberUpdatedState({ if (!skipDisposeSave) performSave() })
+    DisposableEffect(Unit) { onDispose { saveOnExit() } }
 
     fun back() {
-        saveOnExit()
-        onBack()
+        if (exiting || deleted) return
+        if (!loaded) { skipDisposeSave = true; onBack(); return }
+        exiting = true
+        fun saveBeforeLeaving() {
+            val submitted = currentJson()
+            performSave(force = true, onError = {
+                exiting = false
+                android.widget.Toast.makeText(context, "Could not save checklist; please try again.", android.widget.Toast.LENGTH_LONG).show()
+            }) {
+                if (currentJson() != submitted) saveBeforeLeaving()
+                else { skipDisposeSave = true; onBack() }
+            }
+        }
+        saveBeforeLeaving()
     }
+    BackHandler { back() }
 
     fun addItem() {
         val t = draft.trim()
@@ -171,8 +199,15 @@ fun ChecklistEditorScreen(
                 modifier = Modifier
                     .appBorder(1.dp, BonyColors.Danger)
                     .clickable {
-                        savedId?.let { viewModel.delete(it) }
-                        onBack()
+                        if (!deleted && !exiting) {
+                            deleted = true
+                            val target = savedId
+                            if (target == null) { skipDisposeSave = true; onBack() }
+                            else viewModel.delete(target, onError = {
+                                deleted = false
+                                android.widget.Toast.makeText(context, "Could not delete checklist; please try again.", android.widget.Toast.LENGTH_LONG).show()
+                            }) { skipDisposeSave = true; onBack() }
+                        }
                     }
                     .padding(horizontal = 8.dp, vertical = 4.dp),
             )

@@ -10,8 +10,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -20,6 +18,7 @@ import javax.inject.Inject
 class DecoyNotesViewModel @Inject constructor(
     private val repository: DecoyNotesRepository,
     private val crypto: NotesCrypto,
+    private val noteWrites: NoteWriteCoordinator,
 ) : ViewModel() {
 
     val notes: StateFlow<List<NoteUi>> = repository.notes
@@ -54,32 +53,37 @@ class DecoyNotesViewModel @Inject constructor(
         }
     }
 
-    suspend fun getNote(id: String): NoteUi? = withContext(Dispatchers.IO) { repository.getById(id) }
+    suspend fun getNote(id: String): NoteUi? = noteWrites.submit { repository.getById(id) }.await()
 
     fun attachmentsFor(noteId: String): Flow<List<NoteAttachmentUi>> = repository.attachments(noteId)
 
-    private val textSaveMutex = Mutex()
-
-    fun saveText(id: String?, title: String, text: String, folderId: String? = null, onSaved: (String) -> Unit = {}) {
+    fun saveText(id: String?, title: String, text: String, folderId: String? = null, onError: (Exception) -> Unit = {}, onSaved: (String) -> Unit = {}) {
+        // Enqueue synchronously before the editor can be popped. Only the UI
+        // callback is scoped to this ViewModel; persistence is app-scoped.
+        val pending = noteWrites.submit { repository.saveText(id, title, text, folderId) }
         viewModelScope.launch {
-            textSaveMutex.withLock {
-                runCatching { repository.saveText(id, title, text, folderId) }
-                    .onSuccess { onSaved(it) }
-                    .onFailure { _error.value = "could not save (${it.message})" }
-            }
+            try { onSaved(pending.await()) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { _error.value = "could not save (${error.message})"; onError(error) }
         }
     }
 
-    fun saveChecklist(id: String?, title: String, items: List<ChecklistItem>, folderId: String? = null, onSaved: (String) -> Unit = {}) {
+    fun saveChecklist(id: String?, title: String, items: List<ChecklistItem>, folderId: String? = null, onError: (Exception) -> Unit = {}, onSaved: (String) -> Unit = {}) {
+        val pending = noteWrites.submit { repository.saveChecklist(id, title, items.toList(), folderId) }
         viewModelScope.launch {
-            runCatching { repository.saveChecklist(id, title, items, folderId) }
-                .onSuccess { onSaved(it) }
-                .onFailure { _error.value = "could not save (${it.message})" }
+            try { onSaved(pending.await()) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { _error.value = "could not save (${error.message})"; onError(error) }
         }
     }
 
-    fun delete(id: String) = viewModelScope.launch {
-        runCatching { repository.delete(id) }.onFailure { _error.value = "could not delete (${it.message})" }
+    fun delete(id: String, onError: (Exception) -> Unit = {}, onDeleted: () -> Unit = {}) {
+        val pending = noteWrites.submit { repository.delete(id) }
+        viewModelScope.launch {
+            try { pending.await(); onDeleted() }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { _error.value = "could not delete (${error.message})"; onError(error) }
+        }
     }
 
     fun pinToggle(id: String) {

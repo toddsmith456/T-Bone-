@@ -7,6 +7,7 @@ import android.content.Context
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -109,6 +110,9 @@ fun DecoyNoteEditorScreen(
     var blocks by remember {
         mutableStateOf<List<EditorBlock>>(listOf(EditorBlock.Text(TextFieldValue(""))))
     }
+    var deleted by remember { mutableStateOf(false) }
+    var exiting by remember { mutableStateOf(false) }
+    var skipDisposeSave by remember { mutableStateOf(false) }
     var savedId by remember { mutableStateOf<String?>(if (id.isBlank()) null else id) }
     var lastSaved by remember { mutableStateOf("") }
     var lastSavedTitle by remember { mutableStateOf("") }
@@ -196,14 +200,16 @@ fun DecoyNoteEditorScreen(
 
     var builtOnce by remember { mutableStateOf(false) }
 
-    fun performSave(force: Boolean = false, onDone: (String) -> Unit = {}) {
-        if (!loaded || (id.isNotBlank() && !builtOnce)) return
+    fun performSave(force: Boolean = false, onError: (Exception) -> Unit = {
+        android.widget.Toast.makeText(context, "Could not save note; please try again.", android.widget.Toast.LENGTH_LONG).show()
+    }, onDone: (String) -> Unit = {}) {
+        if (deleted || !loaded || (id.isNotBlank() && !builtOnce)) return
         val text = serialize(blocks)
         val submittedTitle = title
-        if (!force && text.isBlank() && submittedTitle.isBlank()) return
+        if (!force && savedId == null && text.isBlank() && submittedTitle.isBlank()) return
         val eid = savedId ?: java.util.UUID.randomUUID().toString()
         savedId = eid
-        viewModel.saveText(eid, submittedTitle, text, folderId) { newId ->
+        viewModel.saveText(eid, submittedTitle, text, folderId, onError = onError) { newId ->
             savedId = newId
             lastSaved = text
             lastSavedTitle = submittedTitle
@@ -229,19 +235,24 @@ fun DecoyNoteEditorScreen(
     }
 
     LaunchedEffect(id) {
-        if (id.isNotBlank()) {
-            viewModel.getNote(id)?.let { note ->
+        try {
+            if (id.isNotBlank()) {
+                val note = viewModel.getNote(id) ?: throw IllegalStateException("Note not found")
                 title = note.title
                 rawText = note.text
                 lastSaved = note.text
                 lastSavedTitle = note.title
                 savedId = note.id
             }
-        }
-        loaded = true
-        if (id.isBlank()) {
-            delay(120)
-            focusRequesters[0]?.requestFocus()
+            loaded = true
+            if (id.isBlank()) {
+                delay(120)
+                focusRequesters[0]?.requestFocus()
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            android.widget.Toast.makeText(context, "Could not load note. No changes will be saved.", android.widget.Toast.LENGTH_LONG).show()
         }
     }
     // One-time rebuild of the storybook blocks once the note text AND its
@@ -261,13 +272,35 @@ fun DecoyNoteEditorScreen(
             if (serialize(blocks) != lastSaved || title != lastSavedTitle) performSave()
         }
     }
-    val saveOnExit by rememberUpdatedState({ performSave() })
+    val saveOnExit by rememberUpdatedState({ if (!skipDisposeSave) performSave() })
     DisposableEffect(Unit) { onDispose { saveOnExit() } }
 
     fun back() {
-        saveOnExit()
-        onBack()
+        if (exiting || deleted) return
+        if (!loaded || (id.isNotBlank() && !builtOnce) ||
+            (savedId == null && title.isBlank() && serialize(blocks).isBlank())) {
+            skipDisposeSave = true
+            onBack()
+            return
+        }
+        exiting = true
+        fun saveBeforeLeaving() {
+            val submittedText = serialize(blocks)
+            val submittedTitle = title
+            performSave(onError = {
+                exiting = false
+                android.widget.Toast.makeText(context, "Could not save note; please try again.", android.widget.Toast.LENGTH_LONG).show()
+            }) {
+                if (serialize(blocks) != submittedText || title != submittedTitle) saveBeforeLeaving()
+                else {
+                    skipDisposeSave = true
+                    onBack()
+                }
+            }
+        }
+        saveBeforeLeaving()
     }
+    BackHandler { back() }
 
     // ── insert attachment at the focused text block's cursor ──────────────────
     fun insertAttachment(att: NoteAttachmentUi) {
@@ -452,8 +485,15 @@ fun DecoyNoteEditorScreen(
                 modifier = Modifier
                     .appBorder(1.dp, BonyColors.Danger)
                     .clickable {
-                        savedId?.let { viewModel.delete(it) }
-                        onBack()
+                        if (!deleted && !exiting) {
+                            deleted = true // disposal must not recreate the deleted note
+                            val target = savedId
+                            if (target == null) { skipDisposeSave = true; onBack() }
+                            else viewModel.delete(target, onError = {
+                                deleted = false
+                                android.widget.Toast.makeText(context, "Could not delete note; please try again.", android.widget.Toast.LENGTH_LONG).show()
+                            }) { skipDisposeSave = true; onBack() }
+                        }
                     }
                     .padding(horizontal = 8.dp, vertical = 4.dp),
             )

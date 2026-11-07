@@ -35,6 +35,7 @@ class ToolboxSecurity @Inject constructor(
     @ApplicationContext private val context: Context,
     private val scope: CoroutineScope,
     private val calendarAlarms: social.tbone.calendar.CalendarAlarmScheduler,
+    private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
 ) {
 
     private val attempts = PinAttemptLimiter(context, "toolbox")
@@ -111,6 +112,7 @@ class ToolboxSecurity @Inject constructor(
         scope.launch(Dispatchers.IO) {
           try {
             val steps = WipeSteps { name, error -> timber.log.Timber.e(error, "Toolbox wipe step failed: $name") }
+            steps.run("pause and drain note writes") { noteWrites.pauseAndDrain() }
             steps.run("block and cancel reminders") { calendarAlarms.beginSensitiveWipe() }
             steps.run("disable geohash cache") { appSettings.setGeohashCacheMillis(0L) }
             steps.run("clear geohash cache") { geohashCache.clear() }
@@ -136,6 +138,7 @@ class ToolboxSecurity @Inject constructor(
                 appSettings.clearToolboxSecurity()
             }
             if (!steps.failed) steps.run("finish calendar wipe gate") { calendarAlarms.finishSensitiveWipe() }
+            if (!steps.failed) noteWrites.resumeAfterWipe()
             if (steps.failed) withContext(Dispatchers.Main) {
                 Toast.makeText(context, "Toolbox wipe incomplete. Keep it locked and try again.", Toast.LENGTH_LONG).show()
             }
