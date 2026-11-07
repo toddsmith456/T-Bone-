@@ -26,7 +26,13 @@ class MediaMetadataTest {
             bitmap.eraseColor(Color.RED)
             source.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it) }
             bitmap.recycle()
-            ExifInterface(source.absolutePath).apply { setLatLong(41.8, -87.6); saveAttributes() }
+            ExifInterface(source.absolutePath).apply {
+                setAttribute(ExifInterface.TAG_GPS_LATITUDE, "41/1,48/1,0/1")
+                setAttribute(ExifInterface.TAG_GPS_LATITUDE_REF, "N")
+                setAttribute(ExifInterface.TAG_GPS_LONGITUDE, "87/1,36/1,0/1")
+                setAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF, "W")
+                saveAttributes()
+            }
             assertNotNull(ExifInterface(source.absolutePath).getAttribute(ExifInterface.TAG_GPS_LATITUDE))
             val prepared = checkNotNull(MediaProcessor.prepareImageMedia(context, Uri.fromFile(source)))
             output = prepared.file
