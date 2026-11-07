@@ -135,10 +135,9 @@ class RemainingAuditUiTest {
         }
         compose.waitForIdle()
         val created = requireNotNull(instance)
-        assertFalse(created.isReleased)
-        compose.runOnIdle { shown.value = false }
+        compose.runOnIdle { assertFalse(created.isReleased); shown.value = false }
         compose.waitForIdle()
-        assertTrue(created.isReleased)
+        compose.runOnIdle { assertTrue(created.isReleased) }
     }
 
     @Test fun collapsedTextReevaluatesAtLargerAndSmallerFontScales() {
