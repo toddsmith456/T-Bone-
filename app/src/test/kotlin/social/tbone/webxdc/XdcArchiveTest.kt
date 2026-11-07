@@ -187,4 +187,16 @@ class XdcArchiveTest {
         }
     }
 
+
+    @Test fun rejectsNonemptyDirectoryEntriesWithoutDrainingThem() {
+        val bytes = zip(linkedMapOf("index.html" to byteArrayOf(1), "dir/" to ByteArray(100)))
+        try { XdcArchive.read(bytes); fail("directory data accepted") }
+        catch (e: XdcException) { assertTrue(e.message!!.contains("directory")) }
+    }
+
+    @Test fun rejectsOversizedPathSegments() {
+        assertNull(XdcArchive.normalisePath("a".repeat(256)))
+        assertNull(XdcArchive.normalisePath("nested/" + "é".repeat(128)))
+    }
+
 }

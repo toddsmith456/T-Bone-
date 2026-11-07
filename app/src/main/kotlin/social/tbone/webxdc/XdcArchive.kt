@@ -83,7 +83,10 @@ object XdcArchive {
                 }
 
                 val rawName = entry.name ?: throw XdcException("invalid entry name")
-                if (!entry.isDirectory) {
+                if (entry.isDirectory) {
+                    // closeEntry() otherwise drains unbounded attacker-supplied data.
+                    if (zip.read() != -1) throw XdcException("directory contains data")
+                } else {
                     val raw = normalisePath(rawName) ?: throw XdcException("unsafe path in archive")
                     // The spec requires `index.html`; tolerate a capitalised name
                     // and store it under the canonical key so `/` can serve it.
@@ -147,7 +150,7 @@ object XdcArchive {
      * slashes are stripped so absolute-style paths remain sandboxed.
      */
     internal fun normalisePath(raw: String): String? {
-        if (raw.isEmpty() || raw.contains('\u0000')) return null
+        if (raw.isEmpty() || raw.length > 4096 || raw.contains('\u0000')) return null
         var p = raw.replace('\\', '/')
         while (p.startsWith("./")) p = p.substring(2)
         p = p.trimStart('/')
@@ -155,7 +158,9 @@ object XdcArchive {
         if (p.contains("..")) return null
         if (p.length >= 2 && p[1] == ':') return null
         // Drop empty segments ("a//b") so the served URL and the map key agree.
-        p = p.split('/').filter { it.isNotEmpty() }.joinToString("/")
+        val segments = p.split('/').filter { it.isNotEmpty() }
+        if (segments.any { it.toByteArray(Charsets.UTF_8).size > 255 }) return null
+        p = segments.joinToString("/")
         return p.ifEmpty { null }
     }
 
