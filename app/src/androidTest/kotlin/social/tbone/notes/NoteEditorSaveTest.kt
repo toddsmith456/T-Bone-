@@ -76,6 +76,7 @@ class NoteEditorSaveTest {
             } }
             compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasText("old title")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("old title").performTextReplacement("changed before wipe")
+            if (decoy) hiddenVm.clearError() else regularVm.clearError()
             runBlocking {
                 assertEquals(true, writes.runWipe(NoteWriteCoordinator.WipeKind.TOOLBOX) {
                     writes.pauseAndDrain()
