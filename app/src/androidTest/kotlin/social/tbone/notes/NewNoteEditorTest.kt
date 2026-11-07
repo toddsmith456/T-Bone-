@@ -286,6 +286,9 @@ class NewNoteEditorTest {
                     assertTrue(runBlocking { f.attachments(decoy, ids.single()).isEmpty() })
                 }
                 f.db.openHelper.writableDatabase.execSQL("DROP TRIGGER reject_first_save")
+                // Error publication can precede the UI callback that clears
+                // its in-flight guard; wait until retry is actually enabled.
+                compose.waitUntil(15_000) { compose.onAllNodes(androidx.compose.ui.test.hasText("image")).fetchSemanticsNodes().isNotEmpty() }
                 compose.onNodeWithText("image").performClick()
             }
             compose.waitUntil(15_000) {
