@@ -42,8 +42,12 @@ class DataWiper @Inject constructor(
      * Wipes all app data and restarts into onboarding.
      * Safe to call from any thread.
      */
+    private val wiping = java.util.concurrent.atomic.AtomicBoolean(false)
+
     fun wipeAndRestart() {
+        if (!wiping.compareAndSet(false, true)) return
         scope.launch(Dispatchers.IO) {
+          try {
             val steps = WipeSteps { name, error -> timber.log.Timber.e(error, "Wipe step failed: $name") }
             steps.run("block and cancel calendar reminders") { calendarAlarms.beginSensitiveWipe() }
             steps.run("cancel notifications") {
@@ -99,6 +103,9 @@ class DataWiper @Inject constructor(
             if (steps.failed) withContext(Dispatchers.Main) {
                 Toast.makeText(context, "Wipe incomplete. Keep the app locked and try again.", Toast.LENGTH_LONG).show()
             }
+          } finally {
+              wiping.set(false)
+          }
         }
     }
 }

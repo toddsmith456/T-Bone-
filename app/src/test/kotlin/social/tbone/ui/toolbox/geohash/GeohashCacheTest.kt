@@ -27,7 +27,13 @@ class GeohashCacheTest {
         runBlocking { settings.initialized.first { it } }
         dao = FakeDao(); cache = GeohashMessageCache(dao, settings, scope)
     }
-    @After fun cleanup() { scope.cancel(); file.delete() }
+    @After fun cleanup() = runBlocking {
+        // DataStore owns child coroutines using this file. Wait for shutdown
+        // before deleting it, otherwise a late read can race the next test.
+        scope.coroutineContext[Job]?.cancelAndJoin()
+        file.delete()
+        Unit
+    }
 
     @Test fun `retention is local receipt time and duplicate ids can be stored in multiple channels`() = runBlocking {
         settings.setGeohashCacheMillis(1_800_000L)

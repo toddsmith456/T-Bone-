@@ -2,6 +2,8 @@ package social.tbone.di
 
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.mockwebserver.MockWebServer
+import java.util.concurrent.TimeUnit
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.IOException
@@ -35,5 +37,22 @@ class TorCallGuardTest {
         guard.register(call, false)
         guard.update(false)
         assertFalse(call.isCanceled())
+    }
+
+    @Test fun cancelledOldModeCallCannotReachServerAfterTransition() {
+        val server = MockWebServer()
+        server.start()
+        try {
+            val guard = TorCallGuard()
+            val request = Request.Builder().url(server.url("/followers")).build()
+            val call = OkHttpClient().newCall(request)
+            guard.register(call, false)
+            guard.update(true)
+            try {
+                call.execute().close()
+                fail("cancelled direct call unexpectedly completed")
+            } catch (_: IOException) { }
+            assertNull(server.takeRequest(200, TimeUnit.MILLISECONDS))
+        } finally { server.shutdown() }
     }
 }

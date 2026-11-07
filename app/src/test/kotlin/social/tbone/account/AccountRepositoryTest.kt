@@ -3,10 +3,20 @@ package social.tbone.account
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
+import social.tbone.nostr.NostrJson
+import social.tbone.security.PinHasher
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -33,9 +43,10 @@ class AccountRepositoryTest {
     }
 
     @After
-    fun tearDown() {
-        scope.cancel()
+    fun tearDown() = runBlocking {
+        scope.coroutineContext[Job]?.cancelAndJoin()
         file.delete()
+        Unit
     }
 
     @Test
@@ -58,6 +69,41 @@ class AccountRepositoryTest {
         val custom = listOf("wss://one.example", "wss://two.example")
         repository.addAccount(account("a", custom))
         assertEquals(custom, repository.accounts.first().single().relays)
+    }
+
+    @Test
+    fun `hidden account verifies salted pin and rejects wrong pin`() = runBlocking {
+        repository.addAccount(account("a"))
+        repository.setHidden("a", true, "1234")
+        assertNull(repository.findHiddenByPin("4321"))
+        assertEquals("a", repository.findHiddenByPin("1234")?.pubkey)
+        assertTrue(repository.unlockHiddenByPin("1234"))
+    }
+
+    @Test
+    fun `legacy hidden pin is migrated only after successful verification`() = runBlocking {
+        val legacy = java.security.MessageDigest.getInstance("SHA-256").digest("1234".toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        val key = stringPreferencesKey("accounts")
+        val original = account("a").copy(isHidden = true, hiddenPinHash = legacy)
+        dataStore.edit { it[key] = NostrJson.encodeToString(listOf(original)) }
+        assertNull(repository.findHiddenByPin("4321"))
+        assertEquals(legacy, NostrJson.decodeFromString<List<Account>>(dataStore.data.first()[key]!!).single().hiddenPinHash)
+        assertEquals("a", repository.findHiddenByPin("1234")?.pubkey)
+        val migrated = NostrJson.decodeFromString<List<Account>>(dataStore.data.first()[key]!!).single().hiddenPinHash!!
+        assertFalse(PinHasher.isLegacy(migrated))
+        assertTrue(PinHasher.verify("1234", migrated))
+    }
+
+    @Test
+    fun `hide does not overwrite unreadable account data`() = runBlocking {
+        val key = stringPreferencesKey("accounts")
+        val raw = "not valid account json"
+        dataStore.edit { it[key] = raw }
+        try {
+            repository.setHidden("a", true, "1234")
+        } catch (_: Exception) { }
+        assertEquals(raw, dataStore.data.first()[key])
     }
 
     private fun account(pubkey: String, relays: List<String> = emptyList()) = Account(

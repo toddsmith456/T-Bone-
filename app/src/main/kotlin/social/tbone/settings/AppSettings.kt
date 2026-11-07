@@ -651,6 +651,17 @@ class AppSettings @Inject constructor(
         dataStore.edit { it[TOOLBOX_SCREENSHOT_BLOCK_ENABLED] = enabled }
     }
 
+    /** Clear toolbox credentials as one atomic finalization after a successful wipe. */
+    suspend fun clearToolboxSecurity() {
+        dataStore.edit { prefs ->
+            prefs.remove(TOOLBOX_PIN_ENABLED)
+            prefs.remove(TOOLBOX_PIN_HASH)
+            prefs.remove(TOOLBOX_DURESS_PIN_ENABLED)
+            prefs.remove(TOOLBOX_DURESS_PIN_HASH)
+            prefs.remove(TOOLBOX_SCREENSHOT_BLOCK_ENABLED)
+        }
+    }
+
     suspend fun getToolboxPinEnabled(): Boolean =
         dataStore.data.first()[TOOLBOX_PIN_ENABLED] ?: false
 

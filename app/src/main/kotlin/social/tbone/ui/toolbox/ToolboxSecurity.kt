@@ -104,8 +104,12 @@ class ToolboxSecurity @Inject constructor(
      * notifications table is PRESERVED — incoming activity from other people
      * is not your private content, so the duress wipe keeps it.
      */
+    private val wiping = java.util.concurrent.atomic.AtomicBoolean(false)
+
     fun wipeToolbox() {
+        if (!wiping.compareAndSet(false, true)) return
         scope.launch(Dispatchers.IO) {
+          try {
             val steps = WipeSteps { name, error -> timber.log.Timber.e(error, "Toolbox wipe step failed: $name") }
             steps.run("block and cancel reminders") { calendarAlarms.beginSensitiveWipe() }
             steps.run("disable geohash cache") { appSettings.setGeohashCacheMillis(0L) }
@@ -128,17 +132,16 @@ class ToolboxSecurity @Inject constructor(
             }
             // Preserve lock credentials until the data-removal steps succeed.
             if (!steps.failed) steps.run("clear toolbox security settings") {
-                appSettings.setToolboxPinEnabled(false)
-                appSettings.setToolboxPinHash("")
-                appSettings.setToolboxDuressPinEnabled(false)
-                appSettings.setToolboxDuressPinHash("")
-                appSettings.setToolboxScreenshotBlockEnabled(false)
                 attempts.reset()
+                appSettings.clearToolboxSecurity()
             }
             if (!steps.failed) steps.run("finish calendar wipe gate") { calendarAlarms.finishSensitiveWipe() }
             if (steps.failed) withContext(Dispatchers.Main) {
                 Toast.makeText(context, "Toolbox wipe incomplete. Keep it locked and try again.", Toast.LENGTH_LONG).show()
             }
+          } finally {
+              wiping.set(false)
+          }
         }
     }
 
