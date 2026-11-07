@@ -19,6 +19,7 @@ class GeohashCacheTest {
     private lateinit var settings: AppSettings
     private lateinit var dao: FakeDao
     private lateinit var cache: GeohashMessageCache
+    private lateinit var coordinator: social.tbone.notes.NoteWriteCoordinator
     @Before fun setup() {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         // Empty protobuf is a valid empty preferences file. Keeping it present
@@ -27,7 +28,8 @@ class GeohashCacheTest {
         val store = PreferenceDataStoreFactory.create(scope = scope) { file }
         settings = AppSettings(store, scope)
         runBlocking { settings.initialized.first { it } }
-        dao = FakeDao(); cache = GeohashMessageCache(dao, settings, scope)
+        dao = FakeDao(); coordinator = social.tbone.notes.NoteWriteCoordinator(scope)
+        cache = GeohashMessageCache(dao, settings, scope, coordinator)
     }
     @After fun cleanup() = runBlocking {
         // DataStore owns child coroutines using this file. Wait for shutdown
@@ -52,6 +54,27 @@ class GeohashCacheTest {
         val seeds = (1..20).map { async(Dispatchers.IO) { settings.geohashIdentitySeed().toList() } }.awaitAll()
         assertEquals(1, seeds.distinct().size)
         Unit
+    }
+    @Test fun `identity lookup cannot create a seed during a wipe`() = runBlocking {
+        val wiping = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        val wipe = async {
+            coordinator.runWipe(social.tbone.notes.NoteWriteCoordinator.WipeKind.TOOLBOX) {
+                coordinator.pauseAndDrain()
+                settings.clearGeohashData()
+                wiping.complete(Unit)
+                finish.await()
+                true
+            }
+        }
+        wiping.await()
+        try {
+            cache.ownPubkeys("9q8yy")
+            fail("identity lookup should be rejected while wiping")
+        } catch (_: java.io.IOException) { }
+        finish.complete(Unit)
+        assertTrue(wipe.await())
+        assertEquals(1, cache.ownPubkeys("9q8yy").size)
     }
     @Test fun `multiple geohash tags match any watched prefix`() {
         fun tag(value: String) = buildJsonArray { add(JsonPrimitive("g")); add(JsonPrimitive(value)) }

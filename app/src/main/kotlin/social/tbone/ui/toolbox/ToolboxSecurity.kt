@@ -32,6 +32,7 @@ class ToolboxSecurity @Inject constructor(
     private val appSettings: AppSettings,
     private val appDatabase: AppDatabase,
     private val geohashCache: social.tbone.ui.toolbox.geohash.GeohashMessageCache,
+    private val geohashMonitor: social.tbone.ui.toolbox.geohash.GeohashPinnedMonitor,
     @ApplicationContext private val context: Context,
     private val scope: CoroutineScope,
     private val calendarAlarms: social.tbone.calendar.CalendarAlarmScheduler,
@@ -112,6 +113,7 @@ class ToolboxSecurity @Inject constructor(
           try {
             noteWrites.runWipe(social.tbone.notes.NoteWriteCoordinator.WipeKind.TOOLBOX) {
             val steps = WipeSteps { name, error -> timber.log.Timber.e(error, "Toolbox wipe step failed: $name") }
+            steps.run("pause geohash watchers") { geohashMonitor.pauseForWipe() }
             steps.run("pause and drain note writes") { noteWrites.pauseAndDrain() }
             steps.run("block and cancel reminders") { calendarAlarms.beginSensitiveWipe() }
             steps.run("disable geohash cache") { appSettings.setGeohashCacheMillis(0L) }
@@ -142,6 +144,7 @@ class ToolboxSecurity @Inject constructor(
                 appSettings.clearToolboxSecurity()
             }
             if (!steps.failed) steps.run("finish calendar wipe gate") { calendarAlarms.finishSensitiveWipe() }
+            if (!steps.failed) steps.run("resume geohash watchers") { geohashMonitor.resumeAfterWipe() }
             if (steps.failed) withContext(Dispatchers.Main) {
                 Toast.makeText(context, "Toolbox wipe incomplete. Keep it locked and try again.", Toast.LENGTH_LONG).show()
             }

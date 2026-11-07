@@ -21,13 +21,14 @@ import javax.inject.Inject
 @HiltViewModel
 class GeohashChannelViewModel @Inject constructor(
     private val appSettings: AppSettings,
+    private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
 ) : ViewModel() {
 
     val channels: StateFlow<List<GeohashChannelEntry>> = appSettings.geohashChannels
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val cacheMillis = appSettings.geohashCacheMillis
-    fun setCacheMillis(value: Long) { viewModelScope.launch { appSettings.setGeohashCacheMillis(value) } }
+    fun setCacheMillis(value: Long) { submitChange { appSettings.setGeohashCacheMillis(value) } }
 
     val nickname: StateFlow<String> = appSettings.geohashNickname
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
@@ -43,27 +44,33 @@ class GeohashChannelViewModel @Inject constructor(
             onResult(true)
             return
         }
+        val request = noteWrites.submit {
+            val current = appSettings.geohashChannels.value
+            if (current.none { it.code == g }) {
+                val first = current.minOfOrNull { it.sortOrder } ?: 0.0
+                appSettings.setGeohashChannels(
+                    listOf(GeohashChannelEntry(g, pinned = false, sortOrder = first - 1.0)) + current,
+                )
+            }
+        }
         viewModelScope.launch {
-            val current = channels.value
-            val first = current.minOfOrNull { it.sortOrder } ?: 0.0
-            appSettings.setGeohashChannels(
-                listOf(GeohashChannelEntry(g, pinned = false, sortOrder = first - 1.0)) + current,
-            )
-            onResult(true)
+            try { request.await(); onResult(true) }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { timber.log.Timber.e(error, "Could not add geohash channel"); onResult(false) }
         }
     }
 
     fun deleteChannel(code: String) {
-        viewModelScope.launch {
-            appSettings.setGeohashChannels(channels.value.filterNot { it.code == code })
+        submitChange {
+            appSettings.setGeohashChannels(appSettings.geohashChannels.value.filterNot { it.code == code })
         }
     }
 
     /** Pins/unpins a channel to the home screen strip. */
     fun pinToHomeToggle(code: String) {
-        viewModelScope.launch {
+        submitChange {
             appSettings.setGeohashChannels(
-                channels.value.map {
+                appSettings.geohashChannels.value.map {
                     if (it.code == code) it.copy(pinnedToHome = !it.pinnedToHome) else it
                 },
             )
@@ -71,9 +78,9 @@ class GeohashChannelViewModel @Inject constructor(
     }
 
     fun pinToggle(code: String) {
-        viewModelScope.launch {
+        submitChange {
             appSettings.setGeohashChannels(
-                channels.value.map { if (it.code == code) it.copy(pinned = !it.pinned) else it },
+                appSettings.geohashChannels.value.map { if (it.code == code) it.copy(pinned = !it.pinned) else it },
             )
         }
     }
@@ -94,11 +101,11 @@ class GeohashChannelViewModel @Inject constructor(
     }
 
     private fun swapInList(a: String, b: String) {
-        viewModelScope.launch {
-            val entries = channels.value.toMutableList()
+        submitChange {
+            val entries = appSettings.geohashChannels.value.toMutableList()
             val ia = entries.indexOfFirst { it.code == a }
             val ib = entries.indexOfFirst { it.code == b }
-            if (ia < 0 || ib < 0) return@launch
+            if (ia < 0 || ib < 0) return@submitChange
             val tmp = entries[ia]
             entries[ia] = entries[ib]
             entries[ib] = tmp
@@ -107,7 +114,18 @@ class GeohashChannelViewModel @Inject constructor(
     }
 
     fun setNickname(name: String) {
-        viewModelScope.launch { appSettings.setGeohashNickname(name.trim().take(24)) }
+        submitChange { appSettings.setGeohashNickname(name.trim().take(24)) }
+    }
+
+    private fun submitChange(action: suspend () -> Unit) {
+        // Submit before launching, so a delayed UI coroutine cannot sneak an
+        // old write in after a wipe has begun.
+        val request = noteWrites.submit(action)
+        viewModelScope.launch {
+            try { request.await() }
+            catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { timber.log.Timber.e(error, "Could not update geohash settings") }
+        }
     }
 
 }
