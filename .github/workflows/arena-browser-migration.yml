@@ -1,0 +1,54 @@
+name: Legacy browser cleanup verification (no release)
+on:
+  push:
+    branches: [arena-audit-verification]
+permissions:
+  contents: read
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Build instrumentation
+        run: ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --stacktrace --no-configuration-cache
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run isolated browser cleanup probe
+        id: browser
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=social.tbone.migration.LegacyBrowserCleanupTest --stacktrace --no-configuration-cache
+      - name: Require browser probe to run and pass
+        if: ${{ !cancelled() && steps.browser.outcome != 'skipped' }}
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          cases = [c for p in glob.glob('app/build/outputs/androidTest-results/**/*.xml', recursive=True) for c in ET.parse(p).getroot().iter('testcase') if c.get('classname', '').endswith('LegacyBrowserCleanupTest')]
+          if len(cases) != 1 or any(c.find('skipped') is not None or c.find('failure') is not None or c.find('error') is not None for c in cases):
+              raise SystemExit('Browser cleanup test missing, skipped or failed')
+          print('Browser cleanup test executed and passed')
+          PY
+      - name: Report browser failure
+        if: failure()
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          for p in glob.glob('app/build/outputs/androidTest-results/**/*.xml', recursive=True):
+              for c in ET.parse(p).getroot().iter('testcase'):
+                  for x in list(c.findall('failure')) + list(c.findall('error')) + list(c.findall('skipped')):
+                      m=(c.get('name','')+': '+(x.get('message','') or '')+'\n'+(x.text or '')).replace('%','%25').replace('\n','%0A')
+                      print('::error::'+m[-20000:])
+          PY
