@@ -33,8 +33,8 @@ class NotesIntegrityTest {
         val crypto = NotesCrypto()
         owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         noteWrites = NoteWriteCoordinator(owner)
-        real = NotesRepository(db.noteDao(), db.noteFolderDao(), db.noteAttachmentDao(), crypto, noteWrites)
-        decoy = DecoyNotesRepository(db.decoyNoteDao(), db.decoyNoteFolderDao(), db.decoyNoteAttachmentDao(), crypto, noteWrites)
+        real = NotesRepository(db.noteDao(), db.noteFolderDao(), db.noteAttachmentDao(), crypto, noteWrites, db)
+        decoy = DecoyNotesRepository(db.decoyNoteDao(), db.decoyNoteFolderDao(), db.decoyNoteAttachmentDao(), crypto, noteWrites, db)
     }
 
     @After fun teardown() { owner.cancel(); db.close() }
@@ -113,6 +113,34 @@ class NotesIntegrityTest {
         assertNotNull(db.decoyNoteAttachmentDao().getById(decoyAttachment))
         decoy.delete("d")
         assertNull(db.decoyNoteAttachmentDao().getById(decoyAttachment))
+    }
+
+    @Test fun attachmentAndMarkerCommitOrRollbackTogetherInBothVaults() = runBlocking {
+        for (isDecoy in listOf(false, true)) {
+            val noteId = if (isDecoy) "atomic-decoy" else "atomic-real"
+            if (isDecoy) decoy.saveText(noteId, "Before", "original", null)
+            else real.saveText(noteId, "Before", "original", null)
+            val table = if (isDecoy) "decoy_notes" else "notes"
+            val sql = db.openHelper.writableDatabase
+            sql.execSQL("CREATE TRIGGER fail_marker_save BEFORE INSERT ON $table BEGIN SELECT RAISE(ABORT, 'injected'); END")
+            try {
+                try {
+                    if (isDecoy) decoy.addAttachmentAndSaveText(noteId, "atomic-att", "image", "image/png", byteArrayOf(1), "After", "[[image:atomic-att]]", null)
+                    else real.addAttachmentAndSaveText(noteId, "atomic-att", "image", "image/png", byteArrayOf(1), "After", "[[image:atomic-att]]", null)
+                    fail("expected marker write failure")
+                } catch (_: android.database.sqlite.SQLiteException) { }
+                val note = if (isDecoy) decoy.getById(noteId) else real.getById(noteId)
+                assertEquals("original", note?.text)
+                assertEquals("Before", note?.title)
+                assertTrue(if (isDecoy) decoy.attachments(noteId).first().isEmpty() else real.attachments(noteId).first().isEmpty())
+            } finally { sql.execSQL("DROP TRIGGER fail_marker_save") }
+            if (isDecoy) decoy.addAttachmentAndSaveText(noteId, "atomic-att", "image", "image/png", byteArrayOf(1), "After", "[[image:atomic-att]]", null)
+            else real.addAttachmentAndSaveText(noteId, "atomic-att", "image", "image/png", byteArrayOf(1), "After", "[[image:atomic-att]]", null)
+            val note = if (isDecoy) decoy.getById(noteId) else real.getById(noteId)
+            assertEquals("[[image:atomic-att]]", note?.text)
+            assertEquals("After", note?.title)
+            assertEquals(1, if (isDecoy) decoy.attachments(noteId).first().size else real.attachments(noteId).first().size)
+        }
     }
 
     @Test fun unreadableTitlesRejectEditingWithoutReplacingStoredCiphertext() = runBlocking {

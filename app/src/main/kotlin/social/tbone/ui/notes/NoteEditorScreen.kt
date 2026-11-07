@@ -111,6 +111,7 @@ fun NoteEditorScreen(
     var deleted by remember { mutableStateOf(false) }
     var exiting by remember { mutableStateOf(false) }
     var pendingMedia by remember { mutableIntStateOf(0) }
+    var attachmentCommitInFlight by remember { mutableStateOf(false) }
     var skipDisposeSave by remember { mutableStateOf(false) }
     var savedId by remember { mutableStateOf<String?>(if (id.isBlank()) null else id) }
     var lastSaved by remember { mutableStateOf("") }
@@ -289,13 +290,13 @@ fun NoteEditorScreen(
     }
 
     // ── autosave ──────────────────────────────────────────────────────────────
-    LaunchedEffect(blocks, title, loaded) {
-        if (loaded) {
+    LaunchedEffect(blocks, title, loaded, pendingMedia) {
+        if (loaded && pendingMedia == 0) {
             delay(1_200)
             if (serialize(blocks) != lastSaved || title != lastSavedTitle) performSave()
         }
     }
-    val saveOnExit by rememberUpdatedState({ if (!skipDisposeSave) performSave() })
+    val saveOnExit by rememberUpdatedState({ if (!skipDisposeSave && !attachmentCommitInFlight) performSave() })
     DisposableEffect(Unit) { onDispose { saveOnExit() } }
 
     fun back() {
@@ -368,20 +369,34 @@ fun NoteEditorScreen(
     }
 
     fun attach(kind: String, mime: String, bytes: ByteArray) {
-        if (!loaded || deleted || exiting) return
+        if (!loaded || deleted || exiting || attachmentCommitInFlight) return
+        attachmentCommitInFlight = true
         pendingMedia++
         val failed: (Exception) -> Unit = {
+            attachmentCommitInFlight = false
             pendingMedia--
             android.widget.Toast.makeText(context, "Could not save attachment; please try again.", android.widget.Toast.LENGTH_LONG).show()
         }
-        // Keep the editor open until both the attachment and its inline marker
-        // are saved. A failed marker save leaves the attachment intact for retry.
+        // Ensure a parent exists, then save the bytes and inline marker in one
+        // Room transaction. Freeze edits during the transaction so a failure can
+        // restore the exact pre-insertion blocks, including selected text.
         performSave(force = true, onError = failed) { noteId ->
-            viewModel.addAttachment(noteId, kind, mime, bytes, epoch = editorEpoch, onError = failed) { attId ->
-                val placeholder = NoteAttachmentUi(attId, noteId, kind, mime, bytes, bytes.size.toLong(), 0L)
-                insertAttachment(placeholder)
-                performSave(force = true, onError = failed) { pendingMedia-- }
-            }
+            val before = blocks
+            val attId = java.util.UUID.randomUUID().toString()
+            val placeholder = NoteAttachmentUi(attId, noteId, kind, mime, bytes, bytes.size.toLong(), 0L)
+            insertAttachment(placeholder)
+            val submittedText = serialize(blocks)
+            val submittedTitle = title
+            viewModel.addAttachmentAndSaveText(noteId, attId, kind, mime, bytes,
+                submittedTitle, submittedText, folderId, editorEpoch, onError = {
+                    blocks = before
+                    failed(it)
+                }, onSaved = {
+                    lastSaved = submittedText
+                    lastSavedTitle = submittedTitle
+                    attachmentCommitInFlight = false
+                    pendingMedia--
+                })
         }
     }
 
@@ -457,7 +472,7 @@ fun NoteEditorScreen(
     }
 
     fun removeAttachment(att: NoteAttachmentUi) {
-        if (deleted || exiting || !loaded) return
+        if (deleted || exiting || !loaded || attachmentCommitInFlight) return
         // Persist the marker removal before deleting its encrypted bytes. If
         // saving fails, retaining an orphan is safer than breaking the note.
         blocks = coalesce(blocks.filterNot { it is EditorBlock.Att && it.att.id == att.id })
@@ -569,7 +584,8 @@ fun NoteEditorScreen(
         // ── Title ─────────────────────────────────────────────────────────────
         OutlinedTextField(
             value = title,
-            onValueChange = { title = it },
+            onValueChange = { if (!attachmentCommitInFlight) title = it },
+            readOnly = attachmentCommitInFlight,
             placeholder = { Text("title", style = BonyType.meta.copy(color = BonyColors.TextMute)) },
             singleLine = true,
             textStyle = BonyType.body.copy(color = BonyColors.Text),
@@ -597,8 +613,9 @@ fun NoteEditorScreen(
                             // work exactly like a normal text field.
                             BasicTextField(
                                 value = block.tfv,
+                                readOnly = attachmentCommitInFlight,
                                 onValueChange = { tf ->
-                                    blocks = blocks.mapIndexed { i, b ->
+                                    if (!attachmentCommitInFlight) blocks = blocks.mapIndexed { i, b ->
                                         if (i == index) EditorBlock.Text(tf) else b
                                     }
                                 },
@@ -674,7 +691,7 @@ fun NoteEditorScreen(
                 active = recording,
                 onClick = { if (recording) stopRecording() else startRecording() },
             )
-            ToolbarChip("image", active = false, onClick = { imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, icon = Icons.Default.Image)
+            ToolbarChip("image", active = false, onClick = { if (pendingMedia == 0 && !recording) imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, icon = Icons.Default.Image)
             Text(
                 text = "permission needed: " + perm.lastDenial.orEmpty(),
                 style = BonyType.caption.copy(color = BonyColors.Danger),

@@ -58,6 +58,8 @@ class NewNoteEditorTest {
     @Test fun decoyBlankNoteCanRetryAfterParentSaveFailure() = firstImage(true, "parent")
     @Test fun normalBlankNoteCanRetryAfterAttachmentFailure() = firstImage(false, "attachment")
     @Test fun decoyBlankNoteCanRetryAfterAttachmentFailure() = firstImage(true, "attachment")
+    @Test fun normalBlankNoteCanRetryAfterAtomicMarkerFailure() = firstImage(false, "marker")
+    @Test fun decoyBlankNoteCanRetryAfterAtomicMarkerFailure() = firstImage(true, "marker")
     @Test fun canceledNormalPickerDoesNotCreateNote() = canceledPicker(false)
     @Test fun canceledDecoyPickerDoesNotCreateNote() = canceledPicker(true)
 
@@ -150,8 +152,8 @@ class NewNoteEditorTest {
         val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val writes = NoteWriteCoordinator(owner)
         val crypto = NotesCrypto()
-        val normal = NotesRepository(db.noteDao(), db.noteFolderDao(), db.noteAttachmentDao(), crypto, writes)
-        val decoy = DecoyNotesRepository(db.decoyNoteDao(), db.decoyNoteFolderDao(), db.decoyNoteAttachmentDao(), crypto, writes)
+        val normal = NotesRepository(db.noteDao(), db.noteFolderDao(), db.noteAttachmentDao(), crypto, writes, db)
+        val decoy = DecoyNotesRepository(db.decoyNoteDao(), db.decoyNoteFolderDao(), db.decoyNoteAttachmentDao(), crypto, writes, db)
         private val gate = social.tbone.toolbox.VoiceRecordingGate(writes, owner)
         val normalVm = NotesViewModel(normal, crypto, writes, gate)
         val decoyVm = DecoyNotesViewModel(decoy, crypto, writes, gate)
@@ -260,7 +262,11 @@ class NewNoteEditorTest {
                     decoy -> "decoy_notes"
                     else -> "notes"
                 }
-                f.db.openHelper.writableDatabase.execSQL("CREATE TRIGGER reject_first_save BEFORE INSERT ON $table BEGIN SELECT RAISE(ABORT, 'injected'); END")
+                val condition = if (failAt == "marker") {
+                    val attachments = if (decoy) "decoy_note_attachments" else "note_attachments"
+                    " WHEN EXISTS (SELECT 1 FROM $attachments WHERE noteId = NEW.id)"
+                } else ""
+                f.db.openHelper.writableDatabase.execSQL("CREATE TRIGGER reject_first_save BEFORE INSERT ON $table$condition BEGIN SELECT RAISE(ABORT, 'injected'); END")
             }
             compose.setContent { CompositionLocalProvider(LocalActivityResultRegistryOwner provides resultOwner) { BonyTheme {
                 if (showing.value) {
