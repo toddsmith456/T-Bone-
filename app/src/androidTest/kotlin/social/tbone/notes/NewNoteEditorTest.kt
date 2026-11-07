@@ -50,6 +50,8 @@ class NewNoteEditorTest {
     @Test fun decoyTitleOnlySavesOnBackAndReopens() = titleOnly(true, false)
     @Test fun normalTitleOnlyAutosavesAndReopens() = titleOnly(false, true)
     @Test fun decoyTitleOnlyAutosavesAndReopens() = titleOnly(true, true)
+    @Test fun normalTitleOnlyReportsFailureAndCanRetry() = titleOnlyFailure(false)
+    @Test fun decoyTitleOnlyReportsFailureAndCanRetry() = titleOnlyFailure(true)
     @Test fun normalBlankNoteAcceptsFirstImage() = firstImage(false, false)
     @Test fun decoyBlankNoteAcceptsFirstImage() = firstImage(true, false)
     @Test fun normalBlankNoteCanRetryAfterParentSaveFailure() = firstImage(false, true)
@@ -97,6 +99,31 @@ class NewNoteEditorTest {
             compose.waitUntil(15_000) { compose.onAllNodes(androidx.compose.ui.test.hasText("Only a title")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("Only a title").assertIsDisplayed()
             assertEquals(1, runBlocking { f.rows(decoy).size })
+        } finally { f.close() }
+    }
+
+    private fun titleOnlyFailure(decoy: Boolean) {
+        val f = Fixture()
+        val showing = mutableStateOf(true)
+        try {
+            val table = if (decoy) "decoy_notes" else "notes"
+            f.db.openHelper.writableDatabase.execSQL("CREATE TRIGGER reject_title BEFORE INSERT ON $table BEGIN SELECT RAISE(ABORT, 'injected'); END")
+            compose.setContent { BonyTheme {
+                if (showing.value) {
+                    if (decoy) DecoyNoteEditorScreen("", onBack = { showing.value = false }, onShare = {}, viewModel = f.decoyVm)
+                    else NoteEditorScreen("", onBack = { showing.value = false }, onShare = {}, viewModel = f.normalVm)
+                }
+            } }
+            compose.onNodeWithText("title").performTextReplacement("Retry title")
+            compose.onNodeWithText("←").performClick()
+            compose.waitUntil(15_000) { if (decoy) f.decoyVm.error.value != null else f.normalVm.error.value != null }
+            assertTrue(showing.value)
+            assertTrue(runBlocking { f.rows(decoy).isEmpty() })
+            f.db.openHelper.writableDatabase.execSQL("DROP TRIGGER reject_title")
+            compose.onNodeWithText("←").performClick()
+            compose.waitUntil(15_000) { !showing.value }
+            val id = runBlocking { f.rows(decoy).single() }
+            assertEquals("Retry title", runBlocking { f.get(decoy, id)?.title })
         } finally { f.close() }
     }
 
