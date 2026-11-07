@@ -13,8 +13,10 @@ import social.tbone.nostr.relay.RelayConnection
  * same path as the on-screen fetch.
  */
 object ImageClientProvider {
+    // The persisted setting is initially unknown. A proxy-only client prevents
+    // early media requests from going direct before application settings load.
     @Volatile
-    var client: OkHttpClient = RelayConnection.buildClient(useTor = false)
+    var client: OkHttpClient = RelayConnection.buildClient(useTor = true)
         private set
 
     fun update(newClient: OkHttpClient) {

@@ -21,6 +21,7 @@ import javax.inject.Qualifier
 import social.tbone.account.AccountRepository
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.first
 
 @Qualifier
 @Retention(AnnotationRetention.BINARY)
@@ -49,6 +50,7 @@ object NetworkModule {
     ): RelayPool {
         val pool = createPool(scope, appSettings, context)
         scope.launch {
+            appSettings.initialized.first { it }
             accountRepository.activeAccount.map { it?.effectiveRelays().orEmpty() }
                 .distinctUntilChanged().collect { pool.setPersonalRelays(it) }
         }
@@ -68,7 +70,8 @@ object NetworkModule {
                 RelayConnection(
                     url,
                     RelayConnection.buildClient(
-                        useTor = appSettings.torEnabled.value,
+                        // Before preferences load, never assume Tor is disabled.
+                        useTor = startupRequiresTor(appSettings.initialized.value, appSettings.torEnabled.value),
                         bypassProxy = RelayConnection.isLocalRelayUrl(url),
                     ),
                 )
@@ -77,6 +80,7 @@ object NetworkModule {
         // On each Tor toggle, probe the reachable Orbot proxy (HTTP CONNECT preferred
         // over SOCKS to avoid the local DNS leak) and reconnect all relays.
         scope.launch {
+            appSettings.initialized.first { it }
             appSettings.torEnabled.collect { useTor ->
                 val status = if (useTor) OrbotHelper.getStatus(context) else null
                 val connected = status as? OrbotStatus.InstalledAndConnected
@@ -93,3 +97,7 @@ object NetworkModule {
         return pool
     }
 }
+
+/** Unknown persisted transport mode is treated as Tor until settings load. */
+internal fun startupRequiresTor(settingsReady: Boolean, torEnabled: Boolean): Boolean =
+    !settingsReady || torEnabled

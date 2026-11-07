@@ -7,6 +7,7 @@ import coil.disk.DiskCache
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import social.tbone.BuildConfig
 import social.tbone.di.ImageClientProvider
@@ -44,6 +45,16 @@ class BonyApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+
+        // Install a proxy-only bootstrap loader synchronously. Until persisted
+        // settings load, the default Coil client must not make direct requests.
+        // Its disk cache is disabled so it cannot overlap the configured loader.
+        Coil.setImageLoader(
+            ImageLoader.Builder(this)
+                .okHttpClient(ImageClientProvider.client)
+                .diskCache(null)
+                .build()
+        )
 
         val logFile = File(filesDir, "logs/$LOG_FILE_NAME")
 
@@ -102,6 +113,7 @@ class BonyApp : Application() {
         // Keep Coil's image loader in sync with Tor + lightweight cache toggle.
         // Lightweight = 64 MB cap; otherwise Coil default (~250 MB).
         applicationScope.launch {
+            appSettings.initialized.first { it }
             combine(appSettings.torEnabled, appSettings.imageCacheLightweight) { tor, lightweight -> tor to lightweight }
                 .collect { (useTor, lightweight) ->
                 val status = if (useTor) OrbotHelper.getStatus(this@BonyApp) else null
