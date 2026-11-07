@@ -229,20 +229,13 @@ class FollowListsViewModel @Inject constructor(
                         ?: acct.followEntries.ifEmpty { acct.follows.map { FollowEntry(it) } }
                     if (existing.none { it.pubkey == pubkeyHex }) { say("Not following"); return@launch }
                     val newEntries = existing.filter { it.pubkey != pubkeyHex }
-                    val keptTags = latest?.tags?.filter { (it.firstOrNull() as? kotlinx.serialization.json.JsonPrimitive)?.content != "p" }.orEmpty()
-                    val pTags = newEntries.map { e ->
-                        kotlinx.serialization.json.buildJsonArray {
-                            add(kotlinx.serialization.json.JsonPrimitive("p")); add(kotlinx.serialization.json.JsonPrimitive(e.pubkey))
-                            if (e.relay.isNotEmpty() || e.petname.isNotEmpty()) add(kotlinx.serialization.json.JsonPrimitive(e.relay))
-                            if (e.petname.isNotEmpty()) add(kotlinx.serialization.json.JsonPrimitive(e.petname))
-                        }
-                    }
+                    val tags = social.tbone.lists.followTagsForToggle(latest, existing, pubkeyHex, add = false)
                     val unsigned = social.tbone.nostr.UnsignedEvent(
                         pubkey = signer.pubkey,
                         createdAt = maxOf(System.currentTimeMillis()/1000, (latest?.createdAt ?: 0L) + 1),
                         kind = EventKind.FOLLOW_LIST,
                         content = latest?.content ?: "",
-                        tags = pTags + keptTags,
+                        tags = tags,
                     )
                     signer.signEvent(unsigned).onSuccess { ev ->
                         if (accountRepository.activeAccount.first()?.pubkey != acct.pubkey ||
@@ -307,20 +300,13 @@ class FollowListsViewModel @Inject constructor(
                     ?: acct.followEntries.ifEmpty { acct.follows.map { FollowEntry(it) } }
                 if (existing.any { it.pubkey == pubkeyHex }) { say("Already following"); return@launch }
                 val newEntries = (existing + FollowEntry(pubkeyHex)).distinctBy { it.pubkey }
-                val keptTags = latest?.tags?.filter { (it.firstOrNull() as? kotlinx.serialization.json.JsonPrimitive)?.content != "p" }.orEmpty()
-                val pTags = newEntries.map { e ->
-                    kotlinx.serialization.json.buildJsonArray {
-                        add(kotlinx.serialization.json.JsonPrimitive("p")); add(kotlinx.serialization.json.JsonPrimitive(e.pubkey))
-                        if (e.relay.isNotEmpty() || e.petname.isNotEmpty()) add(kotlinx.serialization.json.JsonPrimitive(e.relay))
-                        if (e.petname.isNotEmpty()) add(kotlinx.serialization.json.JsonPrimitive(e.petname))
-                    }
-                }
+                val tags = social.tbone.lists.followTagsForToggle(latest, existing, pubkeyHex, add = true)
                 val unsigned = social.tbone.nostr.UnsignedEvent(
                     pubkey = signer.pubkey,
                     createdAt = maxOf(System.currentTimeMillis()/1000, (latest?.createdAt ?: 0L) + 1),
                     kind = EventKind.FOLLOW_LIST,
                     content = latest?.content ?: "",
-                    tags = pTags + keptTags,
+                    tags = tags,
                 )
                 signer.signEvent(unsigned).onSuccess { ev ->
                     if (accountRepository.activeAccount.first()?.pubkey != acct.pubkey ||

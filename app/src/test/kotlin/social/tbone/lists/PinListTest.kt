@@ -45,4 +45,20 @@ class PinListTest {
         assertEquals(b.copy(createdAt = 124), newestListEvent(a, b.copy(createdAt = 124)))
     }
 
+
+    @Test fun followTogglePreservesUnrelatedAndExtendedTags() {
+        fun tag(vararg values: String) = JsonArray(values.map(::JsonPrimitive))
+        val owner = "1".repeat(64)
+        val target = "2".repeat(64)
+        val other = "3".repeat(64)
+        val raw = listOf(tag("p", other, "wss://relay", "alias", "extension"),
+            tag("p", "malformed"), tag("x", "keep"), tag("p", target, "wss://old"))
+        val event = Event("0".repeat(64), owner, 1, EventKind.FOLLOW_LIST, raw, "content", "")
+        assertEquals(raw.dropLast(1), followTagsForToggle(event, emptyList(), target, false))
+        assertEquals(raw, followTagsForToggle(event, emptyList(), target, true))
+        val result = followTagsForToggle(event, emptyList(), "4".repeat(64), true)
+        assertEquals(raw, result.dropLast(1))
+        assertEquals(tag("p", "4".repeat(64)), result.last())
+    }
+
 }

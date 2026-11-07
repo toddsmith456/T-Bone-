@@ -554,24 +554,14 @@ class ProfileViewModel @Inject constructor(
                 else
                     existingEntries.filter { it.pubkey != pubkey }
 
-                // Keep whatever else the existing kind-3 carried (content, non-p tags).
-                val keptTags = latest?.tags?.filter { (it.firstOrNull() as? JsonPrimitive)?.content != "p" }.orEmpty()
-                val pTags = newEntries.map { entry ->
-                    buildJsonArray {
-                        add(JsonPrimitive("p"))
-                        add(JsonPrimitive(entry.pubkey))
-                        // NIP-02 positional fields: a petname needs the relay slot filled.
-                        if (entry.relay.isNotEmpty() || entry.petname.isNotEmpty()) add(JsonPrimitive(entry.relay))
-                        if (entry.petname.isNotEmpty()) add(JsonPrimitive(entry.petname))
-                    }
-                }
+                val tags = social.tbone.lists.followTagsForToggle(latest, existingEntries, pubkey, add)
                 val unsigned = UnsignedEvent(
                     pubkey = signer.pubkey,
                     // Replaceable event: must be strictly newer than the one it replaces.
                     createdAt = maxOf(System.currentTimeMillis() / 1000, (latest?.createdAt ?: 0L) + 1),
                     kind = EventKind.FOLLOW_LIST,
                     content = latest?.content ?: "",
-                    tags = pTags + keptTags,
+                    tags = tags,
                 )
 
                 signer.signEvent(unsigned)
