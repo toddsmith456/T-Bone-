@@ -3,6 +3,9 @@ package social.tbone.webxdc
 import android.os.Build
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.webkit.WebViewFeature
@@ -19,6 +22,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
+import org.junit.Rule
+import social.tbone.FeedRegressionActivity
 import org.junit.runner.RunWith
 import social.tbone.notes.NoteWriteCoordinator
 
@@ -26,6 +31,8 @@ import social.tbone.notes.NoteWriteCoordinator
  * A unique WebView data-directory suffix prevents touching user browser data. */
 @RunWith(AndroidJUnit4::class)
 class XdcBrowserWipeTest {
+    @get:Rule val compose = createAndroidComposeRule<FeedRegressionActivity>()
+
     @Test fun destroysActiveViewAndClearsLocalStorageBeforeCompletion() = runBlocking {
         assumeTrue(Build.VERSION.SDK_INT >= 28)
         withContext(Dispatchers.Main) {
@@ -40,20 +47,42 @@ class XdcBrowserWipeTest {
         val registry = XdcWebViewWipe(writes)
         var closed = false
         var after: WebView? = null
+        var before: WebView? = null
+        val showing = mutableStateOf(true)
+        val epoch = writes.currentWipeEpoch()
         try {
-            val before = newView()
-            withContext(Dispatchers.Main) {
-                assertTrue(registry.register(before, writes.currentWipeEpoch()) { closed = true })
+            val original = newView()
+            before = original
+            compose.setContent {
+                if (showing.value) AndroidView(
+                    factory = {
+                        assertTrue(registry.register(original, epoch) { closed = true })
+                        original
+                    },
+                    onRelease = { registry.release(it) },
+                )
             }
-            assertEquals("\"stored\"", evaluate(before, "localStorage.setItem('private', 'stored'); localStorage.getItem('private')"))
+            compose.waitForIdle()
+            assertEquals("\"stored\"", evaluate(original, "localStorage.setItem('private', 'stored'); localStorage.getItem('private')"))
             assertTrue(writes.requestWipe(NoteWriteCoordinator.WipeKind.TOOLBOX))
             writes.pauseAndDrain()
             registry.clearForWipe()
             assertTrue(closed)
-            after = newView()
-            assertEquals("null", evaluate(after, "localStorage.getItem('private')"))
+            // Compose disposal must tolerate the registry already destroying and
+            // detaching the AndroidView during an active wipe.
+            compose.runOnIdle { showing.value = false }
+            compose.waitForIdle()
+            val replacement = newView()
+            after = replacement
+            assertEquals("null", evaluate(replacement, "localStorage.getItem('private')"))
+            withContext(Dispatchers.Main) {
+                assertTrue(!registry.register(replacement, epoch) {})
+            }
         } finally {
-            withContext(Dispatchers.Main) { after?.destroy() }
+            withContext(Dispatchers.Main) {
+                before?.let(registry::release)
+                after?.destroy()
+            }
             owner.cancel()
         }
     }
