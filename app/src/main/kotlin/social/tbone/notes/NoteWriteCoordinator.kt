@@ -26,15 +26,19 @@ import timber.log.Timber
  * and drains existing work before the vault is cleared.
  */
 @Singleton
-class NoteWriteCoordinator @Inject constructor(scope: CoroutineScope) {
+class NoteWriteCoordinator internal constructor(scope: CoroutineScope, private val wipeState: WipeStateStore) {
+    @Inject constructor(scope: CoroutineScope, wipeState: PersistentWipeState) : this(scope, wipeState as WipeStateStore)
+    internal constructor(scope: CoroutineScope) : this(scope, InMemoryWipeState())
     private val lock = Any()
     private class Work(val execute: suspend () -> Unit, val reject: (Throwable) -> Unit)
     private val work = Channel<Work>(Channel.UNLIMITED)
-    private var wiping = false
-    private val _available = MutableStateFlow(true)
+    private val failedWipes = wipeState.read().toMutableSet()
+    private var wiping = failedWipes.isNotEmpty()
+    private val _available = MutableStateFlow(!wiping)
     val available = _available.asStateFlow()
+    private val _pendingAppWipe = MutableStateFlow(WipeKind.APP in failedWipes)
+    val pendingAppWipe = _pendingAppWipe.asStateFlow()
     private val wipeMutex = Mutex()
-    private val failedWipes = mutableSetOf<WipeKind>()
 
     enum class WipeKind { APP, TOOLBOX }
 
@@ -82,20 +86,38 @@ class NoteWriteCoordinator @Inject constructor(scope: CoroutineScope) {
         return submit { withContext(caller) { action() } }.await()
     }
 
-    /** Serialize both wipe flows and retain the gate after a failed wipe. */
+    /** Close the gate and durably record intent before launching wipe work. */
+    fun requestWipe(kind: WipeKind): Boolean = synchronized(lock) {
+        failedWipes.add(kind)
+        wiping = true
+        _available.value = false
+        _pendingAppWipe.value = WipeKind.APP in failedWipes
+        wipeState.write(failedWipes.toSet())
+    }
+
+    fun pendingWipes(): Set<WipeKind> = synchronized(lock) { failedWipes.toSet() }
+
+    /** Serialize wipes; retain a durable, fail-closed gate after failure/cancellation. */
     suspend fun runWipe(kind: WipeKind, action: suspend () -> Boolean): Boolean = wipeMutex.withLock {
-        synchronized(lock) { wiping = true; _available.value = false }
-        var succeeded = false
+        if (!requestWipe(kind)) return@withLock false
+        var completed = false
         try {
-            succeeded = action()
-            succeeded
+            completed = action()
+            if (completed) synchronized(lock) {
+                val remaining = if (kind == WipeKind.APP) emptySet() else failedWipes - kind
+                if (wipeState.write(remaining)) {
+                    failedWipes.clear()
+                    failedWipes.addAll(remaining)
+                } else completed = false
+            }
+            completed
         } finally {
             synchronized(lock) {
-                if (succeeded) {
-                    if (kind == WipeKind.APP) failedWipes.clear() else failedWipes.remove(kind)
-                } else failedWipes.add(kind)
+                // The marker was written before executing action and is cleared
+                // only after successful cleanup; interruption remains fail-closed.
                 wiping = failedWipes.isNotEmpty()
                 _available.value = !wiping
+                _pendingAppWipe.value = WipeKind.APP in failedWipes
             }
         }
     }
@@ -113,5 +135,8 @@ class NoteWriteCoordinator @Inject constructor(scope: CoroutineScope) {
         drained.await()
     }
 
-    fun resumeAfterWipe() = synchronized(lock) { wiping = false; _available.value = true }
+    internal fun resumeAfterWipe() = synchronized(lock) {
+        check(failedWipes.isEmpty()) { "Cannot resume while a wipe remains pending" }
+        wiping = false; _available.value = true
+    }
 }

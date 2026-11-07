@@ -109,9 +109,16 @@ class ToolboxSecurity @Inject constructor(
 
     fun wipeToolbox() {
         if (!wiping.compareAndSet(false, true)) return
+        if (!noteWrites.requestWipe(social.tbone.notes.NoteWriteCoordinator.WipeKind.TOOLBOX)) {
+            wiping.set(false)
+            scope.launch(Dispatchers.Main) {
+                Toast.makeText(context, "Toolbox wipe could not start. Keep it locked and try again.", Toast.LENGTH_LONG).show()
+            }
+            return
+        }
         scope.launch(Dispatchers.IO) {
           try {
-            noteWrites.runWipe(social.tbone.notes.NoteWriteCoordinator.WipeKind.TOOLBOX) {
+            val complete = noteWrites.runWipe(social.tbone.notes.NoteWriteCoordinator.WipeKind.TOOLBOX) {
             val steps = WipeSteps { name, error -> timber.log.Timber.e(error, "Toolbox wipe step failed: $name") }
             steps.run("pause geohash watchers") { geohashMonitor.pauseForWipe() }
             steps.run("pause and drain note writes") { noteWrites.pauseAndDrain() }
@@ -130,7 +137,8 @@ class ToolboxSecurity @Inject constructor(
                 check(context.getSharedPreferences("tbone_geohash", Context.MODE_PRIVATE).edit().clear().commit())
             }
             steps.run("clear recordings") {
-                context.filesDir.listFiles()?.filter { it.name == "recordings" }?.forEach {
+                checkNotNull(context.filesDir.listFiles()) { "cannot enumerate internal files" }
+                    .filter { it.name == "recordings" }.forEach {
                     check(it.deleteRecursively()) { "recording deletion failed" }
                 }
             }
@@ -145,10 +153,10 @@ class ToolboxSecurity @Inject constructor(
             }
             if (!steps.failed) steps.run("finish calendar wipe gate") { calendarAlarms.finishSensitiveWipe() }
             if (!steps.failed) steps.run("resume geohash watchers") { geohashMonitor.resumeAfterWipe() }
-            if (steps.failed) withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Toolbox wipe incomplete. Keep it locked and try again.", Toast.LENGTH_LONG).show()
-            }
             !steps.failed
+            }
+            if (!complete) withContext(Dispatchers.Main) {
+                Toast.makeText(context, "Toolbox wipe incomplete. Keep it locked and try again.", Toast.LENGTH_LONG).show()
             }
           } finally {
               wiping.set(false)

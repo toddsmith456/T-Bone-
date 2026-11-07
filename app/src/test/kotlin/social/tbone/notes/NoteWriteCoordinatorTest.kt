@@ -181,4 +181,61 @@ class NoteWriteCoordinatorTest {
         } finally { owner.cancel() }
     }
 
+
+    @Test fun pendingWipeSurvivesCoordinatorRecreationAndRequiresMatchingRetry() = runBlocking {
+        val state = InMemoryWipeState()
+        val firstScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val first = NoteWriteCoordinator(firstScope, state)
+        assertTrue(first.requestWipe(NoteWriteCoordinator.WipeKind.APP))
+        firstScope.cancel()
+        val secondScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val second = NoteWriteCoordinator(secondScope, state)
+            assertFalse(second.available.value)
+            assertTrue(second.pendingAppWipe.value)
+            assertTrue(second.hasFailedAppWipe())
+            assertTrue(second.runWipe(NoteWriteCoordinator.WipeKind.TOOLBOX) { true })
+            assertFalse(second.available.value)
+            assertTrue(second.runWipe(NoteWriteCoordinator.WipeKind.APP) { second.pauseAndDrain(); true })
+            assertTrue(second.available.value)
+            assertFalse(second.pendingAppWipe.value)
+            assertTrue(state.read().isEmpty())
+        } finally { secondScope.cancel() }
+    }
+
+    @Test fun markerWriteFailureNeverRunsCleanupOrReopensGate() = runBlocking {
+        val state = object : WipeStateStore {
+            override fun read() = emptySet<NoteWriteCoordinator.WipeKind>()
+            override fun write(pending: Set<NoteWriteCoordinator.WipeKind>) = false
+        }
+        val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val coordinator = NoteWriteCoordinator(owner, state)
+            var actionRan = false
+            assertFalse(coordinator.runWipe(NoteWriteCoordinator.WipeKind.APP) { actionRan = true; true })
+            assertFalse(actionRan)
+            assertFalse(coordinator.available.value)
+            assertTrue(coordinator.pendingAppWipe.value)
+        } finally { owner.cancel() }
+    }
+
+    @Test fun markerClearFailureKeepsGateClosed() = runBlocking {
+        val state = object : WipeStateStore {
+            var saved = emptySet<NoteWriteCoordinator.WipeKind>()
+            override fun read() = saved
+            override fun write(pending: Set<NoteWriteCoordinator.WipeKind>): Boolean {
+                if (pending.isEmpty()) return false
+                saved = pending.toSet()
+                return true
+            }
+        }
+        val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val coordinator = NoteWriteCoordinator(owner, state)
+            assertFalse(coordinator.runWipe(NoteWriteCoordinator.WipeKind.APP) { true })
+            assertFalse(coordinator.available.value)
+            assertEquals(setOf(NoteWriteCoordinator.WipeKind.APP), state.read())
+        } finally { owner.cancel() }
+    }
+
 }

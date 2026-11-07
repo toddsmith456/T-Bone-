@@ -35,7 +35,8 @@ class CalendarAlarmScheduler @Inject constructor(
 
     // A persisted gate survives process death during a wipe. Synchronizing the
     // scheduling and delivery entry points also prevents in-process races.
-    private var wipeBlocked = prefs().getBoolean("wipe_in_progress", false)
+    private var wipeBlocked = prefs().getBoolean("wipe_in_progress", false) ||
+        social.tbone.notes.PersistentWipeState(context).read().isNotEmpty()
 
     @Synchronized fun beginSensitiveWipe() {
         wipeBlocked = true

@@ -56,6 +56,8 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var stealthManager: social.tbone.stealth.StealthManager
     @Inject lateinit var appSettings: AppSettings
     @Inject lateinit var updateManager: UpdateManager
+    @Inject lateinit var noteWrites: social.tbone.notes.NoteWriteCoordinator
+    @Inject lateinit var dataWiper: social.tbone.security.DataWiper
     @Inject lateinit var reactionsRepository: social.tbone.reactions.ReactionsRepository
 
     private val amberLauncher = registerForActivityResult(
@@ -155,6 +157,15 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             ThemeHost {
+                val pendingWipe by noteWrites.pendingAppWipe.collectAsStateWithLifecycle()
+                if (pendingWipe) {
+                    Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color(0xFF0A0A0A)),
+                        contentAlignment = androidx.compose.ui.Alignment.Center) {
+                        androidx.compose.material3.Button(onClick = { dataWiper.wipeAndRestart() }) {
+                            androidx.compose.material3.Text("Retry cleanup")
+                        }
+                    }
+                } else {
                 val brightness by social.tbone.ui.media.ScreenBrightness.level
                     .collectAsStateWithLifecycle()
                 val screenTimeLocked by screenTimeManager.locked.collectAsStateWithLifecycle()
@@ -228,6 +239,7 @@ class MainActivity : FragmentActivity() {
                                 .background(overlayColor),
                         )
                     }
+                }
                 }
             }
         }

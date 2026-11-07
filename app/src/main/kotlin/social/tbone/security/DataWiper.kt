@@ -49,9 +49,16 @@ class DataWiper @Inject constructor(
 
     fun wipeAndRestart() {
         if (!wiping.compareAndSet(false, true)) return
+        if (!noteWrites.requestWipe(social.tbone.notes.NoteWriteCoordinator.WipeKind.APP)) {
+            wiping.set(false)
+            scope.launch(Dispatchers.Main) {
+                Toast.makeText(context, "Wipe could not start. Keep the app locked and try again.", Toast.LENGTH_LONG).show()
+            }
+            return
+        }
         scope.launch(Dispatchers.IO) {
           try {
-            noteWrites.runWipe(social.tbone.notes.NoteWriteCoordinator.WipeKind.APP) {
+            val complete = noteWrites.runWipe(social.tbone.notes.NoteWriteCoordinator.WipeKind.APP) {
             val steps = WipeSteps { name, error -> timber.log.Timber.e(error, "Wipe step failed: $name") }
             steps.run("pause follow list mutations") { followMutations.pauseForWipe() }
             steps.run("pause geohash watchers") { geohashMonitor.pauseForWipe() }
@@ -71,15 +78,18 @@ class DataWiper @Inject constructor(
             // The live DataStore file must never be deleted behind its active
             // instance. It is cleared atomically through its API below instead.
             steps.run("clear internal files") {
-                context.filesDir.listFiles()?.filterNot { it.name == "datastore" }?.forEach {
+                checkNotNull(context.filesDir.listFiles()) { "cannot enumerate internal files" }
+                    .filterNot { it.name == "datastore" }.forEach {
                     check(it.deleteRecursively()) { "internal file deletion failed" }
                 }
             }
             steps.run("clear cache") {
-                context.cacheDir.listFiles()?.forEach { check(it.deleteRecursively()) { "cache deletion failed" } }
+                checkNotNull(context.cacheDir.listFiles()) { "cannot enumerate cache" }
+                    .forEach { check(it.deleteRecursively()) { "cache deletion failed" } }
             }
             steps.run("clear code cache") {
-                context.codeCacheDir.listFiles()?.forEach { check(it.deleteRecursively()) { "code cache deletion failed" } }
+                checkNotNull(context.codeCacheDir.listFiles()) { "cannot enumerate code cache" }
+                    .forEach { check(it.deleteRecursively()) { "code cache deletion failed" } }
             }
             listOf("tbone_notes_key", "tbone_local_key_encryption", "tbone_calendar_key").forEach { alias ->
                 steps.run("remove owned key") {
@@ -96,7 +106,8 @@ class DataWiper @Inject constructor(
                     val prefsDir = java.io.File(context.applicationInfo.dataDir, "shared_prefs")
                     // Keep the persisted alarm gate until all data removal is complete.
                     // Deleting it here would let a process restart deliver a stale alarm.
-                    prefsDir.listFiles()?.filter { it.name.endsWith(".xml") && it.name != "tbone_calendar_alarms.xml" }?.forEach { file ->
+                    val prefsFiles = if (prefsDir.exists()) checkNotNull(prefsDir.listFiles()) { "cannot enumerate preferences" } else emptyArray()
+                    prefsFiles.filter { it.name.endsWith(".xml") && it.name != "tbone_calendar_alarms.xml" && it.name != "${social.tbone.notes.PersistentWipeState.PREFS_NAME}.xml" }.forEach { file ->
                         check(context.getSharedPreferences(file.name.removeSuffix(".xml"), Context.MODE_PRIVATE)
                             .edit().clear().commit())
                     }
@@ -114,10 +125,10 @@ class DataWiper @Inject constructor(
             }
             if (!steps.failed) steps.run("resume follow list mutations") { followMutations.resumeAfterWipe() }
             if (!steps.failed) steps.run("resume geohash watchers") { geohashMonitor.resumeAfterWipe() }
-            if (steps.failed) withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Wipe incomplete. Keep the app locked and try again.", Toast.LENGTH_LONG).show()
-            }
             !steps.failed
+            }
+            if (!complete) withContext(Dispatchers.Main) {
+                Toast.makeText(context, "Wipe incomplete. Keep the app locked and try again.", Toast.LENGTH_LONG).show()
             }
           } finally {
               wiping.set(false)

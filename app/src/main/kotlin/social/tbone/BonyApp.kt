@@ -38,6 +38,9 @@ class BonyApp : Application() {
     @Inject lateinit var calendarScheduler: CalendarAlarmScheduler
     @Inject lateinit var updateManager: UpdateManager
     @Inject lateinit var geohashPinnedMonitor: social.tbone.ui.toolbox.geohash.GeohashPinnedMonitor
+    @Inject lateinit var noteWrites: social.tbone.notes.NoteWriteCoordinator
+    @Inject lateinit var dataWiper: social.tbone.security.DataWiper
+    @Inject lateinit var toolboxSecurity: social.tbone.ui.toolbox.ToolboxSecurity
 
     override fun onCreate() {
         super.onCreate()
@@ -52,6 +55,15 @@ class BonyApp : Application() {
 
         createNotificationChannels(this)
         Phrase.init(this)
+
+        // A previously requested wipe must continue after process death. Its
+        // durable marker closes the note gate before this application starts.
+        val pending = noteWrites.pendingWipes()
+        if (pending.isNotEmpty()) geohashPinnedMonitor.pauseForWipe()
+        when {
+            social.tbone.notes.NoteWriteCoordinator.WipeKind.APP in pending -> dataWiper.wipeAndRestart()
+            social.tbone.notes.NoteWriteCoordinator.WipeKind.TOOLBOX in pending -> toolboxSecurity.wipeToolbox()
+        }
 
         // Keep fully-offline calendar alarms in sync with the event list:
         // whenever events change (add/edit/delete), re-schedule reminders.
