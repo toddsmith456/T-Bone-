@@ -137,4 +137,41 @@ class IconAndLinkRegressionTest {
         compose.runOnIdle { assertEquals("1", entered) }
     }
 
+
+    @Test fun uploadedLoadingImageDecodesAndBadInputPreservesIt() {
+        val base = compose.activity.applicationContext
+        val dir = java.io.File(base.cacheDir, "splash-test-" + java.util.UUID.randomUUID()).apply { mkdirs() }
+        val prefsName = "splash-test-" + java.util.UUID.randomUUID()
+        val isolated = object : android.content.ContextWrapper(base) {
+            override fun getFilesDir(): java.io.File = dir
+            override fun getSharedPreferences(name: String?, mode: Int): android.content.SharedPreferences =
+                base.getSharedPreferences(prefsName, mode)
+        }
+        val source = java.io.File(dir, "source.png")
+        try {
+            val bitmap = android.graphics.Bitmap.createBitmap(2048, 1024, android.graphics.Bitmap.Config.ARGB_8888)
+            bitmap.eraseColor(android.graphics.Color.RED)
+            source.outputStream().use { assertTrue(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)) }
+            bitmap.recycle()
+            social.tbone.ui.settings.saveSplashImage(isolated, android.net.Uri.fromFile(source))
+            val saved = java.io.File(dir, "splash-image.png")
+            assertTrue(saved.isFile)
+            val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeFile(saved.absolutePath, bounds)
+            assertTrue(bounds.outWidth in 1..1024)
+            assertTrue(bounds.outHeight in 1..1024)
+            assertEquals("upload", isolated.getSharedPreferences("launcher_appearance", Context.MODE_PRIVATE).getString("splash", null))
+            val previous = saved.readBytes()
+            val invalid = java.io.File(dir, "invalid.png").apply { writeText("not an image") }
+            try {
+                social.tbone.ui.settings.saveSplashImage(isolated, android.net.Uri.fromFile(invalid))
+                throw AssertionError("bad image should be rejected")
+            } catch (_: IllegalArgumentException) { }
+            assertTrue(previous.contentEquals(saved.readBytes()))
+        } finally {
+            base.getSharedPreferences(prefsName, Context.MODE_PRIVATE).edit().clear().commit()
+            dir.deleteRecursively()
+        }
+    }
+
 }

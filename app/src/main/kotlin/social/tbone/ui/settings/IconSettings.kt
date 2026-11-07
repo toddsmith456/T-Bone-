@@ -91,7 +91,7 @@ internal fun IconSettings() {
 }
 
 /** Decode at bounded dimensions without keeping a permission to a foreign URI. */
-private fun saveSplashImage(context: Context, uri: Uri) {
+internal fun saveSplashImage(context: Context, uri: Uri) {
     val resolver = context.contentResolver
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds); Unit } ?: error("No image")
