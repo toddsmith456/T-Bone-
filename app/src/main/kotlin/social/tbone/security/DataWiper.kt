@@ -39,6 +39,7 @@ class DataWiper @Inject constructor(
     private val geohashCache: social.tbone.ui.toolbox.geohash.GeohashMessageCache,
     private val geohashMonitor: social.tbone.ui.toolbox.geohash.GeohashPinnedMonitor,
     private val followMutations: social.tbone.lists.FollowMutationCoordinator,
+    private val xdcRepository: social.tbone.webxdc.XdcRepository,
 ) {
 
     /**
@@ -73,6 +74,7 @@ class DataWiper @Inject constructor(
             // Clear the in-memory channel state before watchers can resume,
             // not only the underlying DataStore on its later flow emission.
             steps.run("clear geohash settings") { appSettings.clearGeohashData() }
+            steps.run("clear webxdc memory") { xdcRepository.clearInMemoryForWipe() }
             steps.run("clear database") { appDatabase.clearAllTables() }
 
             // The live DataStore file must never be deleted behind its active

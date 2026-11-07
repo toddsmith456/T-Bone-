@@ -119,4 +119,24 @@ class XdcUpdateStoreTest {
         assertTrue(original.contentEquals(file.readBytes()))
     }
 
+
+    @Test fun staleJournalInstanceCannotRecreateUpdatesAfterWipe() = kotlinx.coroutines.runBlocking {
+        val owner = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        val file = tmp.newFile("wipe.log")
+        try {
+            val coordinator = social.tbone.notes.NoteWriteCoordinator(owner)
+            val oldStore = XdcUpdateStore(file, coordinator)
+            oldStore.append("1")
+            assertTrue(coordinator.runWipe(social.tbone.notes.NoteWriteCoordinator.WipeKind.APP) {
+                coordinator.pauseAndDrain()
+                file.delete()
+                true
+            })
+            try { oldStore.append("2"); throw AssertionError("stale store wrote after wipe") }
+            catch (_: java.io.IOException) { }
+            assertTrue(!file.exists())
+            assertEquals(1, XdcUpdateStore(file, coordinator).append("3").serial)
+        } finally { owner.coroutineContext[kotlinx.coroutines.Job]?.cancel() }
+    }
+
 }

@@ -33,6 +33,7 @@ class XdcPlayerViewModel @Inject constructor(
     accountRepository: AccountRepository,
     profileRepository: ProfileRepository,
     private val appSettings: AppSettings,
+    private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
 ) : ViewModel() {
 
     val appId: String = checkNotNull(savedStateHandle["appId"]) { "appId is required" }
@@ -62,6 +63,7 @@ class XdcPlayerViewModel @Inject constructor(
     /** Promotes this app to a toolbox tool, replacing any previous icon/name. */
     fun addAsTool(app: SavedXdcApp, name: String, iconId: String) {
         viewModelScope.launch {
+            try { noteWrites.runCancellable {
             val tools = appSettings.xdcCustomTools.value.filterNot { it.appId == app.id }
             appSettings.setXdcCustomTools(
                 tools + XdcCustomTool(
@@ -71,6 +73,8 @@ class XdcPlayerViewModel @Inject constructor(
                     addedAt = System.currentTimeMillis(),
                 ),
             )
+            } } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (error: Exception) { timber.log.Timber.w(error, "Could not save webxdc tool") }
         }
     }
 }

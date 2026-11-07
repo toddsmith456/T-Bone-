@@ -30,7 +30,10 @@ data class XdcUpdate(
  * metadata (arbitrary unicode) never need escaping. Serials are strictly
  * increasing 1..N, matching webxdc's `serial` / `max_serial` contract.
  */
-class XdcUpdateStore(private val file: File) {
+class XdcUpdateStore(
+    private val file: File,
+    private val noteWrites: social.tbone.notes.NoteWriteCoordinator? = null,
+) {
 
     companion object {
         private const val SEP = "\t"
@@ -42,9 +45,16 @@ class XdcUpdateStore(private val file: File) {
         private val pathLocks = Array(64) { Any() }
     }
 
+    private val wipeEpoch = noteWrites?.currentWipeEpoch()
     private val lock = pathLocks[(file.canonicalPath.hashCode() and Int.MAX_VALUE) % pathLocks.size]
 
-    fun load(): List<XdcUpdate> = synchronized(lock) {
+    private fun <T> gated(action: () -> T): T = noteWrites?.let { writes ->
+        kotlinx.coroutines.runBlocking { writes.runCancellableAtEpoch(checkNotNull(wipeEpoch)) { action() } }
+    } ?: action()
+
+    fun load(): List<XdcUpdate> = gated { loadDirect() }
+
+    private fun loadDirect(): List<XdcUpdate> = synchronized(lock) {
         if (!file.exists()) return emptyList()
         val out = ArrayList<XdcUpdate>()
         file.forEachLine { line ->
@@ -76,7 +86,9 @@ class XdcUpdateStore(private val file: File) {
         document: String? = null,
         summary: String? = null,
         href: String? = null,
-    ): XdcUpdate = synchronized(lock) {
+    ): XdcUpdate = gated { appendDirect(payloadJson, info, document, summary, href) }
+
+    private fun appendDirect(payloadJson: String, info: String?, document: String?, summary: String?, href: String?): XdcUpdate = synchronized(lock) {
         // Reject huge strings before encoding them or loading the existing
         // journal. UTF-8 requires at least one byte per UTF-16 code unit.
         var inputBytes = 0L
@@ -86,7 +98,7 @@ class XdcUpdateStore(private val file: File) {
             require(inputBytes <= MAX_BYTES) { "webxdc update too large" }
         }
         if (file.length() >= MAX_BYTES) error("webxdc journal full (5 MB)")
-        val records = load()
+        val records = loadDirect()
         val existing = records.lastOrNull()?.serial ?: 0
         val update = XdcUpdate(
             serial = existing + 1,
@@ -121,10 +133,10 @@ class XdcUpdateStore(private val file: File) {
         update
     }
 
-    fun clear() = synchronized(lock) {
+    fun clear() = gated { synchronized(lock) {
         file.delete()
         Unit
-    }
+    } }
 
     private fun encode(value: String?): String =
         if (value == null) EMPTY else Base64.getEncoder().encodeToString(value.toByteArray(Charsets.UTF_8))

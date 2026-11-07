@@ -34,6 +34,7 @@ class NoteWriteCoordinator internal constructor(scope: CoroutineScope, private v
     private val work = Channel<Work>(Channel.UNLIMITED)
     private val failedWipes = wipeState.read().toMutableSet()
     private var wiping = failedWipes.isNotEmpty()
+    private var wipeEpoch = 0L
     private val _available = MutableStateFlow(!wiping)
     val available = _available.asStateFlow()
     private val _pendingAppWipe = MutableStateFlow(WipeKind.APP in failedWipes || WipeKind.UNKNOWN in failedWipes)
@@ -82,6 +83,23 @@ class NoteWriteCoordinator internal constructor(scope: CoroutineScope, private v
         return result
     }
 
+    /** Tokens invalidate operations that began before a later wipe request. */
+    fun currentWipeEpoch(): Long = synchronized(lock) { if (wiping) Long.MIN_VALUE else wipeEpoch }
+
+    fun <T> submitAtEpoch(epoch: Long, action: suspend () -> T): Deferred<T> = synchronized(lock) {
+        if (epoch != wipeEpoch || wiping) {
+            return@synchronized CompletableDeferred<T>().also {
+                it.completeExceptionally(IOException("Operation invalidated by a wipe"))
+            }
+        }
+        submit(action)
+    }
+
+    suspend fun <T> runCancellableAtEpoch(epoch: Long, action: suspend () -> T): T {
+        val caller = checkNotNull(currentCoroutineContext()[Job])
+        return submitAtEpoch(epoch) { withContext(caller) { action() } }.await()
+    }
+
     /** Long operations retain cancellation from the caller, unlike editor saves. */
     suspend fun <T> runCancellable(action: suspend () -> T): T {
         val caller = checkNotNull(currentCoroutineContext()[Job])
@@ -93,6 +111,7 @@ class NoteWriteCoordinator internal constructor(scope: CoroutineScope, private v
         require(kind != WipeKind.UNKNOWN) { "Unknown wipe is not an executable operation" }
         // Never turn a corrupt/unknown marker into an automatic destructive wipe.
         if (WipeKind.UNKNOWN in failedWipes) return@synchronized false
+        wipeEpoch++
         failedWipes.add(kind)
         wiping = true
         _available.value = false

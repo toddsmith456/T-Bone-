@@ -41,6 +41,7 @@ import javax.inject.Singleton
 class XdcRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val appSettings: AppSettings,
+    private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
 ) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -61,13 +62,27 @@ class XdcRepository @Inject constructor(
     val busy: StateFlow<Set<String>> = _busy.asStateFlow()
 
     init {
-        scope.launch { reload() }
+        scope.launch {
+            try { reload() } catch (_: IOException) {
+                _savedApps.value = emptyList()
+                _loaded.value = true
+            }
+        }
     }
 
     // ── Library ───────────────────────────────────────────────────────────────
 
-    suspend fun reload() = withContext(Dispatchers.IO) {
+    suspend fun reload() = noteWrites.runCancellable { withContext(Dispatchers.IO) { refreshLoaded() } }
+
+    private fun refreshLoaded() {
         _savedApps.value = readAll()
+        _loaded.value = true
+    }
+
+    /** Called after full-wipe writers have drained, before files are removed. */
+    fun clearInMemoryForWipe() {
+        _savedApps.value = emptyList()
+        _busy.value = emptySet()
         _loaded.value = true
     }
 
@@ -90,25 +105,26 @@ class XdcRepository @Inject constructor(
         return file.takeIf { it.isFile }
     }
 
-    fun updateStore(appId: String): XdcUpdateStore = XdcUpdateStore(File(updatesDir, "$appId.log"))
+    fun updateStore(appId: String): XdcUpdateStore = XdcUpdateStore(File(updatesDir, "$appId.log"), noteWrites)
 
-    suspend fun delete(appId: String) = withContext(Dispatchers.IO) {
+    suspend fun delete(appId: String) = noteWrites.runCancellable { withContext(Dispatchers.IO) {
         File(appsDir, appId).deleteRecursively()
         File(updatesDir, "$appId.log").delete()
         val remaining = appSettings.xdcCustomTools.value.filterNot { it.appId == appId }
         if (remaining.size != appSettings.xdcCustomTools.value.size) {
             appSettings.setXdcCustomTools(remaining)
         }
-        reload()
-    }
+        refreshLoaded()
+    } }
 
     // ── Import ────────────────────────────────────────────────────────────────
 
     suspend fun importFromUri(uri: Uri): SavedXdcApp = withContext(Dispatchers.IO) {
+        val epoch = noteWrites.currentWipeEpoch()
         val bytes = context.contentResolver.openInputStream(uri)?.use { readCapped(it) }
             ?: throw XdcException("could not open the selected file")
         val name = queryDisplayName(uri)
-        importBytes(bytes, name, origin = "local")
+        importBytes(bytes, name, origin = "local", expectedEpoch = epoch)
     }
 
     suspend fun importBytes(
@@ -116,7 +132,8 @@ class XdcRepository @Inject constructor(
         fallbackName: String?,
         origin: String,
         uuid: String? = null,
-    ): SavedXdcApp = withContext(Dispatchers.IO) {
+        expectedEpoch: Long = noteWrites.currentWipeEpoch(),
+    ): SavedXdcApp = noteWrites.runCancellableAtEpoch(expectedEpoch) { withContext(Dispatchers.IO) {
         val pkg = XdcArchive.read(bytes, fallbackName)
         val existing = _savedApps.value.firstOrNull { it.id == pkg.id }
         if (existing != null) return@withContext existing
@@ -149,13 +166,13 @@ class XdcRepository @Inject constructor(
             if (!tmp.renameTo(target)) {
                 throw IOException("could not move the imported app into place")
             }
-            reload()
+            refreshLoaded()
             _savedApps.value.firstOrNull { it.id == pkg.id } ?: meta
         } catch (t: Throwable) {
             tmp.deleteRecursively()
             throw t
         }
-    }
+    } }
 
     /**
      * Downloads an `.xdc` from a URL (Blossom, webxdc.org store, anywhere) and
@@ -168,10 +185,11 @@ class XdcRepository @Inject constructor(
         uuid: String? = null,
         key: String = url,
     ): SavedXdcApp = withContext(Dispatchers.IO) {
+        val epoch = noteWrites.currentWipeEpoch()
         _busy.value = _busy.value + key
         try {
             val bytes = httpGetBytes(url, XdcArchive.MAX_ARCHIVE_BYTES)
-            importBytes(bytes, fallbackName, origin, uuid)
+            importBytes(bytes, fallbackName, origin, uuid, expectedEpoch = epoch)
         } finally {
             _busy.value = _busy.value - key
         }

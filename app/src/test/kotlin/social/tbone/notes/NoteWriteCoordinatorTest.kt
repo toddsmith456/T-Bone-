@@ -254,4 +254,19 @@ class NoteWriteCoordinatorTest {
         } finally { owner.cancel() }
     }
 
+
+    @Test fun operationsFromBeforeAWipeCannotWriteAfterItCompletes() = runBlocking {
+        val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val coordinator = NoteWriteCoordinator(owner)
+            val oldEpoch = coordinator.currentWipeEpoch()
+            assertTrue(coordinator.runWipe(NoteWriteCoordinator.WipeKind.APP) { coordinator.pauseAndDrain(); true })
+            try {
+                coordinator.runCancellableAtEpoch(oldEpoch) { "unsafe" }
+                fail("old operation must not run after wipe")
+            } catch (_: IOException) { }
+            assertEquals("fresh", coordinator.runCancellableAtEpoch(coordinator.currentWipeEpoch()) { "fresh" })
+        } finally { owner.cancel() }
+    }
+
 }
