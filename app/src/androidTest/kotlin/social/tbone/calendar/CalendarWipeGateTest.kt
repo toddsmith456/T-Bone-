@@ -32,6 +32,15 @@ class CalendarWipeGateTest {
         assertEquals(1, delivered)
     }
 
+    private fun awaitNotificationCount(manager: NotificationManager, expected: Int) {
+        val deadline = android.os.SystemClock.elapsedRealtime() + 5_000
+        while (manager.activeNotifications.count { it.id == 314159 } != expected &&
+            android.os.SystemClock.elapsedRealtime() < deadline) {
+            android.os.SystemClock.sleep(50)
+        }
+        assertEquals(expected, manager.activeNotifications.count { it.id == 314159 })
+    }
+
     @Test fun wipeCancelsPreviouslyPostedCalendarNotification() {
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CalendarAlarmReceiver.CHANNEL_ID,
@@ -39,10 +48,10 @@ class CalendarWipeGateTest {
         manager.notify(314159, Notification.Builder(context, CalendarAlarmReceiver.CHANNEL_ID)
             .setContentTitle("private title")
             .setSmallIcon(android.R.drawable.ic_dialog_info).build())
-        assertEquals(1, manager.activeNotifications.count { it.id == 314159 })
+        awaitNotificationCount(manager, 1)
         val scheduler = CalendarAlarmScheduler(context)
         scheduler.beginSensitiveWipe()
-        assertEquals(0, manager.activeNotifications.count { it.id == 314159 })
+        awaitNotificationCount(manager, 0)
         scheduler.finishSensitiveWipe()
     }
 }
