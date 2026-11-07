@@ -37,9 +37,12 @@ class XdcUpdateStore(private val file: File) {
         private const val EMPTY = "~"
         const val MAX_UPDATES = 5000
         const val MAX_BYTES = 5L * 1024 * 1024
+        // Separate store instances may refer to the same file. Striped locks
+        // serialize those instances without retaining an unbounded path map.
+        private val pathLocks = Array(64) { Any() }
     }
 
-    private val lock = Any()
+    private val lock = pathLocks[(file.canonicalPath.hashCode() and Int.MAX_VALUE) % pathLocks.size]
 
     fun load(): List<XdcUpdate> = synchronized(lock) {
         if (!file.exists()) return emptyList()
@@ -74,12 +77,17 @@ class XdcUpdateStore(private val file: File) {
         summary: String? = null,
         href: String? = null,
     ): XdcUpdate = synchronized(lock) {
+        // Reject huge strings before encoding them or loading the existing
+        // journal. UTF-8 requires at least one byte per UTF-16 code unit.
+        var inputBytes = 0L
+        for (value in listOfNotNull(payloadJson, info, document, summary, href)) {
+            require(value.length.toLong() <= MAX_BYTES - inputBytes) { "webxdc update too large" }
+            inputBytes += value.toByteArray(Charsets.UTF_8).size
+            require(inputBytes <= MAX_BYTES) { "webxdc update too large" }
+        }
+        if (file.length() >= MAX_BYTES) error("webxdc journal full (5 MB)")
         val records = load()
         val existing = records.lastOrNull()?.serial ?: 0
-        // Bound input before Base64 encoding to avoid creating huge transient copies.
-        val inputBytes = listOfNotNull(payloadJson, info, document, summary, href)
-            .sumOf { it.toByteArray(Charsets.UTF_8).size.toLong() }
-        require(inputBytes <= MAX_BYTES) { "webxdc update too large" }
         val update = XdcUpdate(
             serial = existing + 1,
             payloadJson = payloadJson,

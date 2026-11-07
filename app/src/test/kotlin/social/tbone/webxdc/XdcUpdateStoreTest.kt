@@ -84,4 +84,39 @@ class XdcUpdateStoreTest {
         store.append("null")
         assertEquals("null", store.load().single().payloadJson)
     }
+
+    @Test fun concurrentInstancesShareSerialAndQuotaLock() {
+        val file = tmp.newFile("concurrent.log")
+        val stores = listOf(XdcUpdateStore(file), XdcUpdateStore(file))
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(8)
+        val start = java.util.concurrent.CountDownLatch(1)
+        try {
+            val tasks = (0 until 48).map { index ->
+                executor.submit<Int> {
+                    start.await()
+                    stores[index % 2].append("{\"n\":$index}").serial
+                }
+            }
+            start.countDown()
+            val serials = tasks.map { it.get(10, java.util.concurrent.TimeUnit.SECONDS) }.sorted()
+            assertEquals((1..48).toList(), serials)
+            assertEquals((1..48).toList(), stores[0].load().map { it.serial })
+            assertTrue(file.length() <= XdcUpdateStore.MAX_BYTES)
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test fun oversizeInputIsRejectedBeforeChangingJournal() {
+        val file = tmp.newFile("input-limit.log")
+        val store = XdcUpdateStore(file)
+        store.append("1")
+        val original = file.readBytes()
+        try {
+            store.append("x".repeat(XdcUpdateStore.MAX_BYTES.toInt() + 1))
+            throw AssertionError("expected size rejection")
+        } catch (_: IllegalArgumentException) { }
+        assertTrue(original.contentEquals(file.readBytes()))
+    }
+
 }
