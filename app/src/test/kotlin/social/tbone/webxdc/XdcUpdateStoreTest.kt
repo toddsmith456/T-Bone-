@@ -139,4 +139,14 @@ class XdcUpdateStoreTest {
         } finally { owner.coroutineContext[kotlinx.coroutines.Job]?.cancel() }
     }
 
+
+    @Test fun oversizedExistingJournalIsRejectedBeforeParsing() {
+        val file = java.io.File.createTempFile("xdc-oversized-", ".log")
+        try {
+            java.io.RandomAccessFile(file, "rw").use { it.setLength(XdcUpdateStore.MAX_BYTES + 1) }
+            try { XdcUpdateStore(file).load(); org.junit.Assert.fail("oversized journal accepted") }
+            catch (_: IllegalArgumentException) { }
+        } finally { file.delete() }
+    }
+
 }

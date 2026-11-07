@@ -56,12 +56,14 @@ class XdcUpdateStore(
 
     private fun loadDirect(): List<XdcUpdate> = synchronized(lock) {
         if (!file.exists()) return emptyList()
+        require(file.length() <= MAX_BYTES) { "webxdc journal exceeds size limit" }
         val out = ArrayList<XdcUpdate>()
         file.forEachLine { line ->
             if (line.isBlank()) return@forEachLine
             val parts = line.split(SEP)
             if (parts.size < 7) return@forEachLine
             val serial = parts[0].toIntOrNull() ?: return@forEachLine
+            require(out.size < MAX_UPDATES) { "webxdc journal exceeds update limit" }
             out += XdcUpdate(
                 serial = serial,
                 payloadJson = decode(parts[2]) ?: return@forEachLine,
