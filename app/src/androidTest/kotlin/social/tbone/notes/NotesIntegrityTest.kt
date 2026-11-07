@@ -143,6 +143,33 @@ class NotesIntegrityTest {
         }
     }
 
+    @Test fun attachmentRemovalIsAtomicAndKeepsDuplicateReferences() = runBlocking {
+        for (isDecoy in listOf(false, true)) {
+            val id = if (isDecoy) "remove-decoy" else "remove-real"
+            if (isDecoy) decoy.saveText(id, "title", "start", null) else real.saveText(id, "title", "start", null)
+            val att = if (isDecoy) decoy.addAttachment(id, "image", "image/png", byteArrayOf(1)) else real.addAttachment(id, "image", "image/png", byteArrayOf(1))
+            val marker = "[[image:$att]]"
+            if (isDecoy) decoy.saveText(id, "title", "$marker$marker", null) else real.saveText(id, "title", "$marker$marker", null)
+            if (isDecoy) decoy.removeAttachmentAndSaveText(id, att, "title", marker, null) else real.removeAttachmentAndSaveText(id, att, "title", marker, null)
+            assertEquals(1, if (isDecoy) decoy.attachments(id).first().size else real.attachments(id).first().size)
+            val table = if (isDecoy) "decoy_note_attachments" else "note_attachments"
+            val sql = db.openHelper.writableDatabase
+            sql.execSQL("CREATE TRIGGER fail_attachment_delete BEFORE DELETE ON $table BEGIN SELECT RAISE(ABORT, 'injected'); END")
+            try {
+                try {
+                    if (isDecoy) decoy.removeAttachmentAndSaveText(id, att, "changed", "", null) else real.removeAttachmentAndSaveText(id, att, "changed", "", null)
+                    fail("expected delete failure")
+                } catch (_: android.database.sqlite.SQLiteException) { }
+                val note = if (isDecoy) decoy.getById(id) else real.getById(id)
+                assertEquals(marker, note?.text)
+                assertEquals("title", note?.title)
+                assertEquals(1, if (isDecoy) decoy.attachments(id).first().size else real.attachments(id).first().size)
+            } finally { sql.execSQL("DROP TRIGGER fail_attachment_delete") }
+            if (isDecoy) decoy.removeAttachmentAndSaveText(id, att, "title", "", null) else real.removeAttachmentAndSaveText(id, att, "title", "", null)
+            assertTrue(if (isDecoy) decoy.attachments(id).first().isEmpty() else real.attachments(id).first().isEmpty())
+        }
+    }
+
     @Test fun unreadableTitlesRejectEditingWithoutReplacingStoredCiphertext() = runBlocking {
         real.saveText("r", "title", "body", null)
         decoy.saveText("d", "title", "body", null)

@@ -472,11 +472,26 @@ fun NoteEditorScreen(
     }
 
     fun removeAttachment(att: NoteAttachmentUi) {
-        if (deleted || exiting || !loaded || attachmentCommitInFlight) return
-        // Persist the marker removal before deleting its encrypted bytes. If
-        // saving fails, retaining an orphan is safer than breaking the note.
+        if (deleted || exiting || !loaded || attachmentCommitInFlight || attachmentLoadFailed) return
+        val noteId = savedId ?: return
+        val before = blocks
+        attachmentCommitInFlight = true
+        pendingMedia++
         blocks = coalesce(blocks.filterNot { it is EditorBlock.Att && it.att.id == att.id })
-        performSave(force = true) { viewModel.deleteAttachment(att.id, epoch = editorEpoch) }
+        val submittedText = serialize(blocks)
+        val submittedTitle = title
+        viewModel.removeAttachmentAndSaveText(noteId, att.id, submittedTitle, submittedText, folderId, editorEpoch,
+            onError = {
+                blocks = before
+                attachmentCommitInFlight = false
+                pendingMedia--
+                android.widget.Toast.makeText(context, "Could not remove attachment; please try again.", android.widget.Toast.LENGTH_LONG).show()
+            }, onSaved = {
+                lastSaved = submittedText
+                lastSavedTitle = submittedTitle
+                attachmentCommitInFlight = false
+                pendingMedia--
+            })
     }
 
     // Photo picker.
