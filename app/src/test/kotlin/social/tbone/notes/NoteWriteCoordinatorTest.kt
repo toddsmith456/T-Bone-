@@ -69,4 +69,81 @@ class NoteWriteCoordinatorTest {
         } finally { owner.cancel() }
     }
 
+
+    @Test fun wipesAreSerializedAndFailureKeepsQueueBlockedUntilFullRetry() = runBlocking {
+        val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val coordinator = NoteWriteCoordinator(owner)
+            val started = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            val toolboxStarted = CompletableDeferred<Unit>()
+            val full = async {
+                coordinator.runWipe(NoteWriteCoordinator.WipeKind.APP) {
+                    coordinator.pauseAndDrain()
+                    started.complete(Unit)
+                    release.await()
+                    false
+                }
+            }
+            started.await()
+            val toolbox = async(start = CoroutineStart.UNDISPATCHED) {
+                coordinator.runWipe(NoteWriteCoordinator.WipeKind.TOOLBOX) {
+                    toolboxStarted.complete(Unit)
+                    assertTrue(coordinator.hasFailedAppWipe())
+                    true
+                }
+            }
+            assertFalse(toolboxStarted.isCompleted)
+            release.complete(Unit)
+            assertFalse(full.await())
+            assertTrue(toolbox.await())
+            try { coordinator.submit { "blocked" }.await(); fail("failed app wipe was cleared") }
+            catch (_: IOException) { }
+            assertTrue(coordinator.runWipe(NoteWriteCoordinator.WipeKind.APP) { coordinator.pauseAndDrain(); true })
+            assertEquals("allowed", coordinator.submit { "allowed" }.await())
+        } finally { owner.cancel() }
+    }
+
+    @Test fun cancelledWipeKeepsWritesBlocked() = runBlocking {
+        val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val coordinator = NoteWriteCoordinator(owner)
+            val started = CompletableDeferred<Unit>()
+            val wipe = launch {
+                coordinator.runWipe(NoteWriteCoordinator.WipeKind.APP) {
+                    started.complete(Unit)
+                    awaitCancellation()
+                }
+            }
+            started.await()
+            wipe.cancelAndJoin()
+            try { coordinator.submit { "blocked" }.await(); fail("cancelled wipe reopened queue") }
+            catch (_: IOException) { }
+        } finally { owner.cancel() }
+    }
+
+
+    @Test fun stoppedWorkerRejectsQueuedOperationsInsteadOfLeavingThemHanging() = runBlocking {
+        val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coordinator = NoteWriteCoordinator(owner)
+        val started = CompletableDeferred<Unit>()
+        coordinator.submit { started.complete(Unit); awaitCancellation() }
+        started.await()
+        val queued = coordinator.submit { "not reached" }
+        owner.cancel()
+        withTimeout(3_000) {
+            try { queued.await(); fail("queued operation should fail") } catch (_: IOException) { }
+        }
+    }
+
+    @Test fun taskCancellationDoesNotKillAnActiveWorker() = runBlocking {
+        val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val coordinator = NoteWriteCoordinator(owner)
+            val cancelled = coordinator.submit<Unit> { throw CancellationException("operation cancelled") }
+            try { cancelled.await(); fail("expected cancellation") } catch (_: CancellationException) { }
+            assertEquals("next", withTimeout(3_000) { coordinator.submit { "next" }.await() })
+        } finally { owner.cancel() }
+    }
+
 }

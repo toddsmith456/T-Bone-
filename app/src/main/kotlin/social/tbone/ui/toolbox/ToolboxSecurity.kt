@@ -111,6 +111,7 @@ class ToolboxSecurity @Inject constructor(
         if (!wiping.compareAndSet(false, true)) return
         scope.launch(Dispatchers.IO) {
           try {
+            noteWrites.runWipe(social.tbone.notes.NoteWriteCoordinator.WipeKind.TOOLBOX) {
             val steps = WipeSteps { name, error -> timber.log.Timber.e(error, "Toolbox wipe step failed: $name") }
             steps.run("pause and drain note writes") { noteWrites.pauseAndDrain() }
             steps.run("block and cancel reminders") { calendarAlarms.beginSensitiveWipe() }
@@ -132,15 +133,20 @@ class ToolboxSecurity @Inject constructor(
                     check(it.deleteRecursively()) { "recording deletion failed" }
                 }
             }
+            // A toolbox-only wipe cannot finalize a previously failed full wipe.
+            if (noteWrites.hasFailedAppWipe()) steps.run("check previous app wipe") {
+                error("Previous full app wipe requires retry")
+            }
             // Preserve lock credentials until the data-removal steps succeed.
             if (!steps.failed) steps.run("clear toolbox security settings") {
                 attempts.reset()
                 appSettings.clearToolboxSecurity()
             }
             if (!steps.failed) steps.run("finish calendar wipe gate") { calendarAlarms.finishSensitiveWipe() }
-            if (!steps.failed) noteWrites.resumeAfterWipe()
             if (steps.failed) withContext(Dispatchers.Main) {
                 Toast.makeText(context, "Toolbox wipe incomplete. Keep it locked and try again.", Toast.LENGTH_LONG).show()
+            }
+            !steps.failed
             }
           } finally {
               wiping.set(false)

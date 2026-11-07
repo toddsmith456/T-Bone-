@@ -49,6 +49,7 @@ class DataWiper @Inject constructor(
         if (!wiping.compareAndSet(false, true)) return
         scope.launch(Dispatchers.IO) {
           try {
+            noteWrites.runWipe(social.tbone.notes.NoteWriteCoordinator.WipeKind.APP) {
             val steps = WipeSteps { name, error -> timber.log.Timber.e(error, "Wipe step failed: $name") }
             steps.run("pause and drain note writes") { noteWrites.pauseAndDrain() }
             steps.run("block and cancel calendar reminders") { calendarAlarms.beginSensitiveWipe() }
@@ -102,9 +103,10 @@ class DataWiper @Inject constructor(
                     context.startActivity(intent)
                 }
             }
-            if (!steps.failed) noteWrites.resumeAfterWipe()
             if (steps.failed) withContext(Dispatchers.Main) {
                 Toast.makeText(context, "Wipe incomplete. Keep the app locked and try again.", Toast.LENGTH_LONG).show()
+            }
+            !steps.failed
             }
           } finally {
               wiping.set(false)
