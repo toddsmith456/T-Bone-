@@ -181,26 +181,22 @@ class AccountRepository @Inject constructor(
     }
 
     suspend fun setActiveAccount(pubkey: String) {
-        // Leaving a hidden account behind should re-hide it. We detect the
-        // previous active: if it was hidden and we're switching away, drop
-        // its session unlock so it disappears again.
-        val previous = dataStore.data.first()[KEY_ACTIVE_PUBKEY]
-        if (previous != null && previous != pubkey) {
-            val all = allAccounts.first()
-            val prevAccount = all.find { it.pubkey == previous }
-            if (prevAccount?.isHidden == true) {
-                appSettings.removeHiddenUnlocked(previous)
-            }
-        }
-        // Entering an account always unlocks it for the session so it stays
-        // visible while it is active (even if hidden).
-        val all = allAccounts.first()
-        if (all.any { it.pubkey == pubkey && it.isHidden }) {
-            appSettings.addHiddenUnlocked(pubkey)
-        }
+        var hiddenToRelock: String? = null
+        var unlockTarget = false
         dataStore.edit { prefs ->
+            val accounts = prefs[KEY_ACCOUNTS]
+                ?.let { NostrJson.decodeFromString<List<Account>>(it) }
+                ?: return@edit
+            val target = accounts.firstOrNull { it.pubkey == pubkey } ?: return@edit
+            val previous = prefs[KEY_ACTIVE_PUBKEY]
+            if (previous != null && previous != pubkey && accounts.any { it.pubkey == previous && it.isHidden }) {
+                hiddenToRelock = previous
+            }
+            unlockTarget = target.isHidden
             prefs[KEY_ACTIVE_PUBKEY] = pubkey
         }
+        hiddenToRelock?.let(appSettings::removeHiddenUnlocked)
+        if (unlockTarget) appSettings.addHiddenUnlocked(pubkey)
     }
 
     suspend fun updateAccount(account: Account) {
@@ -208,7 +204,7 @@ class AccountRepository @Inject constructor(
             val updated = prefs[KEY_ACCOUNTS]
                 ?.let { NostrJson.decodeFromString<List<Account>>(it) }
                 ?.map { if (it.pubkey == account.pubkey) account else it }
-                ?: listOf(account)
+                ?: return@edit
             prefs[KEY_ACCOUNTS] = NostrJson.encodeToString(updated)
         }
     }

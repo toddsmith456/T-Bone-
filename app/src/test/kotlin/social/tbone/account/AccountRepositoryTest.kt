@@ -106,6 +106,25 @@ class AccountRepositoryTest {
         assertEquals(raw, dataStore.data.first()[key])
     }
 
+    @Test
+    fun `stale account update does not recreate a cleared account list`() = runBlocking {
+        val old = account("a")
+        repository.addAccount(old)
+        dataStore.edit { it.clear() }
+        repository.updateAccount(old)
+        assertNull(dataStore.data.first()[stringPreferencesKey("accounts")])
+        assertTrue(repository.accounts.first().isEmpty())
+    }
+
+    @Test
+    fun `switching to a removed account does not restore its active identifier`() = runBlocking {
+        repository.addAccount(account("a"))
+        repository.removeAccount("a")
+        repository.setActiveAccount("a")
+        assertEquals("", dataStore.data.first()[stringPreferencesKey("active_pubkey")])
+        assertNull(repository.activeAccount.first())
+    }
+
     private fun account(pubkey: String, relays: List<String> = emptyList()) = Account(
         pubkey = pubkey,
         signerType = SignerType.AMBER,
