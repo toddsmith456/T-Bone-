@@ -546,7 +546,7 @@ class ProfileViewModel @Inject constructor(
                     _messages.tryEmit("Existing follow list has a future timestamp — nothing changed")
                     return@launch
                 }
-                if (accountRepository.activeAccount.first()?.pubkey != account.pubkey ||
+                if (!social.tbone.lists.sameListWriteContext(account, accountRepository.activeAccount.first()) ||
                     offlineLists.snapshot(ListType.FOLLOWS, account.pubkey).enabled) {
                     _messages.tryEmit("Account or list mode changed — try again")
                     return@launch
@@ -575,7 +575,7 @@ class ProfileViewModel @Inject constructor(
 
                 signer.signEvent(unsigned)
                     .onSuccess { event ->
-                        if (accountRepository.activeAccount.first()?.pubkey != account.pubkey ||
+                        if (!social.tbone.lists.sameListWriteContext(account, accountRepository.activeAccount.first()) ||
                             offlineLists.snapshot(ListType.FOLLOWS, account.pubkey).enabled) {
                             _messages.tryEmit("Account or list mode changed — nothing published")
                             return@onSuccess

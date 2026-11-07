@@ -224,7 +224,8 @@ class MuteListRepository @Inject constructor(
 
         // Always re-read the newest list from the relays right before changing it, so a stale
         // cache can never overwrite the user's real list.
-        val fetched = fetcher.fetchLatest(owner, KIND, account.relays)
+        if (account.effectiveRelays().isEmpty()) return MuteOutcome.RELAYS_UNREACHABLE
+        val fetched = fetcher.fetchLatest(owner, KIND, account.effectiveRelays())
         if (!fetched.allRelaysAnswered) {
             return if (!muted && hadLegacy) MuteOutcome.SAVED_LOCAL else MuteOutcome.RELAYS_UNREACHABLE
         }
@@ -237,7 +238,7 @@ class MuteListRepository @Inject constructor(
         if (known != null && known.event == null && known.createdAt > (base?.createdAt ?: 0L)) {
             return if (!muted && hadLegacy) MuteOutcome.SAVED_LOCAL else MuteOutcome.RELAYS_UNREACHABLE
         }
-        if (accountRepository.activeAccount.first()?.pubkey != owner ||
+        if (!sameListWriteContext(account, accountRepository.activeAccount.first()) ||
             offline.snapshot(ListType.MUTES, owner).enabled) return MuteOutcome.REJECTED
 
         val baseTags: List<JsonArray> = base?.tags ?: emptyList()
@@ -265,7 +266,7 @@ class MuteListRepository @Inject constructor(
             Timber.w(it, "Mute list signing failed")
             return MuteOutcome.SIGN_FAILED
         }
-        if (accountRepository.activeAccount.first()?.pubkey != owner ||
+        if (!sameListWriteContext(account, accountRepository.activeAccount.first()) ||
             offline.snapshot(ListType.MUTES, owner).enabled) return MuteOutcome.REJECTED
         val targets = account.effectiveRelays().map(RelayPool::normalize).toSet()
         if (pool.publishTo(signed, targets) == 0) return MuteOutcome.RELAYS_UNREACHABLE

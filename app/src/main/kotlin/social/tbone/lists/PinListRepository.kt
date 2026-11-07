@@ -47,9 +47,10 @@ class PinListRepository @Inject constructor(
         val signer = signerFactory.forActiveAccount() ?: return@withLock "No signer available"
         if (signer.pubkey != account.pubkey) return@withLock "Account changed; try again"
         val relays = account.effectiveRelays().map(RelayPool::normalize).toSet()
+        if (relays.isEmpty()) return@withLock "No configured relays; pin list not changed"
         val result = fetcher.fetchLatest(account.pubkey, EventKind.PIN_LIST, relays.toList())
         if (!result.allRelaysAnswered) return@withLock "Couldn't read your pin list from every configured relay; nothing changed"
-        if (accounts.activeAccount.first()?.pubkey != account.pubkey) return@withLock "Account changed; try again"
+        if (!sameListWriteContext(account, accounts.activeAccount.first())) return@withLock "Account or relays changed; try again"
         val remote = result.event
         val cached = _lists.value[account.pubkey]
         val old = listOfNotNull(remote, cached).maxWithOrNull(
@@ -68,6 +69,7 @@ class PinListRepository @Inject constructor(
             kind = EventKind.PIN_LIST, tags = tags, content = old?.content.orEmpty())).getOrElse {
             return@withLock "Could not sign pin list"
         }
+        if (!sameListWriteContext(account, accounts.activeAccount.first())) return@withLock "Account or relays changed; nothing published"
         if (pool.publishTo(signed, relays) == 0) return@withLock "No connected relays; pin list not sent"
         consume(signed)
         if (pinned) "Unpin sent to relays" else "Pin sent to relays"

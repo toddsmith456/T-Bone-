@@ -49,9 +49,16 @@ class NsecBunkerSigner(
         request("get_public_key", emptyList()).getOrThrow()
     }
 
-    override suspend fun signEvent(event: UnsignedEvent): Result<Event> =
-        request("sign_event", listOf(unsignedEventToJson(event)))
-            .mapCatching { result -> Event.fromJson(result) }
+    override suspend fun signEvent(event: UnsignedEvent): Result<Event> {
+        if (event.pubkey != pubkey) return Result.failure(IllegalArgumentException("Signing account changed"))
+        return request("sign_event", listOf(unsignedEventToJson(event)))
+            .mapCatching { result ->
+                val signed = Event.fromJson(result)
+                check(matchesSignedTemplate(event, signed)) { "Bunker substituted event fields" }
+                check(signed.verify()) { "Bunker returned an invalid signature" }
+                signed
+            }
+    }
 
     override suspend fun nip44Encrypt(plaintext: String, recipientPubkey: String): Result<String> =
         request("nip44_encrypt", listOf(plaintext, recipientPubkey))
@@ -65,7 +72,9 @@ class NsecBunkerSigner(
         signingIndicator.start()
         return try {
             Result.success(performRequest(method, params))
-        } catch (e: Throwable) {
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
             Result.failure(e)
         } finally {
             signingIndicator.stop()
@@ -158,3 +167,8 @@ class NsecBunkerSigner(
         val error: String = "",
     )
 }
+
+/** Compare the entire signed payload before accepting an external signer result. */
+internal fun matchesSignedTemplate(template: UnsignedEvent, signed: Event): Boolean =
+    signed.pubkey == template.pubkey && signed.createdAt == template.createdAt &&
+        signed.kind == template.kind && signed.tags == template.tags && signed.content == template.content

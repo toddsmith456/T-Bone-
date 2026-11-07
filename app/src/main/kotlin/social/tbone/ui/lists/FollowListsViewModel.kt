@@ -221,7 +221,7 @@ class FollowListsViewModel @Inject constructor(
                         say("Couldn't read the follow list from every configured relay — nothing changed")
                         return@launch
                     }
-                    if (signer.pubkey != acct.pubkey || accountRepository.activeAccount.first()?.pubkey != acct.pubkey ||
+                    if (signer.pubkey != acct.pubkey || !social.tbone.lists.sameListWriteContext(acct, accountRepository.activeAccount.first()) ||
                         offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
                         say("Account or list mode changed — try again")
                         return@launch
@@ -244,7 +244,7 @@ class FollowListsViewModel @Inject constructor(
                         tags = tags,
                     )
                     signer.signEvent(unsigned).onSuccess { ev ->
-                        if (accountRepository.activeAccount.first()?.pubkey != acct.pubkey ||
+                        if (!social.tbone.lists.sameListWriteContext(acct, accountRepository.activeAccount.first()) ||
                         offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
                         say("Account or list mode changed — nothing published")
                         return@onSuccess
@@ -299,7 +299,7 @@ class FollowListsViewModel @Inject constructor(
                         say("Couldn't read the follow list from every configured relay — nothing changed")
                         return@launch
                     }
-                    if (signer.pubkey != acct.pubkey || accountRepository.activeAccount.first()?.pubkey != acct.pubkey ||
+                    if (signer.pubkey != acct.pubkey || !social.tbone.lists.sameListWriteContext(acct, accountRepository.activeAccount.first()) ||
                         offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
                         say("Account or list mode changed — try again")
                         return@launch
@@ -322,7 +322,7 @@ class FollowListsViewModel @Inject constructor(
                     tags = tags,
                 )
                 signer.signEvent(unsigned).onSuccess { ev ->
-                    if (accountRepository.activeAccount.first()?.pubkey != acct.pubkey ||
+                    if (!social.tbone.lists.sameListWriteContext(acct, accountRepository.activeAccount.first()) ||
                         offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
                         say("Account or list mode changed — nothing published")
                         return@onSuccess
@@ -541,7 +541,7 @@ class FollowListsViewModel @Inject constructor(
                         say("Couldn't read the follow list from every configured relay — nothing changed")
                         return@launch
                     }
-                    if (signer.pubkey != acct.pubkey || accountRepository.activeAccount.first()?.pubkey != acct.pubkey ||
+                    if (signer.pubkey != acct.pubkey || !social.tbone.lists.sameListWriteContext(acct, accountRepository.activeAccount.first()) ||
                         offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
                         say("Account or list mode changed — try again")
                         return@launch
@@ -572,7 +572,7 @@ class FollowListsViewModel @Inject constructor(
                     tags = pTags + keptTags,
                 )
                 signer.signEvent(unsigned).onSuccess { ev ->
-                    if (accountRepository.activeAccount.first()?.pubkey != acct.pubkey ||
+                    if (!social.tbone.lists.sameListWriteContext(acct, accountRepository.activeAccount.first()) ||
                         offline.snapshot(ListType.FOLLOWS, acct.pubkey).enabled) {
                         say("Account or list mode changed — nothing published")
                         return@onSuccess
