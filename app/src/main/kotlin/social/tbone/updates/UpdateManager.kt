@@ -34,6 +34,7 @@ import social.tbone.settings.AppSettings
 import social.tbone.settings.OrbotHelper
 import social.tbone.settings.OrbotStatus
 import timber.log.Timber
+import social.tbone.util.readBounded
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
@@ -195,13 +196,14 @@ class UpdateManager @Inject constructor(
             .header("User-Agent", "T-Bone-Android-Updater")
             .get()
             .build()
-        val bodyText = githubClient().newCall(request).execute().use { response ->
+        val bodyText = guardedGithubCall(request) { response ->
             if (!response.isSuccessful) {
                 // GitHub rate-limit is 60 unauthenticated req/hour; give a friendly message
                 if (response.code == 403) error("GitHub rate limit hit — try again in a few minutes (or Check Now later)")
                 error("GitHub returned HTTP ${response.code}")
             }
-            response.body?.string() ?: error("GitHub returned an empty release response")
+            response.body?.byteStream()?.use { it.readBounded(2 * 1024 * 1024).toString(Charsets.UTF_8) }
+                ?: error("GitHub returned an empty release response")
         }
         val json = Json.parseToJsonElement(bodyText).jsonObject
         val tag = json["tag_name"]?.jsonPrimitive?.content
@@ -231,6 +233,7 @@ class UpdateManager @Inject constructor(
             name.equals("SHA256SUMS.txt", ignoreCase = true) || name.equals("SHA256SUMS", ignoreCase = true)
         }
         val sumsUrl = sumsAsset?.jsonObject?.get("browser_download_url")?.jsonPrimitive?.contentOrNull
+            ?.takeIf { it.startsWith("https://github.com/toddsmith456/T-Bone-/releases/download/") }
         var apkSha256: String? = null
         if (sumsUrl != null) {
             apkSha256 = try {
@@ -248,9 +251,9 @@ class UpdateManager @Inject constructor(
         val req = Request.Builder().url(sumsUrl)
             .header("User-Agent", "T-Bone-Android-Updater")
             .get().build()
-        val text = githubClient().newCall(req).execute().use { resp ->
+        val text = guardedGithubCall(req) { resp ->
             if (!resp.isSuccessful) error("SHA256SUMS download failed HTTP ${resp.code}")
-            resp.body?.string() ?: return@use null
+            resp.body?.byteStream()?.use { it.readBounded(1024 * 1024).toString(Charsets.UTF_8) }
         } ?: return@withContext null
         parseChecksum(text, apkName)
     }
@@ -317,7 +320,7 @@ class UpdateManager @Inject constructor(
             .header("User-Agent", "T-Bone-Android-Updater")
             .get()
             .build()
-        githubClient().newCall(request).execute().use { response ->
+        guardedGithubCall(request) { response ->
             if (!response.isSuccessful) error("APK download failed (HTTP ${response.code})")
             val body = response.body ?: error("GitHub returned an empty APK")
             val expectedBytes = body.contentLength()
@@ -531,7 +534,16 @@ class UpdateManager @Inject constructor(
         )
     }
 
-    private suspend fun githubClient(): okhttp3.OkHttpClient {
+    private suspend fun <T> guardedGithubCall(request: Request, read: (okhttp3.Response) -> T): T {
+        val (client, expectedTor) = githubClient()
+        val call = client.newCall(request)
+        val guard = social.tbone.di.TorCallPolicy.guard
+        guard.register(call, expectedTor)
+        try { return call.execute().use(read) }
+        finally { guard.unregister(call) }
+    }
+
+    private suspend fun githubClient(): Pair<okhttp3.OkHttpClient, Boolean> {
         appSettings.initialized.first { it }
         val useTor = appSettings.torEnabled.value
         val connected = if (useTor) OrbotHelper.getStatus(context) as? OrbotStatus.InstalledAndConnected else null
@@ -543,7 +555,7 @@ class UpdateManager @Inject constructor(
             .callTimeout(45, TimeUnit.SECONDS)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
-            .build()
+            .build() to useTor
     }
 
     companion object {
