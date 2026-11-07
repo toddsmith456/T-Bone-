@@ -13,6 +13,12 @@ import kotlin.math.abs
  * do not guarantee anonymity or prevent speaker identification. */
 class VoiceAnonymizer {
 
+    companion object {
+        // Decoded PCM expands substantially during resampling; cap before allocation.
+        private const val MAX_PCM_BYTES = 8 * 1024 * 1024
+        private const val MAX_STALL_MS = 30_000L
+    }
+
     private data class Pcm(val samples: ShortArray, val sampleRate: Int)
 
     /** Defaults — the midpoint configuration. */
@@ -26,45 +32,49 @@ class VoiceAnonymizer {
      */
     private fun decodeToPcm(path: String): Pcm? = runCatching {
         val extractor = MediaExtractor()
-        extractor.setDataSource(path)
-        val trackIndex = (0 until extractor.trackCount).firstOrNull { i ->
-            extractor.getTrackFormat(i)
-                .getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
-        } ?: return null
-        val format = extractor.getTrackFormat(trackIndex)
-        extractor.selectTrack(trackIndex)
-        val mime = format.getString(MediaFormat.KEY_MIME)!!
-        val sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
-        val codec = MediaCodec.createDecoderByType(mime)
-        codec.configure(format, null, null, 0)
-        codec.start()
+        var codec: MediaCodec? = null
+        try {
+            extractor.setDataSource(path)
+            val trackIndex = (0 until extractor.trackCount).firstOrNull { i ->
+                extractor.getTrackFormat(i).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true
+            } ?: return@runCatching null
+            val format = extractor.getTrackFormat(trackIndex)
+            extractor.selectTrack(trackIndex)
+            val mime = format.getString(MediaFormat.KEY_MIME) ?: return@runCatching null
+            val sampleRate = format.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            require(sampleRate in 1..192_000) { "invalid sample rate" }
+            val decoder = MediaCodec.createDecoderByType(mime)
+            codec = decoder
+            decoder.configure(format, null, null, 0)
+            decoder.start()
 
-        val outBytes = ByteArrayOutputStream()
-        val bufferInfo = MediaCodec.BufferInfo()
-        var inputDone = false
-        var eos = false
-        while (!eos) {
-            // Feed input
-            if (!inputDone) {
-                val inIdx = codec.dequeueInputBuffer(10_000)
-                if (inIdx >= 0) {
-                    val inBuf = codec.getInputBuffer(inIdx) ?: continue
-                    val size = extractor.readSampleData(inBuf, 0)
-                    if (size < 0) {
-                        codec.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-                        inputDone = true
-                    } else {
-                        codec.queueInputBuffer(inIdx, 0, size, extractor.sampleTime, 0)
-                        extractor.advance()
+            val outBytes = ByteArrayOutputStream()
+            val bufferInfo = MediaCodec.BufferInfo()
+            var inputDone = false
+            var eos = false
+            var lastProgress = android.os.SystemClock.elapsedRealtime()
+            while (!eos) {
+                var progressed = false
+                if (!inputDone) {
+                    val inIdx = decoder.dequeueInputBuffer(10_000)
+                    if (inIdx >= 0) {
+                        val inBuf = decoder.getInputBuffer(inIdx) ?: error("missing decoder input")
+                        val size = extractor.readSampleData(inBuf, 0)
+                        if (size < 0) {
+                            decoder.queueInputBuffer(inIdx, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                            inputDone = true
+                        } else {
+                            decoder.queueInputBuffer(inIdx, 0, size, extractor.sampleTime, 0)
+                            extractor.advance()
+                        }
+                        progressed = true
                     }
                 }
-            }
-            // Drain output
-            val outIdx = codec.dequeueOutputBuffer(bufferInfo, 10_000)
-            when {
-                outIdx >= 0 -> {
+                val outIdx = decoder.dequeueOutputBuffer(bufferInfo, 10_000)
+                if (outIdx >= 0) {
                     if (bufferInfo.size > 0) {
-                        val outBuf = codec.getOutputBuffer(outIdx)!!
+                        require(bufferInfo.size <= MAX_PCM_BYTES - outBytes.size()) { "recording is too large to process" }
+                        val outBuf = decoder.getOutputBuffer(outIdx) ?: error("missing decoder output")
                         outBuf.position(bufferInfo.offset)
                         outBuf.limit(bufferInfo.offset + bufferInfo.size)
                         val shortBuf = outBuf.asShortBuffer()
@@ -74,23 +84,22 @@ class VoiceAnonymizer {
                         arr.forEach { bb.putShort(it) }
                         outBytes.write(bb.array())
                     }
-                    codec.releaseOutputBuffer(outIdx, false)
+                    decoder.releaseOutputBuffer(outIdx, false)
                     if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) eos = true
+                    progressed = true
                 }
-                outIdx == MediaCodec.INFO_TRY_AGAIN_LATER -> {
-                    // spin
-                }
-                outIdx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                    // ignore — we keep the declared sample rate
-                }
+                if (progressed) lastProgress = android.os.SystemClock.elapsedRealtime()
+                check(android.os.SystemClock.elapsedRealtime() - lastProgress < MAX_STALL_MS) { "audio decoder stalled" }
             }
+            val raw = outBytes.toByteArray()
+            require(raw.isNotEmpty()) { "empty audio" }
+            val shorts = ShortArray(raw.size / 2)
+            ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts)
+            Pcm(shorts, sampleRate)
+        } finally {
+            codec?.let { runCatching { it.stop() }; runCatching { it.release() } }
+            runCatching { extractor.release() }
         }
-        codec.stop(); codec.release(); extractor.release()
-
-        val raw = outBytes.toByteArray()
-        val shorts = ShortArray(raw.size / 2)
-        ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN).asShortBuffer().get(shorts)
-        Pcm(shorts, sampleRate)
     }.getOrNull()
 
     /**
@@ -124,10 +133,15 @@ class VoiceAnonymizer {
         // 3) Waveshaper distortion → destroys the original spectral structure.
         val distorted = distort(samples, drive.coerceIn(0f, 8f))
         // 4) Write as WAV at the (speed-adjusted) sample rate.
-        val out = File(src.parentFile, "voice_anon_${System.currentTimeMillis()}.wav")
-        val outRate = (pcm.sampleRate * speed.coerceIn(0.5f, 1.2f)).toInt().coerceAtLeast(8000)
-        writeWav(distorted, outRate, out)
-        out
+        val out = File.createTempFile("voice_anon_", ".wav", src.parentFile)
+        try {
+            val outRate = (pcm.sampleRate * speed.coerceIn(0.5f, 1.2f)).toInt().coerceAtLeast(8000)
+            writeWav(distorted, outRate, out)
+            out
+        } catch (error: Exception) {
+            out.delete()
+            throw error
+        }
     }.getOrNull()
 
     /** Linear-interpolation resample: changes both speed and pitch by [rate]. */
