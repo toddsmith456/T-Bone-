@@ -182,7 +182,7 @@ class CalendarRepository @Inject constructor(
 
     fun isHardwareBacked(): Boolean = crypto.isHardwareBacked()
 
-    suspend fun getById(id: String): CalendarEventUi? = dao.getById(id)?.let { it.toUi(crypto) }
+    suspend fun getById(id: String): CalendarEventUi? = dao.getById(id)?.let { it.toUi(crypto, strictDescription = true) }
 
     /** One-shot decrypted event list — used by the boot alarm re-scheduler. */
     suspend fun getEventsForScheduling(): List<CalendarEventUi> =
@@ -230,11 +230,14 @@ class CalendarRepository @Inject constructor(
 
     suspend fun deleteEvent(id: String) = dao.delete(id)
 
-    private fun CalendarEventEntity.toUi(crypto: CalendarCrypto): CalendarEventUi? = runCatching {
+    private fun CalendarEventEntity.toUi(crypto: CalendarCrypto, strictDescription: Boolean = false): CalendarEventUi? = runCatching {
         CalendarEventUi(
             id = id,
             title = crypto.decrypt(titleCiphertext, titleIv),
-            description = descriptionCiphertext?.let { ct ->
+            description = if (strictDescription) {
+                if (descriptionCiphertext == null && descriptionIv == null) ""
+                else crypto.decrypt(requireNotNull(descriptionCiphertext), requireNotNull(descriptionIv))
+            } else descriptionCiphertext?.let { ct ->
                 descriptionIv?.let { iv -> runCatching { crypto.decrypt(ct, iv) }.getOrNull() }
             } ?: "",
             startMillis = startMillis,

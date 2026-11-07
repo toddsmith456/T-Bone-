@@ -148,4 +148,15 @@ class NotesIntegrityTest {
         assertNotNull(db.decoyNoteFolderDao().getById(decoyFolder))
     }
 
+
+    @Test fun unreadableCalendarDescriptionIsNotPresentedAsEditableBlank() = runBlocking {
+        val calendar = social.tbone.calendar.CalendarRepository(db.calendarEventDao(), social.tbone.calendar.CalendarCrypto())
+        calendar.saveEvent("event", "title", "private description", 1L, 2L, false,
+            social.tbone.calendar.RepeatUnit.NONE, 0, null)
+        val row = db.calendarEventDao().getById("event")!!
+        db.calendarEventDao().upsert(row.copy(descriptionIv = byteArrayOf(0)))
+        assertNull(calendar.getById("event"))
+        assertArrayEquals(row.descriptionCiphertext, db.calendarEventDao().getById("event")!!.descriptionCiphertext)
+    }
+
 }

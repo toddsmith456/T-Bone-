@@ -54,11 +54,17 @@ class NotesViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            val (verified, hw) = withContext(Dispatchers.IO) {
-                repository.encryptionSelfTest() to repository.isHardwareBacked()
+            try {
+                val (verified, hw) = noteWrites.submit {
+                    repository.encryptionSelfTest() to repository.isHardwareBacked()
+                }.await()
+                _encryptionVerified.value = verified
+                _hardwareBacked.value = hw
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _error.value = "encryption unavailable (${error.message})"
             }
-            _encryptionVerified.value = verified
-            _hardwareBacked.value = hw
         }
     }
 

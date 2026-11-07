@@ -61,7 +61,8 @@ class CalendarCrypto @Inject constructor() {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(
             Cipher.DECRYPT_MODE,
-            getOrCreateKey(),
+            (keyStore.getKey(KEY_ALIAS, null) as? SecretKey
+                ?: throw java.security.KeyStoreException("Encryption key is unavailable")),
             GCMParameterSpec(GCM_TAG_BITS, iv),
         )
         return String(cipher.doFinal(ciphertext), Charsets.UTF_8)
