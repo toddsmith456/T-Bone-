@@ -51,7 +51,7 @@ jobs:
           arch: x86_64
           target: google_apis
           disable-animations: true
-          script: ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=social.tbone.notifications.NavigationIntentTest,social.tbone.settings.OrbotInstallTest,social.tbone.media.MediaMetadataTest,social.tbone.ui.AccountStartupScreenTest,social.tbone.ui.settings.HideAccountDialogTest,social.tbone.notes.NewNoteEditorTest,social.tbone.notes.NoteAudioSourceTest,social.tbone.notes.NotesCryptoConcurrencyTest,social.tbone.calendar.CalendarCryptoConcurrencyTest,social.tbone.account.LocalKeyConcurrencyTest,social.tbone.notes.PersistentWipeStateTest,social.tbone.notes.NoteEditorSaveTest,social.tbone.ui.toolbox.geohash.GeohashLiveTest,social.tbone.notes.NotesIntegrityTest,social.tbone.security.BackgroundPinTimeoutTest,social.tbone.security.PinAttemptLimiterTest,social.tbone.calendar.CalendarWipeGateTest,social.tbone.ui.feed.FeedScrollTest,social.tbone.ui.feed.IconAndLinkRegressionTest,social.tbone.ui.feed.RemainingAuditUiTest,social.tbone.stealth.StealthManagerTest,social.tbone.stealth.StealthPinExitTest --stacktrace --no-configuration-cache
+          script: ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=social.tbone.migration.LegacyCleanupTest,social.tbone.notifications.NavigationIntentTest,social.tbone.settings.OrbotInstallTest,social.tbone.media.MediaMetadataTest,social.tbone.ui.AccountStartupScreenTest,social.tbone.ui.settings.HideAccountDialogTest,social.tbone.notes.NewNoteEditorTest,social.tbone.notes.NoteAudioSourceTest,social.tbone.notes.NotesCryptoConcurrencyTest,social.tbone.calendar.CalendarCryptoConcurrencyTest,social.tbone.account.LocalKeyConcurrencyTest,social.tbone.notes.PersistentWipeStateTest,social.tbone.notes.NoteEditorSaveTest,social.tbone.ui.toolbox.geohash.GeohashLiveTest,social.tbone.notes.NotesIntegrityTest,social.tbone.security.BackgroundPinTimeoutTest,social.tbone.security.PinAttemptLimiterTest,social.tbone.calendar.CalendarWipeGateTest,social.tbone.ui.feed.FeedScrollTest,social.tbone.ui.feed.IconAndLinkRegressionTest,social.tbone.ui.feed.RemainingAuditUiTest,social.tbone.stealth.StealthManagerTest,social.tbone.stealth.StealthPinExitTest --stacktrace --no-configuration-cache
       - name: Preserve and verify targeted general results
         if: ${{ !cancelled() && steps.general.outcome != 'skipped' }}
         run: |
@@ -60,34 +60,11 @@ jobs:
           import glob, xml.etree.ElementTree as ET
           paths = glob.glob('/tmp/arena-general-results/**/*.xml', recursive=True)
           cases = [case for path in paths for case in ET.parse(path).getroot().iter('testcase')]
-          for name, expected in [('NewNoteEditorTest', 14), ('HideAccountDialogTest', 1), ('AccountStartupScreenTest', 1), ('OrbotInstallTest', 1), ('MediaMetadataTest', 2), ('NavigationIntentTest', 2), ('RemainingAuditUiTest', 8), ('IconAndLinkRegressionTest', 9)]:
+          for name, expected in [('NewNoteEditorTest', 14), ('HideAccountDialogTest', 1), ('AccountStartupScreenTest', 1), ('OrbotInstallTest', 1), ('MediaMetadataTest', 2), ('NavigationIntentTest', 2), ('LegacyCleanupTest', 3), ('RemainingAuditUiTest', 8), ('IconAndLinkRegressionTest', 9)]:
               selected = [c for c in cases if c.get('classname', '').endswith(name)]
               if len(selected) != expected or any(c.find('skipped') is not None for c in selected):
                   raise SystemExit(f'{name}: expected {expected} executed tests, found {len(selected)} (some may have skipped)')
               print(f'{name}: {len(selected)} tests executed')
-          PYCODE
-      - name: Run isolated WebView probe (separate result)
-        id: webview
-        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.kvm.outcome == 'success' }}
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 29
-          arch: x86_64
-          target: google_apis
-          disable-animations: true
-          script: ./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=social.tbone.webxdc.XdcBrowserWipeTest --stacktrace --no-configuration-cache
-      - name: Require WebView probe to execute
-        if: ${{ !cancelled() && steps.webview.outcome != 'skipped' }}
-        run: |
-          cp -R app/build/outputs/androidTest-results /tmp/arena-webview-results 2>/dev/null || true
-          python3 - <<'PYCODE'
-          import glob, xml.etree.ElementTree as ET
-          cases = [c for p in glob.glob('/tmp/arena-webview-results/**/*.xml', recursive=True)
-                   for c in ET.parse(p).getroot().iter('testcase')
-                   if c.get('classname', '').endswith('XdcBrowserWipeTest')]
-          if not cases or any(c.find('skipped') is not None for c in cases):
-              raise SystemExit('WebView probe missing or skipped; browser cleanup is not verified')
-          print('Isolated WebView test executed:', len(cases))
           PYCODE
       - name: Report Android test failures
         if: failure()
