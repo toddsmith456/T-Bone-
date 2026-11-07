@@ -63,6 +63,9 @@ class DataWiper @Inject constructor(
             // Disable queued and future geohash writes before deleting cached rows.
             steps.run("disable geohash cache") { appSettings.setGeohashCacheMillis(0L) }
             steps.run("clear geohash cache") { geohashCache.clear() }
+            // Clear the in-memory channel state before watchers can resume,
+            // not only the underlying DataStore on its later flow emission.
+            steps.run("clear geohash settings") { appSettings.clearGeohashData() }
             steps.run("clear database") { appDatabase.clearAllTables() }
 
             // The live DataStore file must never be deleted behind its active

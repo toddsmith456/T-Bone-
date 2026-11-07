@@ -173,7 +173,7 @@ class MuteListRepository @Inject constructor(
         _relay.update { cur ->
             val have = cur?.takeIf { it.pubkey == pk }
             val take = have == null || e.createdAt > have.createdAt ||
-                (e.createdAt == have.createdAt && have.event == null)
+                (e.createdAt == have.createdAt && (have.event == null || e.id < have.event.id))
             accepted = take
             if (take) RelayMute(pk, publicMuted(e, pk), e.createdAt, e) else cur
         }
