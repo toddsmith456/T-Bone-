@@ -23,6 +23,7 @@ class CalendarViewModel @Inject constructor(
     private val crypto: CalendarCrypto,
     private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
 ) : ViewModel() {
+    fun currentWipeEpoch(): Long = noteWrites.currentWipeEpoch()
 
     val events: StateFlow<List<CalendarEventUi>> = repository.events
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -68,6 +69,7 @@ class CalendarViewModel @Inject constructor(
         repeatUnit: RepeatUnit,
         repeatInterval: Int,
         repeatEndMillis: Long?,
+        epoch: Long = noteWrites.currentWipeEpoch(),
         onError: (Exception) -> Unit = {},
         onSaved: (String) -> Unit = {},
     ) {
@@ -77,7 +79,7 @@ class CalendarViewModel @Inject constructor(
             onError(error)
             return
         }
-        val pending = noteWrites.submit {
+        val pending = noteWrites.submitAtEpoch(epoch) {
                 repository.saveEvent(
                     id = id,
                     title = title,
@@ -97,8 +99,8 @@ class CalendarViewModel @Inject constructor(
         }
     }
 
-    fun deleteEvent(id: String, onError: (Exception) -> Unit = {}, onDeleted: () -> Unit = {}) {
-        val pending = noteWrites.submit { repository.deleteEvent(id) }
+    fun deleteEvent(id: String, epoch: Long = noteWrites.currentWipeEpoch(), onError: (Exception) -> Unit = {}, onDeleted: () -> Unit = {}) {
+        val pending = noteWrites.submitAtEpoch(epoch) { repository.deleteEvent(id) }
         viewModelScope.launch {
             try { pending.await(); onDeleted() }
             catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }

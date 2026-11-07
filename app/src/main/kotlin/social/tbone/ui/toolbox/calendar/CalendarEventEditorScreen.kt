@@ -123,6 +123,7 @@ fun CalendarEventEditorScreen(
     var clockTarget by remember { mutableStateOf<TimeTarget?>(null) }
 
     val context = LocalContext.current
+    val editorEpoch = remember(viewModel, id) { viewModel.currentWipeEpoch() }
     val permPromptDone = remember {
         context.getSharedPreferences("tbone_calendar", Context.MODE_PRIVATE)
             .getBoolean("perm_prompt_done", false)
@@ -184,6 +185,7 @@ fun CalendarEventEditorScreen(
             repeatEndMillis = submitted.repeatEndDate
                 ?.atStartOfDay(ZoneId.systemDefault())
                 ?.toInstant()?.toEpochMilli(),
+            epoch = editorEpoch,
             onError = onError,
         ) { newId ->
             savedId = newId
@@ -251,7 +253,7 @@ fun CalendarEventEditorScreen(
                     deleted = true
                     val target = savedId
                     if (target == null) { skipDisposeSave = true; onBack() }
-                    else viewModel.deleteEvent(target, onError = { deleted = false }) {
+                    else viewModel.deleteEvent(target, epoch = editorEpoch, onError = { deleted = false }) {
                         skipDisposeSave = true
                         onBack()
                     }
