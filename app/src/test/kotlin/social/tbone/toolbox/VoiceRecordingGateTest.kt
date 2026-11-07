@@ -13,7 +13,7 @@ class VoiceRecordingGateTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             val coordinator = NoteWriteCoordinator(scope)
-            val gate = VoiceRecordingGate(coordinator)
+            val gate = VoiceRecordingGate(coordinator, scope)
             val started = CountDownLatch(1)
             val release = CountDownLatch(1)
             val stopped = AtomicInteger(0)
@@ -41,7 +41,7 @@ class VoiceRecordingGateTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             val coordinator = NoteWriteCoordinator(scope)
-            val gate = VoiceRecordingGate(coordinator)
+            val gate = VoiceRecordingGate(coordinator, scope)
             val owner = Any()
             var releases = 0
             assertTrue(gate.start(owner, coordinator.currentWipeEpoch()) {

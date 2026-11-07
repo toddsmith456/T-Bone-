@@ -45,7 +45,7 @@ class NoteEditorSaveTest {
         val crypto = NotesCrypto()
         val regular = NotesRepository(db.noteDao(), db.noteFolderDao(), db.noteAttachmentDao(), crypto, writes)
         val hidden = DecoyNotesRepository(db.decoyNoteDao(), db.decoyNoteFolderDao(), db.decoyNoteAttachmentDao(), crypto, writes)
-        val recordingGate = social.tbone.toolbox.VoiceRecordingGate(writes)
+        val recordingGate = social.tbone.toolbox.VoiceRecordingGate(writes, owner)
         val regularVm = NotesViewModel(regular, crypto, writes, recordingGate)
         val hiddenVm = DecoyNotesViewModel(hidden, crypto, writes, recordingGate)
         val left = AtomicBoolean(false)

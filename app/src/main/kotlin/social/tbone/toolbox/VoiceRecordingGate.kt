@@ -1,13 +1,19 @@
 package social.tbone.toolbox
 
 import social.tbone.notes.NoteWriteCoordinator
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /** Serializes recorder lifecycle with wipe shutdown. The recorder remains
  * registered until release succeeds, so a failed shutdown can be retried. */
 @Singleton
-class VoiceRecordingGate @Inject constructor(private val writes: NoteWriteCoordinator) {
+class VoiceRecordingGate @Inject constructor(
+    private val writes: NoteWriteCoordinator,
+    private val scope: CoroutineScope,
+) {
     private val lock = Any()
     private var owner: Any? = null
     private var close: ((Boolean) -> Unit)? = null
@@ -28,6 +34,14 @@ class VoiceRecordingGate @Inject constructor(private val writes: NoteWriteCoordi
 
     fun stop(token: Any, discard: Boolean = false) = synchronized(lock) {
         if (owner === token) stopLocked(discard)
+    }
+
+    /** Disposal runs on Main; recorder stop/release may block, so finish on IO. */
+    fun stopAfterDispose(token: Any) {
+        scope.launch(Dispatchers.IO) {
+            try { stop(token, discard = true) }
+            catch (error: Exception) { timber.log.Timber.w(error, "Recorder release failed") }
+        }
     }
 
     fun stopForWipe() = synchronized(lock) { stopLocked(true) }

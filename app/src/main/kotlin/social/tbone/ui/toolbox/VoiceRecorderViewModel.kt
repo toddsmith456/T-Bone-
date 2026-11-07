@@ -342,7 +342,7 @@ class VoiceRecorderViewModel @Inject constructor(
         disposed.set(true)
         ticker?.cancel()
         previewTicker?.cancel()
-        runCatching { recordingGate.stop(recordingOwner, discard = true) }
+        recordingGate.stopAfterDispose(recordingOwner)
         runCatching { player?.release() }
         player = null
     }

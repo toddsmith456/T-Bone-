@@ -663,7 +663,7 @@ fun DecoyNoteEditorScreen(
     DisposableEffect(Unit) {
         onDispose {
             editorDisposed.set(true)
-            runCatching { viewModel.recordingGate.stop(recordingOwner, discard = true) }
+            viewModel.recordingGate.stopAfterDispose(recordingOwner)
             stopPlayback()
         }
     }
