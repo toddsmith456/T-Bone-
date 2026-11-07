@@ -17,6 +17,8 @@ class ToolboxLockViewModel @Inject constructor(
     val keypadScrambled: StateFlow<Boolean> = appSettings.toolboxPinKeypadScrambled
     val isLocked: StateFlow<Boolean> = toolboxLockManager.isLocked
 
+    fun retryAfterMillis(): Long = security.retryAfterMillis()
+
     suspend fun verifyPin(input: String): Boolean = security.verifyPin(input)
 
     suspend fun isDuressPin(input: String): Boolean = security.isDuressPin(input)

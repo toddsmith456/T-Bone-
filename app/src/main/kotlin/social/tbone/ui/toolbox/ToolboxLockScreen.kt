@@ -57,6 +57,7 @@ fun ToolboxLockScreen(
         social.tbone.ui.lock.PinKeypadLayout.digits(scramble = scrambleKeypad)
     }
     var isError by remember { mutableStateOf(false) }
+    var retryMessage by remember { mutableStateOf("") }
     val shakeOffset = remember { Animatable(0f) }
 
     fun submit() {
@@ -70,6 +71,8 @@ fun ToolboxLockScreen(
                 viewModel.unlock()
                 onUnlocked()
             } else {
+                val wait = viewModel.retryAfterMillis()
+                retryMessage = if (wait > 0) "try again in ${(wait + 999) / 1000} seconds" else ""
                 isError = true
                 shakeOffset.animateTo(
                     targetValue = 0f,
@@ -112,6 +115,7 @@ fun ToolboxLockScreen(
                 style = BonyType.caption.copy(color = BonyColors.TextMute),
             )
 
+            if (retryMessage.isNotEmpty()) Text(retryMessage, style = BonyType.caption.copy(color = BonyColors.Danger))
             Spacer(Modifier.height(48.dp))
 
             Row(

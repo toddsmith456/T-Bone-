@@ -13,7 +13,7 @@ import javax.crypto.spec.PBEKeySpec
  * This is not “unbreakable” for a 4-digit PIN (10k space), but PBKDF2 with 120k iterations +
  * random 16-byte salt raises offline brute-force from <1 ms to seconds per guess and defeats rainbow tables.
  *
- * Rate limiting in AppLockManager/ToolboxSecurity adds the remaining wall.
+ * Online retry throttling is separate; offline attacks on a four-digit PIN remain feasible.
  */
 object PinHasher {
 

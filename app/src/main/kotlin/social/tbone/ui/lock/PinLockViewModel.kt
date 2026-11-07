@@ -17,6 +17,8 @@ class PinLockViewModel @Inject constructor(
 
     val keypadScrambled: StateFlow<Boolean> = appSettings.appPinKeypadScrambled
 
+    fun retryAfterMillis(): Long = lockManager.retryAfterMillis()
+
     suspend fun verifyPin(input: String): Boolean = lockManager.verifyPin(input)
 
     /**

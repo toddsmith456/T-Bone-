@@ -51,6 +51,7 @@ fun PinLockScreen(
         PinKeypadLayout.digits(scramble = scrambleKeypad)
     }
     var isError by remember { mutableStateOf(false) }
+    var retryMessage by remember { mutableStateOf("") }
     val shakeOffset = remember { Animatable(0f) }
 
     fun submitPin() {
@@ -67,6 +68,8 @@ fun PinLockScreen(
                 viewModel.unlock()
                 onUnlocked()
             } else {
+                val wait = viewModel.retryAfterMillis()
+                retryMessage = if (wait > 0) "try again in ${(wait + 999) / 1000} seconds" else ""
                 isError = true
                 shakeOffset.animateTo(
                     targetValue = 0f,
@@ -118,6 +121,7 @@ fun PinLockScreen(
 
             Spacer(Modifier.height(48.dp))
 
+            if (retryMessage.isNotEmpty()) Text(retryMessage, style = BonyType.caption.copy(color = BonyColors.Danger))
             // PIN dot indicators
             Row(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),

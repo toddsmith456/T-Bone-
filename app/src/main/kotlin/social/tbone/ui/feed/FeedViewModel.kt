@@ -1234,25 +1234,39 @@ class FeedViewModel @Inject constructor(
     private suspend fun fetchFollowsOnce(account: Account, timeoutMs: Long = 8_000): List<String> {
         val cached = account.follows
         if (cached.isNotEmpty()) return cached
-        val result = kotlinx.coroutines.CompletableDeferred<List<String>>()
-        val id = pool.subscribe(
-            listOf(Filter(authors = listOf(account.pubkey), kinds = listOf(EventKind.FOLLOW_LIST), limit = 1)),
-            label = "clock-follows",
-        )
+        val best = java.util.concurrent.atomic.AtomicReference<Event?>(null)
+        val id = "clock-follows-" + java.util.UUID.randomUUID().toString().take(8)
+        val ready = kotlinx.coroutines.CompletableDeferred<Unit>()
         val job = viewModelScope.launch(Dispatchers.Default) {
-            pool.messages.collect { (_, message) ->
-                if (message is RelayMessage.EventMessage &&
-                    message.subscriptionId == id &&
-                    message.event.kind == EventKind.FOLLOW_LIST &&
-                    message.event.verify()
-                ) {
-                    result.complete(message.event.parsedTags.pubkeys)
+            pool.messages.onSubscription {
+                pool.subscribe(listOf(Filter(authors = listOf(account.pubkey), kinds = listOf(EventKind.FOLLOW_LIST), limit = 1)),
+                    id = id, label = "clock-follows")
+                ready.complete(Unit)
+            }.collect { (_, message) ->
+                if (message is RelayMessage.EventMessage && message.subscriptionId == id &&
+                    message.event.pubkey == account.pubkey && message.event.kind == EventKind.FOLLOW_LIST && message.event.verify()) {
+                    val candidate = message.event
+                    best.updateAndGet { old ->
+                        if (old == null || candidate.createdAt > old.createdAt ||
+                            (candidate.createdAt == old.createdAt && candidate.id < old.id)) candidate else old
+                    }
                 }
             }
         }
-        val follows = withTimeoutOrNull(timeoutMs) { result.await() } ?: emptyList()
-        job.cancel()
-        pool.unsubscribe(id)
+        try {
+            ready.await()
+            val start = System.currentTimeMillis()
+            var firstFound = 0L
+            while (System.currentTimeMillis() - start < timeoutMs) {
+                if (best.get() != null && firstFound == 0L) firstFound = System.currentTimeMillis()
+                if (firstFound != 0L && System.currentTimeMillis() - firstFound >= 2_000L) break
+                kotlinx.coroutines.delay(100)
+            }
+        } finally {
+            job.cancel()
+            pool.unsubscribe(id)
+        }
+        val follows = best.get()?.parsedTags?.pubkeys ?: emptyList()
         return follows
     }
 

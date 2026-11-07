@@ -48,6 +48,10 @@ class WebxdcBridge(
 
     @JavascriptInterface
     fun call(method: String, id: Int, paramsJson: String) {
+        if (paramsJson.length > XdcUpdateStore.MAX_BYTES) {
+            reject(id, "webxdc request too large")
+            return
+        }
         try {
             val params = runCatching {
                 json.parseToJsonElement(paramsJson).jsonObject

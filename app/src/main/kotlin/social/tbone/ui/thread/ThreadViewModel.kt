@@ -149,6 +149,7 @@ class ThreadViewModel @Inject constructor(
     private var collectJob: Job? = null
     private val activeSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val quoteSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val metadataSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /** Every event known to be part of this thread, keyed by id. */
     private val threadEvents = ConcurrentHashMap<String, Event>()
@@ -540,6 +541,11 @@ class ThreadViewModel @Inject constructor(
                     .add(poolMsg.relayUrl)
                 eoseSignals.tryEmit(msg.subscriptionId)
 
+                if (msg.subscriptionId in metadataSubIds && eoseCount(msg.subscriptionId) >= expectedEose()) {
+                    metadataSubIds.remove(msg.subscriptionId)
+                    activeSubIds.remove(msg.subscriptionId)
+                    pool.unsubscribe(msg.subscriptionId)
+                }
                 // Close the one-shot quote lookups once every relay has answered.
                 if (msg.subscriptionId in quoteSubIds &&
                     eoseCount(msg.subscriptionId) >= expectedEose()
@@ -567,8 +573,7 @@ class ThreadViewModel @Inject constructor(
     private fun fetchProfiles(events: List<Event>) {
         val pubkeys = events.map { it.pubkey }.distinct().filter { it.isNotBlank() }
         if (pubkeys.isEmpty()) return
-        pool.subscribe(listOf(Filter(authors = pubkeys, kinds = listOf(EventKind.METADATA))))
-            .also { activeSubIds += it }
+        subscribeMetadata(pubkeys)
     }
 
     private fun fetchPollsFor(events: List<Event>) {
@@ -637,8 +642,20 @@ class ThreadViewModel @Inject constructor(
     private fun fetchMetadataForAuthors(pubkeys: List<String>) {
         val unknown = pubkeys.distinct().filter { profileRepository.profiles.value[it] == null }
         if (unknown.isEmpty()) return
-        pool.subscribe(listOf(Filter(authors = unknown, kinds = listOf(EventKind.METADATA))))
-            .also { activeSubIds += it }
+        subscribeMetadata(unknown)
+    }
+
+    private fun subscribeMetadata(pubkeys: List<String>) {
+        val id = pool.subscribe(listOf(Filter(authors = pubkeys, kinds = listOf(EventKind.METADATA))))
+        activeSubIds += id
+        metadataSubIds += id
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(15_000)
+            if (metadataSubIds.remove(id)) {
+                activeSubIds.remove(id)
+                pool.unsubscribe(id)
+            }
+        }
     }
 
     /**

@@ -8,6 +8,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import social.tbone.security.PinAttemptLimiter
 import social.tbone.db.AppDatabase
 import social.tbone.settings.AppSettings
 import social.tbone.security.PinHasher
@@ -27,15 +30,22 @@ class ToolboxSecurity @Inject constructor(
     private val geohashCache: social.tbone.ui.toolbox.geohash.GeohashMessageCache,
     @ApplicationContext private val context: Context,
     private val scope: CoroutineScope,
+    private val calendarAlarms: social.tbone.calendar.CalendarAlarmScheduler,
 ) {
+
+    private val attempts = PinAttemptLimiter(context, "toolbox")
+    private val verifyMutex = Mutex()
+    fun retryAfterMillis(): Long = attempts.remainingMillis()
 
     suspend fun isPinEnabled(): Boolean = appSettings.getToolboxPinEnabled()
 
-    suspend fun verifyPin(input: String): Boolean {
-        val stored = appSettings.getToolboxPinHash() ?: return false
+    suspend fun verifyPin(input: String): Boolean = verifyMutex.withLock {
+        if (attempts.remainingMillis() > 0) return@withLock false
+        val stored = appSettings.getToolboxPinHash() ?: return@withLock false
         val ok = PinHasher.verify(input, stored)
+        if (ok) attempts.reset() else attempts.failure()
         if (ok && PinHasher.isLegacy(stored)) appSettings.setToolboxPinHash(PinHasher.hash(input))
-        return ok
+        ok
     }
 
     suspend fun isDuressPin(input: String): Boolean {
@@ -52,6 +62,7 @@ class ToolboxSecurity @Inject constructor(
             val duressHash = appSettings.getToolboxDuressPinHash()
             if (duressHash != null && PinHasher.verify(pin, duressHash)) return false
         }
+        attempts.reset()
         appSettings.setToolboxPinHash(PinHasher.hash(pin))
         appSettings.setToolboxPinEnabled(true)
         return true
@@ -92,6 +103,7 @@ class ToolboxSecurity @Inject constructor(
     fun wipeToolbox() {
         scope.launch(Dispatchers.IO) {
             runCatching {
+                calendarAlarms.cancelAll()
                 // Stop new geohash cache writes before deleting private messages.
                 appSettings.setGeohashCacheMillis(0L)
                 geohashCache.clear()
@@ -100,7 +112,7 @@ class ToolboxSecurity @Inject constructor(
                 val db = appDatabase.openHelper.writableDatabase
                 listOf("bookmarks", "bookmark_folders", "note_attachments", "note_folders", "calendar_events", "notes", "events", "profiles", "geohash_messages")
                     .forEach { table ->
-                        runCatching { db.execSQL("DELETE FROM $table") }
+                        db.execSQL("DELETE FROM $table")
                     }
                 // Geohash identity: channels + nickname + seed live in the
                 // DataStore; per-channel last-seen marks live in prefs.
@@ -115,7 +127,7 @@ class ToolboxSecurity @Inject constructor(
                 appSettings.setToolboxDuressPinEnabled(false)
                 appSettings.setToolboxDuressPinHash("")
                 appSettings.setToolboxScreenshotBlockEnabled(false)
-            }
+            }.onFailure { timber.log.Timber.e(it, "Toolbox wipe did not complete") }
         }
     }
 

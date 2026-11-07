@@ -65,6 +65,20 @@ class XdcUpdateStoreTest {
     }
 
     @Test
+    fun oversizedAppendDoesNotChangeJournal() {
+        val file = tmp.newFile("quota.log")
+        val store = XdcUpdateStore(file)
+        store.append("small")
+        val before = file.readBytes()
+        try {
+            store.append("a".repeat(XdcUpdateStore.MAX_BYTES.toInt()))
+            throw AssertionError("expected quota rejection")
+        } catch (_: IllegalStateException) { }
+        assertTrue(before.contentEquals(file.readBytes()))
+        assertEquals("small", store.load().single().payloadJson)
+    }
+
+    @Test
     fun nullPayloadIsStoredAsLiteralNull() {
         val store = XdcUpdateStore(tmp.newFile("null.log"))
         store.append("null")

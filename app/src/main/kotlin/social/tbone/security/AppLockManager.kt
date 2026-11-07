@@ -10,6 +10,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 @Singleton
 class AppLockManager @Inject constructor(
@@ -18,6 +20,9 @@ class AppLockManager @Inject constructor(
     @ApplicationContext context: Context,
 ) {
     private val timeout = BackgroundPinTimeout(context, scope, "app")
+    private val attempts = PinAttemptLimiter(context, "app")
+    private val verifyMutex = Mutex()
+    fun retryAfterMillis(): Long = attempts.remainingMillis()
     val isLocked: StateFlow<Boolean> = timeout.locked
     val isPinEnabled: StateFlow<Boolean> = appSettings.pinEnabled
     val isDuressPinEnabled: StateFlow<Boolean> = appSettings.duressPinEnabled
@@ -46,14 +51,16 @@ class AppLockManager @Inject constructor(
     fun onAppBackgrounded() = timeout.onBackground()
     fun onAppForegrounded() = timeout.onForeground()
 
-    suspend fun verifyPin(input: String): Boolean {
-        val stored = appSettings.getPinHash() ?: return false
+    suspend fun verifyPin(input: String): Boolean = verifyMutex.withLock {
+        if (attempts.remainingMillis() > 0) return@withLock false
+        val stored = appSettings.getPinHash() ?: return@withLock false
         val ok = PinHasher.verify(input, stored)
+        if (ok) attempts.reset() else attempts.failure()
         // Auto-upgrade legacy hash on successful verify (no extra user step)
         if (ok && PinHasher.isLegacy(stored)) {
             appSettings.setPinHash(PinHasher.hash(input))
         }
-        return ok
+        ok
     }
 
     suspend fun isDuressPin(input: String): Boolean {
@@ -67,6 +74,7 @@ class AppLockManager @Inject constructor(
     }
 
     suspend fun setPin(pin: String) {
+        attempts.reset()
         appSettings.setPinHash(PinHasher.hash(pin))
         appSettings.setPinEnabled(true)
         timeout.unlock()

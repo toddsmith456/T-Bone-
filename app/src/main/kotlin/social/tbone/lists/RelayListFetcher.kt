@@ -43,7 +43,7 @@ class RelayListFetcher @Inject constructor(
      *                       "the list is empty".
      */
     data class Result(val event: Event?, val eoseRelays: Int) {
-        val reachedRelays: Boolean get() = eoseRelays > 0 || event != null
+        val reachedRelays: Boolean get() = eoseRelays > 0
     }
 
     suspend fun fetchLatest(

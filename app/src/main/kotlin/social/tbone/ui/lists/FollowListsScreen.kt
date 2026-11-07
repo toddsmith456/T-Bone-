@@ -478,7 +478,7 @@ private fun FollowersTab(
                     Spacer(Modifier.height(10.dp))
                     BonyButton(label = "↻ REFRESH FOLLOWERS", primary = false, enabled = !followersBusy, onClick = { viewModel.refreshFollowers() }, modifier = Modifier.fillMaxWidth())
                     if (followersState?.source != null) {
-                        Text("source: ${followersState.source} · ${followersState.followers?.size ?: 0} followers", style = BonyType.metaDim.copy(color = BonyColors.TextMute), modifier = Modifier.padding(top = 6.dp))
+                        Text("source: ${followersState.source} · ${followersState.followers?.size ?: 0} found (incomplete)", style = BonyType.metaDim.copy(color = BonyColors.TextMute), modifier = Modifier.padding(top = 6.dp))
                     }
                 }
             }

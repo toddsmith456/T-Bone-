@@ -31,6 +31,7 @@ class DataWiper @Inject constructor(
     private val appDatabase: AppDatabase,
     private val dataStore: DataStore<Preferences>,
     private val scope: CoroutineScope,
+    private val calendarAlarms: social.tbone.calendar.CalendarAlarmScheduler,
 ) {
 
     /**
@@ -39,6 +40,11 @@ class DataWiper @Inject constructor(
      */
     fun wipeAndRestart() {
         scope.launch(Dispatchers.IO) {
+            // Cancel system-owned alarms before their ID registry is cleared.
+            runCatching { calendarAlarms.cancelAll() }.onFailure { timber.log.Timber.e(it, "Could not cancel calendar reminders during wipe") }
+            runCatching { context.getSystemService(android.app.NotificationManager::class.java)?.cancelAll() }
+                .onFailure { timber.log.Timber.e(it, "Could not cancel notifications during wipe") }
+
             // 1. Room database — every table.
             runCatching { appDatabase.clearAllTables() }
 
@@ -64,7 +70,17 @@ class DataWiper @Inject constructor(
                 val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
                 ks.deleteEntry("tbone_notes_key")
                 ks.deleteEntry("tbone_local_key_encryption")
+                ks.deleteEntry("tbone_calendar_key")
             }
+
+            // Preferences are distinct from DataStore; clear all app-owned
+            // preference files, including geohash and alarm bookkeeping.
+            runCatching {
+                val prefsDir = java.io.File(context.applicationInfo.dataDir, "shared_prefs")
+                prefsDir.listFiles()?.filter { it.name.endsWith(".xml") }?.forEach { file ->
+                    check(context.getSharedPreferences(file.name.removeSuffix(".xml"), Context.MODE_PRIVATE).edit().clear().commit())
+                }
+            }.onFailure { timber.log.Timber.e(it, "Could not clear shared preferences during wipe") }
 
             // 5. Restart the activity so the app boots into a clean state
             //    (no account -> onboarding).

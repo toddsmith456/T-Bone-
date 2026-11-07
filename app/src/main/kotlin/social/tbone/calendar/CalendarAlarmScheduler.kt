@@ -66,6 +66,17 @@ class CalendarAlarmScheduler @Inject constructor(
         persistIds(scheduledIds() + event.id)
     }
 
+    /** Cancel all tracked calendar alarms and their already-posted notifications. */
+    fun cancelAll() {
+        val ids = scheduledIds().toSet()
+        ids.forEach { id ->
+            cancelCurrentPendingAlarm(id)
+            cancelLegacyPendingAlarm(id)
+            context.getSystemService(android.app.NotificationManager::class.java)?.cancel(id.hashCode())
+        }
+        persistIds(emptySet())
+    }
+
     fun cancel(eventId: String) {
         cancelCurrentPendingAlarm(eventId)
         cancelLegacyPendingAlarm(eventId)

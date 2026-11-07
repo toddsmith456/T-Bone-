@@ -32,6 +32,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -78,6 +81,20 @@ fun InlineAudioPlayer(
         )
     } else {
         val player = rememberAudioPlayer(url)
+        if (player == null) {
+            AudioPlayerCard(format = format, isPlaying = false, isBuffering = true,
+                positionMs = 0L, durationMs = 0L, error = false,
+                onPlayPause = {}, onSeek = {}, onCopyLink = { social.tbone.ui.feed.copyNoteLink(context, url) }, modifier = modifier)
+            return
+        }
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(player, lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_STOP) player.pause()
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
         var isPlaying by remember(player) { mutableStateOf(player.isPlaying) }
         var isBuffering by remember(player) {
             mutableStateOf(player.playbackState == Player.STATE_BUFFERING)
@@ -237,28 +254,27 @@ private fun AudioPlayerCard(
 }
 
 @Composable
-private fun rememberAudioPlayer(url: String): ExoPlayer {
+private fun rememberAudioPlayer(url: String): ExoPlayer? {
     val context = LocalContext.current
-    val player = remember(url) {
-        val dataSourceFactory = OkHttpDataSource.Factory(ImageClientProvider.client)
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
-            .build()
-            .also { created ->
-                created.setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(C.USAGE_MEDIA)
-                        .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-                        .build(),
-                    true,
-                )
-                created.repeatMode = Player.REPEAT_MODE_OFF
-                created.setMediaItem(audioMediaItem(url))
-                created.prepare()
-            }
-    }
-    DisposableEffect(player) {
-        onDispose { player.release() }
+    var player by remember(url) { mutableStateOf<ExoPlayer?>(null) }
+    DisposableEffect(url) {
+        var created: ExoPlayer? = null
+        try {
+            val instance = ExoPlayer.Builder(context)
+                .setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(ImageClientProvider.client)))
+                .build()
+            created = instance
+            instance.setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
+            instance.repeatMode = Player.REPEAT_MODE_OFF
+            instance.setMediaItem(audioMediaItem(url))
+            instance.prepare()
+            player = instance
+        } catch (_: Exception) {
+            created?.release()
+            created = null
+        }
+        onDispose { created?.release() }
     }
     return player
 }

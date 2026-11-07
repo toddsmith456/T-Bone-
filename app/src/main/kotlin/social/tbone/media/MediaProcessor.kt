@@ -356,12 +356,13 @@ object MediaProcessor {
         compress: Boolean,
     ): File? = withContext(Dispatchers.IO) {
         runCatching {
-            val src = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                ?: return@runCatching null
             val orientation = readExifOrientation(context, uri)
-
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeByteArray(src, 0, src.size, bounds)
+            context.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, bounds)
+                Unit
+            } ?: return@runCatching null
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
 
             var sample = 1
             while (bounds.outWidth / sample > MAX_IMAGE_DIMENSION ||
@@ -369,7 +370,9 @@ object MediaProcessor {
             ) sample *= 2
 
             val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-            var bmp = BitmapFactory.decodeByteArray(src, 0, src.size, opts) ?: return@runCatching null
+            var bmp = context.contentResolver.openInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, opts)
+            } ?: return@runCatching null
             bmp = applyOrientation(bmp, orientation)
 
             val out = File(context.cacheDir, "tbone_media_${System.currentTimeMillis()}.jpg")

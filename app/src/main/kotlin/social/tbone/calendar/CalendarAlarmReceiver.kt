@@ -38,17 +38,17 @@ class CalendarAlarmReceiver : BroadcastReceiver() {
             CalendarAlarmScheduler.ACTION_ALARM -> {
                 val id = intent.getStringExtra(CalendarAlarmScheduler.EXTRA_EVENT_ID)
                     ?: return
-                val title = intent.getStringExtra(CalendarAlarmScheduler.EXTRA_TITLE)
-                    ?: "calendar event"
                 val start = intent.getLongExtra(CalendarAlarmScheduler.EXTRA_START, 0L)
-                postNotification(context, id, title, start)
-                // Chain the NEXT occurrence (repeating events keep notifying
-                // without the app being opened in between).
+                // PendingIntents can outlive a wipe. Fail closed: never display
+                // sensitive extras until the event is still present in the vault.
                 val pending = goAsync()
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
                         val event = runCatching { repository.getById(id) }.getOrNull()
-                        if (event != null) scheduler.scheduleNextOccurrence(event, start)
+                        if (event != null) {
+                            postNotification(context, id, event.title, start)
+                            scheduler.scheduleNextOccurrence(event, start)
+                        }
                     } finally {
                         pending.finish()
                     }

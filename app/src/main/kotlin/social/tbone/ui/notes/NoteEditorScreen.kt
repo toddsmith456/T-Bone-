@@ -73,6 +73,7 @@ import social.tbone.ui.permissions.rememberPermissionRequester
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import java.io.File
+import social.tbone.util.readBounded
 
 private val MARKER = Regex("""\[\[(voice|image):([0-9a-zA-Z-]+)\]\]""")
 
@@ -312,9 +313,9 @@ fun NoteEditorScreen(
                 insertAttachment(placeholder)
             }
         }
-        val nid = savedId
-        if (nid != null) saveInto(nid)
-        else performSave(force = true) { newId -> saveInto(newId) }
+        // Ensure the parent is committed before inserting the attachment, even
+        // when a prior asynchronous save has assigned an ID but not finished.
+        performSave(force = true) { newId -> saveInto(newId) }
     }
 
     fun beginRecording() {
@@ -358,7 +359,8 @@ fun NoteEditorScreen(
                     recorderRef[0]?.stop()
                     recorderRef[0]?.release()
                     recorderRef[0] = null
-                    file.readBytes().also { try { file.delete() } catch (_: Exception) {} }
+                    file.inputStream().use { it.readBounded(16 * 1024 * 1024) }
+                        .also { try { file.delete() } catch (_: Exception) {} }
                 }.getOrNull()
             }
             if (bytes != null && bytes.isNotEmpty()) attach("voice", "audio/mp4", bytes) else try { file.delete() } catch (_: Exception) {}
@@ -380,8 +382,11 @@ fun NoteEditorScreen(
             scope.launch {
                 val bytes = withContext(Dispatchers.IO) {
                     runCatching {
-                        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        context.contentResolver.openInputStream(uri)?.use { it.readBounded(16 * 1024 * 1024) }
                     }.getOrNull()
+                }
+                if (bytes == null) {
+                    android.widget.Toast.makeText(context, "Could not import image (maximum 16 MB)", android.widget.Toast.LENGTH_LONG).show()
                 }
                 if (bytes != null && bytes.isNotEmpty()) {
                     val mime = runCatching {
