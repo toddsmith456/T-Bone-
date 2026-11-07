@@ -67,14 +67,11 @@ object NetworkModule {
         val pool = RelayPool(
             scope = scope,
             connectionFactory = { url ->
-                RelayConnection(
-                    url,
-                    RelayConnection.buildClient(
-                        // Before preferences load, never assume Tor is disabled.
-                        useTor = startupRequiresTor(appSettings.initialized.value, appSettings.torEnabled.value),
-                        bypassProxy = RelayConnection.isLocalRelayUrl(url),
-                    ),
-                )
+                val tor = startupRequiresTor(appSettings.initialized.value, appSettings.torEnabled.value)
+                RelayConnection(url, RelayConnection.buildClient(
+                    useTor = tor,
+                    bypassProxy = RelayConnection.isLocalRelayUrl(url),
+                )).guardedBy(TorCallPolicy.guard, tor)
             },
         )
         // On each Tor toggle, probe the reachable Orbot proxy (HTTP CONNECT preferred
@@ -84,13 +81,13 @@ object NetworkModule {
             appSettings.torEnabled.collect { useTor ->
                 val status = if (useTor) OrbotHelper.getStatus(context) else null
                 val connected = status as? OrbotStatus.InstalledAndConnected
-                pool.updateTransportFactory { url ->
-                    RelayConnection.buildClient(
+                pool.updateConnectionFactory { url ->
+                    RelayConnection(url, RelayConnection.buildClient(
                         useTor = useTor,
                         proxyType = connected?.proxyType ?: java.net.Proxy.Type.HTTP,
                         torPort = connected?.port ?: 8118,
                         bypassProxy = RelayConnection.isLocalRelayUrl(url),
-                    )
+                    )).guardedBy(TorCallPolicy.guard, useTor)
                 }
             }
         }

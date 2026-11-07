@@ -132,9 +132,12 @@ class RelayPool(
     fun updateTransport(client: okhttp3.OkHttpClient) = updateTransportFactory { client }
 
     /** Reconnect without losing owners; loopback relay routing is preserved. */
+    fun updateTransportFactory(clientFactory: (url: String) -> okhttp3.OkHttpClient) =
+        updateConnectionFactory { url -> RelayConnection(url, clientFactory(url)) }
+
     @Synchronized
-    fun updateTransportFactory(clientFactory: (url: String) -> okhttp3.OkHttpClient) {
-        connectionFactory = { url -> RelayConnection(url, clientFactory(url)) }
+    internal fun updateConnectionFactory(factory: (url: String) -> RelayConnection) {
+        connectionFactory = factory
         val urls = connections.keys.toList()
         urls.forEach { disconnect(it) }
         urls.forEach { addRelay(it) }
