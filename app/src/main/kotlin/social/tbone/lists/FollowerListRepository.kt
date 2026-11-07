@@ -144,7 +144,7 @@ class FollowerListRepository @Inject constructor(
      * Relay-based followers: all kind 3 events that contain p = pubkey.
      * Asked of every count relay + user's own relays at once, with a per-relay limit.
      */
-    private suspend fun fetchRelayFollowers(pubkeyHex: String, seedRelays: List<String>): List<String> {
+    private suspend fun fetchRelayFollowers(pubkeyHex: String, seedRelays: List<String>): List<String> = withContext(kotlinx.coroutines.Dispatchers.Default) {
         val relays = (COUNT_RELAYS + seedRelays).map { it.trim().trimEnd('/') }.distinct()
         val acquired = mutableListOf<String>()
         val authors = mutableSetOf<String>()
@@ -179,7 +179,7 @@ class FollowerListRepository @Inject constructor(
             pool.unsubscribe(subId)
             acquired.forEach { pool.releaseRelay(it) }
         }
-        return authors.toList()
+        authors.toList()
     }
 
     fun followers(pubkeyHex: String, seedRelays: List<String> = emptyList()): Flow<FollowersState> = flow {
