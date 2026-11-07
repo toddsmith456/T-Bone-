@@ -38,6 +38,50 @@ class NoteEditorSaveTest {
     @Test fun regularEditorStaysOpenWhenSaveFails() = exercise(decoy = false, failSave = true)
     @Test fun decoyEditorStaysOpenWhenSaveFails() = exercise(decoy = true, failSave = true)
 
+    @Test fun regularEditorCannotRestoreDataAfterWipe() = staleEditorAfterWipe(false)
+    @Test fun decoyEditorCannotRestoreDataAfterWipe() = staleEditorAfterWipe(true)
+
+    private fun staleEditorAfterWipe(decoy: Boolean) {
+        val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), AppDatabase::class.java).build()
+        val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val writes = NoteWriteCoordinator(owner)
+        val crypto = NotesCrypto()
+        val regular = NotesRepository(db.noteDao(), db.noteFolderDao(), db.noteAttachmentDao(), crypto, writes)
+        val hidden = DecoyNotesRepository(db.decoyNoteDao(), db.decoyNoteFolderDao(), db.decoyNoteAttachmentDao(), crypto, writes)
+        val gate = social.tbone.toolbox.VoiceRecordingGate(writes, owner)
+        val regularVm = NotesViewModel(regular, crypto, writes, gate)
+        val hiddenVm = DecoyNotesViewModel(hidden, crypto, writes, gate)
+        val showing = mutableStateOf(true)
+        try {
+            runBlocking {
+                if (decoy) hidden.saveText("note-id", "old title", "private body", null)
+                else regular.saveText("note-id", "old title", "private body", null)
+            }
+            compose.setContent { BonyTheme {
+                if (showing.value) {
+                    if (decoy) DecoyNoteEditorScreen(id = "note-id", onBack = {}, onShare = {}, viewModel = hiddenVm)
+                    else NoteEditorScreen(id = "note-id", onBack = {}, onShare = {}, viewModel = regularVm)
+                }
+            } }
+            compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasText("old title")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("old title").performTextReplacement("changed before wipe")
+            runBlocking {
+                assertEquals(true, writes.runWipe(NoteWriteCoordinator.WipeKind.TOOLBOX) {
+                    writes.pauseAndDrain()
+                    db.clearAllTables()
+                    true
+                })
+            }
+            compose.runOnIdle { showing.value = false }
+            compose.waitUntil(10_000) { if (decoy) hiddenVm.error.value != null else regularVm.error.value != null }
+            val saved = runBlocking { if (decoy) hidden.getById("note-id") else regular.getById("note-id") }
+            assertEquals(null, saved)
+        } finally {
+            owner.cancel()
+            db.close()
+        }
+    }
+
     private fun exercise(decoy: Boolean, failSave: Boolean) {
         val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), AppDatabase::class.java).build()
         val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
