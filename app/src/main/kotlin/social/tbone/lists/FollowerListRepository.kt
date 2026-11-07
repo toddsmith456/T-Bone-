@@ -33,10 +33,8 @@ import org.json.JSONObject
 /**
  * Follower list — who follows you.
  *
- * Monostr-style: followers are the largest answer among relays (lower-bound).
- * Each relay only knows the contact lists it stores, so the largest set wins.
- * For T-Bone we also try Primal's centralized index (https://primal.net) via HTTP,
- * but the relay result remains the fallback and wins when larger.
+ * Collects bounded, potentially stale samples from relays and Primal's centralized
+ * index. A merged sample is not a verified current count or complete list.
  *
  * Disabled by default (AppSettings.followersEnabled). When enabled a one-time
  * popup warns that the list comes from Primal's centralized cache.
@@ -54,8 +52,7 @@ class FollowerListRepository @Inject constructor(
         val source: String = "relays",
     )
 
-    private val known = HashMap<String, FollowersState>()
-    private val mutex = Mutex()
+    private val known = FollowerSnapshotCache()
 
     // Primal's public caching service: followers list via HTTP.
     // Primal web app uses wss://cache2.primal.net/v1 with method "contacts_list";
@@ -148,79 +145,76 @@ class FollowerListRepository @Inject constructor(
 
     /**
      * Relay-based followers: all kind 3 events that contain p = pubkey.
-     * Asked of every count relay + user's own relays at once. Largest set wins.
+     * Asked of every count relay + user's own relays at once, with a per-relay limit.
      */
     private suspend fun fetchRelayFollowers(pubkeyHex: String, seedRelays: List<String>): List<String> {
         val relays = (COUNT_RELAYS + seedRelays).map { it.trim().trimEnd('/') }.distinct()
-        // Ensure relays are attached for the query
-        relays.forEach { withContext(NonCancellable) { pool.acquireRelay(it) } }
-        val filter = Filter(
-            kinds = listOf(EventKind.FOLLOW_LIST),
-            pTags = listOf(pubkeyHex),
-            limit = 1000,
-        )
-        val subId = pool.subscribeTo(listOf(filter), label = "followers:$pubkeyHex", relays = relays.toSet())
+        val acquired = mutableListOf<String>()
         val authors = mutableSetOf<String>()
+        val subId = "followers-" + java.util.UUID.randomUUID().toString()
         try {
-            kotlinx.coroutines.withTimeoutOrNull(Duration.ofSeconds(8).toMillis()) {
-                pool.messages.collect { pm ->
-                    val msg = pm.message
-                    if (msg is RelayMessage.EventMessage && msg.subscriptionId == subId) {
-                        val e = msg.event
-                        if (e.kind == EventKind.FOLLOW_LIST && e.verify()) {
-                            // The author of this kind 3 is a follower (they list pubkeyHex as p)
-                            if (e.parsedTags.any { it.name == "p" && it.value()?.lowercase() == pubkeyHex.lowercase() }) {
-                                authors.add(e.pubkey)
+            relays.forEach { pool.acquireRelay(it); acquired.add(it) }
+            val filter = Filter(kinds = listOf(EventKind.FOLLOW_LIST), pTags = listOf(pubkeyHex), limit = 1000)
+            kotlinx.coroutines.coroutineScope {
+                // Install the collector before sending REQ; a fast relay may
+                // otherwise answer before SharedFlow has a subscriber.
+                val collector = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                    withTimeoutOrNull(Duration.ofSeconds(8).toMillis()) {
+                        pool.messages.collect { pm ->
+                            val msg = pm.message
+                            if (msg is RelayMessage.EventMessage && msg.subscriptionId == subId) {
+                                val e = msg.event
+                                if (e.kind == EventKind.FOLLOW_LIST && e.verify() &&
+                                    e.parsedTags.any { it.name == "p" && it.value()?.equals(pubkeyHex, ignoreCase = true) == true }) {
+                                    authors.add(e.pubkey)
+                                }
                             }
                         }
                     }
-                    if (msg is RelayMessage.EndOfStoredEvents && msg.subscriptionId == subId) {
-                        // Don't return@collect immediately — keep listening for delayed relays
-                    }
                 }
+                try {
+                    pool.subscribeTo(listOf(filter), id = subId, label = "followers:$pubkeyHex", relays = relays.toSet())
+                    collector.join()
+                } finally { collector.cancel() }
             }
-        } catch (e: CancellationException) { throw e } catch (_: Exception) {}
+        } catch (e: CancellationException) { throw e } catch (_: Exception) { }
         finally {
             pool.unsubscribe(subId)
-            relays.forEach { pool.releaseRelay(it) }
+            acquired.forEach { pool.releaseRelay(it) }
         }
         return authors.toList()
     }
 
     fun followers(pubkeyHex: String, seedRelays: List<String> = emptyList()): Flow<FollowersState> = flow {
-        val memo = synchronized(known) { known[pubkeyHex] }
+        val generation = known.generation()
+        val memo = known.get(pubkeyHex, seedRelays)
         if (memo != null && memo.followers != null && !memo.loading) {
             emit(memo)
             return@flow
         }
         emit(FollowersState(loading = true))
-        // Fetch both sources in parallel (channelFlow like Monostr)
+        // Fetch both sources in parallel and merge their bounded samples.
         val updates = channelFlow {
-            var current: List<String>? = null
-            var currentSource = "relays"
+            val samples = FollowerSamples()
             fun publish(next: List<String>, source: String) {
-                if (next.size > (current?.size ?: -1)) {
-                    current = next
-                    currentSource = source
-                    trySend(FollowersState(followers = next, loading = false, source = source))
-                }
+                synchronized(samples) { samples.merge(next, source)?.let { trySend(it) } }
             }
             launch {
                 try {
                     val relayList = fetchRelayFollowers(pubkeyHex, seedRelays)
                     if (relayList.isNotEmpty()) publish(relayList, "relays")
-                } catch (e: Exception) { Timber.w(e, "Relay followers fetch failed") }
+                } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.w(e, "Relay followers fetch failed") }
             }
             launch {
                 try {
                     val primal = fetchPrimalHttp(pubkeyHex)
                     if (!primal.isNullOrEmpty()) publish(primal, "primal.net")
-                } catch (e: Exception) { Timber.w(e, "Primal followers fetch failed") }
+                } catch (e: CancellationException) { throw e } catch (e: Exception) { Timber.w(e, "Primal followers fetch failed") }
             }
         }
         var last: FollowersState? = null
         updates.collect { state ->
-            synchronized(known) { known[pubkeyHex] = state }
+            known.put(pubkeyHex, seedRelays, state, generation)
             if (state != last) {
                 last = state
                 emit(state)
@@ -228,18 +222,19 @@ class FollowerListRepository @Inject constructor(
         }
         // If nothing arrived, emit empty
         if (last == null) {
-            val empty = FollowersState(followers = emptyList(), loading = false)
-            synchronized(known) { known[pubkeyHex] = empty }
+            val empty = FollowersState(followers = emptyList(), loading = false,
+                error = "No results; sources may be unavailable or incomplete", source = "no results")
+            known.put(pubkeyHex, seedRelays, empty, generation)
             emit(empty)
         }
     }
 
     fun invalidate(pubkeyHex: String) {
-        synchronized(known) { known.remove(pubkeyHex) }
+        known.invalidate(pubkeyHex)
     }
 
     fun invalidateAll() {
-        synchronized(known) { known.clear() }
+        known.clear()
     }
 
     companion object {

@@ -111,6 +111,7 @@ class FollowListsViewModel @Inject constructor(
     private val _followers = MutableStateFlow<FollowerListRepository.FollowersState?>(null)
     val followers: StateFlow<FollowerListRepository.FollowersState?> = _followers.asStateFlow()
 
+    private var followersJob: kotlinx.coroutines.Job? = null
     private val _followersBusy = MutableStateFlow(false)
     val followersBusy: StateFlow<Boolean> = _followersBusy.asStateFlow()
 
@@ -142,6 +143,9 @@ class FollowListsViewModel @Inject constructor(
                 if (acct != null && enabled) {
                     loadFollowers(acct.pubkey, acct.relays)
                 } else {
+                    followersJob?.cancel()
+                    followersJob = null
+                    _followersBusy.value = false
                     _followers.value = null
                 }
             }
@@ -389,9 +393,6 @@ class FollowListsViewModel @Inject constructor(
                 // For now just set and let UI show dialog
             }
             appSettings.setFollowersEnabled(enabled)
-            if (enabled) {
-                account.value?.let { loadFollowers(it.pubkey, it.relays) }
-            }
         }
     }
 
@@ -399,7 +400,6 @@ class FollowListsViewModel @Inject constructor(
         viewModelScope.launch {
             appSettings.setFollowersDisclaimerShown(true)
             appSettings.setFollowersEnabled(true)
-            account.value?.let { loadFollowers(it.pubkey, it.relays) }
         }
     }
 
@@ -408,16 +408,22 @@ class FollowListsViewModel @Inject constructor(
     }
 
     private fun loadFollowers(pubkey: String, relays: List<String>) {
-        viewModelScope.launch {
+        followersJob?.cancel()
+        _followers.value = null
+        val job = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
             _followersBusy.value = true
             try {
-                followerRepo.followers(pubkey, relays).collect { state ->
-                    _followers.value = state
-                }
+                followerRepo.followers(pubkey, relays).collect { state -> _followers.value = state }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 _followers.value = FollowerListRepository.FollowersState(followers = emptyList(), loading = false, error = e.message)
-            } finally { _followersBusy.value = false }
+            } finally {
+                if (followersJob === kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]) _followersBusy.value = false
+            }
         }
+        followersJob = job
+        job.start()
     }
 
     fun refreshFollowers() {
