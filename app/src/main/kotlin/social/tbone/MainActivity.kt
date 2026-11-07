@@ -28,8 +28,7 @@ import social.tbone.settings.AppSettings
 import social.tbone.settings.ContentFilterProvider
 import social.tbone.updates.LocalUpdateAvailable
 import social.tbone.updates.UpdateManager
-import social.tbone.notifications.EXTRA_EVENT_ID
-import social.tbone.nostr.Nip19
+import social.tbone.notifications.dispatchNavigationIntent
 import social.tbone.ui.BonyNavHost
 import social.tbone.ui.SigningOverlay
 import social.tbone.ui.theme.ThemeHost
@@ -326,23 +325,6 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        // From in-app notification tap (EXTRA_EVENT_ID set by NotificationHelper)
-        intent?.getStringExtra(EXTRA_EVENT_ID)?.let { eventId ->
-            deepLinkHandler.navigateToThread(eventId)
-            return
-        }
-
-        // From nostr: URI (Pokey, browsers, other Nostr apps)
-        val data = intent?.data ?: return
-        if (data.scheme != "nostr") return
-        val entity = data.schemeSpecificPart ?: return
-        when {
-            entity.startsWith("note1") || entity.startsWith("nevent1") ->
-                Nip19.nostrUriToEventId(entity)?.let { deepLinkHandler.navigateToThread(it) }
-            entity.startsWith("npub1") ->
-                Nip19.npubToHex(entity)?.let { deepLinkHandler.navigateToProfile(it) }
-            entity.startsWith("nprofile1") ->
-                Nip19.nprofileToHex(entity)?.let { deepLinkHandler.navigateToProfile(it) }
-        }
+        dispatchNavigationIntent(intent, deepLinkHandler)
     }
 }
