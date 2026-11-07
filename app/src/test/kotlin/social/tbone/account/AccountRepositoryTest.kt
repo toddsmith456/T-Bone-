@@ -20,6 +20,10 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeout
+import social.tbone.notes.NoteWriteCoordinator
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -123,6 +127,52 @@ class AccountRepositoryTest {
         repository.setActiveAccount("a")
         assertEquals("", dataStore.data.first()[stringPreferencesKey("active_pubkey")])
         assertNull(repository.activeAccount.first())
+    }
+
+    @Test
+    fun `onboarding completion captured before a wipe cannot recreate accounts`() = runBlocking {
+        val writes = NoteWriteCoordinator(scope)
+        val epoch = writes.currentWipeEpoch()
+        repository.addAccount(account("old"))
+        assertTrue(writes.runWipe(NoteWriteCoordinator.WipeKind.APP) {
+            writes.pauseAndDrain()
+            dataStore.edit { it.clear() }
+            true
+        })
+        try {
+            writes.runCancellableAtEpoch(epoch) { repository.addAccount(account("late")) }
+            throw AssertionError("stale onboarding accepted")
+        } catch (_: java.io.IOException) { }
+        assertTrue(repository.accounts.first().isEmpty())
+    }
+
+    @Test
+    fun `wipe waits for already started account creation before clearing store`() = runBlocking {
+        val writes = NoteWriteCoordinator(scope)
+        val epoch = writes.currentWipeEpoch()
+        val started = CompletableDeferred<Unit>()
+        val resume = CompletableDeferred<Unit>()
+        val creation = async(Dispatchers.IO) {
+            writes.runCancellableAtEpoch(epoch) {
+                started.complete(Unit)
+                resume.await()
+                repository.addAccount(account("slow"))
+            }
+        }
+        started.await()
+        val wiped = async(Dispatchers.IO) {
+            writes.runWipe(NoteWriteCoordinator.WipeKind.APP) {
+                writes.pauseAndDrain()
+                dataStore.edit { it.clear() }
+                true
+            }
+        }
+        withTimeout(3_000) { while (writes.available.value) kotlinx.coroutines.yield() }
+        assertFalse(wiped.isCompleted)
+        resume.complete(Unit)
+        creation.await()
+        assertTrue(wiped.await())
+        assertTrue(repository.accounts.first().isEmpty())
     }
 
     private fun account(pubkey: String, relays: List<String> = emptyList()) = Account(
