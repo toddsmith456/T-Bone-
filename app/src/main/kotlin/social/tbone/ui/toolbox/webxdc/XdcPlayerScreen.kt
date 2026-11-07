@@ -130,7 +130,7 @@ fun XdcPlayerScreen(
             bridge.reject(requestId, "cancelled")
         } else {
             scope.launch {
-                runCatching { filesJson(context, uris) }
+                runCatching { viewModel.runForCurrentPlayer { filesJson(context, uris) } }
                     .onSuccess { bridge.resolve(requestId, it) }
                     .onFailure { bridge.reject(requestId, it.message ?: "could not read files") }
             }
@@ -164,7 +164,7 @@ fun XdcPlayerScreen(
             override fun sendToChat(requestId: Int, messageJson: String) {
                 scope.launch {
                     val ok = withContext(Dispatchers.IO) {
-                        runCatching { shareToChat(context, messageJson) }.getOrDefault(false)
+                        runCatching { viewModel.runForCurrentPlayer { shareToChat(context, messageJson) } }.getOrDefault(false)
                     }
                     bridgeState.value?.let { bridge ->
                         if (ok) bridge.resolve(requestId, "true") else bridge.reject(requestId, "could not share")

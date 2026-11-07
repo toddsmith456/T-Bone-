@@ -36,6 +36,11 @@ class XdcPlayerViewModel @Inject constructor(
     private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
 ) : ViewModel() {
 
+    private val playerEpoch = noteWrites.currentWipeEpoch()
+
+    suspend fun <T> runForCurrentPlayer(action: suspend () -> T): T =
+        noteWrites.runCancellableAtEpoch(playerEpoch, action)
+
     val appId: String = checkNotNull(savedStateHandle["appId"]) { "appId is required" }
 
     val app: StateFlow<SavedXdcApp?> = repository.savedApps
@@ -62,9 +67,8 @@ class XdcPlayerViewModel @Inject constructor(
 
     /** Promotes this app to a toolbox tool, replacing any previous icon/name. */
     fun addAsTool(app: SavedXdcApp, name: String, iconId: String) {
-        val epoch = noteWrites.currentWipeEpoch()
         viewModelScope.launch {
-            try { noteWrites.runCancellableAtEpoch(epoch) {
+            try { noteWrites.runCancellableAtEpoch(playerEpoch) {
             val tools = appSettings.xdcCustomTools.value.filterNot { it.appId == app.id }
             appSettings.setXdcCustomTools(
                 tools + XdcCustomTool(
