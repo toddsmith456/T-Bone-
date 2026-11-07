@@ -41,7 +41,10 @@ class NoteEditorSaveTest {
     @Test fun regularEditorCannotRestoreDataAfterWipe() = staleEditorAfterWipe(false)
     @Test fun decoyEditorCannotRestoreDataAfterWipe() = staleEditorAfterWipe(true)
 
-    private fun staleEditorAfterWipe(decoy: Boolean) {
+    @Test fun regularChecklistCannotRestoreDataAfterWipe() = staleEditorAfterWipe(false, checklist = true)
+    @Test fun decoyChecklistCannotRestoreDataAfterWipe() = staleEditorAfterWipe(true, checklist = true)
+
+    private fun staleEditorAfterWipe(decoy: Boolean, checklist: Boolean = false) {
         val db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext<Context>(), AppDatabase::class.java).build()
         val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val writes = NoteWriteCoordinator(owner)
@@ -54,13 +57,21 @@ class NoteEditorSaveTest {
         val showing = mutableStateOf(true)
         try {
             runBlocking {
-                if (decoy) hidden.saveText("note-id", "old title", "private body", null)
-                else regular.saveText("note-id", "old title", "private body", null)
+                when {
+                    decoy && checklist -> hidden.saveChecklist("note-id", "old title", emptyList(), null)
+                    checklist -> regular.saveChecklist("note-id", "old title", emptyList(), null)
+                    decoy -> hidden.saveText("note-id", "old title", "private body", null)
+                    else -> regular.saveText("note-id", "old title", "private body", null)
+                }
             }
             compose.setContent { BonyTheme {
                 if (showing.value) {
-                    if (decoy) DecoyNoteEditorScreen(id = "note-id", onBack = {}, onShare = {}, viewModel = hiddenVm)
-                    else NoteEditorScreen(id = "note-id", onBack = {}, onShare = {}, viewModel = regularVm)
+                    when {
+                        decoy && checklist -> social.tbone.ui.decoy.DecoyChecklistEditorScreen(id = "note-id", onBack = {}, onShare = {}, viewModel = hiddenVm)
+                        checklist -> social.tbone.ui.notes.ChecklistEditorScreen(id = "note-id", onBack = {}, onShare = {}, viewModel = regularVm)
+                        decoy -> DecoyNoteEditorScreen(id = "note-id", onBack = {}, onShare = {}, viewModel = hiddenVm)
+                        else -> NoteEditorScreen(id = "note-id", onBack = {}, onShare = {}, viewModel = regularVm)
+                    }
                 }
             } }
             compose.waitUntil(10_000) { compose.onAllNodes(androidx.compose.ui.test.hasText("old title")).fetchSemanticsNodes().isNotEmpty() }
