@@ -39,6 +39,29 @@ class NotesIntegrityTest {
 
     @After fun teardown() { owner.cancel(); db.close() }
 
+    @Test fun toolboxWipeClearsBothVaultsAndRollsBackOnFailure() = runBlocking {
+        real.saveText("r", "real", "body", null)
+        decoy.saveText("d", "decoy", "body", null)
+        real.addAttachment("r", "voice", "audio/mp4", byteArrayOf(1))
+        decoy.addAttachment("d", "voice", "audio/mp4", byteArrayOf(2))
+        val sql = db.openHelper.writableDatabase
+        sql.execSQL("CREATE TRIGGER fail_decoy_wipe BEFORE DELETE ON decoy_notes BEGIN SELECT RAISE(ABORT, 'injected'); END")
+        try {
+            social.tbone.ui.toolbox.clearToolboxTables(db)
+            fail("wipe should roll back")
+        } catch (_: android.database.sqlite.SQLiteException) { }
+        assertNotNull(real.getById("r"))
+        assertNotNull(decoy.getById("d"))
+        assertEquals(1, real.attachments("r").first().size)
+        assertEquals(1, decoy.attachments("d").first().size)
+        sql.execSQL("DROP TRIGGER fail_decoy_wipe")
+        social.tbone.ui.toolbox.clearToolboxTables(db)
+        assertNull(real.getById("r"))
+        assertNull(decoy.getById("d"))
+        assertEquals(0, real.attachments("r").first().size)
+        assertEquals(0, decoy.attachments("d").first().size)
+    }
+
     @Test fun titleOnlyAndClearedNotesPersistInSeparateVaults() = runBlocking {
         val realId = real.saveText("real", "Only title", "", null)
         val decoyId = decoy.saveText("decoy", "Decoy title", "", null)

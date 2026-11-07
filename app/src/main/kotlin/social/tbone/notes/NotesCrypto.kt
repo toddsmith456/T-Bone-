@@ -26,18 +26,19 @@ import javax.inject.Singleton
  * the notes screen, which shows a "encrypted" badge only when the test passes.
  */
 @Singleton
-class NotesCrypto @Inject constructor() {
+class NotesCrypto internal constructor(private val alias: String) {
+    @Inject constructor() : this(KEY_ALIAS)
 
     private val keyStore: KeyStore by lazy {
         KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
     }
 
-    private fun getOrCreateKey(): SecretKey {
-        (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+    private fun getOrCreateKey(): SecretKey = synchronized(KEY_CREATION_LOCK) {
+        (keyStore.getKey(alias, null) as? SecretKey)?.let { return@synchronized it }
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
         generator.init(
             KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
+                alias,
                 KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
             )
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
@@ -46,7 +47,7 @@ class NotesCrypto @Inject constructor() {
                 .setRandomizedEncryptionRequired(true)
                 .build()
         )
-        return generator.generateKey()
+        generator.generateKey()
     }
 
     /** Encrypts plaintext → (ciphertext, iv). Throws on failure. */
@@ -70,7 +71,7 @@ class NotesCrypto @Inject constructor() {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(
             Cipher.DECRYPT_MODE,
-            (keyStore.getKey(KEY_ALIAS, null) as? SecretKey
+            (keyStore.getKey(alias, null) as? SecretKey
                 ?: throw java.security.KeyStoreException("Encryption key is unavailable")),
             GCMParameterSpec(GCM_TAG_BITS, iv),
         )
@@ -104,7 +105,7 @@ class NotesCrypto @Inject constructor() {
     val cipherLabel: String get() = TRANSFORMATION
 
     /** Key alias in the Android Keystore. */
-    val keyAlias: String get() = KEY_ALIAS
+    val keyAlias: String get() = alias
 
     /** GCM auth-tag length in bits. */
     val tagBits: Int get() = GCM_TAG_BITS
@@ -113,6 +114,7 @@ class NotesCrypto @Inject constructor() {
     val ivLength: Int get() = GCM_IV_BYTES
 
     private companion object {
+        val KEY_CREATION_LOCK = Any()
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val KEY_ALIAS = "tbone_notes_key"
         const val TRANSFORMATION = "AES/GCM/NoPadding"

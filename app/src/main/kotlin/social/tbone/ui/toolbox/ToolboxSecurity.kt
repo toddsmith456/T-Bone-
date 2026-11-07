@@ -10,7 +10,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.widget.Toast
-import androidx.room.withTransaction
 import social.tbone.security.WipeSteps
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -133,11 +132,7 @@ class ToolboxSecurity @Inject constructor(
             steps.run("disable geohash cache") { appSettings.setGeohashCacheMillis(0L) }
             steps.run("clear geohash cache") { geohashCache.clear() }
             steps.run("clear toolbox tables") {
-                appDatabase.withTransaction {
-                    val db = appDatabase.openHelper.writableDatabase
-                    listOf("bookmarks", "bookmark_folders", "note_attachments", "note_folders", "calendar_events", "notes", "decoy_note_attachments", "decoy_note_folders", "decoy_notes", "events", "profiles", "geohash_messages")
-                        .forEach { table -> db.execSQL("DELETE FROM $table") }
-                }
+                clearToolboxTables(appDatabase)
             }
             steps.run("clear mini-app files") { xdcRepository.deleteFilesForWipe() }
             steps.run("clear mini-app tool settings") { appSettings.setXdcCustomTools(emptyList()) }
