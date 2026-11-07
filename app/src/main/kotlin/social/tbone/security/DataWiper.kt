@@ -87,7 +87,9 @@ class DataWiper @Inject constructor(
             if (!steps.failed) {
                 steps.run("clear shared preferences") {
                     val prefsDir = java.io.File(context.applicationInfo.dataDir, "shared_prefs")
-                    prefsDir.listFiles()?.filter { it.name.endsWith(".xml") }?.forEach { file ->
+                    // Keep the persisted alarm gate until all data removal is complete.
+                    // Deleting it here would let a process restart deliver a stale alarm.
+                    prefsDir.listFiles()?.filter { it.name.endsWith(".xml") && it.name != "tbone_calendar_alarms.xml" }?.forEach { file ->
                         check(context.getSharedPreferences(file.name.removeSuffix(".xml"), Context.MODE_PRIVATE)
                             .edit().clear().commit())
                     }

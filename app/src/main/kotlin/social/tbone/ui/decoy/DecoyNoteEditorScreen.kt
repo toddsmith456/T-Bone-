@@ -240,6 +240,7 @@ fun DecoyNoteEditorScreen(
         try {
             if (id.isNotBlank()) {
                 val note = viewModel.getNote(id) ?: throw IllegalStateException("Note not found")
+                if (note.kind != social.tbone.notes.NoteKind.NOTE) throw IllegalStateException("Not a text note")
                 title = note.title
                 rawText = note.text
                 lastSaved = note.text
