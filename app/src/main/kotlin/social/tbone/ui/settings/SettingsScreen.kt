@@ -1066,7 +1066,7 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
     }
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
-    // Tor kill-switch: block direct traffic when Tor is on but Orbot died (opt-in, off by default so no UX hurt)
+    // This is a preflight check, not continuous monitoring of active requests.
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1075,7 +1075,7 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text("tor kill-switch", style = BonyType.body.copy(color = BonyColors.Text))
-            Text("when Tor is on, block uploads if Orbot disconnects", style = BonyType.meta.copy(color = BonyColors.TextMute))
+            Text("check Orbot before each upload attempt; active uploads are not monitored", style = BonyType.meta.copy(color = BonyColors.TextMute))
         }
         val killSwitch by viewModel.torKillSwitch.collectAsStateWithLifecycle()
         BonyToggle(checked = killSwitch, enabled = torEnabled, onCheckedChange = viewModel::setTorKillSwitch)
