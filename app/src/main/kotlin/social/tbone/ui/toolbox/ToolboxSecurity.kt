@@ -56,9 +56,8 @@ class ToolboxSecurity @Inject constructor(
     suspend fun isDuressPin(input: String): Boolean {
         if (!appSettings.getToolboxDuressPinEnabled()) return false
         val stored = appSettings.getToolboxDuressPinHash() ?: return false
-        val ok = PinHasher.verify(input, stored)
-        if (ok && PinHasher.isLegacy(stored)) appSettings.setToolboxDuressPinHash(PinHasher.hash(input))
-        return ok
+        // The matching PIN initiates a wipe; migration must not delay or block it.
+        return PinHasher.verify(input, stored)
     }
 
     /** Sets the toolbox pin; refuses one equal to the duress pin. */

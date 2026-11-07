@@ -66,11 +66,9 @@ class AppLockManager @Inject constructor(
     suspend fun isDuressPin(input: String): Boolean {
         if (!appSettings.getDuressPinEnabled()) return false
         val stored = appSettings.getDuressPinHash() ?: return false
-        val ok = PinHasher.verify(input, stored)
-        if (ok && PinHasher.isLegacy(stored)) {
-            appSettings.setDuressPinHash(PinHasher.hash(input))
-        }
-        return ok
+        // A match immediately starts a destructive wipe. Do not let a migration
+        // write fail or stall before the duress handler can start that wipe.
+        return PinHasher.verify(input, stored)
     }
 
     suspend fun setPin(pin: String) {
