@@ -23,8 +23,8 @@ import javax.inject.Singleton
 
 /**
  * Toolbox-only security: a PIN that locks the toolbox and a duress PIN that
- * wipes everything toolbox-related (encrypted notes and bookmarks, voice
- * recordings, and toolbox settings). Mirrors the app lock / duress features
+ * attempts to clear selected toolbox data (encrypted notes and bookmarks,
+ * recordings, and toolbox settings); mini apps and external copies remain. Mirrors the app lock / duress features
  * but scoped to the Toolbox.
  */
 @Singleton
@@ -96,15 +96,15 @@ class ToolboxSecurity @Inject constructor(
     }
 
     /**
-     * Wipes everything toolbox-related:
+     * Attempts to clear these toolbox-related datasets:
      *  - encrypted notes and bookmarks (including their folders and attachments)
      *  - calendar events (a toolbox tool)
      *  - geohash channels, nickname and identity seed (DataStore + prefs)
      *  - voice recordings (filesDir/recordings)
      *  - toolbox settings (pin, duress pin, screenshot toggle)
-     * The app's accounts / settings / relay data are untouched, and the
-     * notifications table is PRESERVED — incoming activity from other people
-     * is not your private content, so the duress wipe keeps it.
+     * The current database cleanup also deletes cached events and profiles,
+     * but preserves notifications. Accounts and general app settings remain.
+     * Mini apps, WebView storage and external copies are not cleared here.
      */
     private val wiping = java.util.concurrent.atomic.AtomicBoolean(false)
 

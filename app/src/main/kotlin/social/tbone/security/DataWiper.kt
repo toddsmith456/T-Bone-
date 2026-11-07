@@ -18,12 +18,14 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Completely wipes the app's local data:
+ * Attempts to clear the following app-owned local data:
  *  - Room database (events, profiles, notifications, encrypted notes)
  *  - DataStore preferences (accounts, settings, PIN, everything)
  *  - Internal files (logs, recordings)
- *  - Android Keystore keys used by the app
+ *  - Selected Android Keystore keys used by the app
  *
+ * WebView browser storage and external exports are not cleared here; deletion
+ * is not a forensic erasure guarantee. Other active producers need review.
  * Used by the duress PIN: entering it on the lock screen wipes instead of
  * unlocking. After wiping, the activity restarts into a clean onboarding state.
  */
@@ -44,7 +46,7 @@ class DataWiper @Inject constructor(
 ) {
 
     /**
-     * Wipes all app data and restarts into onboarding.
+     * Attempts the known cleanup steps and restarts into onboarding only on success.
      * Safe to call from any thread.
      */
     private val wiping = java.util.concurrent.atomic.AtomicBoolean(false)
