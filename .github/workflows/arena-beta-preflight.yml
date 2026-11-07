@@ -65,3 +65,30 @@ jobs:
           name: signed-beta-preflight
           path: beta-preflight/
           retention-days: 7
+  upgrade:
+    needs: beta
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-beta-preflight
+          path: beta-preflight
+      - name: Download published previous beta and verify checksum
+        run: |
+          curl -fLsS --retry 3 -o /tmp/previous-beta.apk https://github.com/toddsmith456/T-Bone-/releases/download/beta-0.5.3-23/T-Bone-beta-ed5dda9d7a8c.apk
+          echo 'c3c96fcc4241e2582f280ea93e66781771bd4016c36f5069edb83d0f747c78af  /tmp/previous-beta.apk' | sha256sum -c -
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Upgrade previous beta in a disposable emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 29
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: bash .github/arena-ci/beta-upgrade-smoke.sh
