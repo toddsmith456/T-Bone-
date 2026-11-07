@@ -492,13 +492,17 @@ class UpdateManager @Inject constructor(
                 }
                 val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
                     ?: error("MediaStore refused the download")
-                resolver.openOutputStream(uri)?.use { out ->
-                    apkFile.inputStream().use { inp -> inp.copyTo(out) }
-                } ?: error("Could not open Downloads file")
-                values.clear()
-                values.put(MediaStore.Downloads.IS_PENDING, 0)
-                resolver.update(uri, values, null, null)
-                // also verify saved file size
+                try {
+                    resolver.openOutputStream(uri)?.use { out ->
+                        apkFile.inputStream().use { inp -> inp.copyTo(out) }
+                    } ?: error("Could not open Downloads file")
+                    values.clear()
+                    values.put(MediaStore.Downloads.IS_PENDING, 0)
+                    check(resolver.update(uri, values, null, null) == 1) { "Could not finish Downloads file" }
+                } catch (error: Exception) {
+                    runCatching { resolver.delete(uri, null, null) }
+                    throw error
+                }
                 Timber.i("Saved APK to Downloads: $fileName")
             } else {
                 @Suppress("DEPRECATION")
