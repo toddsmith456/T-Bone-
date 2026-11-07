@@ -7,21 +7,19 @@ import android.webkit.WebView
 import androidx.webkit.WebStorageCompat
 import androidx.webkit.WebViewFeature
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import social.tbone.notes.NoteWriteCoordinator
 import java.util.Collections
 import java.util.WeakHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.coroutines.resume
 
 /** Main-thread owner of active mini-app WebViews and their browser-data wipe. */
 @Singleton
 class XdcWebViewWipe @Inject constructor(private val writes: NoteWriteCoordinator) {
     private val active = mutableMapOf<WebView, () -> Unit>()
     private val destroyed = Collections.newSetFromMap(WeakHashMap<WebView, Boolean>())
+    private val deletion = CallbackWipeBarrier()
 
     fun register(view: WebView, epoch: Long, onClosed: () -> Unit): Boolean {
         check(Looper.myLooper() == Looper.getMainLooper())
@@ -52,14 +50,8 @@ class XdcWebViewWipe @Inject constructor(private val writes: NoteWriteCoordinato
         check(WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)) {
             "WebView browser-data deletion is unavailable; update Android System WebView and retry"
         }
-        val completed = withTimeoutOrNull(30_000) {
-            suspendCancellableCoroutine<Unit> { continuation ->
-                WebStorageCompat.deleteBrowsingData(WebStorage.getInstance()) {
-                    if (continuation.isActive) continuation.resume(Unit)
-                }
-            }
-            true
-        } ?: false
-        if (!completed) throw java.io.IOException("WebView browser-data deletion timed out")
+        deletion.run { complete ->
+            WebStorageCompat.deleteBrowsingData(WebStorage.getInstance()) { complete() }
+        }
     }
 }
