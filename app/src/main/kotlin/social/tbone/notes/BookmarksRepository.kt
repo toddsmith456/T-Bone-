@@ -1,6 +1,8 @@
 package social.tbone.notes
 
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
@@ -53,17 +55,16 @@ class BookmarksRepository @Inject constructor(
 ) {
     private val defaultFolderMutex = Mutex()
 
-    val folders: Flow<List<BookmarkFolderUi>> = flow {
-        try {
-            coordinated { ensureDefaultFolder() }
-        } catch (_: java.io.IOException) {
-            // A wipe may be in progress; keep observing without recreating data.
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val folders: Flow<List<BookmarkFolderUi>> = noteWrites.available.flatMapLatest { available ->
+        flow {
+            if (available) try {
+                coordinated { ensureDefaultFolder() }
+            } catch (_: java.io.IOException) {
+                // The gate may have closed after the availability emission.
+            }
+            emitAll(dao.observeFolders().map { rows -> rows.mapNotNull(::decryptFolder) })
         }
-        emitAll(
-            dao.observeFolders().map { rows ->
-                rows.mapNotNull(::decryptFolder)
-            },
-        )
     }
 
     suspend fun getFolders(): List<BookmarkFolderUi> = coordinated { getFoldersInternal() }

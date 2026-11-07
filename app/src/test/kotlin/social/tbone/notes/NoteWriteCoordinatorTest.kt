@@ -146,4 +146,39 @@ class NoteWriteCoordinatorTest {
         } finally { owner.cancel() }
     }
 
+
+    @Test fun cancellableOperationStopsWithCallerAndDoesNotStallQueue() = runBlocking {
+        val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val coordinator = NoteWriteCoordinator(owner)
+            val started = CompletableDeferred<Unit>()
+            val cleaned = CompletableDeferred<Unit>()
+            val caller = launch {
+                coordinator.runCancellable {
+                    try { started.complete(Unit); awaitCancellation() }
+                    finally { cleaned.complete(Unit) }
+                }
+            }
+            started.await()
+            caller.cancelAndJoin()
+            withTimeout(3_000) { cleaned.await() }
+            assertEquals("next", withTimeout(3_000) { coordinator.submit { "next" }.await() })
+        } finally { owner.cancel() }
+    }
+
+    @Test fun availabilityReflectsWipeFailureAndRetry() = runBlocking {
+        val owner = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val coordinator = NoteWriteCoordinator(owner)
+            assertTrue(coordinator.available.value)
+            assertFalse(coordinator.runWipe(NoteWriteCoordinator.WipeKind.APP) {
+                assertFalse(coordinator.available.value)
+                false
+            })
+            assertFalse(coordinator.available.value)
+            assertTrue(coordinator.runWipe(NoteWriteCoordinator.WipeKind.APP) { true })
+            assertTrue(coordinator.available.value)
+        } finally { owner.cancel() }
+    }
+
 }

@@ -7,6 +7,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.channels.Channel
@@ -27,6 +31,8 @@ class NoteWriteCoordinator @Inject constructor(scope: CoroutineScope) {
     private class Work(val execute: suspend () -> Unit, val reject: (Throwable) -> Unit)
     private val work = Channel<Work>(Channel.UNLIMITED)
     private var wiping = false
+    private val _available = MutableStateFlow(true)
+    val available = _available.asStateFlow()
     private val wipeMutex = Mutex()
     private val failedWipes = mutableSetOf<WipeKind>()
 
@@ -70,9 +76,15 @@ class NoteWriteCoordinator @Inject constructor(scope: CoroutineScope) {
         return result
     }
 
+    /** Long operations retain cancellation from the caller, unlike editor saves. */
+    suspend fun <T> runCancellable(action: suspend () -> T): T {
+        val caller = checkNotNull(currentCoroutineContext()[Job])
+        return submit { withContext(caller) { action() } }.await()
+    }
+
     /** Serialize both wipe flows and retain the gate after a failed wipe. */
     suspend fun runWipe(kind: WipeKind, action: suspend () -> Boolean): Boolean = wipeMutex.withLock {
-        synchronized(lock) { wiping = true }
+        synchronized(lock) { wiping = true; _available.value = false }
         var succeeded = false
         try {
             succeeded = action()
@@ -83,6 +95,7 @@ class NoteWriteCoordinator @Inject constructor(scope: CoroutineScope) {
                     if (kind == WipeKind.APP) failedWipes.clear() else failedWipes.remove(kind)
                 } else failedWipes.add(kind)
                 wiping = failedWipes.isNotEmpty()
+                _available.value = !wiping
             }
         }
     }
@@ -93,11 +106,12 @@ class NoteWriteCoordinator @Inject constructor(scope: CoroutineScope) {
         val drained = CompletableDeferred<Unit>()
         synchronized(lock) {
             wiping = true
+            _available.value = false
             if (work.trySend(Work(execute = { drained.complete(Unit) }, reject = { drained.completeExceptionally(it) })).isFailure)
                 drained.completeExceptionally(IOException("Note writer is unavailable"))
         }
         drained.await()
     }
 
-    fun resumeAfterWipe() = synchronized(lock) { wiping = false }
+    fun resumeAfterWipe() = synchronized(lock) { wiping = false; _available.value = true }
 }

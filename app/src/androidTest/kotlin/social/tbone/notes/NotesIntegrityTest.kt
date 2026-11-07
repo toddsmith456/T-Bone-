@@ -8,6 +8,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -121,7 +123,9 @@ class NotesIntegrityTest {
             // Even subscribing while blocked must not recreate the default folder.
             assertTrue(bookmarks.folders.first().isEmpty())
             assertEquals(0, db.bookmarkDao().folderCount())
+            val afterWipe = async { withTimeout(5_000) { bookmarks.folders.first { it.isNotEmpty() } } }
             coordinator.resumeAfterWipe()
+            assertEquals("bookmarks", afterWipe.await().single().name)
             assertEquals("secret", bookmarks.createFolder("secret").name)
             assertEquals(2, db.bookmarkDao().folderCount())
         } finally { owner.cancel() }
