@@ -44,6 +44,8 @@ import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import social.tbone.media.MimeTypes
 import social.tbone.ui.components.LockBadge
 import social.tbone.ui.permissions.rememberPermissionRequester
@@ -92,15 +94,14 @@ fun VoiceRecorderScreen(
         val file = state.activeFile ?: return@rememberLauncherForActivityResult
         if (uri != null) {
             scope.launch {
-                val bytes = viewModel.readBytes(file)
-                if (bytes != null) {
-                    val ok = runCatching {
-                        context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) } != null
+                val ok = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openOutputStream(uri)?.use { output ->
+                            file.inputStream().use { input -> input.copyTo(output) }
+                        } != null
                     }.getOrDefault(false)
-                    status = if (ok) "saved" else "save failed"
-                } else {
-                    status = "save failed"
                 }
+                status = if (ok) "saved" else "save failed"
             }
         }
     }

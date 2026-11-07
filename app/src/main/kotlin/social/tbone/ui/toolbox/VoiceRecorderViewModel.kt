@@ -316,11 +316,6 @@ class VoiceRecorderViewModel @Inject constructor(
     }
 
     /** Reads the recorded file bytes (for save-to-device / sharing). */
-    suspend fun readBytes(file: File): ByteArray? =
-        withContext(Dispatchers.IO) {
-            runCatching { file.readBytes() }.getOrNull()
-        }
-
     private fun startTicker() {
         ticker?.cancel()
         ticker = viewModelScope.launch {
