@@ -509,10 +509,12 @@ class ProfileViewModel @Inject constructor(
     private fun toggleFollow(add: Boolean) {
         viewModelScope.launch {
           followMutations.mutex.withLock {
-            if (followMutations.paused) {
+            val mutationJob = checkNotNull(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job])
+            if (!followMutations.begin(mutationJob)) {
                 _messages.tryEmit("Follow list unavailable during a wipe")
                 return@launch
             }
+            try {
             _isFollowLoading.update { true }
             try {
                 val account = accountRepository.activeAccount.first() ?: return@launch
@@ -595,6 +597,7 @@ class ProfileViewModel @Inject constructor(
             } finally {
                 _isFollowLoading.update { false }
             }
+            } finally { followMutations.finish(mutationJob) }
           }
         }
     }

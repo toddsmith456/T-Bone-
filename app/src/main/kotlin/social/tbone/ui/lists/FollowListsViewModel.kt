@@ -205,7 +205,9 @@ class FollowListsViewModel @Inject constructor(
         val acct = account.value ?: return
         viewModelScope.launch {
           followMutations.mutex.withLock {
-            if (followMutations.paused) { say("Follow list unavailable during a wipe"); return@launch }
+            val mutationJob = checkNotNull(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job])
+            if (!followMutations.begin(mutationJob)) { say("Follow list unavailable during a wipe"); return@launch }
+            try {
             val isOffline = followsOfflineState.value?.enabled == true
             if (isOffline) {
                 val removed = offline.remove(ListType.FOLLOWS, acct.pubkey, pubkeyHex)
@@ -261,6 +263,7 @@ class FollowListsViewModel @Inject constructor(
                     }.onFailure { say("Signing failed") }
                 } finally { _onlineLoading.value = false }
             }
+            } finally { followMutations.finish(mutationJob) }
           }
         }
     }
@@ -285,7 +288,9 @@ class FollowListsViewModel @Inject constructor(
         val acct = account.value ?: return
         viewModelScope.launch {
           followMutations.mutex.withLock {
-            if (followMutations.paused) { say("Follow list unavailable during a wipe"); return@launch }
+            val mutationJob = checkNotNull(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job])
+            if (!followMutations.begin(mutationJob)) { say("Follow list unavailable during a wipe"); return@launch }
+            try {
             _onlineLoading.value = true
             try {
                 val signer = signerFactory.forActiveAccount() ?: run { say("No signer"); return@launch }
@@ -335,6 +340,7 @@ class FollowListsViewModel @Inject constructor(
                     say("Followed")
                 }.onFailure { say("Signing failed: ${it.message}") }
             } finally { _onlineLoading.value = false }
+            } finally { followMutations.finish(mutationJob) }
           }
         }
     }
@@ -515,7 +521,9 @@ class FollowListsViewModel @Inject constructor(
         val acct = account.value ?: return
         viewModelScope.launch {
           followMutations.mutex.withLock {
-            if (followMutations.paused) { say("Follow list unavailable during a wipe"); return@launch }
+            val mutationJob = checkNotNull(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job])
+            if (!followMutations.begin(mutationJob)) { say("Follow list unavailable during a wipe"); return@launch }
+            try {
             val isOffline = followsOfflineState.value?.enabled == true
             if (isOffline) {
                 if (replace) {
@@ -580,6 +588,7 @@ class FollowListsViewModel @Inject constructor(
                     say("Imported & published ${newEntries.size} follows")
                 }.onFailure { say("Import publish failed: ${it.message}") }
             }
+            } finally { followMutations.finish(mutationJob) }
           }
         }
     }

@@ -32,15 +32,33 @@ internal fun followTagsForToggle(
 class FollowMutationCoordinator @javax.inject.Inject constructor() {
     val mutex = kotlinx.coroutines.sync.Mutex()
     private val lastPublished = mutableMapOf<String, Event>()
-    var paused: Boolean = false
+    private val stateLock = Any()
+    @Volatile var paused: Boolean = false
         private set
+    private var activeJob: kotlinx.coroutines.Job? = null
 
-    suspend fun pauseForWipe() = mutex.withLock {
-        paused = true
-        lastPublished.clear()
+    /** Called inside mutex, before a potentially suspended relay/signer operation. */
+    fun begin(job: kotlinx.coroutines.Job): Boolean = synchronized(stateLock) {
+        if (paused) false else { activeJob = job; true }
     }
 
-    suspend fun resumeAfterWipe() = mutex.withLock { paused = false }
+    fun finish(job: kotlinx.coroutines.Job) = synchronized(stateLock) {
+        if (activeJob === job) activeJob = null
+    }
+
+    suspend fun pauseForWipe() {
+        synchronized(stateLock) {
+            paused = true
+            activeJob?.cancel(kotlinx.coroutines.CancellationException("wipe requested"))
+        }
+        // The cancellation is cooperative; wait for the active mutation's
+        // finally block before clearing the in-memory event cache.
+        mutex.withLock { lastPublished.clear() }
+    }
+
+    suspend fun resumeAfterWipe() = mutex.withLock {
+        synchronized(stateLock) { paused = false }
+    }
 
     // Both methods are called under mutex; this is intentionally an in-memory
     // safeguard, not a distributed transaction or a persistent relay receipt.

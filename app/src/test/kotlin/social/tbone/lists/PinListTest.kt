@@ -1,5 +1,7 @@
 package social.tbone.lists
 
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
@@ -72,6 +74,26 @@ class PinListTest {
         coordinator.pauseForWipe()
         assertEquals(true, coordinator.paused)
         assertEquals(old, coordinator.newest(owner, old))
+        coordinator.resumeAfterWipe()
+        assertEquals(false, coordinator.paused)
+    }
+
+
+    @Test fun wipeCancelsInFlightFollowMutationBeforeClearingCache() = kotlinx.coroutines.runBlocking {
+        val coordinator = FollowMutationCoordinator()
+        val started = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val mutation = launch {
+            coordinator.mutex.withLock {
+                val job = checkNotNull(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job])
+                assertEquals(true, coordinator.begin(job))
+                try { started.complete(Unit); kotlinx.coroutines.awaitCancellation() }
+                finally { coordinator.finish(job) }
+            }
+        }
+        started.await()
+        kotlinx.coroutines.withTimeout(3_000) { coordinator.pauseForWipe() }
+        assertEquals(true, mutation.isCancelled)
+        assertEquals(true, coordinator.paused)
         coordinator.resumeAfterWipe()
         assertEquals(false, coordinator.paused)
     }
