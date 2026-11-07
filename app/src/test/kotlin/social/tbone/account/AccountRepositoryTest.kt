@@ -269,6 +269,81 @@ class AccountRepositoryTest {
         assertEquals(setOf("fresh"), settings.hiddenUnlockedPubkeys.value)
     }
 
+    @Test
+    fun `startup distinguishes empty from corrupt and inconsistent account storage`() = runBlocking {
+        val accountsKey = stringPreferencesKey("accounts")
+        val activeKey = stringPreferencesKey("active_pubkey")
+        assertEquals(AccountStartupStatus.EMPTY, repository.startupStatus.first())
+        dataStore.edit { it[accountsKey] = "not json" }
+        assertEquals(AccountStartupStatus.UNREADABLE, repository.startupStatus.first())
+        dataStore.edit { it[accountsKey] = NostrJson.encodeToString(listOf(account("known"))); it[activeKey] = "missing" }
+        assertEquals(AccountStartupStatus.UNREADABLE, repository.startupStatus.first())
+        dataStore.edit { it[activeKey] = "known" }
+        assertEquals(AccountStartupStatus.READY, repository.startupStatus.first())
+        dataStore.edit { it.remove(accountsKey) }
+        assertEquals(AccountStartupStatus.UNREADABLE, repository.startupStatus.first())
+        dataStore.edit { it.remove(activeKey) }
+        assertEquals(AccountStartupStatus.EMPTY, repository.startupStatus.first())
+    }
+
+    @Test
+    fun `all account mutations refuse to replace malformed account json`() = runBlocking {
+        val key = stringPreferencesKey("accounts")
+        val active = stringPreferencesKey("active_pubkey")
+        val raw = "[{not a valid account}]"
+        dataStore.edit { it[key] = raw; it[active] = "existing" }
+        val operations: List<suspend () -> Unit> = listOf(
+            { repository.addAccount(account("new")) },
+            { repository.removeAccount("existing") },
+            { repository.updateAccount(account("existing")) },
+            { repository.updateAccount("existing") { it.copy(relays = emptyList()) } },
+            { repository.setActiveAccount("existing") },
+            { repository.setHidden("existing", true, "1234") },
+            { repository.unlockHiddenByPin("1234") },
+        )
+        for (operation in operations) {
+            var failed = false
+            try { operation() } catch (_: Exception) { failed = true }
+            assertTrue("mutation should reject corrupt accounts", failed)
+            assertEquals(raw, dataStore.data.first()[key])
+            assertEquals("existing", dataStore.data.first()[active])
+        }
+    }
+
+    @Test
+    fun `corrupt key map rolls back account removal and account addition`() = runBlocking {
+        repository.addAccount(account("existing"))
+        val accountsKey = stringPreferencesKey("accounts")
+        val keysKey = stringPreferencesKey("encrypted_keys")
+        val before = dataStore.data.first()[accountsKey]
+        dataStore.edit { it[keysKey] = "broken key map" }
+        try { repository.removeAccount("existing"); throw AssertionError("remove unexpectedly succeeded") } catch (_: Exception) { }
+        assertEquals(before, dataStore.data.first()[accountsKey])
+        assertEquals("broken key map", dataStore.data.first()[keysKey])
+        try { repository.addAccount(account("new"), byteArrayOf(1)); throw AssertionError("add unexpectedly succeeded") } catch (_: Exception) { }
+        assertEquals(before, dataStore.data.first()[accountsKey])
+        assertEquals("existing", dataStore.data.first()[stringPreferencesKey("active_pubkey")])
+        assertEquals("broken key map", dataStore.data.first()[keysKey])
+    }
+
+    @Test
+    fun `correct pin migrates every legacy match without changing other accounts`() = runBlocking {
+        val legacy = java.security.MessageDigest.getInstance("SHA-256").digest("1234".toByteArray()).joinToString("") { "%02x".format(it) }
+        val other = PinHasher.hash("4321")
+        val key = stringPreferencesKey("accounts")
+        val original = listOf(account("a").copy(isHidden = true, hiddenPinHash = legacy), account("b").copy(isHidden = true, hiddenPinHash = legacy), account("c").copy(isHidden = true, hiddenPinHash = other), account("visible"))
+        dataStore.edit { it[key] = NostrJson.encodeToString(original); it[stringPreferencesKey("active_pubkey")] = "visible" }
+        assertTrue(repository.unlockHiddenByPin("1234"))
+        val result = NostrJson.decodeFromString<List<Account>>(dataStore.data.first()[key]!!).associateBy { it.pubkey }
+        for (id in listOf("a", "b")) {
+            val hash = result.getValue(id).hiddenPinHash!!
+            assertFalse(PinHasher.isLegacy(hash))
+            assertTrue(PinHasher.verify("1234", hash))
+        }
+        assertEquals(other, result.getValue("c").hiddenPinHash)
+        assertEquals(setOf("a", "b", "visible"), repository.accounts.first().map { it.pubkey }.toSet())
+    }
+
     private fun account(pubkey: String, relays: List<String> = emptyList()) = Account(
         pubkey = pubkey,
         signerType = SignerType.AMBER,

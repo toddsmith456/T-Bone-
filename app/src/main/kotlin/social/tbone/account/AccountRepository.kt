@@ -21,6 +21,21 @@ private val KEY_ACCOUNTS = stringPreferencesKey("accounts")
 private val KEY_ACTIVE_PUBKEY = stringPreferencesKey("active_pubkey")
 private val KEY_ENCRYPTED_KEYS = stringPreferencesKey("encrypted_keys") // pubkey → base64(encrypted privkey)
 
+/** Distinguishes a new install from unreadable or inconsistent account data. */
+internal enum class AccountStartupStatus { EMPTY, READY, UNREADABLE }
+
+internal fun accountStartupStatus(prefs: Preferences): AccountStartupStatus {
+    val raw = prefs[KEY_ACCOUNTS]
+    val active = prefs[KEY_ACTIVE_PUBKEY]?.takeIf { it.isNotBlank() }
+    if (raw == null) return if (active == null) AccountStartupStatus.EMPTY else AccountStartupStatus.UNREADABLE
+    val accounts = try { NostrJson.decodeFromString<List<Account>>(raw) }
+        catch (_: kotlinx.serialization.SerializationException) { return AccountStartupStatus.UNREADABLE }
+        catch (_: IllegalArgumentException) { return AccountStartupStatus.UNREADABLE }
+    if (accounts.isEmpty() && active == null) return AccountStartupStatus.EMPTY
+    return if (active != null && accounts.any { it.pubkey == active }) AccountStartupStatus.READY
+        else AccountStartupStatus.UNREADABLE
+}
+
 /**
  * Persists and retrieves [Account] records using Jetpack DataStore.
  *
@@ -36,6 +51,8 @@ class AccountRepository @Inject constructor(
     private val appSettings: AppSettings,
 ) {
     private val hiddenVerification = Mutex()
+
+    internal val startupStatus: Flow<AccountStartupStatus> = dataStore.data.map(::accountStartupStatus)
 
     // Raw, unfiltered — used internally for hidden PIN lookup and migration.
     private val allAccounts: Flow<List<Account>> = dataStore.data.map { prefs ->

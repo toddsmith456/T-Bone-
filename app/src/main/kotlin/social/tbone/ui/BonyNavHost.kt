@@ -6,6 +6,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Text
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -33,8 +35,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.stateIn
 import social.tbone.account.AccountRepository
+import social.tbone.account.AccountStartupStatus
 import social.tbone.notifications.DeepLinkHandler
 import social.tbone.notifications.PendingNavigation
 import social.tbone.security.AppLockManager
@@ -193,6 +197,7 @@ fun BonyNavHost() {
                 CircularProgressIndicator(color = BonyColors.Accent, strokeWidth = 1.dp)
             }
         }
+        StartupState.AccountDataUnavailable -> AccountDataUnavailableScreen()
         is StartupState.Ready -> {
             val start = if ((startupState as StartupState.Ready).hasAccount) ROUTE_FEED else ROUTE_ONBOARDING
 
@@ -817,10 +822,24 @@ private fun WithBottomBar(
     }
 }
 
+/** Do not mistake unreadable existing accounts for a fresh installation. */
+@Composable
+internal fun AccountDataUnavailableScreen() {
+    Box(Modifier.fillMaxSize().background(BonyColors.Bg).padding(24.dp), contentAlignment = Alignment.Center) {
+        Text(
+            "Account data could not be read or the active account could not be found. " +
+                "Your saved data has not been intentionally deleted. Close and reopen the app; " +
+                "if the problem continues, seek help before clearing app data or reinstalling.",
+            color = BonyColors.Text,
+        )
+    }
+}
+
 // ── Startup ViewModel ─────────────────────────────────────────────────────────
 
 sealed interface StartupState {
     data object Loading : StartupState
+    data object AccountDataUnavailable : StartupState
     data class Ready(val hasAccount: Boolean) : StartupState
 }
 
@@ -829,8 +848,15 @@ class StartupViewModel @Inject constructor(
     accountRepository: AccountRepository,
     deepLinkHandler: DeepLinkHandler,
 ) : ViewModel() {
-    val startupState: StateFlow<StartupState> = accountRepository.activeAccount
-        .map { account -> StartupState.Ready(hasAccount = account != null) }
+    val startupState: StateFlow<StartupState> = accountRepository.startupStatus
+        .map { status ->
+            when (status) {
+                AccountStartupStatus.EMPTY -> StartupState.Ready(hasAccount = false)
+                AccountStartupStatus.READY -> StartupState.Ready(hasAccount = true)
+                AccountStartupStatus.UNREADABLE -> StartupState.AccountDataUnavailable
+            }
+        }
+        .catch { emit(StartupState.AccountDataUnavailable) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StartupState.Loading)
 
     val pendingNavigation: Flow<PendingNavigation> = deepLinkHandler.destinations
