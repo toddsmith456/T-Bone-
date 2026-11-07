@@ -82,6 +82,7 @@ class ProfileViewModel @Inject constructor(
     private val offlineLists: OfflineListRepository,
     private val muteRepository: MuteListRepository,
     private val listFetcher: RelayListFetcher,
+    private val followMutations: social.tbone.lists.FollowMutationCoordinator,
     private val pins: social.tbone.lists.PinListRepository,
 ) : ViewModel() {
 
@@ -506,6 +507,11 @@ class ProfileViewModel @Inject constructor(
 
     private fun toggleFollow(add: Boolean) {
         viewModelScope.launch {
+          followMutations.mutex.withLock {
+            if (followMutations.paused) {
+                _messages.tryEmit("Follow list unavailable during a wipe")
+                return@launch
+            }
             _isFollowLoading.update { true }
             try {
                 val account = accountRepository.activeAccount.first() ?: return@launch
@@ -532,7 +538,7 @@ class ProfileViewModel @Inject constructor(
                     _messages.tryEmit("Couldn't read the follow list from every relay — nothing changed")
                     return@launch
                 }
-                val latest = fetched.event
+                val latest = followMutations.newest(account.pubkey, fetched.event)
                 if ((latest?.createdAt ?: 0L) > System.currentTimeMillis() / 1000 + 59) {
                     _messages.tryEmit("Existing follow list has a future timestamp — nothing changed")
                     return@launch
@@ -576,6 +582,7 @@ class ProfileViewModel @Inject constructor(
                             _messages.tryEmit("No connected relays — nothing published")
                             return@onSuccess
                         }
+                        followMutations.published(account.pubkey, event)
                         accountRepository.updateAccount(account.pubkey) {
                             it.copy(
                                 follows = newEntries.map { e -> e.pubkey },
@@ -587,6 +594,7 @@ class ProfileViewModel @Inject constructor(
             } finally {
                 _isFollowLoading.update { false }
             }
+          }
         }
     }
 

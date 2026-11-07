@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withLock
 import social.tbone.account.Account
 import social.tbone.account.AccountRepository
 import social.tbone.account.FollowEntry
@@ -59,6 +60,7 @@ class FollowListsViewModel @Inject constructor(
     private val followerRepo: FollowerListRepository,
     private val signerFactory: NostrSignerFactory,
     private val listFetcher: social.tbone.lists.RelayListFetcher,
+    private val followMutations: social.tbone.lists.FollowMutationCoordinator,
     private val relayPool: social.tbone.nostr.relay.RelayPool,
     private val appSettings: social.tbone.settings.AppSettings,
     profileRepository: ProfileRepository,
@@ -202,6 +204,8 @@ class FollowListsViewModel @Inject constructor(
     fun unfollow(pubkeyHex: String) {
         val acct = account.value ?: return
         viewModelScope.launch {
+          followMutations.mutex.withLock {
+            if (followMutations.paused) { say("Follow list unavailable during a wipe"); return@launch }
             val isOffline = followsOfflineState.value?.enabled == true
             if (isOffline) {
                 val removed = offline.remove(ListType.FOLLOWS, acct.pubkey, pubkeyHex)
@@ -220,7 +224,7 @@ class FollowListsViewModel @Inject constructor(
                         say("Account or list mode changed — try again")
                         return@launch
                     }
-                    val latest = fetched.event
+                    val latest = followMutations.newest(acct.pubkey, fetched.event)
                     if ((latest?.createdAt ?: 0L) > System.currentTimeMillis() / 1000 + 59) {
                         say("Existing follow list has a future timestamp — nothing changed")
                         return@launch
@@ -248,7 +252,8 @@ class FollowListsViewModel @Inject constructor(
                         say("No connected relays — nothing published")
                         return@onSuccess
                     }
-                        accountRepository.updateAccount(acct.pubkey) {
+                        followMutations.published(acct.pubkey, ev)
+                    accountRepository.updateAccount(acct.pubkey) {
                             it.copy(follows = newEntries.map { e -> e.pubkey }, followEntries = newEntries)
                         }
                         _onlineFollowing.value = newEntries.map { ListEntry(it.pubkey, it.relay, it.petname) }
@@ -256,6 +261,7 @@ class FollowListsViewModel @Inject constructor(
                     }.onFailure { say("Signing failed") }
                 } finally { _onlineLoading.value = false }
             }
+          }
         }
     }
 
@@ -278,6 +284,8 @@ class FollowListsViewModel @Inject constructor(
     fun doFollowOnline(pubkeyHex: String) {
         val acct = account.value ?: return
         viewModelScope.launch {
+          followMutations.mutex.withLock {
+            if (followMutations.paused) { say("Follow list unavailable during a wipe"); return@launch }
             _onlineLoading.value = true
             try {
                 val signer = signerFactory.forActiveAccount() ?: run { say("No signer"); return@launch }
@@ -291,7 +299,7 @@ class FollowListsViewModel @Inject constructor(
                         say("Account or list mode changed — try again")
                         return@launch
                     }
-                    val latest = fetched.event
+                    val latest = followMutations.newest(acct.pubkey, fetched.event)
                     if ((latest?.createdAt ?: 0L) > System.currentTimeMillis() / 1000 + 59) {
                         say("Existing follow list has a future timestamp — nothing changed")
                         return@launch
@@ -319,6 +327,7 @@ class FollowListsViewModel @Inject constructor(
                         say("No connected relays — nothing published")
                         return@onSuccess
                     }
+                    followMutations.published(acct.pubkey, ev)
                     accountRepository.updateAccount(acct.pubkey) {
                         it.copy(follows = newEntries.map { it.pubkey }, followEntries = newEntries)
                     }
@@ -326,6 +335,7 @@ class FollowListsViewModel @Inject constructor(
                     say("Followed")
                 }.onFailure { say("Signing failed: ${it.message}") }
             } finally { _onlineLoading.value = false }
+          }
         }
     }
 
@@ -504,6 +514,8 @@ class FollowListsViewModel @Inject constructor(
     fun applyImport(parsed: ListFileFormat.Parsed, replace: Boolean) {
         val acct = account.value ?: return
         viewModelScope.launch {
+          followMutations.mutex.withLock {
+            if (followMutations.paused) { say("Follow list unavailable during a wipe"); return@launch }
             val isOffline = followsOfflineState.value?.enabled == true
             if (isOffline) {
                 if (replace) {
@@ -526,7 +538,7 @@ class FollowListsViewModel @Inject constructor(
                         say("Account or list mode changed — try again")
                         return@launch
                     }
-                    val latest = fetched.event
+                    val latest = followMutations.newest(acct.pubkey, fetched.event)
                     if ((latest?.createdAt ?: 0L) > System.currentTimeMillis() / 1000 + 59) {
                         say("Existing follow list has a future timestamp — nothing changed")
                         return@launch
@@ -562,11 +574,13 @@ class FollowListsViewModel @Inject constructor(
                         say("No connected relays — nothing published")
                         return@onSuccess
                     }
+                    followMutations.published(acct.pubkey, ev)
                     accountRepository.updateAccount(acct.pubkey) { it.copy(follows = newEntries.map { it.pubkey }, followEntries = newEntries) }
                     _onlineFollowing.value = newEntries.map { ListEntry(it.pubkey, it.relay, it.petname) }
                     say("Imported & published ${newEntries.size} follows")
                 }.onFailure { say("Import publish failed: ${it.message}") }
             }
+          }
         }
     }
 }

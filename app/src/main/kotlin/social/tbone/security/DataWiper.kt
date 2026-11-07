@@ -38,6 +38,7 @@ class DataWiper @Inject constructor(
     private val appSettings: social.tbone.settings.AppSettings,
     private val geohashCache: social.tbone.ui.toolbox.geohash.GeohashMessageCache,
     private val geohashMonitor: social.tbone.ui.toolbox.geohash.GeohashPinnedMonitor,
+    private val followMutations: social.tbone.lists.FollowMutationCoordinator,
 ) {
 
     /**
@@ -52,6 +53,7 @@ class DataWiper @Inject constructor(
           try {
             noteWrites.runWipe(social.tbone.notes.NoteWriteCoordinator.WipeKind.APP) {
             val steps = WipeSteps { name, error -> timber.log.Timber.e(error, "Wipe step failed: $name") }
+            steps.run("pause follow list mutations") { followMutations.pauseForWipe() }
             steps.run("pause geohash watchers") { geohashMonitor.pauseForWipe() }
             steps.run("pause and drain note writes") { noteWrites.pauseAndDrain() }
             steps.run("block and cancel calendar reminders") { calendarAlarms.beginSensitiveWipe() }
@@ -107,6 +109,7 @@ class DataWiper @Inject constructor(
                     context.startActivity(intent)
                 }
             }
+            if (!steps.failed) steps.run("resume follow list mutations") { followMutations.resumeAfterWipe() }
             if (!steps.failed) steps.run("resume geohash watchers") { geohashMonitor.resumeAfterWipe() }
             if (steps.failed) withContext(Dispatchers.Main) {
                 Toast.makeText(context, "Wipe incomplete. Keep the app locked and try again.", Toast.LENGTH_LONG).show()

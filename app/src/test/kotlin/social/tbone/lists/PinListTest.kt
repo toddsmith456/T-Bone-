@@ -61,4 +61,19 @@ class PinListTest {
         assertEquals(tag("p", "4".repeat(64)), result.last())
     }
 
+
+    @Test fun localFollowPublicationWinsOverStaleRelayUntilWipe() = kotlinx.coroutines.runBlocking {
+        val coordinator = FollowMutationCoordinator()
+        val owner = "1".repeat(64)
+        val old = Event("b".repeat(64), owner, 123, EventKind.FOLLOW_LIST, emptyList(), "", "")
+        val recent = old.copy(id = "a".repeat(64), createdAt = 124)
+        coordinator.published(owner, recent)
+        assertEquals(recent, coordinator.newest(owner, old))
+        coordinator.pauseForWipe()
+        assertEquals(true, coordinator.paused)
+        assertEquals(old, coordinator.newest(owner, old))
+        coordinator.resumeAfterWipe()
+        assertEquals(false, coordinator.paused)
+    }
+
 }
