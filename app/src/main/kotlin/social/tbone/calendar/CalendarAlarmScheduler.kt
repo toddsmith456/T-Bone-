@@ -35,8 +35,12 @@ class CalendarAlarmScheduler @Inject constructor(
 
     // A persisted gate survives process death during a wipe. Synchronizing the
     // scheduling and delivery entry points also prevents in-process races.
-    private var wipeBlocked = prefs().getBoolean("wipe_in_progress", false) ||
-        social.tbone.notes.PersistentWipeState(context).read().isNotEmpty()
+    private val wipeState = social.tbone.notes.PersistentWipeState(context)
+    private var wipeBlocked = prefs().getBoolean("wipe_in_progress", false) || wipeState.read().isNotEmpty()
+
+    // The durable request is written before the coordinator drains work. An
+    // already-created scheduler must respect it during that drain as well.
+    private fun isBlocked(): Boolean = wipeBlocked || wipeState.read().isNotEmpty()
 
     @Synchronized fun beginSensitiveWipe() {
         wipeBlocked = true
@@ -50,7 +54,7 @@ class CalendarAlarmScheduler @Inject constructor(
     }
 
     @Synchronized fun deliverIfAllowed(action: () -> Unit) {
-        if (!wipeBlocked) action()
+        if (!isBlocked()) action()
     }
 
     /** How far before the event start the reminder fires. */
@@ -62,7 +66,7 @@ class CalendarAlarmScheduler @Inject constructor(
      * a time; when it fires, [scheduleNextOccurrence] chains the following one.
      */
     @Synchronized fun rescheduleAll(events: List<CalendarEventUi>) {
-        if (wipeBlocked) return
+        if (isBlocked()) return
         val now = System.currentTimeMillis()
         val upcoming = events.mapNotNull { event ->
             val start = event.nextOccurrenceAtOrAfter(now) ?: return@mapNotNull null
@@ -79,7 +83,7 @@ class CalendarAlarmScheduler @Inject constructor(
 
     /** Schedules the occurrence of [event] that comes after [afterMillis]. */
     @Synchronized fun scheduleNextOccurrence(event: CalendarEventUi, afterMillis: Long) {
-        if (wipeBlocked) return
+        if (isBlocked()) return
         val start = event.nextOccurrenceAtOrAfter(afterMillis + 1) ?: return
         val now = System.currentTimeMillis()
         val lead = if (event.allDay) 0L else LEAD_MILLIS

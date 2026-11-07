@@ -17,10 +17,13 @@ class PersistentWipeStateTest {
         val state = PersistentWipeState(context)
         assertTrue(state.write(emptySet()))
         try {
+            val existingScheduler = CalendarAlarmScheduler(context)
             assertTrue(state.write(setOf(NoteWriteCoordinator.WipeKind.APP)))
             assertEquals(setOf(NoteWriteCoordinator.WipeKind.APP), PersistentWipeState(context).read())
             val scheduler = CalendarAlarmScheduler(context)
             var delivered = false
+            existingScheduler.deliverIfAllowed { delivered = true }
+            assertFalse(delivered)
             scheduler.deliverIfAllowed { delivered = true }
             assertFalse(delivered)
             assertTrue(state.write(emptySet()))
