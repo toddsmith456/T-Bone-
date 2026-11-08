@@ -192,7 +192,6 @@ fun SettingsScreen(
             expanded = sectionExpanded("appearance"),
             onToggle = { toggleSection("appearance") },
         )
-        IconSettings()
         SettingsPrivacySection(
             viewModel = viewModel,
             context = context,
@@ -1023,6 +1022,9 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
             }
         }
     }
+    // Launcher-icon presets close the section so they collapse together with
+    // the theme settings under UI declutter.
+    IconSettings()
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 }
 

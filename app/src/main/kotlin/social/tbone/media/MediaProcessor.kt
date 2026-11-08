@@ -55,12 +55,16 @@ data class PreparedMedia(
  *  - IMAGES: decoded and re-encoded as JPEG (which removes source EXIF),
  *    orientation applied, optionally compressed — with a quality loop that
  *    keeps the file under an optional byte cap (used for the 800 KB
- *    avatar/banner limit).
- *  - VIDEOS: optionally transcoded with Media3 Transformer (metadata removal
- *    is not guaranteed); unsupported sources fall back to a raw copy
- *    with their original MIME type and extension.
+ *    avatar/banner limit). Animated GIFs are the exception: their bytes are
+ *    copied unchanged so the animation survives the upload.
+ *  - VIDEOS: transcoded with Media3 Transformer whenever compression is
+ *    enabled — tall sources are downscaled to the upload profile, everything
+ *    is standardized to H.264/MP4. Unsupported sources fall back to a raw
+ *    copy with their original MIME type and extension.
  *  - AUDIO: copied unchanged by default; opt-in AAC/M4A compression is kept only
  *    when smaller, otherwise the original bytes, MIME type and extension win.
+ *  - FILES: any other file is copied unchanged and uploaded with its detected
+ *    MIME type and extension (application/octet-stream when unknown).
  *
  * Every entry point returns a [PreparedMedia] so callers always know the true
  * MIME type and extension of the prepared file.
@@ -91,7 +95,7 @@ object MediaProcessor {
      */
     const val VIDEO_MAX_BYTES = VideoUploadPolicy.MAX_BYTES
 
-    /** Videos taller than this are downscaled before upload; smaller ones are sent as-is. */
+    /** Videos taller than this are downscaled before upload; shorter ones are re-encoded at their original size. */
     private const val VIDEO_TARGET_HEIGHT = VideoUploadPolicy.TARGET_HEIGHT
 
     private val VIDEO_TOO_BIG_MESSAGE: String
@@ -102,22 +106,73 @@ object MediaProcessor {
     private const val AUDIO_COMPRESSED_MIME = "audio/mp4"
     private const val AUDIO_COMPRESSED_EXT = "m4a"
 
+    /** Safety ceiling for GIFs and arbitrary files: 500 MB. */
+    const val FILE_MAX_BYTES = VideoUploadPolicy.MAX_BYTES
+    private val FILE_TOO_BIG_MESSAGE: String get() = "file is larger than ${FILE_MAX_BYTES / (1024L * 1024L)} MB"
+
+    /**
+     * Prepares any file for upload. The bytes are copied unchanged — no
+     * re-encoding, no size cap beyond the 500 MB safety ceiling — and the
+     * MIME type is the provider's declaration, the extension-based guess, or
+     * `application/octet-stream` when both are unknown. Servers validate the
+     * declared type against the body, so both are reported honestly.
+     */
+    suspend fun prepareFileMedia(
+        context: Context,
+        uri: Uri,
+    ): PreparedMedia? {
+        val (declaredMime, nameExtension) = withContext(Dispatchers.IO) {
+            sourceMimeOf(context, uri) to MimeTypes.extensionFromFileName(sourceNameOf(context, uri))
+        }
+        val mime = declaredMime
+            ?: MimeTypes.mimeForExtension(nameExtension)
+            ?: "application/octet-stream"
+        val extension = nameExtension.ifBlank {
+            MimeTypes.extensionFor(mime).ifBlank { "bin" }
+        }
+        val sourceCopy = copyToCache(context, uri, extension, "tbone_file", FILE_MAX_BYTES, FILE_TOO_BIG_MESSAGE)
+            ?: return null
+        return PreparedMedia(sourceCopy, mime, extension)
+    }
+
     /** Re-encodes an image URI to a clean JPEG and reports it as such. */
     suspend fun prepareImageMedia(
         context: Context,
         uri: Uri,
         maxBytes: Long? = null,
         compress: Boolean = true,
-    ): PreparedMedia? = prepareImageFile(context, uri, maxBytes, compress)
-        ?.let { PreparedMedia(it, IMAGE_MIME, IMAGE_EXT) }
+    ): PreparedMedia? {
+        // Animated GIFs must stay GIFs: the JPEG pipeline keeps only the first
+        // frame, so a picked GIF is copied byte-for-byte instead. When a byte
+        // cap is set (the 800 KB avatar limit) an oversized GIF falls through
+        // to the static JPEG path, which can actually meet the cap.
+        if (isAnimatedGif(context, uri)) {
+            val sourceSize = sourceSizeOf(context, uri)
+            if (maxBytes == null || (sourceSize in 1..maxBytes)) {
+                copyToCache(context, uri, "gif", "tbone_gif", FILE_MAX_BYTES, FILE_TOO_BIG_MESSAGE)
+                    ?.let { return PreparedMedia(it, "image/gif", "gif") }
+            }
+        }
+        return prepareImageFile(context, uri, maxBytes, compress)
+            ?.let { PreparedMedia(it, IMAGE_MIME, IMAGE_EXT) }
+    }
+
+    /** True when [uri] looks like an animated GIF by MIME type or extension. */
+    private fun isAnimatedGif(context: Context, uri: Uri): Boolean {
+        val mime = sourceMimeOf(context, uri)
+        if (mime.equals("image/gif", ignoreCase = true)) return true
+        // Document providers sometimes report a generic MIME; trust the name.
+        return MimeTypes.extensionFromFileName(sourceNameOf(context, uri)) == "gif"
+    }
 
     /**
-     * Prepares a video for upload. Media3 Transformer is tried first when
-     * compression is enabled **and** the source is bigger than the 1280p
-     * profile. If the source codec/container is not supported, or the transcode
-     * does not actually shrink the file, the original bytes are uploaded with
-     * their detected MIME type and extension rather than rejecting a file the
-     * user's Blossom server may accept.
+     * Prepares a video for upload. Media3 Transformer runs whenever
+     * compression is enabled — tall sources are downscaled to the upload
+     * profile, everything is standardized to H.264/MP4. If the source
+     * codec/container is not supported, or the transcode does not actually
+     * shrink the file, the original bytes are uploaded with their detected
+     * MIME type and extension rather than rejecting a file the user's
+     * Blossom server may accept.
      */
     suspend fun prepareVideoMedia(
         context: Context,
@@ -136,16 +191,14 @@ object MediaProcessor {
         try {
             if (!compress) return PreparedMedia(sourceCopy, sourceMime, sourceExtension)
             val sourceHeight = withContext(Dispatchers.IO) { videoHeightOf(context, Uri.fromFile(sourceCopy)) }
-            val transcoded = if (VideoUploadPolicy.needsTranscode(sourceHeight)) {
-                try {
-                    transcodeVideo(context, Uri.fromFile(sourceCopy))
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (error: Exception) {
-                    Timber.w(error, "video transcode unavailable; uploading original file")
-                    null
-                }
-            } else null
+            val transcoded = try {
+                transcodeVideo(context, Uri.fromFile(sourceCopy), sourceHeight)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Timber.w(error, "video transcode unavailable; uploading original file")
+                null
+            }
             if (transcoded != null && transcoded.exists() && transcoded.length() > 0L &&
                 VideoUploadPolicy.preferTranscoded(transcoded.length(), sourceCopy.length()) &&
                 VideoUploadPolicy.isWithinCeiling(transcoded.length())) {
@@ -445,14 +498,23 @@ object MediaProcessor {
         }
     }.getOrDefault(0)
 
-    private suspend fun transcodeVideo(context: Context, uri: Uri): File? {
+    private suspend fun transcodeVideo(context: Context, uri: Uri, sourceHeight: Int): File? {
         val out = File(context.cacheDir, "tbone_video_comp_${java.util.UUID.randomUUID()}.mp4")
-        val presentation = Presentation.createForHeight(VIDEO_TARGET_HEIGHT)
-        val effects = Effects(emptyList(), listOf(presentation))
-        val edited = EditedMediaItem.Builder(MediaItem.fromUri(uri))
-            .setEffects(effects)
-            .setRemoveAudio(false)
-            .build()
+        // Downscale only — never upscale. Sources at or below the upload
+        // profile are re-encoded at their original resolution; the caller
+        // keeps the result only when it is genuinely smaller than the input.
+        val edited = if (VideoUploadPolicy.shouldDownscale(sourceHeight)) {
+            val presentation = Presentation.createForHeight(VIDEO_TARGET_HEIGHT)
+            val effects = Effects(emptyList(), listOf(presentation))
+            EditedMediaItem.Builder(MediaItem.fromUri(uri))
+                .setEffects(effects)
+                .setRemoveAudio(false)
+                .build()
+        } else {
+            EditedMediaItem.Builder(MediaItem.fromUri(uri))
+                .setRemoveAudio(false)
+                .build()
+        }
         val sequence = EditedMediaItemSequence(edited)
         val composition = Composition.Builder(sequence).build()
 

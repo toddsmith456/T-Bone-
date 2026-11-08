@@ -254,7 +254,7 @@ class ComposeViewModel @Inject constructor(
 
     /** Queue one upload; multiple picker results are processed sequentially and all URLs kept. */
     fun attachMedia(uri: Uri, kind: String) {
-        if (kind !in setOf("image", "video", "audio")) return
+        if (kind !in setOf("image", "video", "audio", "file")) return
         synchronized(uploadQueueLock) {
             pendingUploads += 1
             _uiState.update { it.copy(isUploading = true) }
@@ -289,13 +289,15 @@ class ComposeViewModel @Inject constructor(
                     request.uri,
                     compress = appSettings.blossomAudioCompress.value,
                 )
+                "file" -> MediaProcessor.prepareFileMedia(context, request.uri)
                 else -> null
             } ?: error("could not read ${request.kind} media")
             preparedFile = prepared.file
             val label = when (request.kind) {
                 "image" -> "Uploading image"
                 "video" -> "Uploading video"
-                else -> "Uploading audio"
+                "audio" -> "Uploading audio"
+                else -> "Uploading file"
             }
             val url = blossomUploader.upload(
                 file = prepared.file,
