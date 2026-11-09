@@ -212,8 +212,8 @@ class NotificationsRepository @Inject constructor(
                             }
                             event.kind == EventKind.METADATA -> profileRepository.processEvent(event)
                             msg.subscriptionId == pagedSubId -> ingestPaged(event)
-                            msg.subscriptionId == notifSubId -> ingest(event, fromOwnRefSub = false)
-                            msg.subscriptionId == ownRefSubId -> ingest(event, fromOwnRefSub = true)
+                            msg.subscriptionId == notifSubId -> ingest(event)
+                            msg.subscriptionId == ownRefSubId -> ingest(event)
                             else -> {
                                 val me = currentPubkey
                                 if (me != null && event.pubkey == me) {
@@ -283,49 +283,66 @@ class NotificationsRepository @Inject constructor(
         _referencedNotes.value = emptyMap()
         refFetchAttempts.clear()
 
+        // Seed "events I wrote" FIRST (authored notes directly, plus
+        // feed-cached notes filtered to this account). A reply/comment may
+        // never belong to the home feed, and a poll is not present in older
+        // caches; both still need tracking so reactions, reposts and votes
+        // can be attributed. The cache validation below needs this set.
+        val mine = (
+            eventRepository.getRecentAuthoredEvents(pubkey) +
+                eventRepository.getRecentFeedEvents(pubkey)
+            ).filter { it.pubkey == pubkey }
+            .distinctBy { it.id }
+        synchronized(lock) {
+            mine.forEach { myOwnEventIds[it.id] = it.createdAt }
+            pruneOwnEventIdsLocked()
+        }
+        resubscribeOwnRefs()
+
         // Restore the latest 200 notifications (not merely the last 24 hours)
-        // so the tab opens instantly with a useful, bounded history.
+        // so the tab opens instantly with a useful, bounded history — but
+        // re-validate every restored row through the same eligibility gate
+        // as live events. Rows written by older builds could contain events
+        // that never involved this account (relays that ignored the #p
+        // filter on the "load older" path); those are dropped here and
+        // deleted from the database, so a poisoned cache heals itself on
+        // the next launch instead of greeting the user forever.
         val cached = notificationDao.getLatest(pubkey, CACHE_LIMIT)
+        val invalidIds = mutableListOf<String>()
         synchronized(lock) {
             groupMap.clear()
             flatItems.clear()
             flatItemIds.clear()
-            cached.forEach { entity ->
-                runCatching { NostrJson.decodeFromString<FlatNotifItem>(entity.json) }
-                    .getOrNull()?.let { item ->
-                        flatItems.add(item)
-                        flatItemIds.add(item.id)
-                    }
+        }
+        for (entity in cached) {
+            val item = runCatching {
+                NostrJson.decodeFromString<FlatNotifItem>(entity.json)
+            }.getOrNull()
+            if (item == null || !isStillValid(item, pubkey)) {
+                invalidIds.add(entity.id)
+                continue
             }
+            synchronized(lock) {
+                flatItems.add(item)
+                flatItemIds.add(item.id)
+            }
+        }
+        synchronized(lock) {
             flatItems.sortByDescending { it.timestamp }
             latestNotifTs = flatItems.maxOfOrNull { it.timestamp } ?: 0L
             rebuildGroupsFromFlatLocked()
         }
         _hasMore.value = synchronized(lock) { flatItems.isNotEmpty() }
         rebuild()
+        if (invalidIds.isNotEmpty()) {
+            scope.launch {
+                runCatching { notificationDao.deleteByIds(pubkey, invalidIds) }
+            }
+        }
 
         // Enforce the per-account cache bound even if this database was upgraded
         // from a build that retained an unbounded/24-hour time window.
         scope.launch { notificationDao.keepLatest(pubkey, CACHE_LIMIT) }
-
-        // Seed "events I wrote" from the local cache (feed cache includes other
-        // people's notes — keep only this account's events).
-        scope.launch {
-            // Load authored notes directly as well as feed-cached notes. A
-            // reply/comment may never belong to the home feed, and a poll is
-            // not present in older caches; both still need to be tracked so
-            // reactions, reposts and votes can be attributed after restart.
-            val mine = (
-                eventRepository.getRecentAuthoredEvents(pubkey) +
-                    eventRepository.getRecentFeedEvents(pubkey)
-                ).filter { it.pubkey == pubkey }
-                .distinctBy { it.id }
-            synchronized(lock) {
-                mine.forEach { myOwnEventIds[it.id] = it.createdAt }
-                pruneOwnEventIdsLocked()
-            }
-            resubscribeOwnRefs()
-        }
 
         subscribeNotifications(pubkey)
 
@@ -410,16 +427,15 @@ class NotificationsRepository @Inject constructor(
 
     // ── Ingestion ─────────────────────────────────────────────────────────────
 
-    private suspend fun ingest(event: Event, fromOwnRefSub: Boolean) {
+    private suspend fun ingest(event: Event) {
         val me = currentPubkey ?: return
         if (event.pubkey == me) {
             rememberOwnEvent(event)
             return
         }
-        // Reposts may omit the p-tag; e-tag-subscription finds are by definition
-        // about one of your notes.
-        val hasPTag = event.parsedTags.any { it.name == "p" && it.value() == me }
-        if (!hasPTag && !fromOwnRefSub && event.kind != EventKind.REPOST) return
+        // No relay-side filtering is trusted here: mergeEvent classifies the
+        // event through classifyNotification, which requires the event
+        // itself to prove it involves this account.
         synchronized(lock) {
             if (seenEvents.get(event.id) != null) return
             seenEvents.put(event.id, true)
@@ -442,52 +458,71 @@ class NotificationsRepository @Inject constructor(
         }
     }
 
+    /**
+     * Classifies [event] through the shared eligibility gate and merges it.
+     * Every entry point (live subscription, own-refs subscription, and the
+     * "load older" pages) funnels through here, so no path can create a
+     * notification for an event that does not provably involve the account —
+     * regardless of what any relay chose to send.
+     */
     private suspend fun mergeEvent(event: Event): FlatNotifItem? {
         val me = currentPubkey ?: return null
-        return when (event.kind) {
-            EventKind.REACTION, EventKind.REPOST -> {
+        val ownIds = resolveOwnIds(event, me)
+        return when (classifyNotification(event, me) { it in ownIds }) {
+            NotificationClass.REACTION -> {
                 val refId = event.parsedTags.lastOrNull { it.name == "e" }?.value() ?: return null
-                val cached = eventRepository.getById(refId)
-                val isOwn = cached?.pubkey == me ||
-                    synchronized(lock) { refId in myOwnEventIds }
-                if (!isOwn) return null
-                synchronized(lock) {
-                    if (event.kind == EventKind.REACTION) mergeReactionLocked(event, refId)
-                    else mergeRepostLocked(event, refId)
-                }
+                synchronized(lock) { mergeReactionLocked(event, refId) }
             }
-            EventKind.TEXT_NOTE, EventKind.COMMENT -> {
-                // NIP-22 comments use the same q/e reply semantics as text
-                // notes, but were previously discarded before this point.
-                val quoteIds = (event.parsedTags.filter { it.name == "q" }.mapNotNull { it.value() } +
-                    extractInlineQuoteIds(event.content)).distinct()
-                // A p tag can mention us while quoting someone else. Only call it
-                // a quote of our note when ownership is actually established.
-                val quoteId = quoteIds.firstOrNull { id ->
-                    synchronized(lock) { id in myOwnEventIds } || eventRepository.getById(id)?.pubkey == me
-                }
-                val replyId = event.parsedTags.replyEventId
-                val item = synchronized(lock) {
-                    when {
-                        quoteId != null -> mergeQuoteLocked(event, quoteId)
-                        replyId != null -> mergeReplyLocked(event, replyId)
-                        else -> mergeMentionLocked(event)
-                    }
-                }
+            NotificationClass.REPOST -> {
+                val refId = event.parsedTags.lastOrNull { it.name == "e" }?.value() ?: return null
+                synchronized(lock) { mergeRepostLocked(event, refId) }
+            }
+            NotificationClass.VOTE -> {
+                val pollId = Nip88.getPollEventId(event) ?: return null
+                synchronized(lock) { mergeVoteLocked(event, pollId) }
+            }
+            NotificationClass.QUOTE -> {
+                val quoteId = notificationQuoteIds(event).firstOrNull { it in ownIds } ?: return null
+                val item = synchronized(lock) { mergeQuoteLocked(event, quoteId) }
                 scope.launch { eventRepository.save(event, "") }
                 item
             }
-            EventKind.POLL_RESPONSE -> {
-                // Only notify when the poll being voted on is ours.
-                val pollId = Nip88.getPollEventId(event) ?: return null
-                val cached = eventRepository.getById(pollId)
-                val isOwn = cached?.pubkey == me ||
-                    synchronized(lock) { pollId in myOwnEventIds }
-                if (!isOwn) return null
-                synchronized(lock) { mergeVoteLocked(event, pollId) }
+            NotificationClass.REPLY -> {
+                val replyId = event.parsedTags.replyEventId ?: return null
+                val item = synchronized(lock) { mergeReplyLocked(event, replyId) }
+                scope.launch { eventRepository.save(event, "") }
+                item
             }
-            else -> null
+            NotificationClass.MENTION -> {
+                val item = synchronized(lock) { mergeMentionLocked(event) }
+                scope.launch { eventRepository.save(event, "") }
+                item
+            }
+            null -> null
         }
+    }
+
+    /**
+     * Resolves which of the events referenced by [event] belong to [me]:
+     * the tracked own-event set first, then the local event cache for the
+     * few ids not already known.
+     */
+    private suspend fun resolveOwnIds(event: Event, me: String): Set<String> {
+        val candidates = buildSet {
+            addAll(notificationReferencedIds(event))
+            addAll(notificationQuoteIds(event))
+            Nip88.getPollEventId(event)?.let { add(it) }
+        }
+        if (candidates.isEmpty()) return emptySet()
+        val own = HashSet<String>()
+        val unknown = synchronized(lock) {
+            candidates.filterTo(own) { it in myOwnEventIds }
+            candidates - own
+        }
+        for (id in unknown) {
+            if (eventRepository.getById(id)?.pubkey == me) own.add(id)
+        }
+        return own
     }
 
     private fun noteSeen(event: Event) {
@@ -497,6 +532,39 @@ class NotificationsRepository @Inject constructor(
         _hasMore.value = true
         rebuildSignals.trySend(Unit)
         updateUnread()
+    }
+
+    /**
+     * Re-checks a cache-restored row before it is shown again. Text-note
+     * rows carry their event, so they are held to exactly the live standard
+     * (classifyNotification must agree with the row's type). Reaction,
+     * repost and vote rows carry only a referenced id: they are dropped
+     * only when that note is positively known to be someone else's, never
+     * merely because it aged out of the local event cache.
+     */
+    private suspend fun isStillValid(item: FlatNotifItem, me: String): Boolean {
+        if (item.actorPubkey == me) return false
+        return when (item.type) {
+            NotifType.MENTION, NotifType.REPLY, NotifType.QUOTE -> {
+                val note = item.note ?: return false
+                if (note.pubkey == me) return false
+                val ownIds = resolveOwnIds(note, me)
+                when (classifyNotification(note, me) { it in ownIds }) {
+                    NotificationClass.MENTION -> item.type == NotifType.MENTION
+                    NotificationClass.REPLY -> item.type == NotifType.REPLY
+                    NotificationClass.QUOTE -> item.type == NotifType.QUOTE
+                    else -> false
+                }
+            }
+            NotifType.REACTION, NotifType.REPOST, NotifType.VOTE -> {
+                val refId = item.referencedEventId ?: return false
+                val knownOwn = synchronized(lock) { refId in myOwnEventIds }
+                if (knownOwn) return true
+                val author = eventRepository.getById(refId)?.pubkey
+                author == null || author == me
+            }
+            NotifType.CALENDAR -> true
+        }
     }
 
     /** Persist a merged notification and keep only the latest 200 rows/account. */

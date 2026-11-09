@@ -121,7 +121,7 @@ val List<Tag>.rootEventId: String?
  * Returns the NIP-10 marker ("root", "reply", "mention") for an "e" tag.
  * Marker may be at index 3 (relay hint present) or index 2 (relay hint omitted).
  */
-private fun Tag.nip10Marker(): String? {
+internal fun Tag.nip10Marker(): String? {
     val markers = setOf("root", "reply", "mention")
     return listOfNotNull(value(3), value(2)).firstOrNull { it in markers }
 }

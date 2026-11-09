@@ -53,6 +53,9 @@ interface NotificationDao {
     )
     suspend fun keepLatest(pubkey: String, keep: Int)
 
+    @Query("DELETE FROM notifications WHERE pubkey = :pubkey AND id IN (:ids)")
+    suspend fun deleteByIds(pubkey: String, ids: List<String>)
+
     @Query("DELETE FROM notifications WHERE pubkey = :pubkey")
     suspend fun clear(pubkey: String)
 }
