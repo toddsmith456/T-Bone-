@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   build:
-    if: github.ref == 'refs/heads/beta' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build beta]'))
+    if: github.ref == 'refs/heads/beta' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build beta]') || contains(github.event.head_commit.message, '[build artifacts]'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
