@@ -39,6 +39,8 @@ import social.tbone.reactions.PollsRepository
 import social.tbone.reactions.RepliesRepository
 import social.tbone.settings.AppSettings
 import social.tbone.settings.ContentFilter
+import social.tbone.settings.HideReason
+import social.tbone.settings.NsfwMode
 import social.tbone.Tunables
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.add
@@ -75,6 +77,10 @@ enum class FeedTab { HOME, CLOCK, SUGGESTED, GLOBAL }
 
 data class FeedUiState(
     val events: List<Event> = emptyList(),
+    /** Visible notes interleaved with grouped markers for hidden notes. */
+    val feedItems: List<FeedListItem> = emptyList(),
+    /** How many notes the content filters removed from this feed. */
+    val hiddenCount: Int = 0,
     val isLoading: Boolean = true,
     val error: String? = null,
     val globalOlderLoading: Boolean = false,
@@ -87,6 +93,25 @@ data class FeedUiState(
     val suggestedAuthors: Int = 0,
     val suggestedTotal: Int = 0,
     val suggestedLoading: Boolean = false,
+)
+
+/** One row of the feed list: a note, or a collapsed group of hidden notes. */
+sealed interface FeedListItem {
+    val key: String
+    data class Note(val event: Event) : FeedListItem {
+        override val key: String get() = event.id
+    }
+    data class HiddenGroup(
+        val entries: List<HiddenEntry>,
+        override val key: String,
+    ) : FeedListItem
+}
+
+/** A hidden note's identity + why it was hidden (never its content). */
+data class HiddenEntry(
+    val eventId: String,
+    val pubkey: String,
+    val reason: HideReason,
 )
 
 private enum class GlobalPageKind { OLDER, NEWER }
@@ -364,11 +389,11 @@ class FeedViewModel @Inject constructor(
         viewModelScope.launch {
             combine(
                 muteRepository.effectiveMuted,
-                appSettings.hideNsfw,
+                appSettings.nsfwMode,
                 appSettings.hideWords,
             ) { _, _, _ -> Unit }.collect {
                 val snapshot = synchronized(feedEvents) { feedEvents.take(feedEventLimit()) }
-                _uiState.update { state -> state.copy(events = applyContentFilter(snapshot)) }
+                _uiState.update { state -> state.withContentFilter(applyContentFilter(snapshot)) }
             }
         }
     }
@@ -420,8 +445,7 @@ class FeedViewModel @Inject constructor(
             globalVisibleLimit = (globalVisibleLimit + GLOBAL_PAGE_SIZE).coerceAtMost(MAX_GLOBAL_EVENTS)
             val snapshot = synchronized(feedEvents) { feedEvents.take(feedEventLimit()) }
             _uiState.update { state ->
-                state.copy(
-                    events = applyContentFilter(snapshot),
+                state.withContentFilter(applyContentFilter(snapshot)).copy(
                     globalOlderLoading = false,
                     globalCanLoadOlder = globalVisibleLimit < MAX_GLOBAL_EVENTS &&
                         (prefetchedCount > globalVisibleLimit || state.globalCanLoadOlder),
@@ -621,7 +645,7 @@ class FeedViewModel @Inject constructor(
 
         val snapshot = synchronized(feedEvents) { feedEvents.take(feedEventLimit()) }
         if (incoming.isNotEmpty() || request.kind == GlobalPageKind.NEWER) {
-            _uiState.update { state -> state.copy(events = applyContentFilter(snapshot)) }
+            _uiState.update { state -> state.withContentFilter(applyContentFilter(snapshot)) }
         }
         if (incoming.isNotEmpty()) {
             fetchQuotesForEvents(incoming)
@@ -679,7 +703,7 @@ class FeedViewModel @Inject constructor(
         focusedEventId = event.id
         synchronized(feedEvents) { feedEvents.add(event) }
         val visible = listOf(event) + _uiState.value.events.filterNot { it.id == event.id }
-        _uiState.update { it.copy(events = applyContentFilter(visible)) }
+        _uiState.update { it.withContentFilter(applyContentFilter(visible)) }
         fetchQuotesForEvents(listOf(event))
         fetchProfilesForEvents(listOf(event))
         reactionsRepository.subscribeTo(listOf(event.id))
@@ -701,33 +725,73 @@ class FeedViewModel @Inject constructor(
      * Applies content filtering (blocked pubkeys, NSFW, hidden words) to a
      * list of events before it reaches the UI.
      */
-    private fun applyContentFilter(events: List<social.tbone.nostr.Event>): List<social.tbone.nostr.Event> {
+    private data class ContentFilterResult(
+        val events: List<Event>,
+        val items: List<FeedListItem>,
+        val hiddenCount: Int,
+    )
+
+    private fun FeedUiState.withContentFilter(result: ContentFilterResult): FeedUiState =
+        copy(events = result.events, feedItems = result.items, hiddenCount = result.hiddenCount)
+
+    /**
+     * Applies content filtering (blocked pubkeys, NSFW mode, hidden words) to
+     * a list of events before it reaches the UI. Visible notes keep their
+     * order; consecutive hidden notes collapse into one [FeedListItem.HiddenGroup]
+     * so a filtered timeline never looks identical to a quiet one.
+     */
+    private fun applyContentFilter(events: List<social.tbone.nostr.Event>): ContentFilterResult {
         // Defense in depth: relay filters and event dispatch both restrict the
         // feed, but cached/side-loaded data must also never surface NIP-17 or
         // its NIP-59 wrappers in the public timeline.
         val publicEvents = events.filterNot { EventKind.isPrivateMessaging(it.kind) }.distinctBy { it.id }
         val blocked = muteRepository.effectiveMuted.value
-        val hideNsfw = appSettings.hideNsfw.value
+        val nsfwMode = appSettings.nsfwMode.value
         val hideWords = appSettings.hideWords.value
         val contextEvents = synchronized(feedEvents) { feedEvents.associateBy { it.id } } + _quotedEvents.value
-        val filtered = if (blocked.isEmpty() && !hideNsfw && hideWords.isEmpty()) {
-            publicEvents
-        } else {
-            publicEvents.filter {
-                !ContentFilter.shouldHide(it, blocked, hideNsfw, hideWords, contextEvents)
+        val filtersActive = blocked.isNotEmpty() || nsfwMode == NsfwMode.HIDE || hideWords.isNotEmpty()
+
+        val visible = mutableListOf<Event>()
+        val items = mutableListOf<FeedListItem>()
+        val pendingHidden = mutableListOf<HiddenEntry>()
+        fun flushHidden() {
+            if (pendingHidden.isNotEmpty()) {
+                items += FeedListItem.HiddenGroup(pendingHidden.toList(), "hidden-" + pendingHidden.first().eventId)
+                pendingHidden.clear()
             }
         }
+        for (event in publicEvents) {
+            val reason = if (filtersActive) {
+                ContentFilter.hideReason(event, blocked, nsfwMode, hideWords, contextEvents)
+            } else {
+                null
+            }
+            if (reason == null) {
+                flushHidden()
+                visible += event
+                items += FeedListItem.Note(event)
+            } else {
+                pendingHidden += HiddenEntry(event.id, event.pubkey, reason)
+            }
+        }
+        flushHidden()
+        val hiddenCount = items.filterIsInstance<FeedListItem.HiddenGroup>().sumOf { it.entries.size }
+
         val focused = focusedEventId?.let { id ->
             publicEvents.firstOrNull { it.id == id }
                 ?: synchronized(feedEvents) { feedEvents.firstOrNull { it.id == id } }
         }
         val focusedIsAllowed = focused?.let {
-            !ContentFilter.shouldHide(it, blocked, hideNsfw, hideWords, contextEvents)
+            !ContentFilter.shouldHide(it, blocked, nsfwMode, hideWords, contextEvents)
         } == true
-        return if (focused != null && focusedIsAllowed && filtered.none { it.id == focused.id }) {
-            listOf(focused) + filtered
+        return if (focused != null && focusedIsAllowed && visible.none { it.id == focused.id }) {
+            ContentFilterResult(
+                events = listOf(focused) + visible,
+                items = listOf(FeedListItem.Note(focused)) + items,
+                hiddenCount = hiddenCount,
+            )
         } else {
-            filtered
+            ContentFilterResult(visible, items, hiddenCount)
         }
     }
 
@@ -816,7 +880,7 @@ class FeedViewModel @Inject constructor(
                     feedEvents.removeAll { it.pubkey !in allowed }
                     feedEvents.take(feedEventLimit())
                 }
-                _uiState.update { state -> state.copy(events = applyContentFilter(snapshot)) }
+                _uiState.update { state -> state.withContentFilter(applyContentFilter(snapshot)) }
             }
 
             if (isSameAccount) {
@@ -831,7 +895,7 @@ class FeedViewModel @Inject constructor(
                             feedEvents.addAll(cached)
                             feedEvents.take(feedEventLimit())
                         }
-                        _uiState.update { state -> state.copy(events = applyContentFilter(snapshot)) }
+                        _uiState.update { state -> state.withContentFilter(applyContentFilter(snapshot)) }
                         fetchProfilesForEvents(cached)
                         // Cached home rows need the same quote lookup as live
                         // relay rows; otherwise cards remain blank until tapped.
@@ -1110,8 +1174,7 @@ class FeedViewModel @Inject constructor(
             feedEvents.toList()
         }
         _uiState.update {
-            it.copy(
-                events = applyContentFilter(kept),
+            it.withContentFilter(applyContentFilter(kept)).copy(
                 clockAnchor = anchor,
                 isLoading = kept.isEmpty(),
                 error = null,
@@ -1536,8 +1599,7 @@ class FeedViewModel @Inject constructor(
             globalOlderCursor = synchronized(feedEvents) { feedEvents.lastOrNull()?.createdAt }
         }
         _uiState.update { state ->
-            state.copy(
-                events = applyContentFilter(snapshot),
+            state.withContentFilter(applyContentFilter(snapshot)).copy(
                 globalCanLoadOlder = if (_currentFeed.value == FeedTab.GLOBAL && snapshot.size >= GLOBAL_PAGE_SIZE) {
                     true
                 } else state.globalCanLoadOlder,
@@ -1558,7 +1620,7 @@ class FeedViewModel @Inject constructor(
             feedEvents.addAll(events)
             feedEvents.take(feedEventLimit())
         }
-        _uiState.update { state -> state.copy(events = applyContentFilter(snapshot)) }
+        _uiState.update { state -> state.withContentFilter(applyContentFilter(snapshot)) }
         _scrollToTop.tryEmit(Unit)
         fetchQuotesForEvents(events)
         fetchProfilesForEvents(events)

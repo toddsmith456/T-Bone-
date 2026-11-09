@@ -18,9 +18,9 @@ import javax.inject.Inject
 /** Snapshot of the content filters, read anywhere in the UI. */
 data class ContentFilterData(
     val blockedPubkeys: Set<String> = emptySet(),
-    val hideNsfw: Boolean = false,
-    val bleepWords: Set<String> = emptySet(),
-    val hideWords: Set<String> = emptySet(),
+    val nsfwMode: NsfwMode = NsfwMode.OFF,
+    val bleepWords: Set<FilterWord> = emptySet(),
+    val hideWords: Set<FilterWord> = emptySet(),
 ) {
     val hasBleep: Boolean get() = bleepWords.isNotEmpty()
 }
@@ -34,11 +34,11 @@ class ContentFilterViewModel @Inject constructor(
 ) : ViewModel() {
     val data: StateFlow<ContentFilterData> = combine(
         muteRepository.effectiveMuted,
-        appSettings.hideNsfw,
+        appSettings.nsfwMode,
         appSettings.bleepWords,
         appSettings.hideWords,
-    ) { blocked, nsfw, bleep, hide ->
-        ContentFilterData(blocked, nsfw, bleep, hide)
+    ) { blocked, nsfwMode, bleep, hide ->
+        ContentFilterData(blocked, nsfwMode, bleep, hide)
     }.stateIn(viewModelScope, SharingStarted.Eagerly, ContentFilterData())
 }
 

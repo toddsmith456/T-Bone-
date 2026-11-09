@@ -127,7 +127,7 @@ class ProfileViewModel @Inject constructor(
         val byId = notes.associateBy { it.id } + quotes
         pins.ids(lists[pubkey]).mapNotNull { byId[it] }.filterNot { event ->
             social.tbone.settings.ContentFilter.shouldHide(event, muteRepository.effectiveMuted.value,
-                appSettings.hideNsfw.value, appSettings.hideWords.value, byId)
+                appSettings.nsfwMode.value, appSettings.hideWords.value, byId)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -324,7 +324,7 @@ class ProfileViewModel @Inject constructor(
         viewModelScope.launch {
             combine(
                 muteRepository.effectiveMuted,
-                appSettings.hideNsfw,
+                appSettings.nsfwMode,
                 appSettings.hideWords,
             ) { _, _, _ -> Unit }.collect { rebuildProfileFeed() }
         }
@@ -356,7 +356,7 @@ class ProfileViewModel @Inject constructor(
             social.tbone.settings.ContentFilter.shouldHide(
                 event,
                 muteRepository.effectiveMuted.value,
-                appSettings.hideNsfw.value,
+                appSettings.nsfwMode.value,
                 appSettings.hideWords.value,
                 contextEvents,
             )

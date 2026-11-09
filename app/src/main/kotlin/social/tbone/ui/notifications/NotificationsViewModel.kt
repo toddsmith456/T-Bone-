@@ -51,17 +51,17 @@ class NotificationsViewModel @Inject constructor(
     private data class NotificationFilterConfig(
         val enabled: Set<NotifFilter>,
         val blocked: Set<String>,
-        val hideNsfw: Boolean,
-        val hideWords: Set<String>,
+        val nsfwMode: social.tbone.settings.NsfwMode,
+        val hideWords: Set<social.tbone.settings.FilterWord>,
     )
 
     private val filterConfig = combine(
         _enabledFilters,
         muteRepository.effectiveMuted,
-        appSettings.hideNsfw,
+        appSettings.nsfwMode,
         appSettings.hideWords,
-    ) { enabled, blocked, hideNsfw, hideWords ->
-        NotificationFilterConfig(enabled, blocked, hideNsfw, hideWords)
+    ) { enabled, blocked, nsfwMode, hideWords ->
+        NotificationFilterConfig(enabled, blocked, nsfwMode, hideWords)
     }
 
     private fun notificationVisible(
@@ -75,7 +75,7 @@ class NotificationsViewModel @Inject constructor(
         return !ContentFilter.shouldHide(
             note,
             config.blocked,
-            config.hideNsfw,
+            config.nsfwMode,
             config.hideWords,
             referencedEvents,
         )

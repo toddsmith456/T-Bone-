@@ -22,6 +22,9 @@ import social.tbone.lists.RelayListFetcher
 import social.tbone.nostr.EventKind
 import social.tbone.security.AppLockManager
 import social.tbone.settings.AppSettings
+import social.tbone.settings.FilterWord
+import social.tbone.settings.NsfwMode
+import social.tbone.settings.WordMatchMode
 import social.tbone.settings.AvatarMode
 import social.tbone.settings.ImageLoadMode
 import social.tbone.settings.VideoPlaybackMode
@@ -138,9 +141,9 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UiTheme.BONY)
 
     // ── content filters ─────────────────────────────────────────────────────
-    val hideNsfw: StateFlow<Boolean> = appSettings.hideNsfw
-    val bleepWords: StateFlow<Set<String>> = appSettings.bleepWords
-    val hideWords: StateFlow<Set<String>> = appSettings.hideWords
+    val nsfwMode: StateFlow<NsfwMode> = appSettings.nsfwMode
+    val bleepWords: StateFlow<Set<FilterWord>> = appSettings.bleepWords
+    val hideWords: StateFlow<Set<FilterWord>> = appSettings.hideWords
 
     // ── blossom media uploads ────────────────────────────────────────────────
     val blossomServers: StateFlow<Set<String>> = appSettings.blossomServers
@@ -308,20 +311,28 @@ class SettingsViewModel @Inject constructor(
 
 
 
-    fun toggleHideNsfw() {
-        viewModelScope.launch { appSettings.setHideNsfw(!appSettings.hideNsfw.value) }
+    fun setNsfwMode(mode: NsfwMode) {
+        viewModelScope.launch { appSettings.setNsfwMode(mode) }
     }
-    fun addBleepWord(word: String) {
-        viewModelScope.launch { appSettings.addBleepWord(word) }
+    fun addBleepWord(word: String, mode: WordMatchMode = WordMatchMode.WHOLE_WORD) {
+        viewModelScope.launch { appSettings.addBleepWord(word, mode) }
     }
-    fun removeBleepWord(word: String) {
+    fun removeBleepWord(word: FilterWord) {
         viewModelScope.launch { appSettings.removeBleepWord(word) }
     }
-    fun addHideWord(word: String) {
-        viewModelScope.launch { appSettings.addHideWord(word) }
+    fun toggleBleepWordMode(word: FilterWord) {
+        val next = if (word.mode == WordMatchMode.WHOLE_WORD) WordMatchMode.ANYWHERE else WordMatchMode.WHOLE_WORD
+        viewModelScope.launch { appSettings.setBleepWordMode(word, next) }
     }
-    fun removeHideWord(word: String) {
+    fun addHideWord(word: String, mode: WordMatchMode = WordMatchMode.WHOLE_WORD) {
+        viewModelScope.launch { appSettings.addHideWord(word, mode) }
+    }
+    fun removeHideWord(word: FilterWord) {
         viewModelScope.launch { appSettings.removeHideWord(word) }
+    }
+    fun toggleHideWordMode(word: FilterWord) {
+        val next = if (word.mode == WordMatchMode.WHOLE_WORD) WordMatchMode.ANYWHERE else WordMatchMode.WHOLE_WORD
+        viewModelScope.launch { appSettings.setHideWordMode(word, next) }
     }
 
     /** True if Orbot is installed — checked once at construction, no async probe needed. */

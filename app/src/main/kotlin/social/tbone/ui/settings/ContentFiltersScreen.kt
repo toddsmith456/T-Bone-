@@ -34,6 +34,9 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import social.tbone.ui.lock.PinKeypad
+import social.tbone.settings.FilterWord
+import social.tbone.settings.NsfwMode
+import social.tbone.settings.WordMatchMode
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 
@@ -59,7 +62,7 @@ fun ContentFiltersScreen(
     LaunchedEffect(Unit) { viewModel.markAsParentalGate() }
     val screenTimeOn by viewModel.screenTimeEnabled.collectAsStateWithLifecycle()
     val screenTimeMinutes by viewModel.screenTimeMinutes.collectAsStateWithLifecycle()
-    val hideNsfw by viewModel.hideNsfw.collectAsStateWithLifecycle()
+    val nsfwMode by viewModel.nsfwMode.collectAsStateWithLifecycle()
     val bleepWords by viewModel.bleepWords.collectAsStateWithLifecycle()
     val hideWords by viewModel.hideWords.collectAsStateWithLifecycle()
     val parentalEnabled by viewModel.parentalPinEnabled.collectAsStateWithLifecycle()
@@ -75,7 +78,9 @@ fun ContentFiltersScreen(
     }
 
     var bleepInput by remember { mutableStateOf("") }
+    var bleepNewMode by remember { mutableStateOf(WordMatchMode.WHOLE_WORD) }
     var hideInput by remember { mutableStateOf("") }
+    var hideNewMode by remember { mutableStateOf(WordMatchMode.WHOLE_WORD) }
 
     Column(
         modifier = Modifier
@@ -137,37 +142,40 @@ fun ContentFiltersScreen(
                 }
             }
 
-            // ── NSFW toggle ────────────────────────────────────────────────────
+            // ── NSFW / content-warning handling ───────────────────────────
             item {
-                FilterSection("nsfw") {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = "hide notes labeled nsfw",
-                            style = BonyType.meta.copy(color = BonyColors.Text),
-                            modifier = Modifier.weight(1f),
-                        )
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp, 22.dp)
-                                .background(if (hideNsfw) BonyColors.AccentBg else BonyColors.Bg)
-                                .appBorder(1.dp, if (hideNsfw) BonyColors.Accent else BonyColors.RuleStrong)
-                                .clickable { viewModel.toggleHideNsfw() }
-                                .padding(2.dp),
-                        ) {
-                            Box(
+                FilterSection("nsfw / content warnings") {
+                    Text(
+                        text = "what happens to notes labelled with a NIP-36 content-warning tag",
+                        style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(
+                            NsfwMode.OFF to "off",
+                            NsfwMode.COVER to "cover",
+                            NsfwMode.HIDE to "hide",
+                        ).forEach { (mode, label) ->
+                            val active = nsfwMode == mode
+                            Text(
+                                text = if (active) "● $label" else "○ $label",
+                                style = BonyType.meta.copy(
+                                    color = if (active) BonyColors.Accent else BonyColors.TextMute,
+                                ),
                                 modifier = Modifier
-                                    .size(16.dp)
-                                    .align(if (hideNsfw) Alignment.CenterEnd else Alignment.CenterStart)
-                                    .background(if (hideNsfw) BonyColors.Accent else BonyColors.TextMute),
+                                    .appBorder(1.dp, if (active) BonyColors.AccentDim else BonyColors.Rule)
+                                    .clickable { viewModel.setNsfwMode(mode) }
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
                             )
                         }
                     }
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(6.dp))
                     Text(
-                        text = "hides notes with a NIP-36 content-warning tag (nsfw / sensitive content)",
+                        text = when (nsfwMode) {
+                            NsfwMode.OFF -> "labelled notes show like any other note"
+                            NsfwMode.COVER -> "labelled notes stay in your timeline behind a tap-to-reveal cover, with the author's reason"
+                            NsfwMode.HIDE -> "labelled notes are removed entirely"
+                        },
                         style = BonyType.metaDim.copy(color = BonyColors.TextMute),
                     )
                 }
@@ -177,7 +185,7 @@ fun ContentFiltersScreen(
             item {
                 FilterSection("bleep words") {
                     Text(
-                        text = "these words are replaced with asterisks in notes (the note still shows)",
+                        text = "these words are replaced with asterisks in notes (the note still shows). exact word = on its own only; anywhere = even inside other words",
                         style = BonyType.metaDim.copy(color = BonyColors.TextMute),
                     )
                     Spacer(Modifier.height(8.dp))
@@ -200,15 +208,21 @@ fun ContentFiltersScreen(
                             modifier = Modifier
                                 .appBorder(1.dp, if (bleepInput.isNotBlank()) BonyColors.AccentDim else BonyColors.Rule)
                                 .clickable(enabled = bleepInput.isNotBlank()) {
-                                    viewModel.addBleepWord(bleepInput)
+                                    viewModel.addBleepWord(bleepInput, bleepNewMode)
                                     bleepInput = ""
                                 }
                                 .padding(horizontal = 12.dp, vertical = 12.dp),
                         )
                     }
+                    Spacer(Modifier.height(8.dp))
+                    MatchModeSelector(bleepNewMode) { bleepNewMode = it }
                     if (bleepWords.isNotEmpty()) {
                         Spacer(Modifier.height(8.dp))
-                        FilterChips(bleepWords.toList().sorted()) { viewModel.removeBleepWord(it) }
+                        FilterWordChips(
+                            words = bleepWords.toList().sortedBy { it.word },
+                            onToggleMode = { viewModel.toggleBleepWordMode(it) },
+                            onRemove = { viewModel.removeBleepWord(it) },
+                        )
                     }
                 }
             }
@@ -217,7 +231,7 @@ fun ContentFiltersScreen(
             item {
                 FilterSection("hide words") {
                     Text(
-                        text = "any note containing these words is hidden entirely",
+                        text = "any note matching these words is hidden entirely. exact word = on its own only; anywhere = even inside other words (may hide innocent posts)",
                         style = BonyType.metaDim.copy(color = BonyColors.TextMute),
                     )
                     Spacer(Modifier.height(8.dp))
@@ -240,15 +254,21 @@ fun ContentFiltersScreen(
                             modifier = Modifier
                                 .appBorder(1.dp, if (hideInput.isNotBlank()) BonyColors.AccentDim else BonyColors.Rule)
                                 .clickable(enabled = hideInput.isNotBlank()) {
-                                    viewModel.addHideWord(hideInput)
+                                    viewModel.addHideWord(hideInput, hideNewMode)
                                     hideInput = ""
                                 }
                                 .padding(horizontal = 12.dp, vertical = 12.dp),
                         )
                     }
+                    Spacer(Modifier.height(8.dp))
+                    MatchModeSelector(hideNewMode) { hideNewMode = it }
                     if (hideWords.isNotEmpty()) {
                         Spacer(Modifier.height(8.dp))
-                        FilterChips(hideWords.toList().sorted()) { viewModel.removeHideWord(it) }
+                        FilterWordChips(
+                            words = hideWords.toList().sortedBy { it.word },
+                            onToggleMode = { viewModel.toggleHideWordMode(it) },
+                            onRemove = { viewModel.removeHideWord(it) },
+                        )
                     }
                 }
             }
@@ -525,7 +545,33 @@ private fun FilterSection(title: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun FilterChips(words: List<String>, onRemove: (String) -> Unit) {
+private fun MatchModeSelector(selected: WordMatchMode, onSelect: (WordMatchMode) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf(
+            WordMatchMode.WHOLE_WORD to "exact word",
+            WordMatchMode.ANYWHERE to "anywhere",
+        ).forEach { (mode, label) ->
+            val active = selected == mode
+            Text(
+                text = if (active) "● $label" else "○ $label",
+                style = BonyType.meta.copy(
+                    color = if (active) BonyColors.Accent else BonyColors.TextMute,
+                ),
+                modifier = Modifier
+                    .appBorder(1.dp, if (active) BonyColors.AccentDim else BonyColors.Rule)
+                    .clickable { onSelect(mode) }
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun FilterWordChips(
+    words: List<FilterWord>,
+    onToggleMode: (FilterWord) -> Unit,
+    onRemove: (FilterWord) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         words.forEach { word ->
             Row(
@@ -536,10 +582,19 @@ private fun FilterChips(words: List<String>, onRemove: (String) -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = word,
+                    text = word.word,
                     style = BonyType.meta.copy(color = BonyColors.Text),
                     modifier = Modifier.weight(1f),
                 )
+                Text(
+                    text = if (word.mode == WordMatchMode.WHOLE_WORD) "exact word" else "anywhere",
+                    style = BonyType.tag.copy(color = BonyColors.Accent),
+                    modifier = Modifier
+                        .appBorder(1.dp, BonyColors.AccentDim)
+                        .clickable { onToggleMode(word) }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                )
+                Spacer(Modifier.width(6.dp))
                 Text(
                     text = "✕",
                     style = BonyType.body.copy(color = BonyColors.Danger),

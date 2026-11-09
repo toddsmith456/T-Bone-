@@ -6,6 +6,12 @@ on:
   push:
     branches: [beta]
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Also publish a public beta release (off = build artifacts only)'
+        type: boolean
+        default: false
+        required: false
 
 permissions:
   contents: write
@@ -90,12 +96,14 @@ jobs:
           retention-days: 90
 
       - name: Prepare beta release metadata
+        if: contains(github.event.head_commit.message, '[build beta]') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
         id: release
         run: |
           VERSION=$(sed -n 's/^versionName=//p' version.properties)
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
           echo "tag=beta-${VERSION}-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
       - name: Publish public beta
+        if: contains(github.event.head_commit.message, '[build beta]') || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release.outputs.tag }}

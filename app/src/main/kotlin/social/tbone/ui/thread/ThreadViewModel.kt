@@ -191,7 +191,7 @@ class ThreadViewModel @Inject constructor(
         viewModelScope.launch {
             combine(
                 muteRepository.effectiveMuted,
-                appSettings.hideNsfw,
+                appSettings.nsfwMode,
                 appSettings.hideWords,
             ) { _, _, _ -> Unit }.collect { rebuild() }
         }
@@ -462,14 +462,14 @@ class ThreadViewModel @Inject constructor(
         val snapshot = threadEvents.values.toList()
         val contextEvents = snapshot.associateBy { it.id }
         val blocked = muteRepository.effectiveMuted.value
-        val hideNsfw = appSettings.hideNsfw.value
+        val nsfwMode = appSettings.nsfwMode.value
         val hideWords = appSettings.hideWords.value
         val visibleEvents = snapshot.filter {
-            !ContentFilter.shouldHide(it, blocked, hideNsfw, hideWords, contextEvents)
+            !ContentFilter.shouldHide(it, blocked, nsfwMode, hideWords, contextEvents)
         }
         val focused = _uiState.value.focused
         val focusedHidden = focused != null &&
-            ContentFilter.shouldHide(focused, blocked, hideNsfw, hideWords, contextEvents)
+            ContentFilter.shouldHide(focused, blocked, nsfwMode, hideWords, contextEvents)
         val focusedId = focused?.id?.takeUnless { focusedHidden }
         val items = ThreadTree.build(
             rootId = rootId,

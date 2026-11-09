@@ -39,7 +39,7 @@ class ContentFilterTest {
             ),
         )
 
-        assertTrue(ContentFilter.shouldHide(reply, setOf(blockedAuthor), false, emptySet()))
+        assertTrue(ContentFilter.shouldHide(reply, setOf(blockedAuthor), NsfwMode.OFF, emptySet()))
     }
 
     @Test
@@ -52,7 +52,7 @@ class ContentFilterTest {
             content = "I mentioned someone, this is not a reply",
         )
 
-        assertFalse(ContentFilter.shouldHide(note, setOf(blockedAuthor), false, emptySet()))
+        assertFalse(ContentFilter.shouldHide(note, setOf(blockedAuthor), NsfwMode.OFF, emptySet()))
     }
 
     @Test
@@ -69,7 +69,7 @@ class ContentFilterTest {
             ContentFilter.shouldHide(
                 reply,
                 blockedPubkeys = setOf(blockedAuthor),
-                hideNsfw = false,
+                nsfwMode = NsfwMode.OFF,
                 hideWords = emptySet(),
                 referencedEvents = mapOf(parent.id to parent),
             ),
@@ -80,8 +80,8 @@ class ContentFilterTest {
     fun `hidden words match case-insensitively`() {
         val note = event(id = "note", pubkey = "n".repeat(64), content = "Please HideThis phrase")
 
-        assertTrue(ContentFilter.shouldHide(note, emptySet(), false, setOf("hidethis")))
-        assertFalse(ContentFilter.shouldHide(note, emptySet(), false, setOf("absent")))
+        assertTrue(ContentFilter.shouldHide(note, emptySet(), NsfwMode.OFF, setOf(FilterWord("hidethis"))))
+        assertFalse(ContentFilter.shouldHide(note, emptySet(), NsfwMode.OFF, setOf(FilterWord("absent"))))
     }
 
     @Test
@@ -94,6 +94,6 @@ class ContentFilterTest {
             kind = EventKind.REPOST,
         )
 
-        assertTrue(ContentFilter.shouldHide(repost, setOf(blockedAuthor), false, emptySet()))
+        assertTrue(ContentFilter.shouldHide(repost, setOf(blockedAuthor), NsfwMode.OFF, emptySet()))
     }
 }

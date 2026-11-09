@@ -136,11 +136,24 @@ fun NoteCard(
     if (ContentFilter.shouldHide(
             event,
             contentFilter.blockedPubkeys,
-            contentFilter.hideNsfw,
+            contentFilter.nsfwMode,
             contentFilter.hideWords,
             referencedNotes,
         )
     ) return
+
+    // Content-warning veil: in COVER mode a labelled note stays in the
+    // timeline behind a tap-to-reveal cover (text and media alike).
+    var cwRevealed by remember(event.id) { mutableStateOf(false) }
+    if (ContentFilter.shouldVeil(event, contentFilter.nsfwMode) && !cwRevealed) {
+        ContentWarningVeil(
+            reason = ContentFilter.contentWarningReason(event),
+            authorLabel = profile?.bestName ?: event.pubkey.phraseHandle(),
+            onReveal = { cwRevealed = true },
+            modifier = modifier,
+        )
+        return
+    }
 
     val youniversal = YouniversalTheme.enabled
     val cardBg = when {
@@ -604,7 +617,7 @@ fun QuotedNoteCard(
     if (ContentFilter.shouldHide(
             event,
             contentFilter.blockedPubkeys,
-            contentFilter.hideNsfw,
+            contentFilter.nsfwMode,
             contentFilter.hideWords,
             quotedEvents,
         )
@@ -613,6 +626,16 @@ fun QuotedNoteCard(
             text = "quoted note hidden by your content filters",
             style = BonyType.meta.copy(color = BonyColors.TextMute),
             modifier = modifier.fillMaxWidth().padding(8.dp),
+        )
+        return
+    }
+
+    var quotedCwRevealed by remember(event.id) { mutableStateOf(false) }
+    if (ContentFilter.shouldVeil(event, contentFilter.nsfwMode) && !quotedCwRevealed) {
+        QuotedContentWarningVeil(
+            reason = ContentFilter.contentWarningReason(event),
+            onReveal = { quotedCwRevealed = true },
+            modifier = modifier,
         )
         return
     }
@@ -738,6 +761,62 @@ fun QuotedNoteCard(
                 quoteAncestors = quoteAncestors + event.id,
             )
         }
+    }
+}
+
+@Composable
+private fun ContentWarningVeil(
+    reason: String?,
+    authorLabel: String,
+    onReveal: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(BonyColors.Bg)
+            .clickable { onReveal() }
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+    ) {
+        Text(
+            text = "⚠ sensitive content",
+            style = BonyType.body.copy(color = BonyColors.Text),
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = if (reason.isNullOrBlank()) {
+                "$authorLabel labelled this note · tap to show"
+            } else {
+                "$authorLabel labelled this note: $reason · tap to show"
+            },
+            style = BonyType.meta.copy(color = BonyColors.TextMute),
+        )
+    }
+    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+}
+
+@Composable
+private fun QuotedContentWarningVeil(
+    reason: String?,
+    onReveal: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .border(1.dp, BonyColors.Rule)
+            .background(BonyColors.SurfaceAlt)
+            .clickable { onReveal() }
+            .padding(10.dp),
+    ) {
+        Text(
+            text = "⚠ sensitive content",
+            style = BonyType.meta.copy(color = BonyColors.Text),
+        )
+        Text(
+            text = if (reason.isNullOrBlank()) "tap to show" else "$reason · tap to show",
+            style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+        )
     }
 }
 

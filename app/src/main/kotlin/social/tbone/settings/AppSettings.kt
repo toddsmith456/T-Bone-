@@ -94,6 +94,7 @@ class AppSettings @Inject constructor(
         private val NOTE_MENU_MODERATION = booleanPreferencesKey("note_menu_moderation")
         private val CLIENT_TAG_ENABLED = booleanPreferencesKey("client_tag_enabled")
         private val HIDE_NSFW = booleanPreferencesKey("hide_nsfw")
+        private val NSFW_MODE = stringPreferencesKey("nsfw_mode")
         private val BLEEP_WORDS = stringSetPreferencesKey("bleep_words")
         private val HIDE_WORDS = stringSetPreferencesKey("hide_words")
         // Parental PIN: locks the content-filter settings behind a 4-digit pin
@@ -359,16 +360,16 @@ class AppSettings @Inject constructor(
     private val _screenTimeMinutes = MutableStateFlow(120)
     val screenTimeMinutes = _screenTimeMinutes.asStateFlow()
 
-    /** Hide notes carrying a NIP-36 content-warning ("content-warning") tag. */
-    private val _hideNsfw = MutableStateFlow(false)
-    val hideNsfw = _hideNsfw.asStateFlow()
+    /** What happens to notes carrying a NIP-36 content-warning tag. */
+    private val _nsfwMode = MutableStateFlow(NsfwMode.OFF)
+    val nsfwMode = _nsfwMode.asStateFlow()
 
-    /** Words replaced with asterisks in note text (bleep). */
-    private val _bleepWords = MutableStateFlow<Set<String>>(emptySet())
+    /** Words replaced with asterisks in note text (bleep), each with its match mode. */
+    private val _bleepWords = MutableStateFlow<Set<FilterWord>>(emptySet())
     val bleepWords = _bleepWords.asStateFlow()
 
-    /** Words that hide any note containing them. */
-    private val _hideWords = MutableStateFlow<Set<String>>(emptySet())
+    /** Words that hide any note matching them, each with its match mode. */
+    private val _hideWords = MutableStateFlow<Set<FilterWord>>(emptySet())
     val hideWords = _hideWords.asStateFlow()
 
     // Followers (centralized via Primal) — off by default, opt-in with one switch
@@ -482,9 +483,11 @@ class AppSettings @Inject constructor(
                 _blockedPubkeys.value = prefs[BLOCKED_PUBKEYS] ?: emptySet()
                 _noteMenuModerationEnabled.value = prefs[NOTE_MENU_MODERATION] ?: false
                 _clientTagEnabled.value = prefs[CLIENT_TAG_ENABLED] ?: true
-                _hideNsfw.value = prefs[HIDE_NSFW] ?: false
-                _bleepWords.value = prefs[BLEEP_WORDS] ?: emptySet()
-                _hideWords.value = prefs[HIDE_WORDS] ?: emptySet()
+                _nsfwMode.value = prefs[NSFW_MODE]?.let { stored ->
+                    runCatching { NsfwMode.valueOf(stored) }.getOrNull()
+                } ?: if (prefs[HIDE_NSFW] == true) NsfwMode.HIDE else NsfwMode.OFF
+                _bleepWords.value = (prefs[BLEEP_WORDS] ?: emptySet()).map(::decodeFilterWord).toSet()
+                _hideWords.value = (prefs[HIDE_WORDS] ?: emptySet()).map(::decodeFilterWord).toSet()
                 _followersEnabled.value = prefs[FOLLOWERS_ENABLED] ?: false
                 _followersDisclaimerShown.value = prefs[FOLLOWERS_DISCLAIMER_SHOWN] ?: false
                 _notepadFrontEnabled.value = prefs[NOTEPAD_FRONT_ENABLED] ?: false
@@ -886,43 +889,71 @@ class AppSettings @Inject constructor(
         dataStore.edit { it[BLOCKED_PUBKEYS] = next }
     }
 
-    suspend fun setHideNsfw(enabled: Boolean) {
-        _hideNsfw.value = enabled
-        dataStore.edit { it[HIDE_NSFW] = enabled }
+    // Filter words persist as "w:<word>" (whole word) / "a:<word>" (anywhere).
+    // Entries stored before match modes existed have no prefix and migrate to
+    // whole-word matching, the new default.
+    private fun encodeFilterWord(word: FilterWord): String =
+        (if (word.mode == WordMatchMode.ANYWHERE) "a:" else "w:") + word.word
+
+    private fun decodeFilterWord(stored: String): FilterWord = when {
+        stored.startsWith("a:") -> FilterWord(stored.drop(2), WordMatchMode.ANYWHERE)
+        stored.startsWith("w:") -> FilterWord(stored.drop(2), WordMatchMode.WHOLE_WORD)
+        else -> FilterWord(stored, WordMatchMode.WHOLE_WORD)
     }
 
-    suspend fun setBleepWords(words: Set<String>) {
+    suspend fun setNsfwMode(mode: NsfwMode) {
+        _nsfwMode.value = mode
+        dataStore.edit { it[NSFW_MODE] = mode.name }
+    }
+
+    suspend fun setBleepWords(words: Set<FilterWord>) {
         _bleepWords.value = words
-        dataStore.edit { it[BLEEP_WORDS] = words }
+        dataStore.edit { it[BLEEP_WORDS] = words.map(::encodeFilterWord).toSet() }
     }
 
-    suspend fun addBleepWord(word: String) {
-        val next = _bleepWords.value + word.trim().lowercase()
+    suspend fun addBleepWord(word: String, mode: WordMatchMode = WordMatchMode.WHOLE_WORD) {
+        val cleaned = word.trim().lowercase()
+        if (cleaned.isEmpty()) return
+        val next = _bleepWords.value.filterNot { it.word == cleaned }.toSet() + FilterWord(cleaned, mode)
         _bleepWords.value = next
-        dataStore.edit { it[BLEEP_WORDS] = next }
+        dataStore.edit { it[BLEEP_WORDS] = next.map(::encodeFilterWord).toSet() }
     }
 
-    suspend fun removeBleepWord(word: String) {
+    suspend fun removeBleepWord(word: FilterWord) {
         val next = _bleepWords.value - word
         _bleepWords.value = next
-        dataStore.edit { it[BLEEP_WORDS] = next }
+        dataStore.edit { it[BLEEP_WORDS] = next.map(::encodeFilterWord).toSet() }
     }
 
-    suspend fun setHideWords(words: Set<String>) {
+    suspend fun setBleepWordMode(word: FilterWord, mode: WordMatchMode) {
+        val next = _bleepWords.value - word + FilterWord(word.word, mode)
+        _bleepWords.value = next
+        dataStore.edit { it[BLEEP_WORDS] = next.map(::encodeFilterWord).toSet() }
+    }
+
+    suspend fun setHideWords(words: Set<FilterWord>) {
         _hideWords.value = words
-        dataStore.edit { it[HIDE_WORDS] = words }
+        dataStore.edit { it[HIDE_WORDS] = words.map(::encodeFilterWord).toSet() }
     }
 
-    suspend fun addHideWord(word: String) {
-        val next = _hideWords.value + word.trim().lowercase()
+    suspend fun addHideWord(word: String, mode: WordMatchMode = WordMatchMode.WHOLE_WORD) {
+        val cleaned = word.trim().lowercase()
+        if (cleaned.isEmpty()) return
+        val next = _hideWords.value.filterNot { it.word == cleaned }.toSet() + FilterWord(cleaned, mode)
         _hideWords.value = next
-        dataStore.edit { it[HIDE_WORDS] = next }
+        dataStore.edit { it[HIDE_WORDS] = next.map(::encodeFilterWord).toSet() }
     }
 
-    suspend fun removeHideWord(word: String) {
+    suspend fun removeHideWord(word: FilterWord) {
         val next = _hideWords.value - word
         _hideWords.value = next
-        dataStore.edit { it[HIDE_WORDS] = next }
+        dataStore.edit { it[HIDE_WORDS] = next.map(::encodeFilterWord).toSet() }
+    }
+
+    suspend fun setHideWordMode(word: FilterWord, mode: WordMatchMode) {
+        val next = _hideWords.value - word + FilterWord(word.word, mode)
+        _hideWords.value = next
+        dataStore.edit { it[HIDE_WORDS] = next.map(::encodeFilterWord).toSet() }
     }
 
     suspend fun setFollowersEnabled(enabled: Boolean) {
