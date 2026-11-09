@@ -5,7 +5,7 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
-## [0.5.4] — 2026-11-07 (beta preparation)
+## [0.5.4] — 2026-11-09
 
 ### Removed
 - Removed the Webxdc mini-app feature and its toolbox, player, bridge, import/export and discovery code. On upgrade, app-owned mini-app files and tool settings are removed. Legacy browser data cleanup is retried if the installed WebView does not support it; the app warns when cleanup remains incomplete. Exported and shared copies cannot be recalled.
@@ -18,8 +18,17 @@ All notable changes to this fork are documented here. Format follows
 - Audio uploads stage their own copy instead of risking deletion of a source file; audio and video staging enforce a stream-size ceiling.
 - Note editors stop saves when attachment data cannot be read instead of silently treating failed decryptions as missing data.
 
+### Added in the final release
+- Note action menu: "Delete request" publishes a signed NIP-09 (kind 5) deletion request for your own notes, with a confirmation step. Relays are asked to delete the note; they may or may not honour it, and copies may already exist elsewhere.
+- Greentext: lines starting with `>` render entirely in green — bright matrix green on dark backgrounds, a deeper green on light and cream — in the write tab and in published notes.
+
+### Fixed in the final release
+- Video compression works again: with compression on, every video is downscaled to the upload profile with a capped encoder bitrate and the re-encoded file is always the upload. A successful re-encode also strips embedded metadata (location, device, timestamps). Audio is re-encoded and stripped the same way when either compression toggle is on; the write-tab metadata warning is removed and the Blossom settings wording corrected.
+- Replies no longer silently quote a note quoted by the note being replied to; quoting only happens when chosen explicitly.
+- Content filters: per-word matching, the NSFW warning veil, grouped hidden-content markers, and quoted notes surviving filters.
+
 ### Verification limits
-- Device upgrade, process-death, live relay, physical-device TalkBack and end-to-end Tor isolation checks remain necessary. This section describes beta preparation, not a production release.
+- Device upgrade, process-death, live relay, physical-device TalkBack and end-to-end Tor isolation checks remain necessary.
 
 ## [0.5.3] — 2026-11-01
 
