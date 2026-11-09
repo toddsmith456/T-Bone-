@@ -204,7 +204,7 @@ fun BlossomSettingsScreen(
                     Text("compress uploads", style = BonyType.meta.copy(color = BonyColors.Text))
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        text = "images are re-encoded without EXIF, GIFs stay animated, and videos are transcoded to H.264/MP4. If a format cannot be processed the original file is sent instead, including its metadata.",
+                        text = "images are re-encoded without EXIF, GIFs stay animated, and videos are transcoded to H.264/MP4. Re-encoding strips embedded metadata such as location from videos and audio. If a format cannot be processed the original file is sent instead, including its metadata.",
                         style = BonyType.metaDim.copy(color = BonyColors.TextMute),
                     )
                 }
@@ -235,7 +235,7 @@ fun BlossomSettingsScreen(
                     Text("compress audio uploads", style = BonyType.meta.copy(color = BonyColors.Text))
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        text = "re-encodes audio to compact AAC/M4A · off keeps the original MP3 or other format",
+                        text = "re-encodes audio to compact AAC/M4A and strips its tags · audio is also re-encoded while compress uploads is on · with both off the original MP3 or other format is kept",
                         style = BonyType.metaDim.copy(color = BonyColors.TextMute),
                     )
                 }

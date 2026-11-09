@@ -135,14 +135,16 @@ class ComposeViewModel @Inject constructor(
     // Preview content builder — mirrors publish() finalContent logic without side effects.
     fun buildPreviewContent(trimmed: String): String {
         val explicitQuote = _uiState.value.quoteToEvent
-        val inheritedQuoteId = _uiState.value.replyToEvent?.parsedTags?.quotedEventId
+        // Only notes the user explicitly chose to quote are quoted. A reply
+        // never inherits a quote from the note it replies to.
         val quoteIds = (
             _uiState.value.quoteFolderEvents.map { it.id } +
-            listOfNotNull(explicitQuote?.id, inheritedQuoteId)
+            listOfNotNull(explicitQuote?.id)
             ).distinct()
         val missingRefs = quoteIds
             .map { id ->
-                val quoted = _uiState.value.quoteFolderEvents.firstOrNull { it.id == id } ?: explicitQuote
+                val quoted = _uiState.value.quoteFolderEvents.firstOrNull { it.id == id }
+                    ?: explicitQuote?.takeIf { it.id == id }
                 val reference = if (quoted != null) Nip19.hexToNevent(id, quoted.pubkey, quoted.kind) else Nip19.hexToNevent(id)
                 "nostr:$reference"
             }
@@ -287,7 +289,10 @@ class ComposeViewModel @Inject constructor(
                 "audio" -> MediaProcessor.prepareAudioMedia(
                     context,
                     request.uri,
-                    compress = appSettings.blossomAudioCompress.value,
+                    // Either compression toggle turns audio re-encoding on,
+                    // so tags/metadata are stripped whenever the user asked
+                    // for compression anywhere.
+                    compress = compress || appSettings.blossomAudioCompress.value,
                 )
                 "file" -> MediaProcessor.prepareFileMedia(context, request.uri)
                 else -> null
@@ -472,17 +477,13 @@ class ComposeViewModel @Inject constructor(
 
                 val replyTo = _uiState.value.replyToEvent
                 val explicitQuote = _uiState.value.quoteToEvent
-                // A reply opened from a quote-note still carries the quote's
-                // relationship. This prevents the composer from silently dropping
-                // the q reference while it correctly adds the new reply target.
-                val inheritedQuoteId = replyTo?.parsedTags?.quotedEventId
-                val inheritedQuote = if (explicitQuote == null && inheritedQuoteId != null) {
-                    eventRepository.getById(inheritedQuoteId)
-                } else null
+                // Quoting is explicit only: a reply to a note that itself
+                // quotes another note must not silently quote that note too.
+                // Only the chosen quote / quote-folder events get q-tags.
                 val quoteEvents = (
-                    _uiState.value.quoteFolderEvents + listOfNotNull(explicitQuote, inheritedQuote)
+                    _uiState.value.quoteFolderEvents + listOfNotNull(explicitQuote)
                 ).distinctBy { it.id }
-                val quoteIds = (quoteEvents.map { it.id } + listOfNotNull(inheritedQuoteId)).distinct()
+                val quoteIds = quoteEvents.map { it.id }
 
                 val tags = buildList {
                     if (replyTo != null) {

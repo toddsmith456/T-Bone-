@@ -51,8 +51,17 @@ class VideoUploadPolicyTest {
     }
 
     @Test
-    fun anInflatedTranscodeFallsBackToTheOriginal() {
-        assertFalse(VideoUploadPolicy.preferTranscoded(transcodedBytes = 40L, originalBytes = 8L))
+    fun aTranscodeIsStillUsedEvenIfAnEncoderQuirkMakesItLarger() {
+        // Compression ON means the transcode is the upload: it is the
+        // metadata-stripped artifact, and falling back to the original would
+        // leak the source metadata. Sanity floor (40x) and non-empty only.
+        assertTrue(VideoUploadPolicy.preferTranscoded(transcodedBytes = 40L, originalBytes = 8L))
+    }
+
+    @Test
+    fun brokenTranscodesAreNeverUsed() {
         assertFalse(VideoUploadPolicy.preferTranscoded(transcodedBytes = 0L, originalBytes = 8L))
+        assertFalse(VideoUploadPolicy.preferTranscoded(transcodedBytes = 500L, originalBytes = 8L))
+        assertFalse(VideoUploadPolicy.preferTranscoded(transcodedBytes = -1L, originalBytes = 8L))
     }
 }

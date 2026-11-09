@@ -8,12 +8,14 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.map
 import social.tbone.account.AccountRepository
 import social.tbone.account.signer.NostrSignerFactory
 import social.tbone.db.EventRepository
 import social.tbone.lists.MuteListRepository
 import social.tbone.lists.MuteOutcome
 import social.tbone.nostr.Event
+import social.tbone.nostr.Nip09Deletion
 import social.tbone.nostr.Nip56Report
 import social.tbone.nostr.Nip56ReportReason
 import social.tbone.nostr.quotedEventId
@@ -39,6 +41,11 @@ class NoteActionsViewModel @Inject constructor(
     private val pins: social.tbone.lists.PinListRepository,
 ) : ViewModel() {
     val moderationActionsEnabled = appSettings.noteMenuModerationEnabled
+
+    /** The active account's pubkey — deletion requests only make sense on your own notes. */
+    val activePubkey: StateFlow<String?> = accountRepository.activeAccount
+        .map { it?.pubkey }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
     val bookmarkFolders: StateFlow<List<BookmarkFolderUi>> = bookmarksRepository.folders
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -114,6 +121,45 @@ class NoteActionsViewModel @Inject constructor(
                 MuteOutcome.REJECTED -> "Can't block this account"
             }
             onFinished(message)
+        }
+    }
+
+    /**
+     * Signs and publishes a NIP-09 deletion request for one of the user's
+     * own notes. Relays are asked to delete the event; whether they do is
+     * up to them, so the result wording says exactly that.
+     */
+    fun requestDeletion(
+        event: Event,
+        onFinished: (String) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val signer = signerFactory.forActiveAccount()
+            if (signer == null) {
+                onFinished("No signer available — deletion was not requested")
+                return@launch
+            }
+            if (signer.pubkey != event.pubkey) {
+                onFinished("You can only request deletion of your own notes")
+                return@launch
+            }
+            val unsigned = Nip09Deletion.forNote(
+                requesterPubkey = signer.pubkey,
+                target = event,
+            )
+            signer.signEvent(unsigned)
+                .onSuccess { signed ->
+                    val connected = relayPool.relayStatuses.value.values.count { it == RelayStatus.CONNECTED }
+                    relayPool.publish(signed)
+                    onFinished(
+                        if (connected > 0) {
+                            "Deletion requested on $connected connected relay(s) — relays may or may not remove the note, and copies may already exist elsewhere"
+                        } else {
+                            "Deletion request signed, but no relays are connected"
+                        },
+                    )
+                }
+                .onFailure { onFinished("Deletion request signing failed") }
         }
     }
 

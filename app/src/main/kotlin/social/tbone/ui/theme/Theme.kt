@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.font.Font
@@ -58,6 +59,15 @@ object BonyColors {
     var Link by mutableStateOf(Color(0xFF82C8FF))
         private set
 
+    /**
+     * Greentext colour for lines starting with `>`. Bright matrix green on
+     * dark backgrounds; a deeper green on light/cream backgrounds so the
+     * text stays readable. Updated with the palette in [applyMode] and
+     * [applyYouniversal].
+     */
+    var GreenText by mutableStateOf(Color(0xFF33FF66))
+        private set
+
     /** The accent color — green by default, user-customizable via Settings. */
     var Accent by mutableStateOf(Color(0xFF7FDE6B))
         private set
@@ -88,6 +98,7 @@ object BonyColors {
                 WarnBg = Color(0x14E89A4A)
                 Danger = Color(0xFFC74B3D)
                 Link = Color(0xFF1E6FB8)
+                GreenText = Color(0xFF1B7A2E)
             }
             ThemeMode.DARK -> {
                 Bg = Color(0xFF0A0A0A)
@@ -103,6 +114,7 @@ object BonyColors {
                 WarnBg = Color(0x0FE89A4A)
                 Danger = Color(0xFFD96A5A)
                 Link = Color(0xFF82C8FF)
+                GreenText = Color(0xFF33FF66)
             }
             ThemeMode.CREAM -> {
                 // Dimmed warm cream — an old book page, muted several steps
@@ -120,6 +132,7 @@ object BonyColors {
                 WarnBg = Color(0x14A8641B)
                 Danger = Color(0xFFB23A2C)
                 Link = Color(0xFF1E63A5)
+                GreenText = Color(0xFF1E7A34)
             }
         }
     }
@@ -147,6 +160,9 @@ object BonyColors {
         Warn = scheme.tertiary
         WarnDim = scheme.onTertiaryContainer
         WarnBg = scheme.tertiaryContainer.copy(alpha = 0.12f)
+        // Matrix green only reads as greentext on dark surfaces; on light
+        // Youniversal schemes use the deep green instead.
+        GreenText = if (scheme.background.luminance() < 0.5f) Color(0xFF33FF66) else Color(0xFF1B7A2E)
     }
 }
 

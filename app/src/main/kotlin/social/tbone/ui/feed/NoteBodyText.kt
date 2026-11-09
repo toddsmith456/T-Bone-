@@ -65,6 +65,29 @@ private sealed interface BodySeg {
 
 private data class SegRange(val start: Int, val end: Int, val kind: Int, val value: String)
 
+/**
+ * Character ranges of greentext lines in [text]: a line whose first
+ * non-blank character is `>` is greentext and is coloured whole, in the
+ * classic imageboard style. Ranges exclude the trailing newline.
+ */
+internal fun greentextLineRanges(text: String): List<IntRange> {
+    val ranges = mutableListOf<IntRange>()
+    var lineStart = 0
+    val length = text.length
+    while (lineStart < length) {
+        var lineEnd = text.indexOf('\n', lineStart)
+        if (lineEnd < 0) lineEnd = length
+        var first = lineStart
+        while (first < lineEnd && (text[first] == ' ' || text[first] == '\t')) first++
+        if (first < lineEnd && text[first] == '>') {
+            ranges.add(lineStart until lineEnd)
+        }
+        if (lineEnd == length) break
+        lineStart = lineEnd + 1
+    }
+    return ranges
+}
+
 /** A clickable region inside the annotated note text. */
 private data class SegAction(val start: Int, val end: Int, val copyText: String? = null, val accessibilityLabel: String? = null, val action: (() -> Unit)?)
 
@@ -380,7 +403,18 @@ private fun buildSegmentedAnnotated(
             }
         }
     }
-    return SegmentedBody(builder, actions, segs)
+    // Greentext last: a line starting with `>` is green end to end, even
+    // where it contains a link or mention. Styles added later win over the
+    // per-segment colours above for the same characters.
+    val greenRanges = greentextLineRanges(builder.text)
+    if (greenRanges.isEmpty()) return SegmentedBody(builder, actions, segs)
+    val styled = with(androidx.compose.ui.text.AnnotatedString.Builder(builder)) {
+        greenRanges.forEach { range ->
+            addStyle(SpanStyle(color = BonyColors.GreenText), range.first, range.last + 1)
+        }
+        toAnnotatedString()
+    }
+    return SegmentedBody(styled, actions, segs)
 }
 
 private fun segment(text: String, profiles: Map<String, ProfileContent>): List<BodySeg> {

@@ -166,6 +166,13 @@ fun ComposeScreen(
             val text = source.text
             val annotated = buildAnnotatedString {
                 append(text)
+                // Greentext while writing: lines starting with `>` go green,
+                // exactly as they will render once published.
+                social.tbone.ui.feed.greentextLineRanges(text).forEach { range ->
+                    if (!range.isEmpty()) {
+                        addStyle(SpanStyle(color = BonyColors.GreenText), range.first, range.last + 1)
+                    }
+                }
                 mentionMap.keys.forEach { name ->
                     val token = "@$name"
                     var from = 0
@@ -474,13 +481,6 @@ fun ComposeScreen(
                 }
             }
 
-            // Media can upload immediately after selection, so disclose this
-            // before the picker is opened, not only in compression settings.
-            Text(
-                "Video and audio uploads may include embedded metadata, including location.",
-                style = BonyType.metaDim.copy(color = BonyColors.TextMute),
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 5.dp),
-            )
             // ── Toolbar ───────────────────────────────────────────────────────
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
             Row(

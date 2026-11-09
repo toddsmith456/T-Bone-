@@ -61,8 +61,9 @@ data class PreparedMedia(
  *    enabled — tall sources are downscaled to the upload profile, everything
  *    is standardized to H.264/MP4. Unsupported sources fall back to a raw
  *    copy with their original MIME type and extension.
- *  - AUDIO: copied unchanged by default; opt-in AAC/M4A compression is kept only
- *    when smaller, otherwise the original bytes, MIME type and extension win.
+ *  - AUDIO: copied unchanged by default; opt-in AAC/M4A re-encoding is always
+ *    used when it succeeds (it is the metadata-stripped artifact), otherwise
+ *    the original bytes, MIME type and extension win.
  *  - FILES: any other file is copied unchanged and uploaded with its detected
  *    MIME type and extension (application/octet-stream when unknown).
  *
@@ -168,10 +169,11 @@ object MediaProcessor {
     /**
      * Prepares a video for upload. Media3 Transformer runs whenever
      * compression is enabled — tall sources are downscaled to the upload
-     * profile, everything is standardized to H.264/MP4. If the source
-     * codec/container is not supported, or the transcode does not actually
-     * shrink the file, the original bytes are uploaded with their detected
-     * MIME type and extension rather than rejecting a file the user's
+     * profile, bitrate is capped, everything is standardized to H.264/MP4,
+     * and a successful transcode is always the upload (it is also the
+     * metadata-stripped artifact). Only if the source codec/container is
+     * not supported are the original bytes uploaded with their detected
+     * MIME type and extension, rather than rejecting a file the user's
      * Blossom server may accept.
      */
     suspend fun prepareVideoMedia(
@@ -199,6 +201,14 @@ object MediaProcessor {
                 Timber.w(error, "video transcode unavailable; uploading original file")
                 null
             }
+            // A successful transcode IS the compressed, metadata-stripped
+            // upload: the re-encode is written fresh by the muxer, so source
+            // metadata (location, device, timestamps) never reaches it.
+            // Older versions always used this result; the later
+            // "only if smaller" rule silently discarded most re-encodes and
+            // uploaded the untouched original instead, which is why videos
+            // stopped being compressed. Use the transcode whenever it
+            // succeeded and is within the safety ceiling.
             if (transcoded != null && transcoded.exists() && transcoded.length() > 0L &&
                 VideoUploadPolicy.preferTranscoded(transcoded.length(), sourceCopy.length()) &&
                 VideoUploadPolicy.isWithinCeiling(transcoded.length())) {
@@ -251,8 +261,11 @@ object MediaProcessor {
                     Timber.w(error, "audio transcode unavailable; uploading original file")
                     null
                 }
-                if (transcoded != null && transcoded.exists() && transcoded.length() > 0L &&
-                    transcoded.length() < sourceCopy.length()) {
+                // As with video: a successful re-encode is the compressed,
+                // metadata-stripped upload and is always used when
+                // compression is on; the old smaller-only rule discarded it
+                // and sent the original (with its tags) instead.
+                if (transcoded != null && transcoded.exists() && transcoded.length() > 0L) {
                     sourceCopy.delete()
                     return PreparedMedia(transcoded, AUDIO_COMPRESSED_MIME, AUDIO_COMPRESSED_EXT)
                 }
@@ -501,8 +514,8 @@ object MediaProcessor {
     private suspend fun transcodeVideo(context: Context, uri: Uri, sourceHeight: Int): File? {
         val out = File(context.cacheDir, "tbone_video_comp_${java.util.UUID.randomUUID()}.mp4")
         // Downscale only — never upscale. Sources at or below the upload
-        // profile are re-encoded at their original resolution; the caller
-        // keeps the result only when it is genuinely smaller than the input.
+        // profile are re-encoded at their original resolution with a capped
+        // bitrate; the caller always keeps a successful result.
         val edited = if (VideoUploadPolicy.shouldDownscale(sourceHeight)) {
             val presentation = Presentation.createForHeight(VIDEO_TARGET_HEIGHT)
             val effects = Effects(emptyList(), listOf(presentation))
@@ -518,10 +531,42 @@ object MediaProcessor {
         val sequence = EditedMediaItemSequence(edited)
         val composition = Composition.Builder(sequence).build()
 
+        // Cap the video bitrate for the output height. Without this the
+        // encoder defaults to a camera-like bitrate and the "compressed"
+        // file comes out the same size as the source (or larger).
+        val outputHeight = if (VideoUploadPolicy.shouldDownscale(sourceHeight)) {
+            VIDEO_TARGET_HEIGHT
+        } else if (sourceHeight > 0) {
+            sourceHeight
+        } else {
+            VIDEO_TARGET_HEIGHT
+        }
+        val targetVideoBitrate = when {
+            outputHeight >= 1200 -> 5_000_000
+            outputHeight >= 700 -> 3_000_000
+            outputHeight >= 400 -> 1_500_000
+            else -> 800_000
+        }
+        val defaultEncoderFactory = DefaultEncoderFactory.Builder(context).build()
+        val encoderFactory = object : Codec.EncoderFactory {
+            override fun createForAudioEncoding(inputFormat: Format): Codec =
+                defaultEncoderFactory.createForAudioEncoding(inputFormat)
+
+            override fun createForVideoEncoding(inputFormat: Format): Codec =
+                defaultEncoderFactory.createForVideoEncoding(
+                    inputFormat.buildUpon().setAverageBitrate(targetVideoBitrate).build(),
+                )
+
+            override fun audioNeedsEncoding(): Boolean = defaultEncoderFactory.audioNeedsEncoding()
+
+            override fun videoNeedsEncoding(): Boolean = true
+        }
+
         return suspendCancellableCoroutine { cont ->
             val transformer = Transformer.Builder(context)
                 .setVideoMimeType(androidx.media3.common.MimeTypes.VIDEO_H264)
                 .setAudioMimeType(androidx.media3.common.MimeTypes.AUDIO_AAC)
+                .setEncoderFactory(encoderFactory)
                 .addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                     if (cont.isActive) cont.resume(out) else out.delete()

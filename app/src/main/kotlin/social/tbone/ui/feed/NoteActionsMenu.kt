@@ -38,6 +38,7 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.OpenInBrowser
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.TextFields
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -108,6 +109,7 @@ fun NoteActionsMenu(
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     val moderationActionsEnabled by viewModel.moderationActionsEnabled.collectAsStateWithLifecycle()
+    val activePubkey by viewModel.activePubkey.collectAsStateWithLifecycle()
     val bookmarkFolders by viewModel.bookmarkFolders.collectAsStateWithLifecycle()
     var expanded by remember(event.id) { mutableStateOf(false) }
     var bookmarkFoldersExpanded by remember(event.id) { mutableStateOf(false) }
@@ -115,6 +117,7 @@ fun NoteActionsMenu(
     var showRawJson by remember(event.id) { mutableStateOf(false) }
     var showReportDialog by remember(event.id) { mutableStateOf(false) }
     var showBlockDialog by remember(event.id) { mutableStateOf(false) }
+    var showDeleteDialog by remember(event.id) { mutableStateOf(false) }
     var selectedReportReason by remember(event.id) { mutableStateOf<Nip56ReportReason?>(null) }
     var reportComment by remember(event.id) { mutableStateOf("") }
     var creatingCard by remember(event.id) { mutableStateOf(false) }
@@ -258,6 +261,12 @@ fun NoteActionsMenu(
                         }
                     }
                 }
+                if (activePubkey != null && activePubkey == event.pubkey) {
+                    NoteActionMenuItem(Icons.Outlined.DeleteOutline, "Delete request") {
+                        expanded = false
+                        showDeleteDialog = true
+                    }
+                }
                 if (moderationActionsEnabled) {
                     NoteActionMenuItem(Icons.Outlined.Block, "Block poster") {
                         expanded = false
@@ -334,6 +343,37 @@ fun NoteActionsMenu(
             },
             dismissButton = {
                 TextButton(onClick = { showBlockDialog = false }) {
+                    Text("CANCEL", color = BonyColors.TextMute)
+                }
+            },
+        )
+    }
+
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            containerColor = BonyColors.Surface,
+            titleContentColor = BonyColors.Text,
+            textContentColor = BonyColors.TextDim,
+            title = { Text("Request deletion?", style = BonyType.body.copy(color = BonyColors.Text)) },
+            text = {
+                Text(
+                    "This publishes a deletion request (NIP-09) for this note, signed with your key. " +
+                        "Relays that receive it are asked to remove the note, but they may not honour the request, " +
+                        "and other relays or clients may already keep copies. It cannot be undone.",
+                    style = BonyType.meta.copy(color = BonyColors.TextDim),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteDialog = false
+                    viewModel.requestDeletion(event) { message ->
+                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                    }
+                }) { Text("REQUEST DELETION", color = BonyColors.Danger) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
                     Text("CANCEL", color = BonyColors.TextMute)
                 }
             },
