@@ -5,6 +5,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
@@ -153,6 +155,9 @@ class ComposeViewModel @Inject constructor(
     }
 
     private data class MediaUploadRequest(val uri: Uri, val kind: String)
+
+    /** Display hints measured at upload time, keyed by the uploaded URL. */
+    private val uploadedMediaHints = java.util.concurrent.ConcurrentHashMap<String, UploadedMediaHint>()
 
     private val mediaUploadQueue = Channel<MediaUploadRequest>(Channel.UNLIMITED)
     private val uploadedUrlQueue = Channel<String>(Channel.UNLIMITED)
@@ -312,6 +317,23 @@ class ComposeViewModel @Inject constructor(
                 alt = label,
                 extension = prepared.extension,
             )
+            if (request.kind == "image" || request.kind == "video") {
+                val blurhash = if (request.kind == "image") {
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            val bmp = android.graphics.BitmapFactory.decodeFile(prepared.file.absolutePath)
+                            bmp?.let { social.tbone.util.BlurHash.encodeBitmap(it) }
+                        }.getOrNull()
+                    }
+                } else null
+                uploadedMediaHints[url] = UploadedMediaHint(
+                    url = url,
+                    mime = prepared.mime,
+                    width = prepared.width,
+                    height = prepared.height,
+                    blurhash = blurhash,
+                )
+            }
             uploadedUrlQueue.trySend(url)
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -536,6 +558,15 @@ class ComposeViewModel @Inject constructor(
                     }
                 }
 
+                // NIP-92 display hints for media uploaded in this session,
+                // so other clients (and this one) can size frames and show
+                // blurred previews before the media downloads.
+                val mediaTags = uploadedMediaHints.values
+                    .filter { hint -> trimmed.contains(hint.url) }
+                    .sortedBy { hint -> trimmed.indexOf(hint.url) }
+                    .map { hint -> buildImetaTag(hint) }
+                val tagsWithMedia = tags + mediaTags
+
                 // Keep every quoted event visible to NIP-27 clients. Links are
                 // grouped below the writing line, in the same order as the folder.
                 val missingRefs = quoteIds
@@ -575,12 +606,12 @@ class ComposeViewModel @Inject constructor(
                     kind = if (isPoll) EventKind.POLL else EventKind.TEXT_NOTE,
                     content = finalContent,
                     tags = if (pollKindTags != null) {
-                        tags + pollKindTags.map { tag ->
+                        tagsWithMedia + pollKindTags.map { tag ->
                             kotlinx.serialization.json.buildJsonArray {
                                 tag.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }
                             }
                         }
-                    } else tags,
+                    } else tagsWithMedia,
                 )
 
                 // getOrElse keeps signer failures in the error state. The outer
@@ -617,3 +648,36 @@ class ComposeViewModel @Inject constructor(
 
     fun clearError() = _uiState.update { it.copy(error = null) }
 }
+
+
+/**
+ * Display hints for one uploaded medium (NIP-92): the MIME type, pixel
+ * dimensions measured from the prepared file, and for images a BlurHash
+ * preview computed at upload time.
+ */
+internal data class UploadedMediaHint(
+    val url: String,
+    val mime: String,
+    val width: Int? = null,
+    val height: Int? = null,
+    val blurhash: String? = null,
+)
+
+/** The `imeta` tag entries for [hint], in tag order (bare values, no "imeta" head). */
+internal fun imetaTagEntries(hint: UploadedMediaHint): List<String> = buildList {
+    add("url ${hint.url}")
+    add("m ${hint.mime}")
+    if (hint.width != null && hint.height != null && hint.width > 0 && hint.height > 0) {
+        add("dim ${hint.width}x${hint.height}")
+    }
+    if (!hint.blurhash.isNullOrBlank()) {
+        add("blurhash ${hint.blurhash}")
+    }
+}
+
+/** Builds the full `["imeta", "url …", "m …", …]` tag for [hint]. */
+internal fun buildImetaTag(hint: UploadedMediaHint): kotlinx.serialization.json.JsonArray =
+    kotlinx.serialization.json.buildJsonArray {
+        add(kotlinx.serialization.json.JsonPrimitive("imeta"))
+        imetaTagEntries(hint).forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }
+    }

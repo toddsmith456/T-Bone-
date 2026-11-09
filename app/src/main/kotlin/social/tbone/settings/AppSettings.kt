@@ -54,6 +54,7 @@ class AppSettings @Inject constructor(
         private val VIDEO_QUALITY = stringPreferencesKey("video_quality")
         private val VIDEO_PLAYBACK_MODE = stringPreferencesKey("video_playback_mode")
         private val VIDEO_THUMBNAILS = booleanPreferencesKey("video_thumbnails")
+        private val MEDIA_FITTED_LAYOUT = booleanPreferencesKey("media_fitted_layout")
         private val IMAGE_CACHE_LIGHTWEIGHT = booleanPreferencesKey("image_cache_lightweight")
         private val AVATAR_MODE = stringPreferencesKey("avatar_mode")
         private val AVATAR_ANIMATED = booleanPreferencesKey("avatar_animated")
@@ -227,6 +228,10 @@ class AppSettings @Inject constructor(
 
     private val _videoThumbnails = MutableStateFlow(true)
     val videoThumbnails = _videoThumbnails.asStateFlow()
+
+    /** When true, inline media frames take the media's real shape instead of the fixed box. */
+    private val _mediaFittedLayout = MutableStateFlow(false)
+    val mediaFittedLayout = _mediaFittedLayout.asStateFlow()
 
     private val _imageCacheLightweight = MutableStateFlow(false)
     val imageCacheLightweight = _imageCacheLightweight.asStateFlow()
@@ -460,6 +465,7 @@ class AppSettings @Inject constructor(
                 _videoQuality.value = VideoQuality.fromPref(prefs[VIDEO_QUALITY])
                 _videoPlaybackMode.value = VideoPlaybackMode.fromPref(prefs[VIDEO_PLAYBACK_MODE])
                 _videoThumbnails.value = prefs[VIDEO_THUMBNAILS] ?: true
+                _mediaFittedLayout.value = prefs[MEDIA_FITTED_LAYOUT] ?: false
                 _imageCacheLightweight.value = prefs[IMAGE_CACHE_LIGHTWEIGHT] ?: false
                 _avatarMode.value = AvatarMode.fromPref(prefs[AVATAR_MODE])
                 _avatarAnimated.value = prefs[AVATAR_ANIMATED] ?: true
@@ -625,6 +631,10 @@ class AppSettings @Inject constructor(
 
     suspend fun setVideoThumbnails(enabled: Boolean) {
         dataStore.edit { it[VIDEO_THUMBNAILS] = enabled }
+    }
+
+    suspend fun setMediaFittedLayout(enabled: Boolean) {
+        dataStore.edit { it[MEDIA_FITTED_LAYOUT] = enabled }
     }
 
     suspend fun setImageCacheLightweight(enabled: Boolean) {

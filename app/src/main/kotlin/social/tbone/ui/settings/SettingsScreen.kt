@@ -91,6 +91,8 @@ fun SettingsScreen(
     val clientTagEnabled by viewModel.clientTagEnabled.collectAsStateWithLifecycle()
     val imageLoadMode by viewModel.imageLoadMode.collectAsStateWithLifecycle()
     val videoQuality by viewModel.videoQuality.collectAsStateWithLifecycle()
+    val videoThumbnails by viewModel.videoThumbnails.collectAsStateWithLifecycle()
+    val mediaFittedLayout by viewModel.mediaFittedLayout.collectAsStateWithLifecycle()
     val imageCacheLightweight by viewModel.imageCacheLightweight.collectAsStateWithLifecycle()
     val avatarMode by viewModel.avatarMode.collectAsStateWithLifecycle()
     val avatarAnimated by viewModel.avatarAnimated.collectAsStateWithLifecycle()
@@ -167,6 +169,8 @@ fun SettingsScreen(
             imageLoadMode = imageLoadMode,
             videoQuality = videoQuality,
             imageCacheLightweight = imageCacheLightweight,
+            videoThumbnails = videoThumbnails,
+            mediaFittedLayout = mediaFittedLayout,
             compact = declutterMode,
             expanded = sectionExpanded("media"),
             onToggle = { toggleSection("media") },
@@ -454,7 +458,7 @@ private fun SettingsNoteActionsSection(noteMenuModerationEnabled: Boolean, clien
 }
 
 @Composable
-private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: () -> Unit, onBlossom: () -> Unit, imageLoadMode: ImageLoadMode, videoQuality: VideoQuality, imageCacheLightweight: Boolean, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
+private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: () -> Unit, onBlossom: () -> Unit, imageLoadMode: ImageLoadMode, videoQuality: VideoQuality, imageCacheLightweight: Boolean, videoThumbnails: Boolean, mediaFittedLayout: Boolean, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
     // ── Media section ─────────────────────────────────────────────────────
     SettingsCategoryHeader("MEDIA", compact, expanded, onToggle)
     if (compact && !expanded) return
@@ -565,9 +569,45 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
 
         Spacer(Modifier.height(14.dp))
         Text(
-            "Videos use a lightweight placeholder. Tap to load and play one at a time; no video thumbnails are extracted.",
+            "Videos use a lightweight placeholder. Tap to load and play one at a time. When a post supplies a preview still, it is shown instead of the placeholder — nothing is extracted from videos on this device.",
             style = BonyType.meta.copy(color = BonyColors.TextMute),
         )
+        Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("video thumbnails", style = BonyType.body.copy(color = BonyColors.TextDim))
+                Text(
+                    "show the preview still a post supplies for its video",
+                    style = BonyType.meta.copy(color = BonyColors.TextMute),
+                )
+            }
+            BonyToggle(
+                checked = videoThumbnails,
+                enabled = true,
+                onCheckedChange = { viewModel.setVideoThumbnails(it) },
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("fit media to its real shape", style = BonyType.body.copy(color = BonyColors.TextDim))
+                Text(
+                    "pictures and videos take their own proportions (using the size stated in the post when available) instead of the standard box · blurred previews while loading",
+                    style = BonyType.meta.copy(color = BonyColors.TextMute),
+                )
+            }
+            BonyToggle(
+                checked = mediaFittedLayout,
+                enabled = true,
+                onCheckedChange = { viewModel.setMediaFittedLayout(it) },
+            )
+        }
         Spacer(Modifier.height(12.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),

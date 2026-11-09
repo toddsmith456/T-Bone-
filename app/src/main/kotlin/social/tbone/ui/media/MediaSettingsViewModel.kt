@@ -37,6 +37,9 @@ class MediaSettingsViewModel @Inject constructor(
     val videoThumbnails: StateFlow<Boolean> = appSettings.videoThumbnails
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
+    val mediaFittedLayout: StateFlow<Boolean> = appSettings.mediaFittedLayout
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
     val avatarMode: StateFlow<AvatarMode> = appSettings.avatarMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AvatarMode.REGULAR)
 
@@ -57,6 +60,10 @@ class MediaSettingsViewModel @Inject constructor(
 
     fun setVideoThumbnails(enabled: Boolean) {
         viewModelScope.launch { appSettings.setVideoThumbnails(enabled) }
+    }
+
+    fun setMediaFittedLayout(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setMediaFittedLayout(enabled) }
     }
 
     fun setAvatarMode(mode: AvatarMode) {

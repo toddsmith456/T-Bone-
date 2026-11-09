@@ -120,6 +120,7 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), VideoPlaybackMode.PLAY_ON_TAP)
 
     val videoThumbnails: StateFlow<Boolean> = appSettings.videoThumbnails
+    val mediaFittedLayout: StateFlow<Boolean> = appSettings.mediaFittedLayout
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
     val imageCacheLightweight: StateFlow<Boolean> = appSettings.imageCacheLightweight
@@ -360,6 +361,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setVideoThumbnails(enabled: Boolean) {
         viewModelScope.launch { appSettings.setVideoThumbnails(enabled) }
+    }
+
+    fun setMediaFittedLayout(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setMediaFittedLayout(enabled) }
     }
 
     fun setImageCacheLightweight(enabled: Boolean) {

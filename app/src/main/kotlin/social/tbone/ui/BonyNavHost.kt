@@ -61,6 +61,7 @@ import social.tbone.ui.media.LocalImageLoadMode
 import social.tbone.ui.media.LocalVideoPlaybackMode
 import social.tbone.ui.media.LocalVideoQuality
 import social.tbone.ui.media.LocalVideoThumbnails
+import social.tbone.ui.media.LocalMediaFitted
 import social.tbone.ui.media.MediaSettingsViewModel
 import social.tbone.ui.notifications.NotificationsScreen
 import social.tbone.ui.notes.ChecklistEditorScreen
@@ -166,6 +167,7 @@ fun BonyNavHost() {
     val videoQuality by mediaSettings.videoQuality.collectAsStateWithLifecycle()
     val videoPlaybackMode by mediaSettings.videoPlaybackMode.collectAsStateWithLifecycle()
     val videoThumbnails by mediaSettings.videoThumbnails.collectAsStateWithLifecycle()
+    val mediaFittedLayout by mediaSettings.mediaFittedLayout.collectAsStateWithLifecycle()
     val avatarMode by mediaSettings.avatarMode.collectAsStateWithLifecycle()
     val avatarAnimated by mediaSettings.avatarAnimated.collectAsStateWithLifecycle()
     val navController = rememberNavController()
@@ -223,6 +225,7 @@ fun BonyNavHost() {
                 LocalVideoQuality provides videoQuality,
                 LocalVideoPlaybackMode provides videoPlaybackMode,
                 LocalVideoThumbnails provides videoThumbnails,
+                LocalMediaFitted provides mediaFittedLayout,
                 LocalAvatarMode provides avatarMode,
                 LocalAnimatedAvatars provides avatarAnimated,
             ) {

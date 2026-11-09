@@ -10,6 +10,10 @@ internal data class ShareCardMedia(
     val url: String,
     val kind: ShareMediaKind,
     val mimeType: String? = null,
+    val dimension: String? = null,
+    val blurhash: String? = null,
+    val thumbhash: String? = null,
+    val posterUrl: String? = null,
 )
 
 /** Understands both extension-bearing URLs and NIP-92 `imeta` MIME hints. */
@@ -21,12 +25,22 @@ internal object ShareCardMediaParser {
 
     fun parse(event: Event): List<ShareCardMedia> {
         val hints = LinkedHashMap<String, String?>()
+        val metaHints = LinkedHashMap<String, ShareCardMedia>()
         event.tags.forEach { tag ->
             val fields = tag.drop(1).mapNotNull { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }
             val name = runCatching { tag.firstOrNull()?.jsonPrimitive?.contentOrNull }.getOrNull()
             if (name == "imeta") {
                 val url = field(fields, "url") ?: return@forEach
                 val mime = field(fields, "m") ?: field(fields, "mime")
+                metaHints[url.trim()] = ShareCardMedia(
+                    url = url.trim(),
+                    kind = ShareMediaKind.IMAGE,
+                    mimeType = mime?.trim(),
+                    dimension = field(fields, "dim")?.trim(),
+                    blurhash = field(fields, "blurhash")?.trim(),
+                    thumbhash = field(fields, "thumbhash")?.trim(),
+                    posterUrl = field(fields, "image")?.trim(),
+                )
                 hints[url.trim()] = mime?.trim()
             }
         }
@@ -41,7 +55,16 @@ internal object ShareCardMediaParser {
         return orderedUrls.mapNotNull { url ->
             val mime = hints[url]
             val kind = kindFor(url, mime) ?: return@mapNotNull null
-            ShareCardMedia(url, kind, mime)
+            val meta = metaHints[url]
+            ShareCardMedia(
+                url = url,
+                kind = kind,
+                mimeType = mime,
+                dimension = meta?.dimension,
+                blurhash = meta?.blurhash,
+                thumbhash = meta?.thumbhash,
+                posterUrl = meta?.posterUrl,
+            )
         }
     }
 
@@ -84,10 +107,17 @@ fun parseEventContent(event: Event): ParsedContent {
     val media = ShareCardMediaParser.parse(event)
     val text = ShareCardMediaParser.stripMediaUrls(event.content, media)
     val ordinary = parseNoteContent(text)
+    fun MediaMetaOf(item: ShareCardMedia) = MediaMeta(
+        mime = item.mimeType,
+        dimension = item.dimension,
+        blurhash = item.blurhash,
+        thumbhash = item.thumbhash,
+        image = item.posterUrl,
+    )
     val fromTagsAndUrls = media.map { item ->
         when (item.kind) {
-            ShareMediaKind.IMAGE -> MediaItem.Image(item.url)
-            ShareMediaKind.VIDEO -> MediaItem.Video(item.url)
+            ShareMediaKind.IMAGE -> MediaItem.Image(item.url, MediaMetaOf(item))
+            ShareMediaKind.VIDEO -> MediaItem.Video(item.url, MediaMetaOf(item))
             ShareMediaKind.AUDIO -> MediaItem.Audio(item.url)
         }
     }

@@ -359,7 +359,9 @@ fun NoteCard(
     // ── Kind-1 text note ─────────────────────────────────────────────────────
     val hasQuote = event.parsedTags.quotedEventId != null
         || extractInlineQuoteId(event.content) != null
-    val parsed = remember(event.id) { parseNoteContent(event.content, profiles) }
+    // Event-aware parse: carries NIP-92 imeta display hints (size, blurred
+    // preview, video poster) into the media items, not just their URLs.
+    val parsed = remember(event.id) { parseEventContent(event) }
     // When a quote is present, drop its raw nostr:nevent1…/note1… URI from the
     // body — the quoted note is rendered as a card below, so the URI must
     // never appear as a fake "nevent" link inside the text.

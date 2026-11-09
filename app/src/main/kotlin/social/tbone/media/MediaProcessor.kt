@@ -46,6 +46,9 @@ data class PreparedMedia(
     val file: File,
     val mime: String,
     val extension: String,
+    /** Pixel dimensions of the prepared file when known (images/videos). */
+    val width: Int? = null,
+    val height: Int? = null,
 ) {
     val sizeBytes: Long get() = file.length()
 }
@@ -151,11 +154,17 @@ object MediaProcessor {
             val sourceSize = sourceSizeOf(context, uri)
             if (maxBytes == null || (sourceSize in 1..maxBytes)) {
                 copyToCache(context, uri, "gif", "tbone_gif", FILE_MAX_BYTES, FILE_TOO_BIG_MESSAGE)
-                    ?.let { return PreparedMedia(it, "image/gif", "gif") }
+                    ?.let { gif ->
+                        val (w, h) = imageSizeOf(gif)
+                        return PreparedMedia(gif, "image/gif", "gif", w, h)
+                    }
             }
         }
         return prepareImageFile(context, uri, maxBytes, compress)
-            ?.let { PreparedMedia(it, IMAGE_MIME, IMAGE_EXT) }
+            ?.let { file ->
+                val (w, h) = imageSizeOf(file)
+                PreparedMedia(file, IMAGE_MIME, IMAGE_EXT, w, h)
+            }
     }
 
     /** True when [uri] looks like an animated GIF by MIME type or extension. */
@@ -191,7 +200,10 @@ object MediaProcessor {
         // stream to a codec. A provider's reported SIZE can be absent or false.
         val sourceCopy = copyVideoToCache(context, uri, sourceExtension) ?: return null
         try {
-            if (!compress) return PreparedMedia(sourceCopy, sourceMime, sourceExtension)
+            if (!compress) {
+                val (w, h) = withContext(Dispatchers.IO) { videoSizeOf(context, Uri.fromFile(sourceCopy)) }
+                return PreparedMedia(sourceCopy, sourceMime, sourceExtension, w, h)
+            }
             val sourceHeight = withContext(Dispatchers.IO) { videoHeightOf(context, Uri.fromFile(sourceCopy)) }
             val transcoded = try {
                 transcodeVideo(context, Uri.fromFile(sourceCopy), sourceHeight)
@@ -212,11 +224,16 @@ object MediaProcessor {
             if (transcoded != null && transcoded.exists() && transcoded.length() > 0L &&
                 VideoUploadPolicy.preferTranscoded(transcoded.length(), sourceCopy.length()) &&
                 VideoUploadPolicy.isWithinCeiling(transcoded.length())) {
+                // Probe the file actually uploaded (it may be downscaled).
+                val (w, h) = withContext(Dispatchers.IO) { videoSizeOf(context, Uri.fromFile(transcoded)) }
                 sourceCopy.delete()
-                return PreparedMedia(transcoded, VIDEO_MIME, VIDEO_EXT)
+                return PreparedMedia(transcoded, VIDEO_MIME, VIDEO_EXT, w, h)
             }
             transcoded?.delete()
-            return PreparedMedia(sourceCopy, sourceMime, sourceExtension)
+            val (dispW, dispH) = withContext(Dispatchers.IO) {
+                videoSizeOf(context, Uri.fromFile(sourceCopy))
+            }
+            return PreparedMedia(sourceCopy, sourceMime, sourceExtension, dispW, dispH)
         } catch (failure: Throwable) {
             sourceCopy.delete()
             throw failure
@@ -487,6 +504,38 @@ object MediaProcessor {
             }
         }
     }
+
+    /** Pixel size of an image file from its header, without a full decode. */
+    private fun imageSizeOf(file: File): Pair<Int?, Int?> = runCatching {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        val w = bounds.outWidth.takeIf { it > 0 }
+        val h = bounds.outHeight.takeIf { it > 0 }
+        w to h
+    }.getOrDefault(null to null)
+
+    /** Displayed (post-rotation) pixel size of a video, or nulls if unknown. */
+    private fun videoSizeOf(context: Context, uri: Uri): Pair<Int?, Int?> = runCatching {
+        val retriever = MediaMetadataRetriever()
+        try {
+            if (uri.scheme == "file") {
+                uri.path?.let { path -> retriever.setDataSource(path) }
+            } else {
+                retriever.setDataSource(context, uri)
+            }
+            val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                ?.toIntOrNull() ?: 0
+            val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                ?.toIntOrNull() ?: 0
+            val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+                ?.toIntOrNull() ?: 0
+            if (width <= 0 || height <= 0) null to null
+            else if (rotation == 90 || rotation == 270) height to width
+            else width to height
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }.getOrDefault(null to null)
 
     /** Height (as displayed, i.e. after rotation) of the source video, or 0 if unknown. */
     private fun videoHeightOf(context: Context, uri: Uri): Int = runCatching {
