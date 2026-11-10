@@ -342,6 +342,16 @@ fun feedCardBackground(): Color =
     if (!YouniversalTheme.enabled) BonyColors.Bg
     else feedCardColor(MaterialTheme.colorScheme, YouniversalTheme.isDark)
 
+/**
+ * Page paint for screens whose classic shell already painted the Scaffold
+ * container ([androidx.compose.material3.colorScheme].surface): Youniversal
+ * gets the deep feed page; classic keeps its exact previous container color.
+ */
+@Composable
+fun feedShellBackground(): Color =
+    if (YouniversalTheme.enabled) feedPageBackground()
+    else MaterialTheme.colorScheme.surface
+
 /** Press-feedback target scale for engagement controls (tap acknowledgement). */
 fun engagementPressScale(pressed: Boolean): Float = if (pressed) 0.92f else 1f
 

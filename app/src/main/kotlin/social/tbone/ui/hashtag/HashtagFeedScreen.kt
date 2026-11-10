@@ -1,6 +1,6 @@
 package social.tbone.ui.hashtag
 
-import social.tbone.ui.theme.feedPageBackground
+import social.tbone.ui.theme.feedShellBackground
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.PaddingValues
@@ -63,7 +63,7 @@ fun HashtagFeedScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(feedPageBackground())
+                .background(feedShellBackground())
                 .padding(padding),
         ) {
             when {

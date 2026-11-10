@@ -2,7 +2,7 @@ package social.tbone.ui.notifications
 
 import androidx.compose.material3.MaterialTheme
 import social.tbone.ui.theme.appCornerShape
-import social.tbone.ui.theme.feedPageBackground
+import social.tbone.ui.theme.feedShellBackground
 import dev.youniversal.theme.YouniversalEmptyState
 import dev.youniversal.theme.YouniversalTheme
 import androidx.compose.animation.AnimatedVisibility
@@ -155,7 +155,7 @@ fun NotificationsScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            Column(modifier = Modifier.fillMaxSize().background(feedPageBackground())) {
+            Column(modifier = Modifier.fillMaxSize().background(feedShellBackground())) {
                 // The 24h summary bar is ALWAYS visible — even when a selected
                 // filter (e.g. mentions) currently has zero items, the stat
                 // stays up so you can see at a glance what's empty.
