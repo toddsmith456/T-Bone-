@@ -3,11 +3,8 @@ package social.tbone.nostr
 import org.bouncycastle.asn1.sec.SECNamedCurves
 import org.bouncycastle.crypto.params.ECDomainParameters
 import org.bouncycastle.crypto.params.ECPublicKeyParameters
-import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.bouncycastle.math.ec.ECPoint
 import java.math.BigInteger
-import java.security.Security
-import timber.log.Timber
 
 /**
  * BIP-340 Schnorr signature verification over secp256k1.
@@ -18,51 +15,24 @@ import timber.log.Timber
  */
 object Crypto {
 
-    /**
-     * Non-colliding provider name. Android's bundled legacy provider occupies
-     * "BC", so registering under our own name is what actually takes effect on
-     * API 26 devices.
-     */
-    private const val BOUNCY_CASTLE = "BouncyCastle-TBone"
-
     private val secp256k1 by lazy {
-        ensureBouncyCastle()
-        // BouncyCastle's lightweight API (SECNamedCurves) below is used directly and
-        // does not depend on the JCA provider, so a provider collision on API 26
-        // must never prevent curve initialisation.
+        // No JCA provider is registered or required here. Everything below
+        // (SECNamedCurves / ECDomainParameters / ECPoint) is BouncyCastle's
+        // lightweight API and resolves the curve itself, and taggedHash() uses
+        // the platform's own SHA-256.
+        //
+        // This is the real Android 8 (API 26) fix for the "BouncyCastle provider
+        // collision": the old code called Security.addProvider(BouncyCastleProvider())
+        // and keyed off Security.getProvider("BC"), but Android ships its own
+        // legacy "BC" provider, so that call can no-op or throw. Verification
+        // never needed the provider, so not touching it removes the failure mode
+        // instead of papering over it. (Note BouncyCastleProvider is `final` in
+        // bcprov 1.78.1, so it cannot be subclassed to register under a
+        // different name either.)
         val params = requireNotNull(SECNamedCurves.getByName("secp256k1")) {
             "secp256k1 curve unavailable"
         }
         ECDomainParameters(params.curve, params.g, params.n, params.h)
-    }
-
-    /**
-     * Android 8 (API 26) Fix: BouncyCastle provider collision.
-     *
-     * Android bundles an old "BC" provider, so [Security.addProvider] can be a
-     * no-op or throw. We install ours under a distinct name and only fall back to
-     * "BC" when nothing else is registered, instead of assuming the platform
-     * provider is ours. Any failure is logged rather than silently discarded,
-     * and is never fatal: signature verification uses the lightweight
-     * [SECNamedCurves] API, which needs no provider at all.
-     */
-    private fun ensureBouncyCastle() {
-        try {
-            if (Security.getProvider(BOUNCY_CASTLE) == null) {
-                Security.addProvider(IsolatedBouncyCastleProvider())
-            }
-        } catch (e: Exception) {
-            Timber.e(e, "BouncyCastle provider registration failed; using lightweight API only")
-        }
-    }
-
-    /**
-     * Registers under [BOUNCY_CASTLE] instead of the provider's default "BC" so
-     * installing it cannot evict or be refused by Android's bundled provider —
-     * the classic API 26 collision. Registration is additive and idempotent.
-     */
-    private class IsolatedBouncyCastleProvider : BouncyCastleProvider() {
-        override fun getName(): String = BOUNCY_CASTLE
     }
 
     /**
