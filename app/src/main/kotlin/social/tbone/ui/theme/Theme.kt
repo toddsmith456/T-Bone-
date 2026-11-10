@@ -202,16 +202,26 @@ object BonyType {
         size: Int,
         lineHeight: Int,
         letterSpacing: Float = 0f,
+        youniversalWeight: FontWeight? = null,
+        youniversalSize: Int? = null,
+        youniversalLineHeight: Int? = null,
     ): TextStyle {
         val customYouniversalFont = activeYouniversalFontFamily != null
+        // Reading-hierarchy roles (name/body/count) carry an explicit
+        // Youniversal ladder; everything else keeps the classic size with the
+        // legacy +2 leading bump for the taller sans metrics.
+        val resolvedWeight = if (customYouniversalFont) youniversalWeight ?: weight else weight
+        val resolvedSize = if (customYouniversalFont) youniversalSize ?: size else size
+        val resolvedLineHeight = if (customYouniversalFont) {
+            youniversalLineHeight ?: (lineHeight + 2)
+        } else {
+            lineHeight
+        }
         return TextStyle(
             fontFamily = currentFontFamily,
-            fontWeight = weight,
-            fontSize = size.sp,
-            // Nunito/system sans metrics are taller than JetBrains Mono's. The
-            // old tight mono leading clipped accents and descenders in several
-            // legacy BonyType labels when a Youniversal font was selected.
-            lineHeight = (lineHeight + if (customYouniversalFont) 2 else 0).sp,
+            fontWeight = resolvedWeight,
+            fontSize = resolvedSize.sp,
+            lineHeight = resolvedLineHeight.sp,
             letterSpacing = letterSpacing.sp,
             platformStyle = if (customYouniversalFont) PlatformTextStyle(includeFontPadding = true) else null,
         )
@@ -219,13 +229,29 @@ object BonyType {
 
     val wordmark get() = style(FontWeight.Bold, 30, 30, -1.0f)
     val title    get() = style(FontWeight.Bold, 20, 26, -0.3f)
-    val body     get() = style(FontWeight.Normal, 15, 22)
-    val bodyDim  get() = style(FontWeight.Normal, 14, 20)
+    val body     get() = style(FontWeight.Normal, 15, 22, youniversalSize = 16, youniversalLineHeight = 25)
+    val bodyDim  get() = style(FontWeight.Normal, 14, 20, youniversalSize = 15, youniversalLineHeight = 23)
     val meta     get() = style(FontWeight.Normal, 13, 18, 0.4f)
     val metaDim  get() = style(FontWeight.Normal, 12, 16, 0.4f)
     val caption  get() = style(FontWeight.Normal, 11, 14, 1.5f)
     val tag      get() = style(FontWeight.SemiBold, 11, 14, 1.0f)
     val button   get() = style(FontWeight.SemiBold, 13, 16, 1.0f)
+
+    /**
+     * Author name in a note row. Classic mode renders exactly like [bodyDim]
+     * (the historical style); Youniversal promotes it to a larger semi-bold so
+     * the eye lands on *who* first.
+     */
+    val name get() = style(
+        FontWeight.Normal, 14, 20,
+        youniversalWeight = FontWeight.SemiBold, youniversalSize = 16, youniversalLineHeight = 22,
+    )
+
+    /** Engagement counts (replies/likes). Classic equals [metaDim]; Youniversal bumps to a scannable medium weight. */
+    val count get() = style(
+        FontWeight.Normal, 12, 16, 0.4f,
+        youniversalWeight = FontWeight.Medium, youniversalSize = 13, youniversalLineHeight = 18,
+    )
 }
 
 /**

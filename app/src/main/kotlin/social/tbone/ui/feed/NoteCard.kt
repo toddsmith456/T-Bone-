@@ -280,7 +280,7 @@ fun NoteCard(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         val name = profile?.bestName
                         if (name != null) {
-                            Text(name, style = BonyType.bodyDim.copy(color = BonyColors.Text), maxLines = 1)
+                            Text(name, style = BonyType.name.copy(color = BonyColors.Text), maxLines = 1)
                             Text(" · ", style = BonyType.metaDim.copy(color = BonyColors.TextMute))
                         }
                         Text(
@@ -431,7 +431,7 @@ fun NoteCard(
                         if (name != null) {
                             Text(
                                 text = name,
-                                style = BonyType.bodyDim.copy(color = BonyColors.Text),
+                                style = BonyType.name.copy(color = BonyColors.Text),
                                 maxLines = 1,
                             )
                             Text(
@@ -1106,7 +1106,7 @@ private fun LikeButton(
                 Spacer(Modifier.width(4.dp))
                 Text(
                     text = likeCount.toString(),
-                    style = BonyType.metaDim.copy(color = BonyColors.Accent),
+                    style = BonyType.count.copy(color = BonyColors.Accent),
                 )
             }
         } else {
@@ -1169,7 +1169,7 @@ private fun EngagementButton(
             Spacer(Modifier.width(4.dp))
             Text(
                 text = count.toString(),
-                style = BonyType.metaDim.copy(color = tint),
+                style = BonyType.count.copy(color = tint),
             )
         }
     }

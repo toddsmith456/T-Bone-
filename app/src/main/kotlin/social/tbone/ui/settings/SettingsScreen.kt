@@ -50,6 +50,15 @@ import dev.youniversal.theme.YouniversalBackgroundStyle
 import dev.youniversal.theme.YouniversalContrast
 import dev.youniversal.theme.YouniversalThemeState
 import dev.youniversal.theme.YouniversalFontOption
+import dev.youniversal.theme.YouniversalLook
+import dev.youniversal.theme.youniversalLookScheme
+import dev.youniversal.theme.youniversalScheme
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.material3.MaterialTheme
 import social.tbone.ui.theme.ThemeViewModel
@@ -844,6 +853,32 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
                 style = BonyType.meta.copy(color = BonyColors.TextMute),
             )
 
+            // One-tap looks: coordinated bundles of the fine-tune controls
+            // below, each with a live mini preview of its own palette.
+            Text("looks", style = BonyType.meta.copy(color = BonyColors.TextMute))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                YouniversalLook.entries.forEach { look ->
+                    LookPreviewCard(
+                        look = look,
+                        selected = youniversalState.activeLook == look,
+                        state = youniversalState,
+                        onClick = { youniversalState.applyLook(look) },
+                    )
+                }
+            }
+            Text(
+                "tap a look to set everything below at once — tweak any control and it becomes Custom",
+                style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+            )
+
+            // Fine-tune controls. Any manual change here marks the mix Custom.
+            Text("fine tune", style = BonyType.meta.copy(color = BonyColors.TextMute))
+
             // App-wide typeface. Standard is intentionally the Youniversal
             // default; Soft provides a warmer, rounded sans-serif alternative.
             Text("app font", style = BonyType.meta.copy(color = BonyColors.TextMute))
@@ -1066,6 +1101,114 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
     // the theme settings under UI declutter.
     IconSettings()
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+}
+
+/**
+ * Mini live mock of one Youniversal look for the settings looks row:
+ * the look's own background, a stand-in post card, name/body lines and the
+ * accent dot. [YouniversalLook.CUSTOM] previews the current fine-tune mix.
+ */
+@Composable
+private fun LookPreviewCard(
+    look: YouniversalLook,
+    selected: Boolean,
+    state: YouniversalThemeState,
+    onClick: () -> Unit,
+) {
+    val systemDark = isSystemInDarkTheme()
+    val context = LocalContext.current
+    val scheme = remember(
+        look,
+        systemDark,
+        state.backgroundStyle,
+        state.contrast,
+        state.accentSeed,
+        state.dynamicColor,
+    ) {
+        val wallpaper: ((Boolean) -> ColorScheme)? =
+            if (
+                state.dynamicColor &&
+                state.accentSeed == Color.Unspecified &&
+                android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
+            ) {
+                { isDark ->
+                    if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+                }
+            } else {
+                null
+            }
+        if (look.isBundle) {
+            youniversalLookScheme(look, systemDark, wallpaper)
+        } else {
+            youniversalScheme(
+                backgroundStyle = state.backgroundStyle,
+                contrast = state.contrast,
+                accentSeed = state.accentSeed,
+                isSystemDark = systemDark,
+                dynamicScheme = wallpaper,
+            )
+        }
+    }
+    val cornerScale = if (look.isBundle) look.cornerScale else state.cornerScale
+    val shape = RoundedCornerShape((10 * cornerScale).dp)
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.clickable(onClick = onClick),
+    ) {
+        Box(
+            modifier = Modifier
+                .width(76.dp)
+                .clip(shape)
+                .background(scheme.background, shape)
+                .border(
+                    if (selected) 2.dp else 1.dp,
+                    if (selected) BonyColors.Accent else BonyColors.Rule,
+                    shape,
+                ),
+        ) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 8.dp, top = 8.dp, end = 26.dp),
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(0.72f)
+                        .height(6.dp)
+                        .background(scheme.onSurface.copy(alpha = 0.92f), RoundedCornerShape(3.dp)),
+                )
+                Spacer(Modifier.height(5.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth(0.95f)
+                        .height(4.dp)
+                        .background(scheme.onSurfaceVariant.copy(alpha = 0.7f), RoundedCornerShape(2.dp)),
+                )
+                Spacer(Modifier.height(4.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth(0.58f)
+                        .height(4.dp)
+                        .background(scheme.onSurfaceVariant.copy(alpha = 0.55f), RoundedCornerShape(2.dp)),
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(7.dp)
+                    .size(10.dp)
+                    .background(scheme.primary, CircleShape),
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = look.label,
+            style = BonyType.tag.copy(
+                color = if (selected) BonyColors.Accent else BonyColors.TextMute,
+            ),
+            maxLines = 1,
+        )
+    }
 }
 
 @Composable

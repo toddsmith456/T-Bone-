@@ -45,6 +45,7 @@ public class YouniversalThemeState constructor(context: Context) {
     private val animateTransitionsState = mutableStateOf(preferences.getBoolean(KEY_ANIMATE, true))
     private val fontOptionState =
         mutableStateOf(readEnum(KEY_FONT_OPTION, YouniversalFontOption.STANDARD))
+    private val activeLookState = mutableStateOf(readLook())
 
     /** Master switch. When false the host app's own theme renders the content. */
     public val enabled: Boolean
@@ -82,6 +83,10 @@ public class YouniversalThemeState constructor(context: Context) {
     public val fontOption: YouniversalFontOption
         get() = fontOptionState.value
 
+    /** The active one-tap look, or `null` when the settings are at shipped defaults. */
+    public val activeLook: YouniversalLook?
+        get() = activeLookState.value
+
     public fun setEnabled(value: Boolean) {
         enabledState.value = value
         preferences.edit().putBoolean(KEY_ENABLED, value).apply()
@@ -90,6 +95,7 @@ public class YouniversalThemeState constructor(context: Context) {
     public fun setBackgroundStyle(value: YouniversalBackgroundStyle) {
         backgroundStyleState.value = value
         preferences.edit().putString(KEY_STYLE, value.name).apply()
+        markLookCustom()
     }
 
     public fun setDynamicColor(value: Boolean) {
@@ -100,6 +106,7 @@ public class YouniversalThemeState constructor(context: Context) {
     public fun setContrast(value: YouniversalContrast) {
         contrastState.value = value
         preferences.edit().putString(KEY_CONTRAST, value.name).apply()
+        markLookCustom()
     }
 
     /** Pass [Color.Unspecified] to clear the seed and return to the Youniversal accent. */
@@ -112,18 +119,21 @@ public class YouniversalThemeState constructor(context: Context) {
             editor.putLong(KEY_SEED, value.toArgb().toLong() and 0xFFFFFFFFL)
         }
         editor.apply()
+        markLookCustom()
     }
 
     public fun setCornerScale(value: Float) {
         val coerced = value.coerceIn(0f, 2f)
         cornerScaleState.value = coerced
         preferences.edit().putFloat(KEY_CORNERS, coerced).apply()
+        markLookCustom()
     }
 
     public fun setFontScale(value: Float) {
         val coerced = value.coerceIn(0.7f, 2f)
         fontScaleState.value = coerced
         preferences.edit().putFloat(KEY_FONT_SCALE, coerced).apply()
+        markLookCustom()
     }
 
     public fun setAnimateTransitions(value: Boolean) {
@@ -134,6 +144,43 @@ public class YouniversalThemeState constructor(context: Context) {
     public fun setFontOption(value: YouniversalFontOption) {
         fontOptionState.value = value
         preferences.edit().putString(KEY_FONT_OPTION, value.name).apply()
+        markLookCustom()
+    }
+
+    /**
+     * Applies a [YouniversalLook] bundle in one step: every bundled control
+     * plus the look name, persisted together. Applying [YouniversalLook.CUSTOM]
+     * does nothing — it is an indicator, not a bundle.
+     */
+    public fun applyLook(look: YouniversalLook) {
+        if (!look.isBundle) return
+        backgroundStyleState.value = look.backgroundStyle
+        contrastState.value = look.contrast
+        accentSeedState.value = look.accentSeed
+        fontOptionState.value = look.fontOption
+        cornerScaleState.value = look.cornerScale
+        fontScaleState.value = look.fontScale
+        activeLookState.value = look
+        val editor = preferences.edit()
+            .putString(KEY_STYLE, look.backgroundStyle.name)
+            .putString(KEY_CONTRAST, look.contrast.name)
+            .putString(KEY_FONT_OPTION, look.fontOption.name)
+            .putFloat(KEY_CORNERS, look.cornerScale)
+            .putFloat(KEY_FONT_SCALE, look.fontScale)
+            .putString(KEY_LOOK, look.name)
+        if (look.accentSeed == Color.Unspecified) {
+            editor.remove(KEY_SEED)
+        } else {
+            editor.putLong(KEY_SEED, look.accentSeed.toArgb().toLong() and 0xFFFFFFFFL)
+        }
+        editor.apply()
+    }
+
+    /** Any manual change to a bundled control makes the mix hand-tuned. */
+    private fun markLookCustom() {
+        if (activeLookState.value == YouniversalLook.CUSTOM) return
+        activeLookState.value = YouniversalLook.CUSTOM
+        preferences.edit().putString(KEY_LOOK, YouniversalLook.CUSTOM.name).apply()
     }
 
     /** Returns every persisted setting to its default. */
@@ -148,11 +195,17 @@ public class YouniversalThemeState constructor(context: Context) {
         fontScaleState.value = 1f
         animateTransitionsState.value = true
         fontOptionState.value = YouniversalFontOption.STANDARD
+        activeLookState.value = null
     }
 
     private fun readSeed(): Color {
         if (!preferences.contains(KEY_SEED)) return Color.Unspecified
         return Color(preferences.getLong(KEY_SEED, 0L))
+    }
+
+    private fun readLook(): YouniversalLook? {
+        val name = preferences.getString(KEY_LOOK, null) ?: return null
+        return YouniversalLook.entries.firstOrNull { it.name == name }
     }
 
     private inline fun <reified T : Enum<T>> readEnum(key: String, default: T): T {
@@ -171,6 +224,7 @@ public class YouniversalThemeState constructor(context: Context) {
         const val KEY_FONT_SCALE = "font_scale"
         const val KEY_FONT_OPTION = "font_option"
         const val KEY_ANIMATE = "animate_transitions"
+        const val KEY_LOOK = "active_look"
     }
 }
 
