@@ -1,5 +1,7 @@
 package social.tbone.ui.notifications
 
+import dev.youniversal.theme.YouniversalEmptyState
+import dev.youniversal.theme.YouniversalTheme
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -173,10 +175,20 @@ fun NotificationsScreen(
                                 modifier = Modifier.weight(1f).fillMaxWidth(),
                                 contentAlignment = Alignment.Center,
                             ) {
-                                Text(
-                                    text = if (enabledFilters.isEmpty()) "all notification filters are off" else "no notifications yet",
-                                    style = BonyType.meta.copy(color = BonyColors.TextMute),
-                                )
+                                if (YouniversalTheme.enabled) {
+                                    YouniversalEmptyState(
+                                        title = if (enabledFilters.isEmpty()) {
+                                            "all notification filters are off"
+                                        } else {
+                                            "no notifications yet"
+                                        },
+                                    )
+                                } else {
+                                    Text(
+                                        text = if (enabledFilters.isEmpty()) "all notification filters are off" else "no notifications yet",
+                                        style = BonyType.meta.copy(color = BonyColors.TextMute),
+                                    )
+                                }
                             }
                             LoadMoreBar(
                                 hasMore = hasMore,

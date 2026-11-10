@@ -1,8 +1,14 @@
 # Youniversal theme polish — design direction & spec
 
-Status: **Phases 1–2 implemented on beta** (looks + reading typography;
-feed soft-card finish, widget/empty-state swaps, thread/profile polish —
-2026-11-08). Phases 3–4 not started.
+Status: **Phases 1–3 implemented on beta** (looks + reading typography;
+feed soft-card finish, widget/empty-state swaps, thread/profile polish;
+dialogs/snackbars, empty states, navigation + engagement motion —
+2026-11-08). Phase 4 (screenshot review + contrast pass) not started.
+Notes: M3 `AlertDialog`s already match the kit's dialog design through the
+Material 3 bridge (1.3 defaults: surfaceContainerHigh + extraLarge, both
+themed by the kit), so no dialog code change was needed. Haptics were
+skipped — the app has no existing haptic usage to extend. Loading spinners
+stay M3 indicators (already on-palette accent).
 Date: 2026-11-08. Owner: beta (`beta` branch).
 
 This document captures the full deep dive, the four decisions taken on
@@ -223,7 +229,7 @@ the new type/divider rules. System-bar icon tinting already handled by
 |---|---|---|
 | **P1 — shipped** | Looks (bundles + live preview cards) + reading typography + type-scale wiring | Instantly visible 80%; looks are what users play with and show off |
 | **P2 — shipped** | Feed soft-card finish (gaps, dividers, media corners, thread connectors, profile header) + composer & settings component swap | Most-seen surfaces get the modern treatment |
-| **P3** | Dialogs, empty/loading/error states, profile/thread/notifications/long-tail swaps, motion polish | Consistency everywhere |
+| **P3 — shipped** | Dialogs, empty/loading/error states, profile/thread/notifications/long-tail swaps, motion polish | Consistency everywhere |
 | **P4** | Screenshot review across Light/Dark/Cream × looks, contrast/legibility pass, perf pass (palette morph, skeleton shimmer cost) | Ship gate |
 
 Each phase is independently shippable as `[build artifacts]` on `beta`.

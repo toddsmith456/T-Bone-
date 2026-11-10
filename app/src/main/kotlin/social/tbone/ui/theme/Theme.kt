@@ -2,6 +2,7 @@ package social.tbone.ui.theme
 
 import androidx.compose.material3.ColorScheme
 import dev.youniversal.theme.YouniversalContrast
+import dev.youniversal.theme.YouniversalMotion
 import dev.youniversal.theme.YouniversalTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -336,6 +337,25 @@ fun feedPageBackground(): Color =
 fun feedCardBackground(): Color =
     if (!YouniversalTheme.enabled) BonyColors.Bg
     else feedCardColor(MaterialTheme.colorScheme, YouniversalTheme.isDark)
+
+/** Press-feedback target scale for engagement controls (tap acknowledgement). */
+fun engagementPressScale(pressed: Boolean): Float = if (pressed) 0.92f else 1f
+
+/** Transient scale pop shown briefly when a like lands. */
+fun likePopScale(pop: Boolean): Float = if (pop) 1.15f else 1f
+
+/** Navigation motion for Youniversal; null = keep navigation-compose defaults (classic). */
+data class NavMotionSpec(val durationMs: Int, val slideFraction: Float)
+
+fun youniversalNavMotion(enabled: Boolean): NavMotionSpec? =
+    if (enabled) {
+        NavMotionSpec(
+            durationMs = YouniversalMotion.DurationFast,
+            slideFraction = 0.12f,
+        )
+    } else {
+        null
+    }
 
 /** Parses "#RRGGBB" (or "#AARRGGBB") into a Compose Color; null on garbage. */
 fun parseHexColor(hex: String?): Color? {

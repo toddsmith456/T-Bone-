@@ -11,7 +11,15 @@ import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
@@ -71,6 +79,8 @@ import social.tbone.settings.LocalContentFilter
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.ui.theme.appCornerShape
+import social.tbone.ui.theme.engagementPressScale
+import social.tbone.ui.theme.likePopScale
 import social.tbone.ui.theme.feedCardBackground
 import social.tbone.ui.theme.showPostDividers
 import dev.youniversal.theme.YouniversalTheme
@@ -1101,13 +1111,53 @@ private fun LikeButton(
         }
     }
 
-    Box {
+    // Acknowledge a fresh like with a tiny pop; arriving at an already-liked
+    // note (scroll-in) must not pop — only the false -> true edge triggers it.
+    var likePopActive by remember { mutableStateOf(false) }
+    val wasLikedBefore = remember { mutableStateOf(hasReacted) }
+    LaunchedEffect(hasReacted) {
+        if (hasReacted && !wasLikedBefore.value) {
+            likePopActive = true
+            delay(120)
+            likePopActive = false
+        }
+        wasLikedBefore.value = hasReacted
+    }
+    val likePop by animateFloatAsState(
+        targetValue = likePopScale(likePopActive),
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "likePop",
+    )
+    val likeInteraction = remember { MutableInteractionSource() }
+    val likePressed by likeInteraction.collectIsPressedAsState()
+    val likePress by animateFloatAsState(
+        targetValue = engagementPressScale(likePressed),
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "likePress",
+    )
+
+    Box(
+        modifier = Modifier.graphicsLayer {
+            scaleX = likePop * likePress
+            scaleY = likePop * likePress
+        },
+    ) {
         if (myEmoji != null) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .clip(RectangleShape)
-                    .clickable(onClick = onClick)
+                    .clickable(
+                        interactionSource = likeInteraction,
+                        indication = LocalIndication.current,
+                        onClick = onClick,
+                    )
                     .padding(horizontal = 8.dp, vertical = 8.dp),
             ) {
                 Box(modifier = Modifier.size(20.dp), contentAlignment = Alignment.Center) {
@@ -1159,11 +1209,26 @@ private fun EngagementButton(
     tint: Color,
     onClick: () -> Unit,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = engagementPressScale(pressed),
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "engagementPress",
+    )
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
+            .graphicsLayer { scaleX = pressScale; scaleY = pressScale }
             .clip(RectangleShape)
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = LocalIndication.current,
+                onClick = onClick,
+            )
             .semantics {
                 this.contentDescription = contentDescription
                 role = Role.Button

@@ -60,7 +60,7 @@ import androidx.compose.material.icons.outlined.Audiotrack
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.SnackbarHost
+import dev.youniversal.theme.YouniversalSnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Icon
@@ -549,7 +549,7 @@ fun ComposeScreen(
             Spacer(Modifier.height(24.dp))
         }
 
-        SnackbarHost(
+        YouniversalSnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier.align(Alignment.BottomCenter),
         )

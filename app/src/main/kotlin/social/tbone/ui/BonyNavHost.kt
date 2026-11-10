@@ -1,5 +1,17 @@
 package social.tbone.ui
 
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.navigation.NavBackStackEntry
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import dev.youniversal.theme.YouniversalMotion
+import dev.youniversal.theme.YouniversalTheme
+import social.tbone.ui.theme.youniversalNavMotion
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
@@ -229,7 +241,58 @@ fun BonyNavHost() {
                 LocalAvatarMode provides avatarMode,
                 LocalAnimatedAvatars provides avatarAnimated,
             ) {
-                NavHost(navController = navController, startDestination = start) {
+                // Youniversal: snappy 12% slide + fade through YouniversalMotion.
+                // Classic reproduces the library defaults byte-for-byte
+                // (700ms fade in/out; pop transitions mirror their pair).
+                val navMotion = youniversalNavMotion(YouniversalTheme.enabled)
+                val enterTransition: (AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition) =
+                    if (navMotion == null) {
+                        { fadeIn(animationSpec = tween(700)) }
+                    } else {
+                        val m = navMotion
+                        {
+                            slideInHorizontally(
+                                animationSpec = tween(m.durationMs, easing = YouniversalMotion.EaseDecelerate),
+                            ) { full -> (full * m.slideFraction).toInt() } + fadeIn(tween(m.durationMs))
+                        }
+                    }
+                val exitTransition: (AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition) =
+                    if (navMotion == null) {
+                        { fadeOut(animationSpec = tween(700)) }
+                    } else {
+                        val m = navMotion
+                        { fadeOut(tween((m.durationMs * 3 / 4).toInt())) }
+                    }
+                val popEnterTransition: (AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition) =
+                    if (navMotion == null) {
+                        { fadeIn(animationSpec = tween(700)) }
+                    } else {
+                        val m = navMotion
+                        {
+                            slideInHorizontally(
+                                animationSpec = tween(m.durationMs, easing = YouniversalMotion.EaseDecelerate),
+                            ) { full -> (-full * m.slideFraction).toInt() } + fadeIn(tween(m.durationMs))
+                        }
+                    }
+                val popExitTransition: (AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition) =
+                    if (navMotion == null) {
+                        { fadeOut(animationSpec = tween(700)) }
+                    } else {
+                        val m = navMotion
+                        {
+                            slideOutHorizontally(
+                                animationSpec = tween(m.durationMs, easing = YouniversalMotion.EaseAccelerate),
+                            ) { full -> (full * m.slideFraction).toInt() } + fadeOut(tween(m.durationMs))
+                        }
+                    }
+                NavHost(
+                    navController = navController,
+                    startDestination = start,
+                    enterTransition = enterTransition,
+                    exitTransition = exitTransition,
+                    popEnterTransition = popEnterTransition,
+                    popExitTransition = popExitTransition,
+                ) {
                     composable(ROUTE_ONBOARDING) {
                         OnboardingScreen(
                             onAccountAdded = {

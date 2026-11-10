@@ -1,5 +1,7 @@
 package social.tbone.ui.notes
 
+import dev.youniversal.theme.YouniversalEmptyState
+import dev.youniversal.theme.YouniversalTheme
 import social.tbone.ui.theme.appBorder
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -295,6 +297,23 @@ private fun NotesErrorBanner(message: String) {
 @Composable
 private fun NotesEmptyState(modifier: Modifier, onNewNote: () -> Unit) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        if (YouniversalTheme.enabled) {
+            YouniversalEmptyState(
+                title = "no notes yet",
+                description = "encrypted on-device notes + checklists + folders",
+                action = {
+                    Box(
+                        modifier = Modifier
+                            .appBorder(1.dp, BonyColors.Accent)
+                            .clickable { onNewNote() }
+                            .padding(horizontal = 24.dp, vertical = 12.dp),
+                    ) {
+                        Text("+ WRITE A NOTE", style = BonyType.button.copy(color = BonyColors.Accent))
+                    }
+                },
+            )
+            return@Box
+        }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 text = "no notes yet",
