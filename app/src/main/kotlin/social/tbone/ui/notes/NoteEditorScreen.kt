@@ -1,5 +1,6 @@
 package social.tbone.ui.notes
 
+import android.os.Build
 import social.tbone.ui.theme.appBorder
 import android.Manifest
 import android.content.Context
@@ -428,11 +429,13 @@ fun NoteEditorScreen(
                         register { discard -> cleanup.close(discard); Unit }
                         val file = File.createTempFile("note_voice_", ".m4a", context.cacheDir)
                         f = file
-                        val recorder: MediaRecorder
-                        if (Build.VERSION.SDK_INT >= 31) {
-                            recorder = MediaRecorder(context)
+                        // MediaRecorder(Context) is API 31+. minSdk is 26 and core-library
+                        // desugaring does not backport this, so call it only where it exists.
+                        @Suppress("DEPRECATION")
+                        val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            MediaRecorder(context)
                         } else {
-                            recorder = MediaRecorder()
+                            MediaRecorder()
                         }
                         r = recorder
                         recorder.setAudioSource(MediaRecorder.AudioSource.MIC)

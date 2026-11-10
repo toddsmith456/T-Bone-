@@ -110,6 +110,28 @@ public fun YouniversalButton(
     )
 }
 
+/** Fully custom content in an outlined pill button. */
+@Composable
+public fun YouniversalOutlinedButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    shape: Shape = YouniversalShapes.Pill,
+    colors: ButtonColors = ButtonDefaults.outlinedButtonColors(),
+    contentPadding: PaddingValues = ButtonContentPadding,
+    content: @Composable RowScope.() -> Unit,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        shape = shape,
+        colors = colors,
+        contentPadding = contentPadding,
+        content = content,
+    )
+}
+
 /** A secondary action with an accent-tinted fill and accent-colored label. */
 @Composable
 public fun YouniversalTonalButton(

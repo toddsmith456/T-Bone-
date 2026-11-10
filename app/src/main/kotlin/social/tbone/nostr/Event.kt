@@ -8,6 +8,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.encodeToJsonElement
 import org.bouncycastle.jce.provider.BouncyCastleProvider
+import timber.log.Timber
 import social.tbone.Tunables
 import java.security.MessageDigest
 import java.security.Security
@@ -44,19 +45,20 @@ data class Event(
      * Returns false if either check fails — never throws.
      */
     fun verify(): Boolean {
-        // Android 8 (API 26) Fix: Silent Failure Masking & BouncyCastle Collision
-        // Added explicit logging for verification failures to prevent silent drops.
-        // BouncyCastle provider collision is handled in Crypto.kt (API-agnostic patch).
-        val result = runCatching { verifyId() && (VerifiedEventCache.contains(id) || verifySignature()) }.getOrNull()
-        if (result == null) {
-            // Log the specific exception that caused the failure (e.g., BouncyCastle collision on API 26)
-            // In a real app, use Timber.e or Log.e. Here we simulate logging.
-            // social.tbone.util.Log.e("EventVerify", "Verification failed for event $id: ${it.message}")
-            false
-        } else {
-            if (result) VerifiedEventCache.add(id)
-            result
+        // A cached signature only authenticates the original payload, not a
+        // different event claiming the same id. Always recompute the id first.
+        //
+        // Android 8 (API 26): failures used to be swallowed by getOrDefault(false),
+        // which made bad signatures indistinguishable from provider crashes
+        // (BouncyCastle collisions are common on API 26). We still never throw —
+        // callers depend on that — but the reason is now logged.
+        val outcome = runCatching { verifyId() && (VerifiedEventCache.contains(id) || verifySignature()) }
+        outcome.exceptionOrNull()?.let { error ->
+            Timber.e(error, "Event verification threw for id=$id")
         }
+        val result = outcome.getOrDefault(false)
+        if (result) VerifiedEventCache.add(id)
+        return result
     }
 
     private fun verifyId(): Boolean {

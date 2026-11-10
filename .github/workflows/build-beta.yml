@@ -54,7 +54,35 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
           GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
-        run: ./gradlew :app:assembleBeta --stacktrace --no-configuration-cache
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/ci-log"
+          ./gradlew :app:assembleBeta --stacktrace --no-configuration-cache 2>&1 \
+            | tee "$RUNNER_TEMP/ci-log/assemble.log"
+          echo $? > "$RUNNER_TEMP/ci-log/assemble.exit"
+      - name: Publish build log to ci-log branch (always)
+        if: always()
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ci-log"
+          cd "$RUNNER_TEMP/ci-log"
+          # Keep the log small enough to live in git: the compiler errors are what
+          # matters, not the full --stacktrace dump.
+          { grep -nE '^(e: |w: .*error|FAILURE|\* What went wrong|> Task .* FAILED|Caused by)' assemble.log \
+              || echo 'no compiler diagnostics matched'; } > diagnostics.txt || true
+          tail -n 400 assemble.log > assemble.tail.log || true
+          rm -f assemble.log
+          echo "${{ github.sha }}" > sha.txt
+          echo "run=${{ github.run_id }} attempt=${{ github.run_attempt }}" >> sha.txt
+          git init -q
+          git config user.email "ci@tbone.local"
+          git config user.name "CI Logger"
+          git add -A
+          git commit -q -m "CI log for ${{ github.sha }}" || true
+          git push --force \
+            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
+            HEAD:ci-log
       - name: Run unit tests
         env:
           GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"

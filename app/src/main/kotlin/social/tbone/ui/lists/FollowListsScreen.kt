@@ -161,14 +161,15 @@ fun FollowListsScreen(
                 return@Column
             }
 
-            // Tab strip
-            // Outer inset padding so the rounded border doesn't touch screen edges or bottom hairline
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp) // 8dp left/right inset, 4dp top/bottom
-            ) {
-                Row(modifier = Modifier.fillMaxWidth().background(BonyColors.Surface)) {
+            // Tab strip — inset so the active tab's border is not clipped by the
+            // screen edge and is not overdrawn by the hairline below.
+            Column(Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)
+                        .background(BonyColors.Surface),
+                ) {
                     listOf(
                         FollowListsTab.FOLLOWING to "FOLLOWING",
                         FollowListsTab.FOLLOWERS to "FOLLOWERS",
@@ -187,8 +188,12 @@ fun FollowListsScreen(
                         }
                     }
                 }
-                // Bottom hairline (now sits below the outer padding, not overlapping the border)
-                Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule).padding(bottom = 4.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(BonyColors.Rule),
+                )
             }
 
             when (tab) {
