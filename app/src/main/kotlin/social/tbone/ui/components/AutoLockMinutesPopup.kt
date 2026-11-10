@@ -1,5 +1,7 @@
 package social.tbone.ui.components
 
+import androidx.compose.material3.MaterialTheme
+import social.tbone.ui.theme.appCornerShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -120,14 +122,14 @@ private fun AutoLockMinutesPopup(
                         val selected = m == currentMinutes
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
+                                .clip(appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(4.dp)))
                                 .background(
                                     if (selected) BonyColors.Accent else BonyColors.SurfaceAlt,
                                 )
                                 .border(
                                     1.dp,
                                     if (selected) BonyColors.Accent else BonyColors.Rule,
-                                    RoundedCornerShape(4.dp),
+                                    appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(4.dp)),
                                 )
                                 .clickable { onSelect(m) }
                                 .padding(vertical = 10.dp),

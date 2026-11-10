@@ -1,5 +1,7 @@
 package social.tbone.ui.toolbox
 
+import androidx.compose.material3.MaterialTheme
+import social.tbone.ui.theme.appCornerShape
 import social.tbone.ui.theme.appBorder
 import android.Manifest
 import android.content.Intent
@@ -229,7 +231,7 @@ fun VoiceRecorderScreen(
                         Box(
                             modifier = Modifier
                                 .size(26.dp)
-                                .background(BonyColors.Danger, RoundedCornerShape(4.dp)),
+                                .background(BonyColors.Danger, appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(4.dp))),
                         )
                     }
                 }
@@ -369,7 +371,7 @@ private fun RecordControl(
                     .size(if (isRecording) 20.dp else 36.dp)
                     .background(
                         if (isRecording) BonyColors.Warn else BonyColors.Accent,
-                        if (isRecording) RoundedCornerShape(4.dp) else CircleShape,
+                        if (isRecording) appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(4.dp)) else CircleShape,
                     ),
             )
         }
@@ -432,14 +434,14 @@ private fun MiniPlayer(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(4.dp)
-                        .background(BonyColors.Rule, RoundedCornerShape(2.dp))
+                        .background(BonyColors.Rule, appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(2.dp)))
                         .align(Alignment.Center),
                 )
                 Box(
                     modifier = Modifier
                         .fillMaxWidth(progress)
                         .height(4.dp)
-                        .background(BonyColors.Accent, RoundedCornerShape(2.dp))
+                        .background(BonyColors.Accent, appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(2.dp)))
                         .align(Alignment.Center),
                 )
             }

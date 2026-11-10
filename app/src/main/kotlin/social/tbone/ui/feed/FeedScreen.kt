@@ -299,8 +299,8 @@ fun FeedScreen(
                             text = "${globalAutoLoadInterval} min  ▾",
                             style = BonyType.tag.copy(color = BonyColors.Accent),
                             modifier = Modifier
-                                .background(BonyColors.Bg, RoundedCornerShape(16.dp))
-                                .border(1.dp, BonyColors.RuleStrong, RoundedCornerShape(16.dp))
+                                .background(BonyColors.Bg, appCornerShape(MaterialTheme.shapes.medium, RoundedCornerShape(16.dp)))
+                                .border(1.dp, BonyColors.RuleStrong, appCornerShape(MaterialTheme.shapes.medium, RoundedCornerShape(16.dp)))
                                 .clickable { showGlobalIntervalMenu = true }
                                 .padding(horizontal = 10.dp, vertical = 6.dp),
                         )

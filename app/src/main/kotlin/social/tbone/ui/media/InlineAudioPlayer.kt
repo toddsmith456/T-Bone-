@@ -1,5 +1,7 @@
 package social.tbone.ui.media
 
+import androidx.compose.material3.MaterialTheme
+import social.tbone.ui.theme.appCornerShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -189,7 +191,7 @@ private fun AudioPlayerCard(
     onCopyLink: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(12.dp)
+    val shape = appCornerShape(MaterialTheme.shapes.small, RoundedCornerShape(12.dp))
     Column(
         modifier = modifier
             .fillMaxWidth()

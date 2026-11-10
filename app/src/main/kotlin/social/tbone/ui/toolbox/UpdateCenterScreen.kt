@@ -1,5 +1,7 @@
 package social.tbone.ui.toolbox
 
+import androidx.compose.material3.MaterialTheme
+import social.tbone.ui.theme.appCornerShape
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -202,13 +204,13 @@ private fun UpdateCenterContent(
                 if (state.downloadProgress != null) {
                     LinearProgressIndicator(
                         progress = state.downloadProgress / 100f,
-                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(2.dp))),
                         color = BonyColors.Accent,
                         trackColor = BonyColors.Rule,
                     )
                 } else {
                     LinearProgressIndicator(
-                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                        modifier = Modifier.fillMaxWidth().height(4.dp).clip(appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(2.dp))),
                         color = BonyColors.Accent,
                         trackColor = BonyColors.Rule,
                     )
@@ -343,8 +345,8 @@ private fun UpdateCenterContent(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(BonyColors.SurfaceAlt, RoundedCornerShape(6.dp))
-                                .border(1.dp, BonyColors.Rule, RoundedCornerShape(6.dp))
+                                .background(BonyColors.SurfaceAlt, appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(6.dp)))
+                                .border(1.dp, BonyColors.Rule, appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(6.dp)))
                                 .padding(10.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
@@ -402,8 +404,8 @@ private fun UpdateCenterContent(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(BonyColors.SurfaceAlt, RoundedCornerShape(6.dp))
-                            .border(1.dp, BonyColors.Rule, RoundedCornerShape(6.dp))
+                            .background(BonyColors.SurfaceAlt, appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(6.dp)))
+                            .border(1.dp, BonyColors.Rule, appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(6.dp)))
                             .padding(10.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
@@ -529,7 +531,7 @@ private fun HashRow(label: String, hash: String, context: Context) {
 private fun ClickableMonoRow(label: String, value: String, context: Context) {
     Row(
         modifier = Modifier.fillMaxWidth()
-            .clip(RoundedCornerShape(4.dp))
+            .clip(appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(4.dp)))
             .clickable {
                 val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 cm.setPrimaryClip(ClipData.newPlainText(label.ifBlank { "hash" }, value))

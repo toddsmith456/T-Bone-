@@ -1,6 +1,7 @@
 # Youniversal theme polish — design direction & spec
 
-Status: **Phases 1–3 implemented on beta** (looks + reading typography;
+Status: **Phases 1–4 implemented on beta** — Phase 4 = whole-app visual
+audit + systemic fixes (see §9). Phases 1–3: (looks + reading typography;
 feed soft-card finish, widget/empty-state swaps, thread/profile polish;
 dialogs/snackbars, empty states, navigation + engagement motion —
 2026-11-08). Phase 4 (screenshot review + contrast pass) not started.
@@ -263,3 +264,39 @@ Each phase is independently shippable as `[build artifacts]` on `beta`.
 Anything not UI: protocol/features, notification logic, media pipeline
 behaviour (except purely visual media clipping), classic-mode redesign,
 floating navigation bars, copying any reference app's assets or layouts.
+
+## 9. Phase 4 audit record (2026-11-08)
+
+Static whole-app visual audit (no emulator in CI — device screenshots remain
+a manual step before any public release).
+
+**Systemic fix — the bridge.** `BonyColors.applyYouniversal` painted page and
+surface identically (`background == surface` in the kit), so every Surface
+element (toolbars, strips, rows — 37 files) was invisible against its page.
+The bridge now maps the page to the kit's deeper tonal step (container
+low/lowest by darkness), restoring classic semantics: page deep, surfaces
+lift. All screens inherit this without per-screen edits.
+
+**Also fixed:** feed-card hosts (thread, profile, notifications, hashtag)
+paint the same page tone as the feed; the one hardcoded light-grey relay row
+is themed (classic keeps its hex); tap-target ripples round under Youniversal;
+44 fixed-radius shapes across 12 files now ride the scaled shape system with
+their original radius preserved in classic (`appCornerShape(scale, original)`).
+
+**Verified intentional (kept):** relay/health semantic reds, greens and ambers
+(must never follow the accent); accent-seed swatches (they *are* the seeds);
+launcher-icon preview backdrop; geohash own-marker colour; all-caps chrome
+labels (consistent and legible); decoy screens untouched (disguise).
+
+**Legibility gate:** `FeedContrastTest` asserts WCAG AA (4.5:1) for body/dim
+text on page and card tones across light/dark/cream × default/high contrast,
+that the muted secondary tone never regresses versus the surface it was designed
+for, and that hairlines stay visible on the deeper page.
+
+**Perf:** look previews cache their schemes in `remember`; palette morphs were
+already behind the animate toggle; nav transitions and press springs are
+per-frame cheap. No new steady-state work introduced.
+
+**Known remaining:** settings/profile list screens stay flat by design (flat
+lists are valid; the card-pair applies where cards exist); emulator
+screenshot pass is manual before a public release.

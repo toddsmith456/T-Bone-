@@ -1177,21 +1177,21 @@ private fun LookPreviewCard(
                     Modifier
                         .fillMaxWidth(0.72f)
                         .height(6.dp)
-                        .background(scheme.onSurface.copy(alpha = 0.92f), RoundedCornerShape(3.dp)),
+                        .background(scheme.onSurface.copy(alpha = 0.92f), appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(3.dp))),
                 )
                 Spacer(Modifier.height(5.dp))
                 Box(
                     Modifier
                         .fillMaxWidth(0.95f)
                         .height(4.dp)
-                        .background(scheme.onSurfaceVariant.copy(alpha = 0.7f), RoundedCornerShape(2.dp)),
+                        .background(scheme.onSurfaceVariant.copy(alpha = 0.7f), appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(2.dp))),
                 )
                 Spacer(Modifier.height(4.dp))
                 Box(
                     Modifier
                         .fillMaxWidth(0.58f)
                         .height(4.dp)
-                        .background(scheme.onSurfaceVariant.copy(alpha = 0.55f), RoundedCornerShape(2.dp)),
+                        .background(scheme.onSurfaceVariant.copy(alpha = 0.55f), appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(2.dp))),
                 )
             }
             Box(

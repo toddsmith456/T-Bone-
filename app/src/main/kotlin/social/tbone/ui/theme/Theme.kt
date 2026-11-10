@@ -148,14 +148,18 @@ object BonyColors {
     /** Mirrors a Material3 [ColorScheme] (e.g. Youniversal) into the Bony palette so legacy screens
      *  that read `BonyColors.*` still look correct when the Youniversal engine is active. */
     fun applyYouniversal(scheme: ColorScheme) {
-        Bg = scheme.background
-        Surface = scheme.surface
+        // The kit paints background and surface identically, which leaves every
+        // Surface element (toolbars, strips, cards) invisible against its page.
+        // Classic semantics: the page is the deeper tone, surfaces lift off it.
+        val isDark = scheme.background.luminance() < 0.5f
+        Bg = feedPageColor(scheme, isDark)
+        Surface = feedCardColor(scheme, isDark)
         SurfaceAlt = scheme.surfaceContainer
         Rule = scheme.outlineVariant
         RuleStrong = scheme.outline
         Text = scheme.onBackground
         TextDim = scheme.onSurfaceVariant
-        TextMute = scheme.onSurfaceVariant.copy(alpha = 0.6f)
+        TextMute = scheme.onSurfaceVariant.copy(alpha = 0.64f)
         // Map Youniversal primary/tertiary/error to Bony's semantic roles
         Accent = scheme.primary
         Danger = scheme.error

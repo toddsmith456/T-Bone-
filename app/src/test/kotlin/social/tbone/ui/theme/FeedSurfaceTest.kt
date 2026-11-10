@@ -51,6 +51,23 @@ class FeedSurfaceTest {
     }
 
     @Test
+    fun `bridge lifts surfaces above the page in every scheme`() {
+        for ((scheme, isDark) in listOf(
+            youniversalDarkColorScheme() to true,
+            youniversalLightColorScheme() to false,
+            youniversalCreamColorScheme() to false,
+        )) {
+            BonyColors.applyYouniversal(scheme)
+            assertTrue("page is the deeper tone", BonyColors.Bg == feedPageColor(scheme, isDark))
+            assertTrue("surface is the card tone", BonyColors.Surface == feedCardColor(scheme, isDark))
+            assertTrue(
+                "surface lifts off page (${BonyColors.Surface.luminance()} vs ${BonyColors.Bg.luminance()})",
+                BonyColors.Surface.luminance() > BonyColors.Bg.luminance(),
+            )
+        }
+    }
+
+    @Test
     fun `post dividers classic always youniversal only at high contrast`() {
         // Classic: dividers are the historical separator, always shown.
         assertTrue(showPostDividers(youniversalEnabled = false, contrast = YouniversalContrast.Default))

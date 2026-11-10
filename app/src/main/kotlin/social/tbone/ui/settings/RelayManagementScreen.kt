@@ -1,5 +1,7 @@
 package social.tbone.ui.settings
 
+import social.tbone.ui.theme.appCornerShape
+import dev.youniversal.theme.YouniversalTheme
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -178,7 +180,7 @@ fun RelayManagementScreen(
                         TextButton(
                             onClick = { exportLauncher.launch(viewModel.exportFileName()) },
                             enabled = !ui.busy,
-                            modifier = Modifier.weight(1f).border(1.dp, BonyColors.Rule, RoundedCornerShape(4.dp)),
+                            modifier = Modifier.weight(1f).border(1.dp, BonyColors.Rule, appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(4.dp))),
                         ) {
                             Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
@@ -187,7 +189,7 @@ fun RelayManagementScreen(
                         TextButton(
                             onClick = { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) },
                             enabled = !ui.busy,
-                            modifier = Modifier.weight(1f).border(1.dp, BonyColors.Rule, RoundedCornerShape(4.dp)),
+                            modifier = Modifier.weight(1f).border(1.dp, BonyColors.Rule, appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(4.dp))),
                         ) {
                             Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
@@ -244,7 +246,7 @@ fun RelayManagementScreen(
             item(key = "global_section") {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(8.dp)))
                         .background(BonyColors.Surface)
                         .appBorder(1.dp, BonyColors.Rule)
                         .padding(12.dp),
@@ -270,9 +272,13 @@ fun RelayManagementScreen(
                             val status = globalStatuses[url] ?: RelayStatus.DISCONNECTED
                             Row(
                                 modifier = Modifier.fillMaxWidth()
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isActive) BonyColors.SurfaceAlt else Color(0xFFF5F5F5))
-                                    .border(1.dp, if (isActive) BonyColors.AccentDim else BonyColors.Rule, RoundedCornerShape(6.dp))
+                                    .clip(appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(6.dp)))
+                                    .background(
+                                    if (isActive) BonyColors.SurfaceAlt
+                                    else if (YouniversalTheme.enabled) BonyColors.Surface
+                                    else Color(0xFFF5F5F5),
+                                )
+                                    .border(1.dp, if (isActive) BonyColors.AccentDim else BonyColors.Rule, appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(6.dp)))
                                     .clickable { globalViewModel.toggleActive(url) }
                                     .padding(horizontal = 10.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -289,8 +295,8 @@ fun RelayManagementScreen(
                                     "SOLO",
                                     style = BonyType.tag.copy(color = if (globalActive.size == 1 && isActive) BonyColors.Accent else BonyColors.TextMute),
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .border(1.dp, BonyColors.Rule, RoundedCornerShape(4.dp))
+                                        .clip(appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(4.dp)))
+                                        .border(1.dp, BonyColors.Rule, appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(4.dp)))
                                         .clickable { globalViewModel.solo(url) }
                                         .padding(horizontal = 6.dp, vertical = 3.dp),
                                 )
@@ -298,7 +304,7 @@ fun RelayManagementScreen(
                                 // Toggle dot
                                 Box(
                                     modifier = Modifier.size(18.dp)
-                                        .clip(RoundedCornerShape(4.dp))
+                                        .clip(appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(4.dp)))
                                         .background(if (isActive) BonyColors.Accent else BonyColors.Rule)
                                         .padding(2.dp),
                                     contentAlignment = Alignment.Center,
@@ -312,7 +318,7 @@ fun RelayManagementScreen(
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         TextButton(
                             onClick = { showGlobalPopup = true },
-                            modifier = Modifier.border(1.dp, BonyColors.AccentDim, RoundedCornerShape(6.dp)),
+                            modifier = Modifier.border(1.dp, BonyColors.AccentDim, appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(6.dp))),
                         ) { Text("Manage Global") }
                         TextButton(
                             onClick = { globalViewModel.enableAll() },
@@ -498,9 +504,9 @@ private fun GlobalRelayPopup(
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         LazyColumn(
             modifier = Modifier.fillMaxWidth(0.95f).fillMaxHeight(0.85f)
-                .clip(RoundedCornerShape(12.dp))
+                .clip(appCornerShape(MaterialTheme.shapes.small, RoundedCornerShape(12.dp)))
                 .background(MaterialTheme.colorScheme.surface)
-                .border(1.dp, BonyColors.Rule, RoundedCornerShape(12.dp))
+                .border(1.dp, BonyColors.Rule, appCornerShape(MaterialTheme.shapes.small, RoundedCornerShape(12.dp)))
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -524,9 +530,9 @@ private fun GlobalRelayPopup(
                 val isActive = url in globalActive
                 val status = statuses[url] ?: RelayStatus.DISCONNECTED
                 Column(
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                    modifier = Modifier.fillMaxWidth().clip(appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(8.dp)))
                         .background(if (isActive) BonyColors.SurfaceAlt else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-                        .border(1.dp, if (isActive) BonyColors.AccentDim else BonyColors.Rule, RoundedCornerShape(8.dp))
+                        .border(1.dp, if (isActive) BonyColors.AccentDim else BonyColors.Rule, appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(8.dp)))
                         .padding(horizontal = 10.dp, vertical = 8.dp),
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { onToggle(url) }) {

@@ -1,5 +1,6 @@
 package social.tbone.ui.thread
 
+import social.tbone.ui.theme.feedPageBackground
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -110,13 +111,13 @@ fun ThreadScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(BonyColors.Bg),
+            .background(feedPageBackground()),
     ) {
         // ── Top bar ───────────────────────────────────────────────────────────
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(BonyColors.Bg)
+                .background(feedPageBackground())
                 .statusBarsPadding(),
         ) {
             Row(

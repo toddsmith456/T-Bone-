@@ -1,5 +1,7 @@
 package social.tbone.ui.feed
 
+import androidx.compose.material3.MaterialTheme
+import social.tbone.ui.theme.appCornerShape
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -80,7 +82,7 @@ internal fun WalletHandoffDialog(
                         contentDescription = "$kindName payment QR code",
                         modifier = Modifier
                             .size(200.dp)
-                            .background(androidx.compose.ui.graphics.Color.White, RoundedCornerShape(8.dp))
+                            .background(androidx.compose.ui.graphics.Color.White, appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(8.dp)))
                             .padding(8.dp),
                     )
                 }

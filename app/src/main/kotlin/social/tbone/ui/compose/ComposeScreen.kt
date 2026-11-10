@@ -593,9 +593,9 @@ private fun SquareUploadSpinner() {
         modifier = Modifier
             .size(15.dp)
             .graphicsLayer { rotationZ = rotation }
-            .border(1.5.dp, BonyColors.Accent, RoundedCornerShape(3.dp))
+            .border(1.5.dp, BonyColors.Accent, appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(3.dp)))
             .padding(3.dp)
-            .border(1.dp, BonyColors.AccentDim, RoundedCornerShape(1.dp)),
+            .border(1.dp, BonyColors.AccentDim, appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(1.dp))),
     )
 }
 
@@ -1074,7 +1074,7 @@ private fun NotePreviewDialog(
                             Box(
                                 modifier = Modifier
                                     .size(36.dp)
-                                    .clip(RoundedCornerShape(18.dp))
+                                    .clip(appCornerShape(MaterialTheme.shapes.medium, RoundedCornerShape(18.dp)))
                                     .background(BonyColors.SurfaceAlt),
                             )
                         }
@@ -1163,7 +1163,7 @@ private fun NotePreviewDialog(
                                         Box(
                                             modifier = Modifier
                                                 .size(10.dp)
-                                                .clip(RoundedCornerShape(5.dp))
+                                                .clip(appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(5.dp)))
                                                 .background(BonyColors.RuleStrong)
                                                 .appBorder(1.dp, BonyColors.Rule),
                                         )

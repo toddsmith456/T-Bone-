@@ -1,5 +1,7 @@
 package social.tbone.ui.bookmarks
 
+import androidx.compose.material3.MaterialTheme
+import social.tbone.ui.theme.appCornerShape
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -273,9 +275,9 @@ private fun BookmarkFolderRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(appCornerShape(MaterialTheme.shapes.small, RoundedCornerShape(12.dp)))
             .background(BonyColors.Surface)
-            .border(1.dp, BonyColors.Rule, RoundedCornerShape(12.dp))
+            .border(1.dp, BonyColors.Rule, appCornerShape(MaterialTheme.shapes.small, RoundedCornerShape(12.dp)))
             .clickable(onClick = onOpen)
             .padding(start = 14.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -453,9 +455,9 @@ private fun BookmarkCard(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
+            .clip(appCornerShape(MaterialTheme.shapes.small, RoundedCornerShape(14.dp)))
             .background(BonyColors.Surface)
-            .border(1.dp, if (dragging) BonyColors.Accent else BonyColors.Rule, RoundedCornerShape(14.dp))
+            .border(1.dp, if (dragging) BonyColors.Accent else BonyColors.Rule, appCornerShape(MaterialTheme.shapes.small, RoundedCornerShape(14.dp)))
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {

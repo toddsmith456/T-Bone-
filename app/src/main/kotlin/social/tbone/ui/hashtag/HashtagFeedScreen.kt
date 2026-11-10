@@ -1,5 +1,6 @@
 package social.tbone.ui.hashtag
 
+import social.tbone.ui.theme.feedPageBackground
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.PaddingValues
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.background
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.CircularProgressIndicator
@@ -61,6 +63,7 @@ fun HashtagFeedScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .background(feedPageBackground())
                 .padding(padding),
         ) {
             when {

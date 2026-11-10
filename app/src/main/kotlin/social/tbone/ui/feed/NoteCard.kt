@@ -79,6 +79,7 @@ import social.tbone.settings.LocalContentFilter
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.ui.theme.appCornerShape
+import social.tbone.ui.theme.appClip
 import social.tbone.ui.theme.engagementPressScale
 import social.tbone.ui.theme.likePopScale
 import social.tbone.ui.theme.feedCardBackground
@@ -1152,7 +1153,7 @@ private fun LikeButton(
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .clip(RectangleShape)
+                    .appClip(MaterialTheme.shapes.small)
                     .clickable(
                         interactionSource = likeInteraction,
                         indication = LocalIndication.current,
@@ -1223,7 +1224,7 @@ private fun EngagementButton(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .graphicsLayer { scaleX = pressScale; scaleY = pressScale }
-            .clip(RectangleShape)
+            .appClip(MaterialTheme.shapes.small)
             .clickable(
                 interactionSource = interactionSource,
                 indication = LocalIndication.current,

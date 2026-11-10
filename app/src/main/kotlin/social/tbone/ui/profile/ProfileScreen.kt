@@ -1,5 +1,6 @@
 package social.tbone.ui.profile
 
+import social.tbone.ui.theme.feedPageBackground
 import social.tbone.ui.theme.appBorder
 import android.content.ComponentName
 import android.content.Intent
@@ -143,7 +144,7 @@ fun ProfileScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(BonyColors.Bg),
+            .background(feedPageBackground()),
     ) {
         CompositionLocalProvider(
             social.tbone.ui.feed.LocalQuoteState provides
@@ -161,7 +162,7 @@ fun ProfileScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(BonyColors.Bg)
+                        .background(feedPageBackground())
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {

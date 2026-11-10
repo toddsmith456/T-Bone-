@@ -1,5 +1,6 @@
 package social.tbone.ui.feed
 
+import social.tbone.ui.theme.appCornerShape
 import android.content.ClipData
 import android.content.ComponentName
 import android.content.Context
@@ -466,7 +467,7 @@ fun NoteActionsMenu(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 440.dp)
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(8.dp)))
                             .background(BonyColors.Bg)
                             .verticalScroll(rememberScrollState())
                             .padding(12.dp),
