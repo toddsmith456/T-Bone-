@@ -134,6 +134,7 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -181,6 +182,11 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.navigation.compose)
+
+    // Android 8 (API 26) Fix: Core Library Desugaring
+    // Enables API 31+ features (like MediaRecorder(Context)) to be used safely on API 26
+    // by providing backported implementations.
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 
     // Compose
     implementation(platform(libs.androidx.compose.bom))

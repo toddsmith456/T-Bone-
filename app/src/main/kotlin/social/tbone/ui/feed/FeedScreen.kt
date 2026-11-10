@@ -748,95 +748,91 @@ private fun TorPill(torEnabled: Boolean, connected: Boolean, onClick: () -> Unit
 
 // ── Feed tab strip ────────────────────────────────────────────────────────────
 
-@Composable
-private fun FeedTabStrip(
-    currentFeed: FeedTab,
-    onSwitch: (FeedTab) -> Unit,
-    compact: Boolean,
-) {
-    val youniversal = YouniversalTheme.enabled
-    val effectiveFontScale = LocalDensity.current.fontScale.coerceAtLeast(0.1f)
-    // Youniversal composes its text scale with Android's system scale. Cap the
-    // rendered tab-label size so large accessibility/theme scales cannot force a
-    // quarter-width tab outside the screen.
-    // Four tabs on one row leaves ~90 dp per tab even on a small phone, so the
-    // label has a hard ceiling: 9 dp normally, and never more than 12 dp when
-    // Youniversal composes its scale on top of the system one. Dividing by the
-    // effective scale keeps the *rendered* size fixed instead of letting a 2x
-    // accessibility setting push "SUGGESTED" out of its slot.
-    val labelDp = if (youniversal) (9f * effectiveFontScale).coerceAtMost(12f) else 9f
-    val tabLabelSize = (labelDp / effectiveFontScale).sp
-    val tabLetterSpacing = (0.2f / effectiveFontScale).sp
+    @Composable
+    private fun FeedTabStrip(
+        currentFeed: FeedTab,
+        onSwitch: (FeedTab) -> Unit,
+        compact: Boolean,
+    ) {
+        val youniversal = YouniversalTheme.enabled
+        val effectiveFontScale = LocalDensity.current.fontScale.coerceAtLeast(0.1f)
+        val labelDp = if (youniversal) (9f * effectiveFontScale).coerceAtMost(12f) else 9f
+        val tabLabelSize = (labelDp / effectiveFontScale).sp
+        val tabLetterSpacing = (0.2f / effectiveFontScale).sp
 
-    Box(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(BonyColors.Surface),
-        ) {
-            FeedTab.values().forEach { tab ->
-                val active = currentFeed == tab
-                val tabShape = appCornerShape(MaterialTheme.shapes.small, RectangleShape)
-                // Tint animates so switching feels like the same control moving,
-                // not four unrelated buttons lighting up.
-                val tint by animateColorAsState(
-                    targetValue = if (active) BonyColors.Accent else BonyColors.TextMute,
-                    animationSpec = tween(160),
-                    label = "feedTabTint",
-                )
-                Column(
+        Box(modifier = Modifier.fillMaxWidth()) {
+            // Outer inset padding so the rounded border doesn't touch screen edges or bottom hairline
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp) // 8dp left/right inset, 4dp top/bottom
+            ) {
+                Row(
                     modifier = Modifier
-                        .weight(1f)
-                        .clip(tabShape)
-                        .clickable { onSwitch(tab) }
-                        .background(BonyColors.Surface, tabShape)
-                        .then(
-                            if (active) Modifier.border(
-                                width = 1.dp, color = BonyColors.Accent, shape = tabShape,
-                            ) else Modifier
-                        )
-                        .heightIn(min = if (compact) 36.dp else 50.dp)
-                        .padding(horizontal = 2.dp, vertical = if (compact) 4.dp else 7.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
+                        .fillMaxWidth()
+                        .background(BonyColors.Surface),
                 ) {
-                    Icon(
-                        imageVector = FeedTabIcons.forTab(tab),
-                        // The label below is the accessible name; announcing both
-                        // would read each tab twice.
-                        contentDescription = if (compact) tab.label else null,
-                        tint = tint,
-                        modifier = Modifier.size(17.dp),
-                    )
-                    if (!compact) {
-                        Spacer(Modifier.height(3.dp))
-                        Text(
-                            text = tab.label,
-                            style = BonyType.tag.copy(
-                                fontSize = tabLabelSize,
-                                letterSpacing = tabLetterSpacing,
-                                color = tint,
-                            ),
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Clip,
+                    FeedTab.values().forEach { tab ->
+                        val active = currentFeed == tab
+                        val tabShape = appCornerShape(MaterialTheme.shapes.small, RectangleShape)
+                        val tint by animateColorAsState(
+                            targetValue = if (active) BonyColors.Accent else BonyColors.TextMute,
+                            animationSpec = tween(160),
+                            label = "feedTabTint",
                         )
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(tabShape)
+                                .clickable { onSwitch(tab) }
+                                .background(BonyColors.Surface, tabShape)
+                                .then(
+                                    if (active) Modifier.border(
+                                        width = 1.dp, color = BonyColors.Accent, shape = tabShape,
+                                    ) else Modifier
+                                )
+                                .heightIn(min = if (compact) 36.dp else 50.dp)
+                                .padding(horizontal = 2.dp, vertical = if (compact) 4.dp else 7.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            Icon(
+                                imageVector = FeedTabIcons.forTab(tab),
+                                contentDescription = if (compact) tab.label else null,
+                                tint = tint,
+                                modifier = Modifier.size(17.dp),
+                            )
+                            if (!compact) {
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    text = tab.label,
+                                    style = BonyType.tag.copy(
+                                        fontSize = tabLabelSize,
+                                        letterSpacing = tabLetterSpacing,
+                                        color = tint,
+                                    ),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Clip,
+                                )
+                            }
+                        }
                     }
                 }
             }
+            // Bottom hairline (now sits below the outer padding, not overlapping the border)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(BonyColors.Rule)
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 4.dp) // Match the outer vertical padding
+            )
         }
-        // Full-width bottom hairline
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(BonyColors.Rule)
-                .align(Alignment.BottomCenter),
-        )
     }
-}
 
 /** Short label under each tab icon. */
 private val FeedTab.label: String

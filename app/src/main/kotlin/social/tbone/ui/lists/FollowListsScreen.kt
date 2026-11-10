@@ -162,26 +162,34 @@ fun FollowListsScreen(
             }
 
             // Tab strip
-            Row(modifier = Modifier.fillMaxWidth().background(BonyColors.Surface)) {
-                listOf(
-                    FollowListsTab.FOLLOWING to "FOLLOWING",
-                    FollowListsTab.FOLLOWERS to "FOLLOWERS",
-                    FollowListsTab.BLOCKED to "BLOCKED",
-                ).forEach { (t, label) ->
-                    val active = tab == t
-                    val shape = appCornerShape(MaterialTheme.shapes.small, RectangleShape)
-                    Box(
-                        modifier = Modifier.weight(1f).clickable { tab = t }
-                            .background(if (active) BonyColors.AccentBg else BonyColors.Surface)
-                            .border(1.dp, if (active) BonyColors.Accent else BonyColors.Rule, shape)
-                            .padding(vertical = 10.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(label, style = BonyType.tag.copy(color = if (active) BonyColors.Accent else BonyColors.TextMute))
+            // Outer inset padding so the rounded border doesn't touch screen edges or bottom hairline
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp) // 8dp left/right inset, 4dp top/bottom
+            ) {
+                Row(modifier = Modifier.fillMaxWidth().background(BonyColors.Surface)) {
+                    listOf(
+                        FollowListsTab.FOLLOWING to "FOLLOWING",
+                        FollowListsTab.FOLLOWERS to "FOLLOWERS",
+                        FollowListsTab.BLOCKED to "BLOCKED",
+                    ).forEach { (t, label) ->
+                        val active = tab == t
+                        val shape = appCornerShape(MaterialTheme.shapes.small, RectangleShape)
+                        Box(
+                            modifier = Modifier.weight(1f).clickable { tab = t }
+                                .background(if (active) BonyColors.AccentBg else BonyColors.Surface)
+                                .border(1.dp, if (active) BonyColors.Accent else BonyColors.Rule, shape)
+                                .padding(vertical = 10.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(label, style = BonyType.tag.copy(color = if (active) BonyColors.Accent else BonyColors.TextMute))
+                        }
                     }
                 }
+                // Bottom hairline (now sits below the outer padding, not overlapping the border)
+                Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule).padding(bottom = 4.dp))
             }
-            Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
             when (tab) {
                 FollowListsTab.FOLLOWING -> FollowingTab(

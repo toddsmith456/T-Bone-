@@ -33,7 +33,7 @@ import androidx.compose.ui.unit.dp
  * when a request starts.
  */
 
-private val ButtonContentPadding = PaddingValues(horizontal = 22.dp, vertical = 14.dp)
+private val ButtonContentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
 
 @Composable
 private fun ButtonRow(

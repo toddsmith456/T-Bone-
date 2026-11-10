@@ -428,7 +428,12 @@ fun NoteEditorScreen(
                         register { discard -> cleanup.close(discard); Unit }
                         val file = File.createTempFile("note_voice_", ".m4a", context.cacheDir)
                         f = file
-                        val recorder = MediaRecorder(context)
+                        val recorder: MediaRecorder
+                        if (Build.VERSION.SDK_INT >= 31) {
+                            recorder = MediaRecorder(context)
+                        } else {
+                            recorder = MediaRecorder()
+                        }
                         r = recorder
                         recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
                         recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)

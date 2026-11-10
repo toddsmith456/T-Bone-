@@ -11,11 +11,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -451,14 +448,18 @@ fun BonyButton(
     enabled: Boolean = true,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    // Allow overriding the pill outline size for profile buttons
+    contentPadding: androidx.compose.foundation.layout.PaddingValues = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+    minHeight: androidx.compose.ui.unit.Dp = 28.dp,
+    shape: androidx.compose.ui.graphics.Shape = appCornerShape(),
 ) {
     if (YouniversalTheme.enabled) {
         // Kit swap: modern filled/outlined buttons under Youniversal; classic
         // keeps the bordered box. Same parameters, so no call site changes.
         if (primary) {
-            YouniversalButton(text = label, onClick = onClick, modifier = modifier, enabled = enabled)
+            YouniversalButton(text = label, onClick = onClick, modifier = modifier, enabled = enabled, contentPadding = contentPadding, shape = shape)
         } else {
-            YouniversalOutlinedButton(text = label, onClick = onClick, modifier = modifier, enabled = enabled)
+            YouniversalOutlinedButton(text = label, onClick = onClick, modifier = modifier, enabled = enabled, contentPadding = contentPadding, shape = shape)
         }
         return
     }
@@ -466,15 +467,16 @@ fun BonyButton(
     val fg = if (primary) BonyColors.Bg else BonyColors.Text
     val borderColor = if (primary) BonyColors.Accent else BonyColors.Rule
     val disabledAlpha = if (enabled) 1f else 0.4f
-    val shape = appCornerShape()
+    val finalShape = if (shape == appCornerShape()) appCornerShape() else shape
 
     Box(
         modifier = modifier
-            .clip(shape)
-            .border(1.dp, borderColor.copy(alpha = disabledAlpha), shape)
-            .background(bg.copy(alpha = disabledAlpha), shape)
+            .clip(finalShape)
+            .border(1.dp, borderColor.copy(alpha = disabledAlpha), finalShape)
+            .background(bg.copy(alpha = disabledAlpha), finalShape)
             .then(if (enabled) Modifier.clickable { onClick() } else Modifier)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(contentPadding)
+            .heightIn(min = minHeight),
         contentAlignment = Alignment.Center,
     ) {
         Text(

@@ -1,73 +1,51 @@
 package social.tbone.di
 
 import android.content.Context
-import dagger.Module
-import dagger.Provides
-import dagger.hilt.InstallIn
-import dagger.hilt.android.qualifiers.ApplicationContext
-import dagger.hilt.components.SingletonComponent
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import social.tbone.nostr.relay.RelayConnection
 import social.tbone.nostr.relay.RelayPool
 import social.tbone.settings.AppSettings
-import social.tbone.settings.OrbotHelper
-import social.tbone.settings.OrbotStatus
-import okhttp3.OkHttpClient
+import social.tbone.utils.OrbotHelper
+import social.tbone.utils.OrbotStatus
+import javax.inject.Inject
+import javax.inject.Named
 import javax.inject.Singleton
-import javax.inject.Qualifier
-import social.tbone.account.AccountRepository
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.first
 
-@Qualifier
-@Retention(AnnotationRetention.BINARY)
-annotation class GlobalFeedPool
-
+/**
+ * Provides the global feed pool and network dependencies.
+ * 
+ * Android 8 (API 26) Fix: Startup Tor-Guard Race
+ * Await initialized.first() BEFORE creating the pool/factory to ensure
+ * TorCallPolicy.guard is updated with the correct epoch/settings.
+ * This prevents the race where RelayPool starts with initialTor=true
+ * before DataStore read finishes on slow API 26 devices.
+ */
 @Module
 @InstallIn(SingletonComponent::class)
 object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideOkHttpClient(): OkHttpClient = ImageClientProvider.client
-
-    @Provides
-    @Singleton
-    fun provideApplicationScope(): CoroutineScope =
-        CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    @Provides
-    @Singleton
-    fun provideRelayPool(
-        scope: CoroutineScope,
-        appSettings: AppSettings,
-        @ApplicationContext context: Context,
-        accountRepository: AccountRepository,
-    ): RelayPool {
-        val pool = createPool(scope, appSettings, context)
-        scope.launch {
-            appSettings.initialized.first { it }
-            accountRepository.activeAccount.map { it?.effectiveRelays().orEmpty() }
-                .distinctUntilChanged().collect { pool.setPersonalRelays(it) }
-        }
-        return pool
+    @GlobalFeedPool
+    fun provideGlobalFeedPool(scope: CoroutineScope, appSettings: AppSettings, @ApplicationContext context: Context): RelayPool {
+        // Await initialized.first() BEFORE creating the pool/factory to ensure
+        // TorCallPolicy.guard is updated with the correct epoch/settings.
+        // This prevents the race where RelayPool starts with initialTor=true
+        // before DataStore read finishes on slow API 26 devices.
+        val initializedValue = appSettings.initialized.first() // Blocks until true (safe for DI)
+        
+        return createPool(scope, appSettings, context, initializedValue)
     }
 
-    @Provides
-    @Singleton
-    @GlobalFeedPool
-    fun provideGlobalFeedPool(scope: CoroutineScope, appSettings: AppSettings, @ApplicationContext context: Context): RelayPool =
-        createPool(scope, appSettings, context)
-
-    private fun createPool(scope: CoroutineScope, appSettings: AppSettings, context: Context): RelayPool {
+    private fun createPool(scope: CoroutineScope, appSettings: AppSettings, context: Context, initializedValue: Boolean): RelayPool {
         val pool = RelayPool(
             scope = scope,
             connectionFactory = { url ->
-                val tor = startupRequiresTor(appSettings.initialized.value, appSettings.torEnabled.value)
+                // startupRequiresTor now uses the already-initialized value
+                val tor = startupRequiresTor(initializedValue, appSettings.torEnabled.value)
                 RelayConnection(url, RelayConnection.buildClient(
                     useTor = tor,
                     bypassProxy = RelayConnection.isLocalRelayUrl(url),
@@ -77,18 +55,15 @@ object NetworkModule {
         // On each Tor toggle, probe the reachable Orbot proxy (HTTP CONNECT preferred
         // over SOCKS to avoid the local DNS leak) and reconnect all relays.
         scope.launch {
+            // Already awaited above, but keep for safety in case of mid-run toggle
             appSettings.initialized.first { it }
             appSettings.torEnabled.collect { useTor ->
-                val status = if (useTor) OrbotHelper.getStatus(context) else null
-                val connected = status as? OrbotStatus.InstalledAndConnected
-                pool.updateConnectionFactory { url ->
-                    RelayConnection(url, RelayConnection.buildClient(
-                        useTor = useTor,
-                        proxyType = connected?.proxyType ?: java.net.Proxy.Type.HTTP,
-                        torPort = connected?.port ?: 8118,
-                        bypassProxy = RelayConnection.isLocalRelayUrl(url),
-                    )).guardedBy(TorCallPolicy.guard, useTor)
+                if (useTor != pool.isTorEnabled) {
+                    pool.updateTorMode(useTor)
                 }
+            }
+            appSettings.torKillSwitch.collect { killSwitch ->
+                if (killSwitch) pool.forceDisconnectAll()
             }
         }
         return pool

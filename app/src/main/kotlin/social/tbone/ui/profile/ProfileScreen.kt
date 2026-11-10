@@ -347,6 +347,9 @@ fun ProfileScreen(
                                 enabled = !isFollowLoading,
                                 onClick = if (isFollowing) viewModel::unfollow else viewModel::follow,
                                 modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                minHeight = 28.dp,
+                                shape = MaterialTheme.shapes.small,
                             )
                             Spacer(Modifier.width(8.dp))
                             BonyButton(
@@ -355,6 +358,9 @@ fun ProfileScreen(
                                 enabled = !isBlockLoading,
                                 onClick = viewModel::toggleBlock,
                                 modifier = Modifier.weight(0.7f),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                minHeight = 28.dp,
+                                shape = MaterialTheme.shapes.small,
                             )
                             Spacer(Modifier.width(8.dp))
                             BonyButton(
@@ -383,6 +389,9 @@ fun ProfileScreen(
                                     }
                                 },
                                 modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                minHeight = 28.dp,
+                                shape = MaterialTheme.shapes.small,
                             )
                         }
                         if (followIsLocal || blockIsLocal) {
