@@ -132,6 +132,14 @@ jobs:
             echo "### Files"
             echo "- \`T-Bone-fork-${TAG}-release.apk\` — the release APK (minify enabled)."
             echo "- \`SHA256SUMS.txt\` — verify with \`sha256sum -c SHA256SUMS.txt\`."
+            echo ""
+            # The changelog entry is the real release note. Without this the
+            # published body is only the generic header above, so the
+            # verification limits and security disclosures never reach users.
+            echo "---"
+            echo ""
+            chmod +x scripts/changelog-section.sh
+            ./scripts/changelog-section.sh "${TAG#v}"
           } > "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md"
 
