@@ -8,6 +8,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
+import androidx.compose.material3.MaterialTheme
+import dev.youniversal.theme.YouniversalTheme
+import social.tbone.ui.theme.appBackground
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -194,17 +197,21 @@ fun ProfileScreen(
                 Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
                 // ── Banner + Avatar ───────────────────────────────────────────
+                // Youniversal: inset + rounded like the feed's cards so the
+                // header speaks the same visual language as posts.
+                val youniversalHeader = YouniversalTheme.enabled
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(BANNER_HEIGHT + AVATAR_SIZE / 2),
+                        .height(BANNER_HEIGHT + AVATAR_SIZE / 2)
+                        .then(if (youniversalHeader) Modifier.padding(horizontal = 8.dp) else Modifier),
                 ) {
                     // Banner
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(BANNER_HEIGHT)
-                            .background(BonyColors.SurfaceAlt),
+                            .appBackground(BonyColors.SurfaceAlt, MaterialTheme.shapes.medium),
                     ) {
                         if (profile?.banner != null) {
                             AsyncImage(

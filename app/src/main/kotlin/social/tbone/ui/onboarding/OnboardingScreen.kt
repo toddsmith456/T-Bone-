@@ -49,6 +49,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.platform.LocalContext
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
+import dev.youniversal.theme.YouniversalButton
+import dev.youniversal.theme.YouniversalOutlinedButton
+import dev.youniversal.theme.YouniversalTheme
 import social.tbone.ui.theme.appCornerShape
 import social.tbone.updates.AmberInstallState
 
@@ -449,6 +452,16 @@ fun BonyButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    if (YouniversalTheme.enabled) {
+        // Kit swap: modern filled/outlined buttons under Youniversal; classic
+        // keeps the bordered box. Same parameters, so no call site changes.
+        if (primary) {
+            YouniversalButton(text = label, onClick = onClick, modifier = modifier, enabled = enabled)
+        } else {
+            YouniversalOutlinedButton(text = label, onClick = onClick, modifier = modifier, enabled = enabled)
+        }
+        return
+    }
     val bg = if (primary) BonyColors.Accent else BonyColors.Bg
     val fg = if (primary) BonyColors.Bg else BonyColors.Text
     val borderColor = if (primary) BonyColors.Accent else BonyColors.Rule

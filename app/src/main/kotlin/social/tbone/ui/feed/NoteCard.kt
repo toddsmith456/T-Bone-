@@ -71,6 +71,8 @@ import social.tbone.settings.LocalContentFilter
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.ui.theme.appCornerShape
+import social.tbone.ui.theme.feedCardBackground
+import social.tbone.ui.theme.showPostDividers
 import dev.youniversal.theme.YouniversalTheme
 import android.widget.Toast
 import kotlinx.coroutines.CancellationException
@@ -158,14 +160,18 @@ fun NoteCard(
     val youniversal = YouniversalTheme.enabled
     val cardBg = when {
         highlighted -> BonyColors.AccentBg
-        youniversal -> BonyColors.Surface
+        youniversal -> feedCardBackground()
         else -> BonyColors.Bg
     }
     val cardShape = appCornerShape(MaterialTheme.shapes.medium, RectangleShape)
     // The classic feed remains edge-to-edge and square. Youniversal turns each
-    // note into a softly inset, adjustable-radius surface for clearer grouping.
+    // note into a softly inset, adjustable-radius surface for clearer grouping,
+    // with a small vertical gap so cards float instead of tiling.
     val cardContainerModifier = if (youniversal) {
-        Modifier.padding(horizontal = 8.dp).clip(cardShape).background(cardBg, cardShape)
+        Modifier
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .clip(cardShape)
+            .background(cardBg, cardShape)
     } else {
         Modifier.background(cardBg)
     }
@@ -248,7 +254,7 @@ fun NoteCard(
             }
         }
         // Hairline bottom border
-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+        PostCardDivider()
         return
     }
 
@@ -352,7 +358,7 @@ fun NoteCard(
                 repliedByMe = repliedByMe,
             )
         }
-        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+        PostCardDivider()
         return
     }
 
@@ -538,7 +544,15 @@ fun NoteCard(
         }
     }
 
-    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+    PostCardDivider()
+}
+
+/** Between-posts hairline: hidden under Youniversal cards, kept at High contrast. */
+@Composable
+private fun PostCardDivider() {
+    if (showPostDividers(YouniversalTheme.enabled, YouniversalTheme.contrast)) {
+        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+    }
 }
 
 // ── Quoted / nested card ─────────────────────────────────────────────────────
@@ -794,7 +808,7 @@ private fun ContentWarningVeil(
             style = BonyType.meta.copy(color = BonyColors.TextMute),
         )
     }
-    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+    PostCardDivider()
 }
 
 @Composable

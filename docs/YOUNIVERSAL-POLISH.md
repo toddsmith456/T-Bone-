@@ -1,7 +1,8 @@
 # Youniversal theme polish — design direction & spec
 
-Status: **Phase 1 implemented on beta** (looks + reading typography,
-2026-11-08). Phases 2–4 not started.
+Status: **Phases 1–2 implemented on beta** (looks + reading typography;
+feed soft-card finish, widget/empty-state swaps, thread/profile polish —
+2026-11-08). Phases 3–4 not started.
 Date: 2026-11-08. Owner: beta (`beta` branch).
 
 This document captures the full deep dive, the four decisions taken on
@@ -221,7 +222,7 @@ the new type/divider rules. System-bar icon tinting already handled by
 | Phase | Content | Why first |
 |---|---|---|
 | **P1 — shipped** | Looks (bundles + live preview cards) + reading typography + type-scale wiring | Instantly visible 80%; looks are what users play with and show off |
-| **P2** | Feed soft-card finish (gaps, dividers, media corners, thread connectors, profile header) + composer & settings component swap | Most-seen surfaces get the modern treatment |
+| **P2 — shipped** | Feed soft-card finish (gaps, dividers, media corners, thread connectors, profile header) + composer & settings component swap | Most-seen surfaces get the modern treatment |
 | **P3** | Dialogs, empty/loading/error states, profile/thread/notifications/long-tail swaps, motion polish | Consistency everywhere |
 | **P4** | Screenshot review across Light/Dark/Cream × looks, contrast/legibility pass, perf pass (palette morph, skeleton shimmer cost) | Ship gate |
 

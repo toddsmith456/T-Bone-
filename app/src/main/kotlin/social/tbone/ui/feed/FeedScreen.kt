@@ -83,7 +83,9 @@ import social.tbone.ui.components.RelayHealthDot
 import social.tbone.ui.components.BottomTab
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
+import dev.youniversal.theme.YouniversalEmptyState
 import social.tbone.ui.theme.appCornerShape
+import social.tbone.ui.theme.feedPageBackground
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -182,7 +184,7 @@ fun FeedScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(BonyColors.Bg),
+            .background(feedPageBackground()),
     ) {
         // ── Top bar ───────────────────────────────────────────────────────────
         // Relay statuses and tor state are collected inside FeedTopBar so their
@@ -354,6 +356,22 @@ fun FeedScreen(
                 }
                 uiState.events.isEmpty() && !isRefreshing -> {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        if (YouniversalTheme.enabled) {
+                            // Kit empty state: designed, centered, on-palette.
+                            YouniversalEmptyState(
+                                title = when (currentFeed) {
+                                    FeedTab.CLOCK -> "nothing in this window"
+                                    FeedTab.SUGGESTED -> "no notes from these accounts"
+                                    else -> "no notes yet"
+                                },
+                                description = if (currentFeed == FeedTab.SUGGESTED) {
+                                    "─── the end · pull to refresh ───"
+                                } else {
+                                    null
+                                },
+                            )
+                            return@Box
+                        }
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
                                 text = when (currentFeed) {

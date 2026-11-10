@@ -1,6 +1,8 @@
 package social.tbone.ui.theme
 
 import androidx.compose.material3.ColorScheme
+import dev.youniversal.theme.YouniversalContrast
+import dev.youniversal.theme.YouniversalTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -306,6 +308,34 @@ fun BonyTheme(
         content = content,
     )
 }
+
+/**
+ * Feed page/card tonal pair. Youniversal's base palette paints background and
+ * surface identically, so cards cannot lift off the page; these pick one
+ * existing tonal step for each so posts float on a slightly deeper page.
+ * Dark: deeper page / lifted cards. Light & Cream: soft grey page / bright cards.
+ */
+fun feedPageColor(scheme: ColorScheme, isDark: Boolean): Color =
+    if (isDark) scheme.surfaceContainerLowest else scheme.surfaceContainerLow
+
+fun feedCardColor(scheme: ColorScheme, isDark: Boolean): Color =
+    if (isDark) scheme.surfaceContainerLow else scheme.surfaceContainerLowest
+
+/** Hairline separators between posts: gone under Youniversal cards, kept at High contrast. */
+fun showPostDividers(youniversalEnabled: Boolean, contrast: YouniversalContrast): Boolean =
+    !youniversalEnabled || contrast == YouniversalContrast.High
+
+/** Page background for the feed — classic keeps [BonyColors.Bg] exactly. */
+@Composable
+fun feedPageBackground(): Color =
+    if (!YouniversalTheme.enabled) BonyColors.Bg
+    else feedPageColor(MaterialTheme.colorScheme, YouniversalTheme.isDark)
+
+/** Card background for feed posts — classic keeps [BonyColors.Bg] exactly. */
+@Composable
+fun feedCardBackground(): Color =
+    if (!YouniversalTheme.enabled) BonyColors.Bg
+    else feedCardColor(MaterialTheme.colorScheme, YouniversalTheme.isDark)
 
 /** Parses "#RRGGBB" (or "#AARRGGBB") into a Compose Color; null on garbage. */
 fun parseHexColor(hex: String?): Color? {

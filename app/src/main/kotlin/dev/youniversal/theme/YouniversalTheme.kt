@@ -23,6 +23,9 @@ internal val LocalYouniversalEnabled = staticCompositionLocalOf { false }
 internal val LocalYouniversalBackgroundStyle =
     staticCompositionLocalOf { YouniversalBackgroundStyle.Light }
 
+internal val LocalYouniversalContrast =
+    staticCompositionLocalOf { YouniversalContrast.Default }
+
 /**
  * Read the active Youniversal theme from anywhere inside [YouniversalTheme].
  *
@@ -50,6 +53,11 @@ public object YouniversalTheme {
     public val isDark: Boolean
         @Composable @ReadOnlyComposable
         get() = LocalYouniversalBackgroundStyle.current.isDark
+
+    /** The active contrast level; surfaces may choose to keep hairlines at High. */
+    public val contrast: YouniversalContrast
+        @Composable @ReadOnlyComposable
+        get() = LocalYouniversalContrast.current
 
     /** Success/warning/info colors, backdrop glows and shimmer colors. */
     public val extendedColors: YouniversalExtendedColors
@@ -114,6 +122,7 @@ public fun YouniversalTheme(
         CompositionLocalProvider(
             LocalYouniversalEnabled provides false,
             LocalYouniversalBackgroundStyle provides resolvedStyle,
+            LocalYouniversalContrast provides YouniversalContrast.Default,
             LocalYouniversalExtendedColors provides YouniversalExtendedColors.Fallback,
         ) {
             fallback(content)
@@ -172,6 +181,7 @@ public fun YouniversalTheme(
     CompositionLocalProvider(
         LocalYouniversalEnabled provides true,
         LocalYouniversalBackgroundStyle provides resolvedStyle,
+        LocalYouniversalContrast provides contrast,
         LocalYouniversalExtendedColors provides extendedColors,
         LocalDensity provides scaledDensity,
     ) {

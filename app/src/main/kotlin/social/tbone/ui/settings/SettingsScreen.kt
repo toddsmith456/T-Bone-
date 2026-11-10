@@ -50,6 +50,8 @@ import dev.youniversal.theme.YouniversalBackgroundStyle
 import dev.youniversal.theme.YouniversalContrast
 import dev.youniversal.theme.YouniversalThemeState
 import dev.youniversal.theme.YouniversalFontOption
+import dev.youniversal.theme.YouniversalSwitch
+import dev.youniversal.theme.YouniversalTheme
 import dev.youniversal.theme.YouniversalLook
 import dev.youniversal.theme.youniversalLookScheme
 import dev.youniversal.theme.youniversalScheme
@@ -1553,6 +1555,11 @@ internal fun BonyToggle(
     enabled: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
+    if (YouniversalTheme.enabled) {
+        // Kit swap: a real switch under Youniversal; classic keeps the ◉/○ chip.
+        YouniversalSwitch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
+        return
+    }
     val label = if (checked) "◉ ON" else "○ OFF"
     val color = if (!enabled) BonyColors.TextMute else if (checked) BonyColors.Accent else BonyColors.TextMute
 
