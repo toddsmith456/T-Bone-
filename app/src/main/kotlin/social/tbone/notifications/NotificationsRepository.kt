@@ -877,6 +877,7 @@ class NotificationsRepository @Inject constructor(
             var mentions = 0
             var quotes = 0
             var votes = 0
+            var zaps = 0
             for (group in groupMap.values) {
                 if (group.latestTimestamp < cutoff) continue
                 when (group) {
@@ -895,6 +896,11 @@ class NotificationsRepository @Inject constructor(
                     else -> Unit
                 }
             }
+            // Zaps are one row per receipt (not grouped), so they are counted
+            // straight off the flat list rather than through groupMap.
+            zaps = flatItems.count {
+                it.type == NotifType.ZAP && it.timestamp >= cutoff
+            }
             _summary.value = NotifSummary(
                 replyCount = replies,
                 reactionCount = reactions,
@@ -902,6 +908,7 @@ class NotificationsRepository @Inject constructor(
                 mentionCount = mentions,
                 quoteCount = quotes,
                 voteCount = votes,
+                zapCount = zaps,
             )
             _isLoading.value = false
         }

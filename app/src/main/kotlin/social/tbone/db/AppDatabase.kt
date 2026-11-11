@@ -22,7 +22,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DecoyNoteFolderEntity::class,
         DecoyNoteAttachmentEntity::class,
     ],
-    version = 17,
+    version = 18,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun eventDao(): EventDao
@@ -198,6 +198,25 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS index_calendar_events_startMillis " +
                         "ON calendar_events (startMillis)"
+                )
+            }
+        }
+
+        /**
+         * Online bookmarks: folders gained a kind (OFFLINE / ONLINE / MISC) and,
+         * for online ones, the NIP-51 `d` identifier they are published under.
+         * Existing folders are all local, so the defaults make this a no-op for
+         * them.
+         */
+        val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE bookmark_folders ADD COLUMN kind TEXT NOT NULL DEFAULT 'OFFLINE'"
+                )
+                db.execSQL("ALTER TABLE bookmark_folders ADD COLUMN dTag TEXT")
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_bookmark_folders_dTag " +
+                        "ON bookmark_folders (dTag)"
                 )
             }
         }

@@ -83,6 +83,10 @@ import social.tbone.nostr.Nip19
 import social.tbone.nostr.Nip56ReportReason
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Home
 
 private val PrettyEventJson: Json = Json {
     ignoreUnknownKeys = true
@@ -301,10 +305,24 @@ fun NoteActionsMenu(
                 )
                 bookmarkFolders.forEach { folder ->
                     DropdownMenuItem(
-                        text = { Text(folder.name, style = BonyType.meta.copy(color = BonyColors.Text)) },
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                // House for a folder on this device, globe for one
+                                // published to relays — the same icons the bookmarks
+                                // tool uses, so the destination is never a guess.
+                                Icon(
+                                    imageVector = if (folder.isOnline) Icons.Outlined.Public else Icons.Outlined.Home,
+                                    contentDescription = null,
+                                    tint = BonyColors.TextMute,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(folder.name, style = BonyType.meta.copy(color = BonyColors.Text))
+                            }
+                        },
                         onClick = {
                             bookmarkFoldersExpanded = false
-                            viewModel.saveBookmark(event, folder.id) { message ->
+                            viewModel.saveBookmark(event, folder) { message ->
                                 Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                             }
                         },

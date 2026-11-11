@@ -21,7 +21,29 @@ data class BookmarkFolderEntity(
     @ColumnInfo(defaultValue = "0") val sortOrder: Double = 0.0,
     val createdAt: Long,
     val updatedAt: Long,
+    /**
+     * Where this folder lives. OFFLINE = encrypted, device-only as before.
+     * ONLINE = a NIP-51 bookmark set (kind 30003) published to relays; the
+     * identifier in [dTag] is what the network knows it by.
+     */
+    @ColumnInfo(defaultValue = "OFFLINE") val kind: String = "OFFLINE",
+    /**
+     * NIP-51 `d` identifier for ONLINE folders. Null for offline folders and for
+     * the special Miscellaneous bucket, whose bookmarks live in kind 10003.
+     */
+    @ColumnInfo(defaultValue = "NULL") val dTag: String? = null,
 )
+
+/**
+ * Folder kinds. An ONLINE folder is a NIP-51 kind 30003 set; [MISC] is the
+ * pseudo-folder holding kind 10003 bookmarks that belong to no set (and any
+ * online bookmark whose set is missing).
+ */
+object BookmarkFolderKind {
+    const val OFFLINE = "OFFLINE"
+    const val ONLINE = "ONLINE"
+    const val MISC = "MISC"
+}
 
 /** A saved, serialized Nostr event encrypted with the local Notes Keystore key. */
 @Entity(
@@ -64,6 +86,13 @@ interface BookmarkDao {
 
     @Query("DELETE FROM bookmark_folders WHERE id = :id")
     suspend fun deleteFolder(id: String)
+
+    /** Online folders are keyed by their NIP-51 `d` tag, not by a random row id. */
+    @Query("SELECT * FROM bookmark_folders WHERE kind = 'ONLINE' AND dTag = :dTag LIMIT 1")
+    suspend fun getOnlineFolderByDTag(dTag: String): BookmarkFolderEntity?
+
+    @Query("SELECT * FROM bookmark_folders WHERE kind = :kind")
+    suspend fun getFoldersOfKind(kind: String): List<BookmarkFolderEntity>
 
     @Query("SELECT * FROM bookmarks WHERE folderId = :folderId ORDER BY sortOrder ASC, createdAt ASC")
     fun observeBookmarks(folderId: String): Flow<List<BookmarkEntity>>

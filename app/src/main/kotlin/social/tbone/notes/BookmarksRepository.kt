@@ -27,7 +27,15 @@ data class BookmarkFolderUi(
     val sortOrder: Double,
     val createdAt: Long,
     val updatedAt: Long,
-)
+    /** [social.tbone.db.BookmarkFolderKind]: OFFLINE, ONLINE or MISC. */
+    val kind: String = social.tbone.db.BookmarkFolderKind.OFFLINE,
+    val dTag: String? = null,
+) {
+    val isOnline: Boolean get() = kind != social.tbone.db.BookmarkFolderKind.OFFLINE
+
+    /** The "Miscellaneous" bucket holding online bookmarks outside any folder. */
+    val isMiscellaneous: Boolean get() = kind == social.tbone.db.BookmarkFolderKind.MISC
+}
 
 /** Decrypted saved event. It is kept in memory only while the UI is displaying it. */
 data class BookmarkUi(
@@ -238,6 +246,8 @@ class BookmarksRepository @Inject constructor(
             sortOrder = row.sortOrder,
             createdAt = row.createdAt,
             updatedAt = row.updatedAt,
+            kind = row.kind,
+            dTag = row.dTag,
         )
     }.getOrNull()
 

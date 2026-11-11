@@ -24,6 +24,8 @@ object EventKind {
     const val SOFTWARE_ASSET = 3063 // NIP-82: software asset
     const val PIN_LIST = 10001       // NIP-51: replaceable profile pin list
     const val RELAY_LIST = 10002     // NIP-65: relay list metadata
+    const val BOOKMARKS = 10003      // NIP-51: bookmark list (bookmarks outside any set)
+    const val BOOKMARK_SET = 30003   // NIP-51: bookmark set (a named folder)
     const val BLOSSOM_SERVER_LIST = 10063 // BUD-03: user's Blossom server list
     const val PAYMENT_TARGETS = 10133  // NIP-A3: replaceable payment-target list
     const val ZAP_REQUEST = 9734       // NIP-57: zap request

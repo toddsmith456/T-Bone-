@@ -11,6 +11,7 @@ import social.tbone.nostr.relay.RelayConnection
 import okhttp3.OkHttpClient
 import social.tbone.account.signer.NostrSigner
 import social.tbone.lists.PublishedRelayLists
+import social.tbone.nostr.EventKind
 import social.tbone.settings.AppSettings
 import timber.log.Timber
 import java.io.File
@@ -161,7 +162,7 @@ class BlossomUploader @Inject constructor(
         val account = accountRepository.activeAccount.first() ?: return@runCatching emptyList()
         val result = relayListFetcher.fetchLatest(
             pubkey = account.pubkey,
-            kind = social.tbone.nostr.EventKind.BLOSSOM_SERVER_LIST,
+            kind = EventKind.BLOSSOM_SERVER_LIST,
             seedRelays = account.effectiveRelays(),
         )
         result.event?.let { PublishedRelayLists.blossomServers(it) }.orEmpty()

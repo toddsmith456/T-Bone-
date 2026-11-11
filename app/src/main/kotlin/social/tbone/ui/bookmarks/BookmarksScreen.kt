@@ -77,6 +77,12 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
+import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.CloudDownload
+import androidx.compose.ui.graphics.vector.ImageVector
+import kotlinx.coroutines.delay
+import androidx.compose.material3.LinearProgressIndicator
 
 @Composable
 fun BookmarksScreen(
@@ -96,6 +102,9 @@ fun BookmarksScreen(
     }
     val bookmarks by bookmarkFlow.collectAsState(initial = emptyList())
     var creatingFolder by remember { mutableStateOf(false) }
+    var newFolderOnline by remember { mutableStateOf(false) }
+    val onlineMessage by viewModel.onlineMessage.collectAsStateWithLifecycle()
+    val syncing by viewModel.syncing.collectAsStateWithLifecycle()
     var editingFolder by remember { mutableStateOf<BookmarkFolderUi?>(null) }
     var deletingFolder by remember { mutableStateOf<BookmarkFolderUi?>(null) }
     var quotingFolder by remember { mutableStateOf(false) }
@@ -134,6 +143,13 @@ fun BookmarksScreen(
             }
             if (selectedFolder == null) {
                 IconButton(onClick = { creatingFolder = true }) {
+                    IconButton(onClick = { viewModel.syncOnline() }, enabled = !syncing) {
+                        Icon(
+                            imageVector = Icons.Outlined.CloudDownload,
+                            contentDescription = "Load online bookmark folders from your relays",
+                            tint = if (syncing) BonyColors.TextMute else BonyColors.Accent,
+                        )
+                    }
                     Icon(Icons.Outlined.Add, contentDescription = "Create bookmark folder", tint = BonyColors.Accent)
                 }
             } else {
@@ -168,6 +184,48 @@ fun BookmarksScreen(
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
+        // Status line for online operations (sync results, publish failures).
+        // Auto-dismisses: it reports what just happened, not persistent state.
+        onlineMessage?.let { message ->
+            LaunchedEffect(message) {
+                delay(6_000)
+                viewModel.clearOnlineMessage()
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(BonyColors.Surface)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Public,
+                    contentDescription = null,
+                    tint = BonyColors.Accent,
+                    modifier = Modifier.size(15.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = message,
+                    style = BonyType.caption.copy(color = BonyColors.TextDim),
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = "dismiss",
+                    style = BonyType.tag.copy(color = BonyColors.TextMute),
+                    modifier = Modifier.clickable { viewModel.clearOnlineMessage() },
+                )
+            }
+        }
+
+        if (syncing) {
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth().height(2.dp),
+                color = BonyColors.Accent,
+                trackColor = BonyColors.Rule,
+            )
+        }
+
         if (selectedFolder == null && folderId != null) {
             Text(
                 text = "This bookmark folder no longer exists.",
@@ -182,13 +240,27 @@ fun BookmarksScreen(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    item { Text("local · encrypted on this device", style = BonyType.caption.copy(color = BonyColors.TextMute), modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) }
-                    items(folders, key = { it.id }) { folder ->
-                        BookmarkFolderRow(
-                            folder = folder,
-                            onOpen = { onOpenFolder(folder.id) },
-                            onRename = { editingFolder = folder },
-                            onDelete = { deletingFolder = folder },
+                    // Grouped by where the folder lives, so it is obvious at a
+                    // glance which folders follow the account to other clients.
+                    val offline = folders.filter { !it.isOnline }
+                    val online = folders.filter { it.isOnline }
+                    if (offline.isNotEmpty()) {
+                        item { SectionHeader("offline · encrypted on this device") }
+                        items(offline, key = { it.id }) { folder ->
+                            FolderRowWithActions(folder, onOpenFolder, onEdit = { editingFolder = it }, onDelete = { deletingFolder = it })
+                        }
+                    }
+                    if (online.isNotEmpty()) {
+                        item { SectionHeader("online · published to your relays") }
+                        items(online, key = { it.id }) { folder ->
+                            FolderRowWithActions(folder, onOpenFolder, onEdit = { editingFolder = it }, onDelete = { deletingFolder = it })
+                        }
+                    }
+                    item {
+                        Text(
+                            text = "Tap the download icon above to load folders other clients published to your relays.",
+                            style = BonyType.caption.copy(color = BonyColors.TextMute),
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                         )
                     }
                 }
@@ -218,10 +290,11 @@ fun BookmarksScreen(
             title = "New bookmark folder",
             initialName = "",
             confirmLabel = "CREATE",
-            onDismiss = { creatingFolder = false },
+            onDismiss = { creatingFolder = false; newFolderOnline = false },
             onConfirm = { name ->
-                viewModel.createFolder(name) { result ->
-                    result.onSuccess { creatingFolder = false }
+                val online = newFolderOnline
+                viewModel.createFolder(name, online) { result ->
+                    result.onSuccess { creatingFolder = false; newFolderOnline = false }
                         .onFailure { android.widget.Toast.makeText(context, it.message ?: "Could not create folder", android.widget.Toast.LENGTH_LONG).show() }
                 }
             },
@@ -234,7 +307,7 @@ fun BookmarksScreen(
             confirmLabel = "SAVE",
             onDismiss = { editingFolder = null },
             onConfirm = { name ->
-                viewModel.renameFolder(folder.id, name) { result ->
+                viewModel.renameFolder(folder, name) { result ->
                     result.onSuccess { editingFolder = null }
                         .onFailure { android.widget.Toast.makeText(context, it.message ?: "Could not rename folder", android.widget.Toast.LENGTH_LONG).show() }
                 }
@@ -246,7 +319,16 @@ fun BookmarksScreen(
             onDismissRequest = { deletingFolder = null },
             containerColor = BonyColors.Surface,
             title = { Text("Delete ‘${folder.name}’?", style = BonyType.body.copy(color = BonyColors.Text)) },
-            text = { Text("Bookmarks inside this folder will also be deleted. This cannot be undone.", style = BonyType.meta.copy(color = BonyColors.TextDim)) },
+            text = {
+                Text(
+                    text = if (folder.isOnline) {
+                        "The folder and its bookmarks are removed here and the folder is republished to your relays as empty, so other clients stop showing it. The notes themselves are not deleted."
+                    } else {
+                        "Bookmarks inside this folder will also be deleted. This cannot be undone."
+                    },
+                    style = BonyType.meta.copy(color = BonyColors.TextDim),
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     viewModel.deleteFolder(folder.id) { result ->
@@ -260,6 +342,70 @@ fun BookmarksScreen(
             },
             dismissButton = { TextButton(onClick = { deletingFolder = null }) { Text("CANCEL", color = BonyColors.TextMute) } },
         )
+    }
+}
+
+@Composable
+private fun SectionHeader(text: String) {
+    Text(
+        text = text,
+        style = BonyType.caption.copy(color = BonyColors.TextMute),
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+    )
+}
+
+/** Wires a folder row to the screen's edit/delete dialogs. */
+@Composable
+private fun FolderRowWithActions(
+    folder: BookmarkFolderUi,
+    onOpenFolder: (String) -> Unit,
+    onEdit: (BookmarkFolderUi) -> Unit,
+    onDelete: () -> Unit,
+) {
+    BookmarkFolderRow(
+        folder = folder,
+        onOpen = { onOpenFolder(folder.id) },
+        onRename = { onEdit(folder) },
+        onDelete = onDelete,
+    )
+}
+
+/**
+ * One of the two folder locations in the create dialog. Icons match the folder
+ * list: house for device-only, globe for published.
+ */
+@Composable
+private fun FolderKindChoice(
+    icon: ImageVector,
+    label: String,
+    description: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .clip(appCornerShape(MaterialTheme.shapes.small, RoundedCornerShape(10.dp)))
+            .border(
+                1.dp,
+                if (selected) BonyColors.Accent else BonyColors.Rule,
+                appCornerShape(MaterialTheme.shapes.small, RoundedCornerShape(10.dp)),
+            )
+            .clickable(onClick = onClick)
+            .padding(10.dp),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (selected) BonyColors.Accent else BonyColors.TextMute,
+            modifier = Modifier.size(18.dp),
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = label,
+            style = BonyType.tag.copy(color = if (selected) BonyColors.Accent else BonyColors.Text),
+        )
+        Text(text = description, style = BonyType.caption.copy(color = BonyColors.TextMute))
     }
 }
 
@@ -282,11 +428,25 @@ private fun BookmarkFolderRow(
             .padding(start = 14.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(Icons.Outlined.BookmarkBorder, contentDescription = null, tint = BonyColors.Accent, modifier = Modifier.size(22.dp))
+        // House = stored on this device only, encrypted. Globe = published to
+        // relays as a NIP-51 set, so it is the same folder on every client.
+        Icon(
+            imageVector = if (folder.isOnline) Icons.Outlined.Public else Icons.Outlined.Home,
+            contentDescription = if (folder.isOnline) "online folder" else "offline folder",
+            tint = BonyColors.Accent,
+            modifier = Modifier.size(22.dp),
+        )
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(folder.name, style = BonyType.body.copy(color = BonyColors.Text), maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("encrypted local folder", style = BonyType.caption.copy(color = BonyColors.TextMute))
+            Text(
+                text = when {
+                    folder.isMiscellaneous -> "online · bookmarks not in a folder"
+                    folder.isOnline -> "online · synced to your relays"
+                    else -> "offline · encrypted on this device"
+                },
+                style = BonyType.caption.copy(color = BonyColors.TextMute),
+            )
         }
         Box {
             IconButton(onClick = { menuExpanded = true }) {
@@ -322,6 +482,9 @@ private fun FolderNameDialog(
     confirmLabel: String,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
+    allowKindChoice: Boolean = false,
+    online: Boolean = false,
+    onOnlineChange: (Boolean) -> Unit = {},
 ) {
     var name by remember(initialName) { mutableStateOf(initialName) }
     AlertDialog(
@@ -329,12 +492,37 @@ private fun FolderNameDialog(
         containerColor = BonyColors.Surface,
         title = { Text(title, style = BonyType.body.copy(color = BonyColors.Text)) },
         text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it.take(48) },
-                singleLine = true,
-                label = { Text("folder name") },
-            )
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it.take(48) },
+                    singleLine = true,
+                    label = { Text("folder name") },
+                )
+                if (allowKindChoice) {
+                    Spacer(Modifier.height(14.dp))
+                    Text("where should the folder live?", style = BonyType.caption.copy(color = BonyColors.TextMute))
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FolderKindChoice(
+                            icon = Icons.Outlined.Home,
+                            label = "OFFLINE",
+                            description = "encrypted on this device",
+                            selected = !online,
+                            onClick = { onOnlineChange(false) },
+                            modifier = Modifier.weight(1f),
+                        )
+                        FolderKindChoice(
+                            icon = Icons.Outlined.Public,
+                            label = "ONLINE",
+                            description = "published to relays",
+                            selected = online,
+                            onClick = { onOnlineChange(true) },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+            }
         },
         confirmButton = { TextButton(onClick = { onConfirm(name) }, enabled = name.isNotBlank()) { Text(confirmLabel, color = BonyColors.Accent) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("CANCEL", color = BonyColors.TextMute) } },
@@ -396,7 +584,9 @@ private fun ReorderableBookmarks(
                     dragging = isDragging,
                     onOpenEventSearch = onOpenEventSearch,
                     onDelete = { viewModel.deleteBookmark(bookmark.id) },
-                    onMove = { targetFolder -> viewModel.moveBookmark(bookmark.id, targetFolder) },
+                    onMove = { targetFolder ->
+                        viewModel.moveBookmarkEverywhere(bookmark, selectedFolder, targetFolder)
+                    },
                     dragHandle = Modifier.pointerInput(bookmark.id, bookmarks) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = {
@@ -441,7 +631,7 @@ private fun BookmarkCard(
     dragging: Boolean,
     onOpenEventSearch: (String) -> Unit,
     onDelete: () -> Unit,
-    onMove: (String) -> Unit,
+    onMove: (BookmarkFolderUi) -> Unit,
     dragHandle: Modifier,
 ) {
     val context = LocalContext.current
@@ -483,10 +673,24 @@ private fun BookmarkCard(
                     Text("move to folder", style = BonyType.caption.copy(color = BonyColors.TextMute), modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
                     folders.filter { it.id != bookmark.folderId }.forEach { folder ->
                         DropdownMenuItem(
-                            text = { Text(folder.name) },
+                            text = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    // The icon says which side the note will end up
+                                    // on, which is the whole point of allowing a move
+                                    // between offline and online folders.
+                                    Icon(
+                                        imageVector = if (folder.isOnline) Icons.Outlined.Public else Icons.Outlined.Home,
+                                        contentDescription = null,
+                                        tint = BonyColors.TextMute,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(folder.name)
+                                }
+                            },
                             onClick = {
                                 menuExpanded = false
-                                onMove(folder.id)
+                                onMove(folder)
                             },
                         )
                     }

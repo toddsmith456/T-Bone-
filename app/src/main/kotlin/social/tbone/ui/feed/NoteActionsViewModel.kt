@@ -36,6 +36,7 @@ class NoteActionsViewModel @Inject constructor(
     private val signerFactory: NostrSignerFactory,
     private val relayPool: RelayPool,
     private val bookmarksRepository: BookmarksRepository,
+    private val bookmarksSync: social.tbone.notes.BookmarkSyncRepository,
     private val eventRepository: EventRepository,
     private val profileRepository: ProfileRepository,
     private val pins: social.tbone.lists.PinListRepository,
@@ -81,20 +82,34 @@ class NoteActionsViewModel @Inject constructor(
         viewModelScope.launch { onFinished(runCatching { pins.toggle(event) }.getOrElse { "Could not update pin list" }) }
     }
 
-    fun saveBookmark(event: Event, folderId: String, onFinished: (String) -> Unit) {
+    /**
+     * Bookmarks [event] into [folder].
+     *
+     * Online folders also publish the note id to the network (NIP-51), so the
+     * bookmark appears in other clients; offline folders stay encrypted on this
+     * device. The local row is always written first so the note is readable
+     * offline even if publishing fails.
+     */
+    fun saveBookmark(event: Event, folder: BookmarkFolderUi, onFinished: (String) -> Unit) {
         val epoch = bookmarksRepository.currentWipeEpoch()
         viewModelScope.launch {
-            val message = runCatching { bookmarksRepository.addBookmark(event, folderId, epoch) }
-                .fold(
-                    onSuccess = { result ->
-                        when (result) {
-                            BookmarkSaveResult.SAVED -> "Saved to bookmarks"
-                            BookmarkSaveResult.ALREADY_SAVED -> "Already saved in that folder"
-                        }
+            val local = runCatching { bookmarksRepository.addBookmark(event, folder.id, epoch) }
+            val localFailure = local.exceptionOrNull()?.message
+            if (localFailure != null) {
+                onFinished(localFailure)
+                return@launch
+            }
+            if (!folder.isOnline) {
+                onFinished(
+                    when (local.getOrNull()) {
+                        BookmarkSaveResult.SAVED -> "Saved to “${folder.name}”"
+                        else -> "Already saved in that folder"
                     },
-                    onFailure = { it.message ?: "Could not save bookmark" },
                 )
-            onFinished(message)
+                return@launch
+            }
+            val synced = bookmarksSync.addToOnlineFolder(folder, event.id)
+            onFinished(if (synced.ok) "Saved to “${folder.name}” (online)" else synced.message)
         }
     }
 

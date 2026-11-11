@@ -47,6 +47,78 @@ class RelayListFetcher @Inject constructor(
         val allRelaysAnswered: Boolean get() = targetRelays > 0 && eoseRelays >= targetRelays
     }
 
+    /**
+     * Fetches every event of a parameterised replaceable kind for [pubkey],
+     * newest first — the plural sibling of [fetchLatest], which is right for
+     * single-value lists but would return one arbitrary set for kind 30003.
+     *
+     * When [dTag] is given only that one set is requested, which is what a
+     * targeted re-read before publishing needs.
+     */
+    suspend fun fetchMany(
+        pubkey: String,
+        kind: Int,
+        seedRelays: List<String> = emptyList(),
+        dTag: String? = null,
+        timeoutMs: Long = DEFAULT_TIMEOUT_MS,
+    ): List<Event> = coroutineScope {
+        val targets = seedRelays.ifEmpty { Tunables.DEFAULT_RELAYS }
+            .map(RelayPool::normalize).filter(RelayPool::isValidRelayUrl).toSet()
+        targets.forEach(pool::acquireRelay)
+
+        val found = ConcurrentHashMap<String, Event>()
+        val eose: MutableSet<String> = ConcurrentHashMap.newKeySet()
+        val subId = "lm-" + UUID.randomUUID().toString().take(8)
+        val ready = CompletableDeferred<Unit>()
+        val filter = if (dTag == null) {
+            Filter(authors = listOf(pubkey), kinds = listOf(kind))
+        } else {
+            Filter(authors = listOf(pubkey), kinds = listOf(kind), dTags = listOf(dTag))
+        }
+
+        val collector: Job = launch(Dispatchers.Default) {
+            pool.messages
+                .onSubscription {
+                    pool.subscribeTo(listOf(filter), id = subId, label = "list-fetch-many", relays = targets)
+                    ready.complete(Unit)
+                }
+                .collect { pm ->
+                    when (val m = pm.message) {
+                        is RelayMessage.EventMessage -> {
+                            if (m.subscriptionId == subId) {
+                                val e = m.event
+                                if (e.pubkey == pubkey && e.kind == kind && e.verify()) {
+                                    // Keep the newest per address (kind + d tag).
+                                    val key = e.tags.firstNotNullOfOrNull { raw ->
+                                        val t = social.tbone.nostr.Tag.fromJsonArray(raw)
+                                        t.value().takeIf { t.name == "d" }
+                                    }.orEmpty()
+                                    found.merge(key, e) { a, b -> newestListEvent(a, b) }
+                                }
+                            }
+                        }
+                        is RelayMessage.EndOfStoredEvents -> if (m.subscriptionId == subId) eose.add(pm.relayUrl)
+                        else -> Unit
+                    }
+                }
+        }
+
+        try {
+            ready.await()
+            val start = System.currentTimeMillis()
+            while (true) {
+                delay(POLL_MS)
+                if (eose.size >= targets.size.coerceAtLeast(1)) break
+                if (System.currentTimeMillis() - start >= timeoutMs) break
+            }
+        } finally {
+            collector.cancel()
+            pool.unsubscribe(subId)
+            targets.forEach(pool::releaseRelay)
+        }
+        found.values.sortedByDescending { it.createdAt }
+    }
+
     suspend fun fetchLatest(
         pubkey: String,
         kind: Int,

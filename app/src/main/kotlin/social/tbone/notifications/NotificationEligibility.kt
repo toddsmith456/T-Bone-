@@ -25,7 +25,9 @@ internal enum class NotificationClass { REACTION, REPOST, REPLY, QUOTE, MENTION,
  *  - reactions / reposts / poll votes: the referenced event is mine;
  *  - quotes: a quoted event (q-tag or inline `nostr:` quote) is mine;
  *  - replies: the event p-tags me, or its reply parent is my event;
- *  - mentions: the event p-tags me, or it references one of my events.
+ *  - mentions: the event p-tags me, or it references one of my events;
+ *  - zaps: a kind 9735 receipt whose `p` tag is me, whose sender (from the
+ *    embedded zap request) is somebody else.
  *
  * [isOwnEvent] decides whether an event id belongs to [me]; callers resolve
  * it from the own-event set plus the local event cache. Events I authored

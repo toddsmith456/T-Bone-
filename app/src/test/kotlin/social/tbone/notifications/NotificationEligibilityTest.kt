@@ -164,4 +164,55 @@ class NotificationEligibilityTest {
         val e = event(EventKind.FOLLOW_LIST, tags = listOf(tag("p", me)))
         assertNull(classify(e))
     }
+
+    // ── NIP-57 zaps ───────────────────────────────────────────────────────────
+
+    /** A zap receipt: `p` = recipient, `P` = sender, author = the LN node. */
+    private fun zapReceipt(
+        recipient: String = me,
+        sender: String = other,
+        amountMsats: Long = 21_000,
+        comment: String = "nice one",
+    ): Event {
+        val request = """{"id":"${"a".repeat(64)}","pubkey":"$sender","created_at":1,"kind":9734,"tags":[["p","$recipient"]],"content":"$comment","sig":"${"0".repeat(128)}"}"""
+        return Event(
+            id = "9".repeat(64),
+            pubkey = "44".repeat(32), // the Lightning node, not the sender
+            sig = "0".repeat(128),
+            kind = EventKind.ZAP_RECEIPT,
+            tags = listOf(
+                tag("p", recipient),
+                tag("P", sender),
+                tag("amount", amountMsats.toString()),
+                tag("description", request),
+            ),
+            content = "",
+            createdAt = 100,
+        )
+    }
+
+    @Test fun zapAddressedToMeIsAZapNotification() {
+        assertEquals(NotificationClass.ZAP, classify(zapReceipt()))
+    }
+
+    @Test fun zapToSomebodyElseIsNotMyNotification() {
+        assertNull(classify(zapReceipt(recipient = third)))
+    }
+
+    @Test fun selfZapIsNotANotification() {
+        assertNull(classify(zapReceipt(sender = me)))
+    }
+
+    @Test fun receiptWithoutPTagIsIgnored() {
+        val receipt = Event(
+            id = "9".repeat(64),
+            pubkey = "44".repeat(32),
+            createdAt = 100,
+            kind = EventKind.ZAP_RECEIPT,
+            tags = listOf(tag("amount", "21000")),
+            content = "",
+            sig = "0".repeat(128),
+        )
+        assertNull(classify(receipt))
+    }
 }
