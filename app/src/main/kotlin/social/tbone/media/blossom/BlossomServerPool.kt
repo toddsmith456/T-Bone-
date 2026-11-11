@@ -17,6 +17,12 @@ object BlossomServerPool {
      * Entries that are not in [pool] are ignored, and duplicates are collapsed:
      * a server can never be tried twice in one upload.
      *
+     * A [preferred] server is honoured **even when it is not in [pool]**. That
+     * case is the bug this guarded against: a server could be in the compose
+     * chooser (because the account published it) while being absent from the
+     * locally enabled set, and tapping it silently did nothing — the upload went
+     * to some other server. An explicit pick is a user instruction, so it wins.
+     *
      * [shuffle] is injectable so tests get deterministic order.
      */
     fun orderedCandidates(
@@ -25,11 +31,12 @@ object BlossomServerPool {
         default: String?,
         shuffle: (List<String>) -> List<String> = { it.shuffled() },
     ): List<String> {
-        if (pool.isEmpty()) return emptyList()
         val ordered = LinkedHashSet<String>()
-        preferred?.let { if (it in pool) ordered += it }
+        preferred?.takeIf { it.isNotBlank() }?.let { ordered += it }
         default?.let { if (it in pool) ordered += it }
         ordered += shuffle(pool)
+        // Nothing enabled and nothing explicitly picked: fail closed rather than
+        // inventing a server. An explicit pick alone is still enough to upload.
         return ordered.toList()
     }
 }

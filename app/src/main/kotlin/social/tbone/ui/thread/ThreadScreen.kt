@@ -318,10 +318,21 @@ private fun ThreadRow(
 /** "no more replies" terminator — no rail, text only. */
 @Composable
 private fun ThreadDeadEnd(replyCount: Int, depth: Int) {
+    // The terminator has to line up with the *text* of the notes above it, not
+    // with the rail. Note cards inset their content by their own horizontal
+    // padding, so aligning to the rail-only inset left this label ~12dp further
+    // left than every note and clipped the first character off the screen edge.
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = ThreadIndent.LEFT_INSET + ThreadIndent.RAIL_STEP * depth.coerceAtMost(ThreadIndent.MAX_RAIL_DEPTH), top = 6.dp, bottom = 18.dp),
+            .padding(
+                start = ThreadIndent.LEFT_INSET +
+                    ThreadIndent.RAIL_STEP * depth.coerceAtMost(ThreadIndent.MAX_RAIL_DEPTH) +
+                    ThreadIndent.CONTENT_INSET,
+                end = ThreadIndent.MIN_END_PADDING,
+                top = 6.dp,
+                bottom = 18.dp,
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -337,6 +348,16 @@ internal object ThreadIndent {
     val LEFT_INSET = 2.dp
     val RAIL_STEP = 3.dp
     val RAIL_WIDTH = 2.dp
+
+    /**
+     * Horizontal padding a thread note card applies to its own content. Kept in
+     * sync with [social.tbone.ui.feed.NoteCard]'s 14dp text inset so rail-less
+     * rows (like the dead-end label) start on the same column as the notes.
+     */
+    val CONTENT_INSET = 12.dp
+
+    /** Keeps trailing text off the screen edge when the thread is deeply nested. */
+    val MIN_END_PADDING = 14.dp
 }
 
 /**

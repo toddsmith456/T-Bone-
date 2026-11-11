@@ -24,6 +24,7 @@ import social.tbone.db.NotificationEntity
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
 import social.tbone.nostr.Filter
+import social.tbone.nostr.Nip57
 import social.tbone.nostr.Nip88
 import social.tbone.nostr.NostrJson
 import social.tbone.nostr.relay.RelayMessage
@@ -498,6 +499,7 @@ class NotificationsRepository @Inject constructor(
                 scope.launch { eventRepository.save(event, "") }
                 item
             }
+            NotificationClass.ZAP -> synchronized(lock) { mergeZapLocked(event) }
             null -> null
         }
     }
@@ -563,6 +565,10 @@ class NotificationsRepository @Inject constructor(
                 val author = eventRepository.getById(refId)?.pubkey
                 author == null || author == me
             }
+            // A zap was already proved to be addressed to us by the eligibility
+            // gate when it was ingested; there is no referenced note to re-check
+            // and the actor is the sender decoded from the receipt.
+            NotifType.ZAP -> true
             NotifType.CALENDAR -> true
         }
     }
@@ -690,6 +696,32 @@ class NotificationsRepository @Inject constructor(
             timestamp = event.createdAt,
             referencedEventId = refId,
             emoji = emoji,
+        )
+        addFlatLocked(item)
+        return item
+    }
+
+    /**
+     * A NIP-57 zap receipt.
+     *
+     * Keyed by the receipt id, not by actor: someone can zap the same note twice
+     * and each zap is its own event worth showing (and its own amount). The actor
+     * is the sender decoded from the embedded zap request, because the receipt's
+     * own author is the recipient's Lightning node.
+     */
+    private fun mergeZapLocked(event: Event): FlatNotifItem? {
+        val receipt = Nip57.receipt(event) ?: return null
+        val sender = receipt.sender ?: return null
+        val item = FlatNotifItem(
+            id = "zap:${event.id}",
+            type = NotifType.ZAP,
+            actorPubkey = sender,
+            timestamp = event.createdAt,
+            referencedEventId = receipt.zappedEventId,
+            zapSats = receipt.amountSats,
+            // Keep the comment short enough for a row; the full text is still in
+            // the receipt if it is ever needed.
+            zapComment = receipt.comment.take(280).ifBlank { null },
         )
         addFlatLocked(item)
         return item

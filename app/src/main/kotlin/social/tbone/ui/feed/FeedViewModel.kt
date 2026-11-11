@@ -314,6 +314,16 @@ class FeedViewModel @Inject constructor(
      */
     private data class FollowMode(val offline: Boolean, val follows: Set<String>)
     @Volatile private var appliedFollowMode: FollowMode? = null
+
+    /**
+     * Pubkeys the active account follows, used by the content filter so a block
+     * on someone else can never hide a followed author's own note. Read at call
+     * time (not from a captured value) because the set changes as follow lists
+     * load.
+     */
+    private val followedPubkeys: Set<String>
+        get() = appliedFollowMode?.follows.orEmpty()
+
     @Volatile private var appliedForPubkey: String? = null
     private var loadJob: Job? = null
 
@@ -762,7 +772,9 @@ class FeedViewModel @Inject constructor(
         }
         for (event in publicEvents) {
             val reason = if (filtersActive) {
-                ContentFilter.hideReason(event, blocked, nsfwMode, hideWords, contextEvents)
+                ContentFilter.hideReason(
+                    event, blocked, nsfwMode, hideWords, contextEvents, followedPubkeys,
+                )
             } else {
                 null
             }
@@ -782,7 +794,7 @@ class FeedViewModel @Inject constructor(
                 ?: synchronized(feedEvents) { feedEvents.firstOrNull { it.id == id } }
         }
         val focusedIsAllowed = focused?.let {
-            !ContentFilter.shouldHide(it, blocked, nsfwMode, hideWords, contextEvents)
+            !ContentFilter.shouldHide(it, blocked, nsfwMode, hideWords, contextEvents, followedPubkeys)
         } == true
         return if (focused != null && focusedIsAllowed && visible.none { it.id == focused.id }) {
             ContentFilterResult(
@@ -870,7 +882,12 @@ class FeedViewModel @Inject constructor(
             val local = offlineLists.snapshot(ListType.FOLLOWS, account.pubkey)
             val offlineMode = local.enabled
             val localFollows = if (offlineMode) local.pubkeySet() else emptySet()
-            appliedFollowMode = FollowMode(offlineMode, localFollows)
+            // The content filter needs the *effective* follow set in both modes,
+            // not just the offline one: in online mode localFollows is empty and
+            // every followed author would lose the protection that stops a block
+            // on someone else from hiding their notes.
+            val effectiveFollows = if (offlineMode) localFollows else account.follows.toSet()
+            appliedFollowMode = FollowMode(offlineMode, effectiveFollows)
             appliedForPubkey = account.pubkey
 
             if (offlineMode) {

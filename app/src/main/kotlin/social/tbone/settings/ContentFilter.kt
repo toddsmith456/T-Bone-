@@ -38,7 +38,15 @@ enum class NsfwMode {
 
 /** Why a note was hidden — so the UI can say what happened instead of silence. */
 sealed interface HideReason {
-    data object BlockedAuthor : HideReason
+    /**
+     * A blocked account is involved. [direct] distinguishes the two very
+     * different situations the UI used to lump together as "blocked author":
+     *
+     *  - [direct] = true  → you blocked the person who wrote this note,
+     *  - [direct] = false → the author is someone you have NOT blocked; their
+     *    note only replies to / reposts / quotes a blocked account.
+     */
+    data class BlockedAuthor(val direct: Boolean = true) : HideReason
     data class HideWord(val word: String) : HideReason
     data object ContentWarning : HideReason
 }
@@ -64,7 +72,8 @@ object ContentFilter {
         nsfwMode: NsfwMode,
         hideWords: Set<FilterWord>,
         referencedEvents: Map<String, Event> = emptyMap(),
-    ): Boolean = hideReason(event, blockedPubkeys, nsfwMode, hideWords, referencedEvents) != null
+        followedPubkeys: Set<String> = emptySet(),
+    ): Boolean = hideReason(event, blockedPubkeys, nsfwMode, hideWords, referencedEvents, followedPubkeys) != null
 
     /** The reason [event] is hidden, or null when it stays visible (veiled notes stay visible). */
     fun hideReason(
@@ -73,13 +82,18 @@ object ContentFilter {
         nsfwMode: NsfwMode,
         hideWords: Set<FilterWord>,
         referencedEvents: Map<String, Event> = emptyMap(),
+        /**
+         * Accounts the user follows. Passed in so a block on *someone else* can
+         * never hide a followed author's own note (see [isBlockedByReference]).
+         */
+        followedPubkeys: Set<String> = emptySet(),
     ): HideReason? {
         directHideReason(event, blockedPubkeys, nsfwMode, hideWords)?.let { return it }
         if (blockedPubkeys.isEmpty()) return null
         // Only blocking a person inherits through the reference graph; word
         // and content-warning rules judge each note on its own text.
-        return if (isBlockedByReference(event, blockedPubkeys, referencedEvents, mutableSetOf(event.id))) {
-            HideReason.BlockedAuthor
+        return if (isBlockedByReference(event, blockedPubkeys, referencedEvents, mutableSetOf(event.id), followedPubkeys)) {
+            HideReason.BlockedAuthor(direct = false)
         } else {
             null
         }
@@ -96,7 +110,7 @@ object ContentFilter {
         nsfwMode: NsfwMode,
         hideWords: Set<FilterWord>,
     ): HideReason? {
-        if (note.pubkey in blockedPubkeys) return HideReason.BlockedAuthor
+        if (note.pubkey in blockedPubkeys) return HideReason.BlockedAuthor(direct = true)
         if (nsfwMode == NsfwMode.HIDE && hasContentWarning(note)) return HideReason.ContentWarning
         if (hideWords.isNotEmpty()) {
             matchedHideWord(note.content, hideWords)?.let { return HideReason.HideWord(it) }
@@ -108,13 +122,26 @@ object ContentFilter {
      * Blocked-author inheritance: repost/reply p-tags (which catch parents
      * that have not arrived locally), then recursion through referenced
      * parents. Content rules are deliberately not consulted here.
+     *
+     * IMPORTANT: this only ever hides a note written by someone you have NOT
+     * blocked. A relayer/replier you follow stays visible even when they quote,
+     * reply to or repost a blocked account — the old code hid their own posts
+     * too, so a followed-and-not-blocked author appeared as "blocked author"
+     * in a hidden-notes group. The blocked account's own notes are still
+     * hidden by [directHideReason].
      */
     private fun isBlockedByReference(
         note: Event,
         blockedPubkeys: Set<String>,
         referencedEvents: Map<String, Event>,
         visited: MutableSet<String>,
+        followedPubkeys: Set<String> = emptySet(),
     ): Boolean {
+        // Never inherit a block through an author we follow. Following is an
+        // explicit "show me this person"; a block on who they reply to must not
+        // silently override it. Their own notes remain judged on their own text
+        // (words / content warnings) by directHideReason.
+        if (note.pubkey in followedPubkeys) return false
         val tags = note.parsedTags
         if ((note.kind == EventKind.REPOST || note.kind == 16) && tags.any { tag ->
                 (tag.name == "p" || tag.name == "P") && tag.value()?.let { it in blockedPubkeys } == true
@@ -137,8 +164,8 @@ object ContentFilter {
             val parent = referencedEvents[parentId] ?: return@any false
             if (!visited.add(parent.id)) return@any false
             parent.pubkey in blockedPubkeys ||
-                directHideReason(parent, blockedPubkeys, NsfwMode.OFF, emptySet()) == HideReason.BlockedAuthor ||
-                isBlockedByReference(parent, blockedPubkeys, referencedEvents, visited)
+                directHideReason(parent, blockedPubkeys, NsfwMode.OFF, emptySet()) is HideReason.BlockedAuthor ||
+                isBlockedByReference(parent, blockedPubkeys, referencedEvents, visited, followedPubkeys)
         }
     }
 

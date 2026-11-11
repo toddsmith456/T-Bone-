@@ -10,6 +10,7 @@ import social.tbone.settings.OrbotStatus
 import social.tbone.nostr.relay.RelayConnection
 import okhttp3.OkHttpClient
 import social.tbone.account.signer.NostrSigner
+import social.tbone.lists.PublishedRelayLists
 import social.tbone.settings.AppSettings
 import timber.log.Timber
 import java.io.File
@@ -41,6 +42,8 @@ import javax.inject.Singleton
 class BlossomUploader @Inject constructor(
     private val appSettings: AppSettings,
     @ApplicationContext private val context: Context,
+    private val accountRepository: social.tbone.account.AccountRepository,
+    private val relayListFetcher: social.tbone.lists.RelayListFetcher,
 ) {
 
     /**
@@ -72,16 +75,32 @@ class BlossomUploader @Inject constructor(
         require(file.exists() && file.length() > 0) { "nothing to upload" }
         appSettings.initialized.first { it }
 
-        val pool = appSettings.blossomServers.value.toList()
-        if (pool.isEmpty()) {
-            error("no Blossom servers enabled — add one in Settings → Blossom")
+        // Beaver Mode: the online (published) list is the authority, re-read on
+        // every upload, so a change made from another client takes effect on the
+        // very next attachment. The local list is ignored entirely in this mode.
+        // A failed fetch falls back to the local list rather than failing the
+        // upload: losing media because a relay was slow would be worse than using
+        // a slightly stale server set.
+        val (pool, beaverSource) = if (appSettings.blossomBeaverMode.value) {
+            val online = fetchPublishedServers()
+            if (online.isEmpty()) {
+                Timber.w("blossom: beaver mode found no published servers; using local list")
+                appSettings.blossomServers.value.toList() to "local (published list empty)"
+            } else {
+                online to "published"
+            }
+        } else {
+            appSettings.blossomServers.value.toList() to "local"
         }
 
         val candidates = BlossomServerPool.orderedCandidates(
             pool = pool,
             preferred = preferredServer,
-            default = appSettings.blossomDefaultServer.value,
+            default = appSettings.blossomDefaultServer.value.takeIf { beaverSource == "local" },
         )
+        if (candidates.isEmpty()) {
+            error("no Blossom servers enabled — add one in Settings → Blossom")
+        }
         val hash = BlossomClient.sha256Hex(file)
         val size = file.length()
 
@@ -129,6 +148,26 @@ class BlossomUploader @Inject constructor(
         }
 
         throw BlossomUploadException(failures)
+    }
+
+    /**
+     * Reads the account's published Blossom server list (BUD-03, kind 10063).
+     *
+     * Returns an empty list on any failure — callers decide what to fall back to.
+     * This is a network read on the upload path, which is exactly what Beaver
+     * Mode asks for; it is only called when that mode is on.
+     */
+    private suspend fun fetchPublishedServers(): List<String> = runCatching {
+        val account = accountRepository.activeAccount.first() ?: return@runCatching emptyList()
+        val result = relayListFetcher.fetchLatest(
+            pubkey = account.pubkey,
+            kind = social.tbone.nostr.EventKind.BLOSSOM_SERVER_LIST,
+            seedRelays = account.effectiveRelays(),
+        )
+        result.event?.let { PublishedRelayLists.blossomServers(it) }.orEmpty()
+    }.getOrElse { error ->
+        Timber.w(error, "blossom: could not read the published server list")
+        emptyList()
     }
 
     /** Build a current-mode client with finite upload timeouts. */

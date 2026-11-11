@@ -149,14 +149,24 @@ class SettingsViewModel @Inject constructor(
     // ── blossom media uploads ────────────────────────────────────────────────
     val blossomServers: StateFlow<Set<String>> = appSettings.blossomServers
     val blossomDefaultServer: StateFlow<String?> = appSettings.blossomDefaultServer
+    val blossomBeaverMode: StateFlow<Boolean> = appSettings.blossomBeaverMode
     val blossomCompress: StateFlow<Boolean> = appSettings.blossomCompress
     val blossomAudioCompress: StateFlow<Boolean> = appSettings.blossomAudioCompress
 
     private val _blossomSyncState = MutableStateFlow(PublishedListSyncState())
     val blossomSyncState: StateFlow<PublishedListSyncState> = _blossomSyncState.asStateFlow()
 
-    /** Fetches kind 10063 and adds valid published servers without deleting local servers. */
-    fun syncBlossomServers() {
+    /**
+     * Fetches kind 10063 and applies it to the local server list.
+     *
+     * [replace] = false → MERGE: published servers are added, local ones kept.
+     * [replace] = true  → REPLACE: the local list becomes exactly the published
+     *   list, so servers you only had locally are removed (including the
+     *   defaults). The published list is the account's own statement of which
+     *   servers it uses, so replacing is a legitimate choice — it is just
+     *   destructive, hence the explicit option instead of a silent behaviour.
+     */
+    fun syncBlossomServers(replace: Boolean = false) {
         if (_blossomSyncState.value.syncing) return
         viewModelScope.launch {
             _blossomSyncState.value = PublishedListSyncState(syncing = true, message = "syncing published list…")
@@ -184,11 +194,30 @@ class SettingsViewModel @Inject constructor(
                     )
                     return@launch
                 }
-                val merged = appSettings.blossomServers.value + imported
-                appSettings.setBlossomServers(merged)
-                _blossomSyncState.value = PublishedListSyncState(
-                    message = "Synced ${imported.size} published Blossom server${if (imported.size == 1) "" else "s"}; local servers were kept.",
-                )
+                val before = appSettings.blossomServers.value
+                if (replace) {
+                    val next = imported.toSet()
+                    appSettings.setBlossomServers(next)
+                    // The old default may no longer exist; a dangling default would
+                    // never match the pool and would silently stop being applied.
+                    val currentDefault = appSettings.blossomDefaultServer.value
+                    if (currentDefault != null && currentDefault !in next) {
+                        appSettings.setBlossomDefaultServer(null)
+                    }
+                    val removed = (before - next).size
+                    _blossomSyncState.value = PublishedListSyncState(
+                        message = "Replaced your list with ${next.size} published Blossom server${if (next.size == 1) "" else "s"}" +
+                            if (removed > 0) " — $removed local server${if (removed == 1) "" else "s"} removed." else ".",
+                    )
+                } else {
+                    val merged = before + imported
+                    appSettings.setBlossomServers(merged)
+                    val added = (merged - before).size
+                    _blossomSyncState.value = PublishedListSyncState(
+                        message = "Merged ${imported.size} published Blossom server${if (imported.size == 1) "" else "s"}" +
+                            "${if (added > 0) " ($added new)" else ""}; your local servers were kept.",
+                    )
+                }
             } catch (error: Exception) {
                 _blossomSyncState.value = PublishedListSyncState(
                     message = error.message ?: "Could not sync the published Blossom list.",
@@ -204,6 +233,25 @@ class SettingsViewModel @Inject constructor(
 
     fun setClientTagEnabled(enabled: Boolean) {
         viewModelScope.launch { appSettings.setClientTagEnabled(enabled) }
+    }
+
+    fun setBlossomBeaverMode(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setBlossomBeaverMode(enabled) }
+    }
+
+    /**
+     * Enables or disables one server in the pool. Disabling keeps the entry in
+     * DataStore so it can be turned back on; it only leaves the *enabled* set that
+     * uploads draw from.
+     */
+    fun setBlossomServerEnabled(url: String, enabled: Boolean) {
+        viewModelScope.launch {
+            val current = appSettings.blossomServers.value
+            appSettings.setBlossomServers(if (enabled) current + url else current - url)
+            if (!enabled && appSettings.blossomDefaultServer.value == url) {
+                appSettings.setBlossomDefaultServer(null)
+            }
+        }
     }
 
     fun addBlossomServer(url: String) {

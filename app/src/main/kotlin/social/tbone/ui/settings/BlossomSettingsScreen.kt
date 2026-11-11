@@ -31,6 +31,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import social.tbone.settings.AppSettings
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 
 /**
  * Blossom media upload settings:
@@ -53,7 +55,9 @@ fun BlossomSettingsScreen(
     val compress by viewModel.blossomCompress.collectAsStateWithLifecycle()
     val audioCompress by viewModel.blossomAudioCompress.collectAsStateWithLifecycle()
     val syncState by viewModel.blossomSyncState.collectAsStateWithLifecycle()
+    val beaverMode by viewModel.blossomBeaverMode.collectAsStateWithLifecycle()
     var customInput by remember { mutableStateOf("") }
+    var syncChoiceOpen by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -88,10 +92,12 @@ fun BlossomSettingsScreen(
                 style = BonyType.metaDim.copy(color = BonyColors.TextMute),
             )
             Spacer(Modifier.height(12.dp))
+            // Sync now asks merge-vs-replace instead of silently merging, because
+            // replacing is the only way to drop servers you no longer publish.
             Box(
                 modifier = Modifier
                     .appBorder(1.dp, if (syncState.syncing) BonyColors.Rule else BonyColors.AccentDim)
-                    .clickable(enabled = !syncState.syncing) { viewModel.syncBlossomServers() }
+                    .clickable(enabled = !syncState.syncing) { syncChoiceOpen = true }
                     .padding(horizontal = 12.dp, vertical = 10.dp),
             ) {
                 Text(
@@ -108,6 +114,31 @@ fun BlossomSettingsScreen(
                     modifier = Modifier.padding(top = 8.dp),
                 )
             }
+            Spacer(Modifier.height(16.dp))
+
+            // ── Beaver Mode ───────────────────────────────────────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Beaver Mode", style = BonyType.body.copy(color = BonyColors.Text))
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "ignores the server list above and re-reads your published Blossom list every time you upload a file. " +
+                            "Servers stay in sync with whatever your account publishes — including changes made in another client — " +
+                            "at the cost of one extra relay lookup per upload. If the published list can't be read, the list above is used.",
+                        style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                BonyToggle(
+                    checked = beaverMode,
+                    enabled = true,
+                    onCheckedChange = { viewModel.setBlossomBeaverMode(it) },
+                )
+            }
+
             Spacer(Modifier.height(12.dp))
 
             servers.sorted().forEach { server ->
@@ -140,26 +171,34 @@ fun BlossomSettingsScreen(
                     }
                     Spacer(Modifier.height(6.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        val enabled = server in servers
                         Text(
                             text = if (server in AppSettings.BLOSSOM_DEFAULTS) "default server" else "custom server",
                             style = BonyType.caption.copy(color = BonyColors.TextMute),
                             modifier = Modifier.weight(1f),
                         )
-                        if (server !in AppSettings.BLOSSOM_DEFAULTS) {
-                            Text(
-                                text = "remove",
-                                style = BonyType.tag.copy(color = BonyColors.Danger),
-                                modifier = Modifier
-                                    .appBorder(1.dp, BonyColors.Danger)
-                                    .clickable { viewModel.removeBlossomServer(server) }
-                                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                            )
-                        } else {
-                            Text(
-                                text = if (server in servers) "enabled" else "disabled",
-                                style = BonyType.caption.copy(color = BonyColors.TextMute),
-                            )
-                        }
+                        // Every server — including the built-in defaults — can now be
+                        // turned off or removed outright. Previously the defaults had
+                        // no controls at all and could never be removed.
+                        Text(
+                            text = if (enabled) "disable" else "enable",
+                            style = BonyType.tag.copy(
+                                color = if (enabled) BonyColors.TextMute else BonyColors.Accent,
+                            ),
+                            modifier = Modifier
+                                .appBorder(1.dp, if (enabled) BonyColors.Rule else BonyColors.AccentDim)
+                                .clickable { viewModel.setBlossomServerEnabled(server, !enabled) }
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "remove",
+                            style = BonyType.tag.copy(color = BonyColors.Danger),
+                            modifier = Modifier
+                                .appBorder(1.dp, BonyColors.Danger)
+                                .clickable { viewModel.removeBlossomServer(server) }
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                        )
                     }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -263,5 +302,37 @@ fun BlossomSettingsScreen(
                 style = BonyType.caption.copy(color = BonyColors.TextMute),
             )
         }
+    }
+
+    if (syncChoiceOpen) {
+        AlertDialog(
+            onDismissRequest = { syncChoiceOpen = false },
+            containerColor = BonyColors.Surface,
+            title = { Text("Sync published Blossom list", style = BonyType.body.copy(color = BonyColors.Text)) },
+            text = {
+                Text(
+                    "MERGE adds the servers from your published list and keeps the ones you have here.\n\n" +
+                        "REPLACE makes your list exactly what you publish — servers that are only on this device, including the built-in defaults, are removed.",
+                    style = BonyType.meta.copy(color = BonyColors.TextDim),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    syncChoiceOpen = false
+                    viewModel.syncBlossomServers(replace = false)
+                }) { Text("MERGE", style = BonyType.button.copy(color = BonyColors.Accent)) }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        syncChoiceOpen = false
+                        viewModel.syncBlossomServers(replace = true)
+                    }) { Text("REPLACE", style = BonyType.button.copy(color = BonyColors.Danger)) }
+                    TextButton(onClick = { syncChoiceOpen = false }) {
+                        Text("CANCEL", style = BonyType.button.copy(color = BonyColors.TextMute))
+                    }
+                }
+            },
+        )
     }
 }

@@ -42,6 +42,24 @@ fun LinkSegmentedText(
     val context = LocalContext.current
     val segments = remember(text) { splitByUrls(text) }
 
+    // Fast path: a title with no URL needs exactly one Text. The old code always
+    // built a Row and emitted a child Text per segment, and the caller wraps this
+    // in a weighted Row slot — so every visible note row paid for several
+    // measure/layout passes and a nested Row even when there was nothing to make
+    // clickable. That is what made Notes scroll badly under Youniversal, whose
+    // larger type sizes make each of those passes more expensive.
+    if (segments.size == 1 && !segments[0].second) {
+        Text(
+            text = segments[0].first,
+            style = style,
+            maxLines = maxLines,
+            overflow = overflow,
+            onTextLayout = onTextLayout,
+            modifier = modifier,
+        )
+        return
+    }
+
     Row(modifier = modifier) {
         segments.forEach { (segment, isLink) ->
             if (segment.isEmpty()) return@forEach

@@ -58,7 +58,7 @@ import social.tbone.ui.theme.appBorder
 import social.tbone.ui.theme.appCornerShape
 import androidx.compose.material3.MaterialTheme
 
-enum class FollowListsTab { FOLLOWING, FOLLOWERS, BLOCKED }
+enum class FollowListsTab { FOLLOWING, FOLLOWERS, BLOCKED, MUTES }
 
 @Composable
 fun FollowListsScreen(
@@ -74,6 +74,7 @@ fun FollowListsScreen(
     val onlineLoading by viewModel.onlineLoading.collectAsStateWithLifecycle()
     val onlineError by viewModel.onlineError.collectAsStateWithLifecycle()
     val effectiveMuted by viewModel.effectiveMuted.collectAsStateWithLifecycle()
+    val followingSet by viewModel.followingSet.collectAsStateWithLifecycle()
     val followersEnabled by viewModel.followersEnabled.collectAsStateWithLifecycle()
     val followersDisclaimerShown by viewModel.followersDisclaimerShown.collectAsStateWithLifecycle()
     val followersState by viewModel.followers.collectAsStateWithLifecycle()
@@ -174,6 +175,9 @@ fun FollowListsScreen(
                         FollowListsTab.FOLLOWING to "FOLLOWING",
                         FollowListsTab.FOLLOWERS to "FOLLOWERS",
                         FollowListsTab.BLOCKED to "BLOCKED",
+                        // Offline mute list. Lives here now that mutes moved into
+                        // the follow tool, so it stays reachable next to BLOCKED.
+                        FollowListsTab.MUTES to "MUTES",
                     ).forEach { (t, label) ->
                         val active = tab == t
                         val shape = appCornerShape(MaterialTheme.shapes.small, RectangleShape)
@@ -219,6 +223,7 @@ fun FollowListsScreen(
                     followersBusy = followersBusy,
                     profiles = profiles,
                     effectiveMuted = effectiveMuted,
+                    followingSet = followingSet,
                     viewModel = viewModel,
                     onProfileClick = onProfileClick,
                     onEnableRequest = {
@@ -237,6 +242,14 @@ fun FollowListsScreen(
                     blockedOfflineEnabled = blockedOfflineEnabled,
                     profiles = profiles,
                     effectiveMuted = effectiveMuted,
+                    viewModel = viewModel,
+                    onProfileClick = onProfileClick,
+                )
+                FollowListsTab.MUTES -> OfflineMutesTab(
+                    account = account!!,
+                    mutesOffline = mutesOffline,
+                    offlineMutesEnabled = blockedOfflineEnabled,
+                    profiles = profiles,
                     viewModel = viewModel,
                     onProfileClick = onProfileClick,
                 )
@@ -460,6 +473,7 @@ private fun FollowersTab(
     followersBusy: Boolean,
     profiles: Map<String, social.tbone.nostr.ProfileContent>,
     effectiveMuted: Set<String>,
+    followingSet: Set<String>,
     viewModel: FollowListsViewModel,
     onProfileClick: (String) -> Unit,
     onEnableRequest: () -> Unit,
@@ -531,16 +545,20 @@ private fun FollowersTab(
         }
         items(shown, key = { it }) { pk ->
             val isMuted = pk in effectiveMuted
+            // A follower is only offered FOLLOW when we don't already follow
+            // them; when we do, the row offers UNFOLLOW instead. Showing FOLLOW
+            // unconditionally let you "follow" people you already followed.
+            val alreadyFollowing = pk in followingSet
             FollowRow(
                 entry = ListEntry(pk),
                 name = profiles[pk]?.bestName,
                 picture = profiles[pk]?.picture,
                 isMuted = isMuted,
                 onOpen = { onProfileClick(pk) },
-                onUnfollow = null, // Followers are not necessarily followed; show follow button if not following
+                onUnfollow = if (alreadyFollowing) ({ viewModel.unfollow(pk) }) else null,
                 onToggleMute = { viewModel.toggleMute(pk) },
-                isFollowing = null, // We could compute but keep simple: show follow button
-                onFollow = { viewModel.follow(pk) },
+                isFollowing = alreadyFollowing,
+                onFollow = if (alreadyFollowing) null else ({ viewModel.follow(pk) }),
             )
         }
         item { Spacer(Modifier.height(48.dp)) }
@@ -612,6 +630,157 @@ private fun BlockedTab(
     }
 }
 
+/**
+ * Offline mute list.
+ *
+ * Blocks recorded here are stored only on this device: nothing is published and
+ * the relay mute list (kind 10000) is neither read nor written while this list
+ * is on. It exists so blocking keeps working with no network at all — the
+ * capability that was lost when mutes moved out of their own tool.
+ */
+@Composable
+private fun OfflineMutesTab(
+    account: social.tbone.account.Account,
+    mutesOffline: social.tbone.lists.LocalListState?,
+    offlineMutesEnabled: Boolean,
+    profiles: Map<String, social.tbone.nostr.ProfileContent>,
+    viewModel: FollowListsViewModel,
+    onProfileClick: (String) -> Unit,
+) {
+    var filter by rememberSaveable { mutableStateOf("") }
+    var addInput by rememberSaveable { mutableStateOf("") }
+
+    val entries = mutesOffline?.entries.orEmpty()
+    val muted = remember(entries) { entries.map { it.pubkey } }
+
+    LazyColumn(modifier = Modifier.fillMaxSize()) {
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp)
+                    .appBorder(1.dp, BonyColors.Rule)
+                    .background(BonyColors.Surface)
+                    .padding(12.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("offline mute list", style = BonyType.body.copy(color = BonyColors.Text))
+                        Text(
+                            if (offlineMutesEnabled) "on · ${entries.size} muted · local only"
+                            else "off · using relay mute list (kind 10000)",
+                            style = BonyType.meta.copy(
+                                color = if (offlineMutesEnabled) BonyColors.Accent else BonyColors.TextMute,
+                            ),
+                        )
+                    }
+                    BonyToggle(
+                        checked = offlineMutesEnabled,
+                        enabled = true,
+                        onCheckedChange = { viewModel.setOfflineMutesEnabled(it) },
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "While this is on, blocking records the person only on this device and nothing is sent to your relays. " +
+                        "Mutes you already have are copied here when you sync. Turning it off goes back to your published relay mute list.",
+                    style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+                )
+                Spacer(Modifier.height(10.dp))
+                BonyButton(
+                    label = "↻ SYNC FROM RELAYS",
+                    primary = false,
+                    onClick = { viewModel.syncOfflineMutes() },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+
+        if (entries.isEmpty()) {
+            item {
+                Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        if (offlineMutesEnabled) "no one muted on this device yet"
+                        else "turn the offline mute list on to mute without a network",
+                        style = BonyType.meta.copy(color = BonyColors.TextMute),
+                    )
+                }
+            }
+            return@LazyColumn
+        }
+
+        item {
+            SectionHeader("OFFLINE MUTES · ${entries.size}")
+            // Adding by hand matters in offline mode: you may not be able to open
+            // a profile at all, so muting must not require one.
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = addInput,
+                    onValueChange = { addInput = it },
+                    placeholder = { Text("npub or hex key", style = BonyType.meta.copy(color = BonyColors.TextMute)) },
+                    singleLine = true,
+                    textStyle = BonyType.meta.copy(color = BonyColors.Text),
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "MUTE",
+                    style = BonyType.tag.copy(
+                        color = if (addInput.isNotBlank()) BonyColors.Danger else BonyColors.TextMute,
+                    ),
+                    modifier = Modifier
+                        .appBorder(1.dp, if (addInput.isNotBlank()) BonyColors.Danger else BonyColors.Rule)
+                        .clickable(enabled = addInput.isNotBlank()) {
+                            viewModel.addOfflineMute(addInput)
+                            addInput = ""
+                        }
+                        .padding(horizontal = 10.dp, vertical = 10.dp),
+                )
+            }
+            OutlinedTextField(
+                value = filter,
+                onValueChange = { filter = it },
+                placeholder = { Text("filter by name / npub", style = BonyType.meta.copy(color = BonyColors.TextMute)) },
+                singleLine = true,
+                textStyle = BonyType.meta.copy(color = BonyColors.Text),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+            )
+        }
+
+        val q = filter.trim().lowercase()
+        val shown = if (q.isEmpty()) muted else muted.filter { pk ->
+            val name = profiles[pk]?.bestName?.lowercase().orEmpty()
+            name.contains(q) || pk.lowercase().contains(q)
+        }
+        if (shown.isEmpty()) {
+            item {
+                Text(
+                    "no matches",
+                    style = BonyType.meta.copy(color = BonyColors.TextMute),
+                    modifier = Modifier.padding(14.dp),
+                )
+            }
+        } else {
+            items(shown, key = { it }) { pk ->
+                FollowRow(
+                    entry = ListEntry(pk),
+                    name = profiles[pk]?.bestName,
+                    picture = profiles[pk]?.picture,
+                    isMuted = true,
+                    onOpen = { onProfileClick(pk) },
+                    onUnfollow = null,
+                    onToggleMute = { viewModel.removeOfflineMute(pk) },
+                    muteLabel = "UNMUTE",
+                )
+            }
+        }
+        item { Spacer(Modifier.height(48.dp)) }
+    }
+}
+
 @Composable
 private fun FollowRow(
     entry: ListEntry,
@@ -649,8 +818,9 @@ private fun FollowRow(
         }
         Spacer(Modifier.width(8.dp))
         Column(verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.End) {
-            if (onFollow != null && isFollowing == null) {
-                // In followers tab, show follow button
+            // Callers pass exactly one of these depending on the real
+            // relationship, so a row can never offer both at once.
+            if (onFollow != null && isFollowing != true) {
                 Text(
                     "FOLLOW",
                     style = BonyType.tag.copy(color = BonyColors.Accent),

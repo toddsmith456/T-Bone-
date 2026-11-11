@@ -350,7 +350,7 @@ private fun NotesList(
 ) {
     LazyColumn(modifier = modifier.navigationBarsPadding()) {
         // Pinned first (the very top), regardless of folder.
-        val pinned = notes.filter { it.pinned }.sortedBy { it.sortOrder }
+        val pinned = remember(notes) { notes.filter { it.pinned }.sortedBy { it.sortOrder } }
         items(pinned, key = { "n_${it.id}" }) { note ->
             NotesListNoteRow(
                 note = note,
@@ -362,15 +362,26 @@ private fun NotesList(
         }
 
         // Folders in order, each with its unpinned children.
-        val folderList = folders.sortedWith(
-            compareByDescending<NoteFolderUi> { it.pinned }.thenBy { it.sortOrder }.thenBy { it.name },
-        )
+        //
+        // Derived once per notes/folders change instead of on every recomposition:
+        // the sort, the per-folder note count (which is a full O(notes) scan per
+        // folder, so O(folders x notes)) and the unfiled filter used to run inside
+        // the LazyColumn content lambda on every pass. Under Youniversal the row
+        // content changes more often, so that O(f x n) costing ran constantly and
+        // made the list stutter. Notes/folders are the only real inputs.
+        val folderList = remember(folders) {
+            folders.sortedWith(
+                compareByDescending<NoteFolderUi> { it.pinned }.thenBy { it.sortOrder }.thenBy { it.name },
+            )
+        }
+        val countsByFolder = remember(notes) { notes.groupingBy { it.folderId }.eachCount() }
         folderList.forEach { folder ->
-            item(key = "f_${folder.id}") {
+            val folderId = folder.id
+            item(key = "f_$folderId") {
                 FolderRow(
                     folder = folder,
-                    count = notes.count { it.folderId == folder.id },
-                    onToggle = { onOpenFolder(folder.id, folder.name) },
+                    count = countsByFolder[folderId] ?: 0,
+                    onToggle = { onOpenFolder(folderId, folder.name) },
                     onLongClick = { onFolderLongClick(folder) },
                 )
                 NotesDivider()
@@ -378,8 +389,9 @@ private fun NotesList(
         }
 
         // Un-filed unpinned notes.
-        val unfiled = notes.filter { !it.pinned && it.folderId.isNullOrBlank() }
-            .sortedBy { it.sortOrder }
+        val unfiled = remember(notes) {
+            notes.filter { !it.pinned && it.folderId.isNullOrBlank() }.sortedBy { it.sortOrder }
+        }
         items(unfiled, key = { "u_${it.id}" }) { note ->
             NotesListNoteRow(
                 note = note,

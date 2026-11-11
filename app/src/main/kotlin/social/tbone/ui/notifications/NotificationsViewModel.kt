@@ -197,6 +197,7 @@ class NotificationsViewModel @Inject constructor(
         NotifType.QUOTE -> NotifFilter.REPOSTS
         NotifType.MENTION -> NotifFilter.MENTIONS
         NotifType.VOTE -> NotifFilter.VOTES
+        NotifType.ZAP -> NotifFilter.ZAPS
         NotifType.CALENDAR -> NotifFilter.CALENDAR
     }
 }

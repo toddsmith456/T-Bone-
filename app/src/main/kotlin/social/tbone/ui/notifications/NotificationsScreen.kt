@@ -29,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.AlternateEmail
 import androidx.compose.material.icons.outlined.BarChart
+import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -373,6 +374,7 @@ private fun NotifFilter.icon(): ImageVector = when (this) {
     NotifFilter.REPOSTS -> Icons.Outlined.Repeat
     NotifFilter.MENTIONS -> Icons.Outlined.AlternateEmail
     NotifFilter.VOTES -> Icons.Outlined.BarChart
+    NotifFilter.ZAPS -> Icons.Outlined.Bolt
     NotifFilter.CALENDAR -> Icons.Outlined.CalendarMonth
 }
 
@@ -423,6 +425,12 @@ private fun DailySummaryBar(
             value = summary.voteCount.toString(),
             active = isFiltered && NotifFilter.VOTES in enabledFilters,
             onClick = { onFilterSelect(NotifFilter.VOTES) },
+        )
+        SummaryStat(
+            icon = Icons.Outlined.Bolt,
+            value = summary.zapCount.toString(),
+            active = isFiltered && NotifFilter.ZAPS in enabledFilters,
+            onClick = { onFilterSelect(NotifFilter.ZAPS) },
         )
         SummaryStat(
             icon = Icons.Outlined.CalendarMonth,
@@ -561,6 +569,24 @@ private fun NotificationRow(
         ) {
             when (item.type) {
                 NotifType.CALENDAR -> Unit
+                NotifType.ZAP -> {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        val sats = item.zapSats
+                        Text(
+                            text = if (sats != null) "⚡ $sats sats" else "⚡ zap",
+                            style = BonyType.tag.copy(color = BonyColors.Accent),
+                            modifier = Modifier.padding(start = 16.dp, top = 2.dp, bottom = 4.dp),
+                        )
+                        // The comment is optional: plenty of zaps are amount-only.
+                        item.zapComment?.let { comment ->
+                            Text(
+                                text = "“$comment”",
+                                style = BonyType.meta.copy(color = BonyColors.TextDim),
+                                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
+                            )
+                        }
+                    }
+                }
                 NotifType.REPLY -> {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         // Reply graphic header.
@@ -736,6 +762,9 @@ private fun NotifTypeIcon(item: FlatNotifItem) {
             NotifType.VOTE -> Icon(
                 Icons.Outlined.BarChart, "vote", Modifier.size(18.dp), BonyColors.TextMute,
             )
+            NotifType.ZAP -> Icon(
+                Icons.Outlined.Bolt, "zap", Modifier.size(18.dp), BonyColors.Accent,
+            )
             NotifType.CALENDAR -> Icon(
                 Icons.Outlined.CalendarMonth, "calendar", Modifier.size(18.dp), BonyColors.Accent,
             )
@@ -750,6 +779,7 @@ private fun actionText(item: FlatNotifItem): String = when (item.type) {
     NotifType.QUOTE -> "quoted"
     NotifType.MENTION -> "mentioned you"
     NotifType.VOTE -> "voted"
+    NotifType.ZAP -> "zapped"
     NotifType.CALENDAR -> "upcoming"
 }
 

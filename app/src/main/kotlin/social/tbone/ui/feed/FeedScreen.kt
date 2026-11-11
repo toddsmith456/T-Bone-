@@ -169,8 +169,9 @@ fun FeedScreen(
             it is FeedListItem.Note && it.event.id == eventId
         }
         if (index >= 0) {
-            // +1 geohash strip, +1 hidden-count header when present.
-            listState.animateScrollToItem(index + 1 + if (uiState.hiddenCount > 0) 1 else 0)
+            // +1 for the geohash home strip, which is always the first item.
+            // The old hidden-count header that used to add a second offset is gone.
+            listState.animateScrollToItem(index + 1)
             viewModel.consumePendingEventScroll(eventId)
         }
     }
@@ -440,19 +441,11 @@ fun FeedScreen(
                                 onOpenGeohash = onOpenGeohash,
                             )
                         }
-                        if (uiState.hiddenCount > 0) {
-                            item(key = "hidden_summary") {
-                                Text(
-                                    text = "${uiState.hiddenCount} post${if (uiState.hiddenCount == 1) "" else "s"} hidden by your filters · tap to review filters",
-                                    style = BonyType.meta.copy(color = BonyColors.TextMute),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { onSettingsClick() }
-                                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                                )
-                                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
-                            }
-                        }
+                        // The end-of-feed "N posts hidden by your filters" banner used
+                        // to sit here, at the top of the timeline, on every visit. It is
+                        // gone: the inline HiddenGroupRow markers still appear where the
+                        // hidden notes actually were, so nothing is silently missing and
+                        // there is no permanent notice to scroll past.
                         items(uiState.feedItems, key = { it.key }) { row ->
                           when (row) {
                             is FeedListItem.HiddenGroup -> HiddenGroupRow(
@@ -990,11 +983,18 @@ private fun HiddenGroupRow(
             text = "${if (expanded) "▾" else "▸"} ${group.entries.size} post${if (group.entries.size == 1) "" else "s"} hidden by your filters",
             style = BonyType.meta.copy(color = BonyColors.TextMute),
         )
+        // Without a per-row reason the "hidden" label is ambiguous: a note hidden
+        // because you blocked its author reads identically to one hidden because
+        // it quotes someone you blocked. Expand to see which, per note.
         if (expanded) {
             group.entries.forEach { entry ->
                 val author = profiles[entry.pubkey]?.bestName ?: "unknown author"
+                // "blocked author" alone was misleading: it also covered notes by
+                // people you had NOT blocked, whose post merely referenced a blocked
+                // account — which is what made a followed author look blocked.
                 val reason = when (val r = entry.reason) {
-                    HideReason.BlockedAuthor -> "blocked author"
+                    is HideReason.BlockedAuthor ->
+                        if (r.direct) "you blocked this author" else "references an author you blocked"
                     is HideReason.HideWord -> "hide word '${r.word}'"
                     HideReason.ContentWarning -> "content warning (hide mode)"
                 }

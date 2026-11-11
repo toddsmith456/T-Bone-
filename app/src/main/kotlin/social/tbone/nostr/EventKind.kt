@@ -26,6 +26,8 @@ object EventKind {
     const val RELAY_LIST = 10002     // NIP-65: relay list metadata
     const val BLOSSOM_SERVER_LIST = 10063 // BUD-03: user's Blossom server list
     const val PAYMENT_TARGETS = 10133  // NIP-A3: replaceable payment-target list
+    const val ZAP_REQUEST = 9734       // NIP-57: zap request
+    const val ZAP_RECEIPT = 9735       // NIP-57: zap receipt (published by the LN node)
     const val AUTH = 22242             // NIP-42: relay authentication
     const val NOSTR_CONNECT = 24133    // NIP-46: nsecBunker request/response
 

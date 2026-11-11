@@ -28,6 +28,11 @@ data class Filter(
      */
     @SerialName("#E") val bigETags: List<String>? = null,
     @SerialName("#p") val pTags: List<String>? = null,
+    /**
+     * NIP-57 zap receipts (kind 9735) put the **sender** in an uppercase `P` tag
+     * (the recipient is the lowercase `p`). Used to list zaps *sent* by a user.
+     */
+    @SerialName("#P") val bigPTags: List<String>? = null,
     /** NIP-18 quoted event IDs. */
     @SerialName("#q") val qTags: List<String>? = null,
     @SerialName("#t") val tTags: List<String>? = null,
@@ -70,6 +75,11 @@ data class Filter(
                 EventKind.REPOST,
                 EventKind.POLL_RESPONSE,
                 EventKind.FOLLOW_LIST,
+                // NIP-57 receipts (kind 9735) are published by the LN node, but they
+                // do carry `p` = the recipient, so the `#p` filter above matches
+                // incoming zaps. (`P` on a receipt is the *sender*, which is why it
+                // cannot be added to this filter — the keys AND together.)
+                EventKind.ZAP_RECEIPT,
             ),
             pTags = listOf(pubkey),
             limit = limit,

@@ -116,6 +116,12 @@ class AppSettings @Inject constructor(
         private val BLOSSOM_DEFAULT_SERVER = stringPreferencesKey("blossom_default_server")
         private val BLOSSOM_COMPRESS = booleanPreferencesKey("blossom_compress")
         private val BLOSSOM_AUDIO_COMPRESS = booleanPreferencesKey("blossom_audio_compress")
+
+        /**
+         * "Beaver Mode": ignore the locally-configured server list and re-read
+         * the account's published Blossom list (kind 10063) on every upload.
+         */
+        private val BLOSSOM_BEAVER_MODE = booleanPreferencesKey("blossom_beaver_mode")
         // Monero xaps.
         private val LIGHTNING_ZAPS_ENABLED = booleanPreferencesKey("lightning_zaps_enabled")
         private val MONERO_XAPS_ENABLED = booleanPreferencesKey("monero_xaps_enabled")
@@ -230,7 +236,7 @@ class AppSettings @Inject constructor(
     val videoThumbnails = _videoThumbnails.asStateFlow()
 
     /** When true, inline media frames take the media's real shape instead of the fixed box. */
-    private val _mediaFittedLayout = MutableStateFlow(false)
+    private val _mediaFittedLayout = MutableStateFlow(true)
     val mediaFittedLayout = _mediaFittedLayout.asStateFlow()
 
     private val _imageCacheLightweight = MutableStateFlow(false)
@@ -351,6 +357,14 @@ class AppSettings @Inject constructor(
     private val _blossomAudioCompress = MutableStateFlow(false)
     val blossomAudioCompress = _blossomAudioCompress.asStateFlow()
 
+    /**
+     * Beaver Mode: bypass the local server list and read the online (published)
+     * Blossom list on every upload, so the servers used always match whatever the
+     * account publishes — including changes made from another client.
+     */
+    private val _blossomBeaverMode = MutableStateFlow(false)
+    val blossomBeaverMode = _blossomBeaverMode.asStateFlow()
+
 
     private val _lightningZapsEnabled = MutableStateFlow(true)
     val lightningZapsEnabled = _lightningZapsEnabled.asStateFlow()
@@ -465,7 +479,10 @@ class AppSettings @Inject constructor(
                 _videoQuality.value = VideoQuality.fromPref(prefs[VIDEO_QUALITY])
                 _videoPlaybackMode.value = VideoPlaybackMode.fromPref(prefs[VIDEO_PLAYBACK_MODE])
                 _videoThumbnails.value = prefs[VIDEO_THUMBNAILS] ?: true
-                _mediaFittedLayout.value = prefs[MEDIA_FITTED_LAYOUT] ?: false
+                // On by default. Only an explicit previous "off" turns it off, so
+                // existing installs that never touched this switch get the fitted
+                // layout too.
+                _mediaFittedLayout.value = prefs[MEDIA_FITTED_LAYOUT] ?: true
                 _imageCacheLightweight.value = prefs[IMAGE_CACHE_LIGHTWEIGHT] ?: false
                 _avatarMode.value = AvatarMode.fromPref(prefs[AVATAR_MODE])
                 _avatarAnimated.value = prefs[AVATAR_ANIMATED] ?: true
@@ -515,6 +532,7 @@ class AppSettings @Inject constructor(
                         ?.takeIf { it in storedServers }
                 _blossomCompress.value = prefs[BLOSSOM_COMPRESS] ?: true
                 _blossomAudioCompress.value = prefs[BLOSSOM_AUDIO_COMPRESS] ?: false
+                _blossomBeaverMode.value = prefs[BLOSSOM_BEAVER_MODE] ?: false
                 _lightningZapsEnabled.value = prefs[LIGHTNING_ZAPS_ENABLED] ?: true
                 _moneroXapsEnabled.value = prefs[MONERO_XAPS_ENABLED] ?: false
                 _screenTimeEnabled.value = prefs[SCREEN_TIME_ENABLED] ?: false
@@ -809,6 +827,11 @@ class AppSettings @Inject constructor(
     suspend fun setBlossomAudioCompress(enabled: Boolean) {
         _blossomAudioCompress.value = enabled
         dataStore.edit { it[BLOSSOM_AUDIO_COMPRESS] = enabled }
+    }
+
+    suspend fun setBlossomBeaverMode(enabled: Boolean) {
+        _blossomBeaverMode.value = enabled
+        dataStore.edit { it[BLOSSOM_BEAVER_MODE] = enabled }
     }
 
     suspend fun setNoteMenuModerationEnabled(enabled: Boolean) {

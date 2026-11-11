@@ -2,13 +2,14 @@ package social.tbone.notifications
 
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
+import social.tbone.nostr.Nip57
 import social.tbone.nostr.Nip88
 import social.tbone.nostr.nip10Marker
 import social.tbone.nostr.replyEventId
 import social.tbone.ui.feed.extractInlineQuoteIds
 
 /** How an event relates to the account owner, if it does at all. */
-internal enum class NotificationClass { REACTION, REPOST, REPLY, QUOTE, MENTION, VOTE }
+internal enum class NotificationClass { REACTION, REPOST, REPLY, QUOTE, MENTION, VOTE, ZAP }
 
 /**
  * The single eligibility gate every notification must pass, no matter which
@@ -49,6 +50,21 @@ internal fun classifyNotification(
         EventKind.POLL_RESPONSE -> {
             val pollId = Nip88.getPollEventId(event)
             if (pollId != null && isOwnEvent(pollId)) NotificationClass.VOTE else null
+        }
+        EventKind.ZAP_RECEIPT -> {
+            // A receipt proves a zap happened, but only the recipient's own
+            // account may be notified by it: relays happily return receipts for
+            // other people, and the receipt's author is the *LN node*, so the
+            // usual "author != me" test above says nothing about relevance.
+            val receipt = Nip57.receipt(event)
+            when {
+                receipt == null -> null
+                receipt.recipient != me -> null
+                // Ignore zaps the user sent to themselves (self-zaps are a way to
+                // move sats, not an interaction worth notifying about).
+                receipt.sender?.equals(me, ignoreCase = true) == true -> null
+                else -> NotificationClass.ZAP
+            }
         }
         EventKind.TEXT_NOTE, EventKind.COMMENT -> {
             val quoteIds = notificationQuoteIds(event)

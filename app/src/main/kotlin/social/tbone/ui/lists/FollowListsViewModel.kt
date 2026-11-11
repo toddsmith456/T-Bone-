@@ -104,6 +104,18 @@ class FollowListsViewModel @Inject constructor(
     val effectiveMuted: StateFlow<Set<String>> = muteRepository.effectiveMuted
     val offlineMutesEnabled: StateFlow<Boolean> = muteRepository.offlineEnabled
 
+    /**
+     * Pubkeys the active account follows right now, in whichever mode is live
+     * (offline list when enabled, otherwise the relay list).
+     *
+     * The FOLLOWERS tab needs this to decide whether a follower is already
+     * followed: it used to render FOLLOW unconditionally, which let you
+     * "follow" someone you already follow and never offered UNFOLLOW.
+     */
+    val followingSet: StateFlow<Set<String>> = displayedFollowing
+        .map { entries -> entries.mapTo(HashSet(entries.size)) { it.pubkey } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
     // ── Followers (centralized via Primal) ─────────────────────────────────
     val followersEnabled: StateFlow<Boolean> = appSettings.followersEnabled
     val followersDisclaimerShown: StateFlow<Boolean> = appSettings.followersDisclaimerShown
@@ -346,6 +358,65 @@ class FollowListsViewModel @Inject constructor(
             } finally { _onlineLoading.value = false }
             } finally { followMutations.finish(mutationJob) }
           }
+        }
+    }
+
+    // ── Offline mute list (MUTES tab) ────────────────────────────────────────
+
+    /**
+     * Turns the offline mute list on or off.
+     *
+     * Unlike the follow list this never blocks on a relay sync: an offline mute
+     * list exists precisely so blocking works with no network, so switching it
+     * on starts from whatever is already stored locally and leaves syncing to
+     * the explicit SYNC action.
+     */
+    fun setOfflineMutesEnabled(enabled: Boolean) {
+        val acct = account.value ?: return
+        viewModelScope.launch {
+            offline.setEnabled(ListType.MUTES, acct.pubkey, enabled)
+            say(
+                if (enabled) "Offline mute list ON — blocks are saved on this device only"
+                else "Offline mute list OFF — using your relay mute list"
+            )
+        }
+    }
+
+    /** Adds a pubkey to the offline mute list (accepts npub or hex). */
+    fun addOfflineMute(input: String) {
+        val acct = account.value ?: return
+        viewModelScope.launch {
+            when (offline.addByInput(ListType.MUTES, acct.pubkey, input)) {
+                AddResult.ADDED -> say("Added to offline mute list")
+                AddResult.SELF -> say("You cannot mute yourself")
+                AddResult.DUPLICATE -> say("Already muted")
+                AddResult.INVALID -> say("That is not a valid npub or hex key")
+                else -> say("Could not add to the offline mute list")
+            }
+        }
+    }
+
+    /** Removes one pubkey from the offline mute list. */
+    fun removeOfflineMute(pubkeyHex: String) {
+        val acct = account.value ?: return
+        viewModelScope.launch {
+            val removed = offline.remove(ListType.MUTES, acct.pubkey, pubkeyHex)
+            if (removed != null) say("Removed from offline mute list") else say("Not in the offline mute list")
+        }
+    }
+
+    /** Pulls the relay mute list into the local one, replacing it. */
+    fun syncOfflineMutes() {
+        val acct = account.value ?: return
+        viewModelScope.launch {
+            when (val r = offline.fetchOnline(ListType.MUTES, acct.pubkey, acct.relays)) {
+                is OnlineFetch.Found ->
+                    say("Synced ${offline.replaceFromSync(ListType.MUTES, acct.pubkey, r.entries, enable = true)} mutes from your relays")
+                OnlineFetch.Empty ->
+                    say("No relay mute list found — offline list left unchanged")
+                OnlineFetch.Unreachable ->
+                    say("Couldn't reach relays — nothing changed")
+            }
         }
     }
 

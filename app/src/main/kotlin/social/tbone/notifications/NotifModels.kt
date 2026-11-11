@@ -7,10 +7,10 @@ import social.tbone.nostr.Event
  * The kinds of activity T-bone surfaces as notifications.
  *
  * Mirrors Wisp's NotificationType, reduced to what this app can actually do
- * (no wallet/zaps, no DMs, no group chats — so those types don't exist here).
+ * (no DMs, no group chats). ZAP covers NIP-57 zap receipts.
  */
 @Serializable
-enum class NotifType { REACTION, REPOST, REPLY, QUOTE, MENTION, VOTE, CALENDAR }
+enum class NotifType { REACTION, REPOST, REPLY, QUOTE, MENTION, VOTE, CALENDAR, ZAP }
 
 /**
  * Filterable notification categories shown in the summary bar and the filter
@@ -22,6 +22,7 @@ enum class NotifFilter(val label: String) {
     REPOSTS("REPOSTS & QUOTES"),
     MENTIONS("MENTIONS"),
     VOTES("VOTES"),
+    ZAPS("ZAPS"),
     CALENDAR("CALENDAR"),
     ;
 
@@ -117,6 +118,13 @@ data class FlatNotifItem(
     /** Calendar events surface here like any other notification. */
     val calendarEventId: String? = null,
     val calendarTitle: String? = null,
+    /**
+     * NIP-57: amount in sats for ZAP rows. Null when the receipt carried no
+     * usable amount (amountless invoice and no `amount` tag).
+     */
+    val zapSats: Long? = null,
+    /** The zapper's own comment, when they left one. */
+    val zapComment: String? = null,
 )
 
 /** 24h counts shown in the summary bar — mirrors Wisp's NotificationSummary. */
@@ -127,6 +135,7 @@ data class NotifSummary(
     val mentionCount: Int = 0,
     val quoteCount: Int = 0,
     val voteCount: Int = 0,
+    val zapCount: Int = 0,
     val calendarCount: Int = 0,
 )
 
@@ -139,6 +148,7 @@ internal fun summarizeNotifications(items: List<FlatNotifItem>, nowEpochSeconds:
     var mentions = 0
     var quotes = 0
     var votes = 0
+    var zaps = 0
     var calendars = 0
     for (item in items) {
         if (item.type == NotifType.CALENDAR) {
@@ -153,6 +163,7 @@ internal fun summarizeNotifications(items: List<FlatNotifItem>, nowEpochSeconds:
             NotifType.QUOTE -> quotes++
             NotifType.MENTION -> mentions++
             NotifType.VOTE -> votes++
+            NotifType.ZAP -> zaps++
             NotifType.CALENDAR -> Unit
         }
     }
@@ -163,6 +174,7 @@ internal fun summarizeNotifications(items: List<FlatNotifItem>, nowEpochSeconds:
         mentionCount = mentions,
         quoteCount = quotes,
         voteCount = votes,
+        zapCount = zaps,
         calendarCount = calendars,
     )
 }

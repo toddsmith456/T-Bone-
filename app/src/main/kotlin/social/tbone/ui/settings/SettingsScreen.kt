@@ -609,7 +609,7 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
             Column(modifier = Modifier.weight(1f)) {
                 Text("fit media to its real shape", style = BonyType.body.copy(color = BonyColors.TextDim))
                 Text(
-                    "pictures and videos take their own proportions (using the size stated in the post when available) instead of the standard box · blurred previews while loading",
+                    "on by default · pictures and videos take their own proportions (using the size stated in the post when available) instead of the standard box · blurred previews while loading",
                     style = BonyType.meta.copy(color = BonyColors.TextMute),
                 )
             }

@@ -248,9 +248,23 @@ class ComposeViewModel @Inject constructor(
         }
 
         // Load the enabled blossom server pool for the chooser row.
+        //
+        // A manually added server used to be missing from this row: the chooser is
+        // driven by the *enabled pool*, so a server that had been added but not
+        // enabled (or that only existed in the published list) could not be picked
+        // and tapping it did nothing. The pool is authoritative for what uploads
+        // use, and BlossomServerPool gives an explicit pick priority even when it
+        // is not in the pool, so what is offered here is exactly what can be used.
         viewModelScope.launch {
             appSettings.blossomServers.collect { servers ->
-                _uiState.update { it.copy(blossomServers = servers.sorted()) }
+                _uiState.update { state ->
+                    state.copy(
+                        blossomServers = servers.sorted(),
+                        // Drop a selection that is no longer offered so the row never
+                        // shows a chip that is not in the list.
+                        blossomServer = state.blossomServer?.takeIf { it in servers },
+                    )
+                }
             }
         }
     }
