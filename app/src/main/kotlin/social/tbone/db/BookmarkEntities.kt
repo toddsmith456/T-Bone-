@@ -30,8 +30,14 @@ data class BookmarkFolderEntity(
     /**
      * NIP-51 `d` identifier for ONLINE folders. Null for offline folders and for
      * the special Miscellaneous bucket, whose bookmarks live in kind 10003.
+     *
+     * Deliberately has NO `@ColumnInfo(defaultValue = ...)`: declaring
+     * `defaultValue = "NULL"` makes Room expect a `DEFAULT NULL` clause in the
+     * table, which `ALTER TABLE ... ADD COLUMN` does not produce, and the
+     * mismatch crashes the app the first time the database is opened after the
+     * upgrade.
      */
-    @ColumnInfo(defaultValue = "NULL") val dTag: String? = null,
+    val dTag: String? = null,
 )
 
 /**

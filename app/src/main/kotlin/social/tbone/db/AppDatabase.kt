@@ -213,11 +213,17 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL(
                     "ALTER TABLE bookmark_folders ADD COLUMN kind TEXT NOT NULL DEFAULT 'OFFLINE'"
                 )
+                // Room compares the migrated schema against the entity declaration
+                // and throws IllegalStateException ("Migration didn't properly
+                // handle") if they disagree — which crashes the app on first open,
+                // before any UI exists. Two rules matter here:
+                //  - keep the DEFAULT clause only where the entity declares one
+                //    (`kind`), and add `dTag` with no default because the entity
+                //    has none;
+                //  - do NOT create an index the entity does not declare. The `d`
+                //    tag lookup that wanted one goes through a plain scan of a
+                //    table holding a handful of folders.
                 db.execSQL("ALTER TABLE bookmark_folders ADD COLUMN dTag TEXT")
-                db.execSQL(
-                    "CREATE UNIQUE INDEX IF NOT EXISTS index_bookmark_folders_dTag " +
-                        "ON bookmark_folders (dTag)"
-                )
             }
         }
 

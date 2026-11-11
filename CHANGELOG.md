@@ -5,6 +5,29 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.6] — 2026-11-11
+
+### Added
+- Mutes tab in the follow tool, holding a fully offline mute list (the capability lost when mutes moved there): add by npub or hex, unmute, sync from relays on demand, and an on/off switch that never writes anything to the network.
+- Online bookmark folders (NIP-51): creating a folder now asks whether it lives offline (encrypted on the device) or online (published to your relays as a kind 30003 set). A sync action loads every bookmark set and the plain bookmark list your account publishes, so folders made in other clients appear here, and the notes in them are cached for offline reading. Bookmarked notes that belong to no set appear in a "Miscellaneous" folder. House icon marks an offline folder, globe an online one, in the bookmarks tool and in a note's bookmark menu. Notes can be moved between folders on either side, and the destination is written and published before the source is cleared, so a failed publish cannot lose a bookmark.
+- Zap notifications (NIP-57): kind 9735 receipts addressed to you now appear as notifications with the amount and the sender's comment, with their own filter, summary-bar stat and icon. Self-zaps are ignored.
+- "Beaver Mode" in Blossom settings: one switch that ignores the local server list and re-reads the published Blossom list on every upload, so uploads always follow whatever your account publishes — including changes made in another client. If the published list cannot be read, the local list is used instead of failing the upload.
+- Blossom sync now asks Merge or Replace. Merge adds the published servers and keeps yours; Replace makes your list exactly what you publish, removing servers that exist only on this device.
+- Every Blossom server, including the built-in defaults, can now be disabled or removed.
+
+### Changed
+- "Fit media to its real shape" is on by default. An existing explicit off setting is still respected.
+- Followers list offers Unfollow for people you already follow, and Follow only for the rest.
+
+### Fixed
+- **Launch crash after upgrading from 0.5.5.** The online-bookmark database migration created an index the entity does not declare, and Room rejects a migrated schema that disagrees with it — as an exception on first database open, before any screen appears. The migration now adds exactly the two columns the entity declares, with the same defaults.
+- A Blossom server chosen on the compose screen is now honoured even when it is not in the local enabled list. Tapping an added server used to upload to a different server instead.
+- Notes hidden in the follow feed even though the author was followed and not blocked: a block on someone *else* could hide a followed author's note through quote or reply inheritance. Authors you follow are now exempt, and the hidden-note reason distinguishes "you blocked this author" from "references an author you blocked".
+- The end-of-thread marker was indented to the rail instead of the note column, clipping its first character.
+- Typing and scrolling lag in the Notes tool under Youniversal: text without links is no longer laid out as a row of segments, and the list's sort, grouping and per-folder counts are computed when the notes change rather than on every pass.
+- The "N posts hidden by your filters" banner at the end of the follow feed has been removed.
+
+
 ## [0.5.5] — 2026-11-10
 
 ### Added
