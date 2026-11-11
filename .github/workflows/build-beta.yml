@@ -60,6 +60,20 @@ jobs:
           ./gradlew :app:assembleBeta --stacktrace --no-configuration-cache 2>&1 \
             | tee "$RUNNER_TEMP/ci-log/assemble.log"
           echo $? > "$RUNNER_TEMP/ci-log/assemble.exit"
+      - name: Run unit tests
+        id: unit_tests
+        continue-on-error: true
+        env:
+          GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
+        run: |
+          # pipefail is required: without it `tee` would supply the pipeline status
+          # and a failing test run would look like a success.
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/ci-log"
+          # Capture the test run so failures are diagnosable from the ci-log branch
+          # without access to the job log (which the Actions API gates to writers).
+          ./gradlew :app:testBetaUnitTest --stacktrace --no-configuration-cache 2>&1 \
+            | tee "$RUNNER_TEMP/ci-log/test.log"
       - name: Publish build log to ci-log branch (always)
         if: always()
         continue-on-error: true
@@ -73,6 +87,12 @@ jobs:
               || echo 'no compiler diagnostics matched'; } > diagnostics.txt || true
           tail -n 400 assemble.log > assemble.tail.log || true
           rm -f assemble.log
+          if [ -f test.log ]; then
+            { grep -nE '^(> Task .* FAILED|FAILURE|\* What went wrong|[a-zA-Z0-9_.]+ > .* FAILED|.*Exception|.*expected:.*)' test.log \
+                || echo 'no test diagnostics matched'; } > test-diagnostics.txt || true
+            tail -n 300 test.log > test.tail.log || true
+            rm -f test.log
+          fi
           echo "${{ github.sha }}" > sha.txt
           echo "run=${{ github.run_id }} attempt=${{ github.run_attempt }}" >> sha.txt
           git init -q
@@ -83,10 +103,11 @@ jobs:
           git push --force \
             "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
             HEAD:ci-log
-      - name: Run unit tests
-        env:
-          GRADLE_OPTS: -Xmx3g -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=1g" -Dkotlin.daemon.jvmargs="-Xmx1536m"
-        run: ./gradlew :app:testBetaUnitTest --stacktrace --no-configuration-cache
+      - name: Fail if unit tests failed
+        if: steps.unit_tests.outcome == 'failure'
+        run: |
+          echo "Unit tests failed; see test-diagnostics.txt on the ci-log branch."
+          exit 1
       - name: Build and test production release variant
         env:
           KEYSTORE_PATH: ${{ runner.temp }}/beta.keystore
