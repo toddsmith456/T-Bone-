@@ -18,6 +18,7 @@ All notable changes to this fork are documented here. Format follows
 ### Changed
 - "Fit media to its real shape" is on by default. An existing explicit off setting is still respected.
 - Followers list offers Unfollow for people you already follow, and Follow only for the rest.
+- "Block" is now "mute" everywhere in the interface — the tab, row buttons (MUTE/UNMUTE), note menu, profile button, settings and snackbars — so one word means one thing. What it does is unchanged, and it still edits your relay mute list or your offline mute list depending on which is switched on.
 
 ### Fixed
 - **Launch crash after upgrading from 0.5.5.** The online-bookmark database migration created an index the entity does not declare, and Room rejects a migrated schema that disagrees with it — as an exception on first database open, before any screen appears. The migration now adds exactly the two columns the entity declares, with the same defaults.
@@ -26,6 +27,10 @@ All notable changes to this fork are documented here. Format follows
 - The end-of-thread marker was indented to the rail instead of the note column, clipping its first character.
 - Typing and scrolling lag in the Notes tool under Youniversal: text without links is no longer laid out as a row of segments, and the list's sort, grouping and per-folder counts are computed when the notes change rather than on every pass.
 - The "N posts hidden by your filters" banner at the end of the follow feed has been removed.
+- Bookmarks: the add-folder and sync buttons were drawn on top of each other; they are now separate buttons.
+- Bookmarks: syncing from relays now re-downloads the bookmarked notes before rebuilding the lists, so folders load completely on the first sync instead of on the second.
+- Bookmarks: deleting a note from an online folder now also removes it from the published list, and notes removed in another client no longer linger.
+- Blossom: removing every server now sticks instead of the defaults returning after a restart.
 
 
 ## [0.5.5] — 2026-11-10
