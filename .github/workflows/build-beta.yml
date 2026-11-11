@@ -23,7 +23,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Privacy gate
-        run: ./scripts/privacy-check.sh
+        id: privacy
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/ci-log"
+          ./scripts/privacy-check.sh 2>&1 | tee "$RUNNER_TEMP/ci-log/privacy.log"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -87,6 +92,10 @@ jobs:
               || echo 'no compiler diagnostics matched'; } > diagnostics.txt || true
           tail -n 400 assemble.log > assemble.tail.log || true
           rm -f assemble.log
+          if [ -f privacy.log ]; then
+            cp privacy.log privacy.txt || true
+            rm -f privacy.log
+          fi
           if [ -f test.log ]; then
             { grep -nE '^(> Task .* FAILED|FAILURE|\* What went wrong|[a-zA-Z0-9_.]+ > .* FAILED|.*Exception|.*expected:.*)' test.log \
                 || echo 'no test diagnostics matched'; } > test-diagnostics.txt || true
@@ -103,6 +112,11 @@ jobs:
           git push --force \
             "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
             HEAD:ci-log
+      - name: Fail if the privacy gate failed
+        if: steps.privacy.outcome == 'failure'
+        run: |
+          echo "Privacy gate failed; see privacy.txt on the ci-log branch."
+          exit 1
       - name: Fail if unit tests failed
         if: steps.unit_tests.outcome == 'failure'
         run: |
