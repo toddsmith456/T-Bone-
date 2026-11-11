@@ -96,7 +96,10 @@ class BookmarksViewModel @Inject constructor(
     fun saveToFolder(event: Event, folder: BookmarkFolderUi, onFinished: (Result<Unit>) -> Unit = {}) {
         viewModelScope.launch {
             if (!folder.isOnline) {
-                onFinished(runCatching { bookmarksRepository.addBookmark(event, folder.id) })
+                onFinished(
+                    runCatching { bookmarksRepository.addBookmark(event, folder.id) }
+                        .map { _ -> Unit },
+                )
                 return@launch
             }
             // Online folders need the note itself cached locally too, otherwise the

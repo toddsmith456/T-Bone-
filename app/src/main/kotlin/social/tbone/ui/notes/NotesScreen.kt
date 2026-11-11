@@ -348,9 +348,26 @@ private fun NotesList(
     onNoteLongClick: (NoteUi) -> Unit,
     onFolderLongClick: (NoteFolderUi) -> Unit,
 ) {
+    // Everything below is derived once per notes/folders change instead of on every
+    // recomposition. These must live OUTSIDE LazyColumn: its content lambda is a
+    // LazyListScope, not a composable scope, so `remember` cannot be called there.
+    // Before this the sort, the per-folder count (a full O(notes) scan per folder,
+    // so O(folders x notes)) and the unfiled filter ran on every pass; under
+    // Youniversal the row content changes far more often, which made the list
+    // stutter.
+    val pinned = remember(notes) { notes.filter { it.pinned }.sortedBy { it.sortOrder } }
+    val folderList = remember(folders) {
+        folders.sortedWith(
+            compareByDescending<NoteFolderUi> { it.pinned }.thenBy { it.sortOrder }.thenBy { it.name },
+        )
+    }
+    val countsByFolder = remember(notes) { notes.groupingBy { it.folderId }.eachCount() }
+    val unfiled = remember(notes) {
+        notes.filter { !it.pinned && it.folderId.isNullOrBlank() }.sortedBy { it.sortOrder }
+    }
+
     LazyColumn(modifier = modifier.navigationBarsPadding()) {
         // Pinned first (the very top), regardless of folder.
-        val pinned = remember(notes) { notes.filter { it.pinned }.sortedBy { it.sortOrder } }
         items(pinned, key = { "n_${it.id}" }) { note ->
             NotesListNoteRow(
                 note = note,
@@ -362,19 +379,6 @@ private fun NotesList(
         }
 
         // Folders in order, each with its unpinned children.
-        //
-        // Derived once per notes/folders change instead of on every recomposition:
-        // the sort, the per-folder note count (which is a full O(notes) scan per
-        // folder, so O(folders x notes)) and the unfiled filter used to run inside
-        // the LazyColumn content lambda on every pass. Under Youniversal the row
-        // content changes more often, so that O(f x n) costing ran constantly and
-        // made the list stutter. Notes/folders are the only real inputs.
-        val folderList = remember(folders) {
-            folders.sortedWith(
-                compareByDescending<NoteFolderUi> { it.pinned }.thenBy { it.sortOrder }.thenBy { it.name },
-            )
-        }
-        val countsByFolder = remember(notes) { notes.groupingBy { it.folderId }.eachCount() }
         folderList.forEach { folder ->
             val folderId = folder.id
             item(key = "f_$folderId") {
@@ -389,9 +393,6 @@ private fun NotesList(
         }
 
         // Un-filed unpinned notes.
-        val unfiled = remember(notes) {
-            notes.filter { !it.pinned && it.folderId.isNullOrBlank() }.sortedBy { it.sortOrder }
-        }
         items(unfiled, key = { "u_${it.id}" }) { note ->
             NotesListNoteRow(
                 note = note,

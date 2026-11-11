@@ -389,7 +389,8 @@ class FollowListsViewModel @Inject constructor(
             when (offline.addByInput(ListType.MUTES, acct.pubkey, input)) {
                 AddResult.ADDED -> say("Added to offline mute list")
                 AddResult.SELF -> say("You cannot mute yourself")
-                AddResult.DUPLICATE -> say("Already muted")
+                AddResult.ALREADY_PRESENT -> say("Already muted")
+                AddResult.LIST_FULL -> say("The offline mute list is full")
                 AddResult.INVALID -> say("That is not a valid npub or hex key")
                 else -> say("Could not add to the offline mute list")
             }

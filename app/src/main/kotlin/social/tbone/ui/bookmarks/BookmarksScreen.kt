@@ -247,13 +247,13 @@ fun BookmarksScreen(
                     if (offline.isNotEmpty()) {
                         item { SectionHeader("offline · encrypted on this device") }
                         items(offline, key = { it.id }) { folder ->
-                            FolderRowWithActions(folder, onOpenFolder, onEdit = { editingFolder = it }, onDelete = { deletingFolder = it })
+                            FolderRowWithActions(folder, onOpenFolder, onEdit = { editingFolder = it }, onDelete = { deletingFolder = folder })
                         }
                     }
                     if (online.isNotEmpty()) {
                         item { SectionHeader("online · published to your relays") }
                         items(online, key = { it.id }) { folder ->
-                            FolderRowWithActions(folder, onOpenFolder, onEdit = { editingFolder = it }, onDelete = { deletingFolder = it })
+                            FolderRowWithActions(folder, onOpenFolder, onEdit = { editingFolder = it }, onDelete = { deletingFolder = folder })
                         }
                     }
                     item {
@@ -275,6 +275,7 @@ fun BookmarksScreen(
             } else {
                 ReorderableBookmarks(
                     folderId = folderId,
+                    currentFolder = selectedFolder,
                     bookmarks = bookmarks,
                     folders = folders,
                     profiles = profiles,
@@ -532,6 +533,7 @@ private fun FolderNameDialog(
 @Composable
 private fun ReorderableBookmarks(
     folderId: String,
+    currentFolder: BookmarkFolderUi?,
     bookmarks: List<BookmarkUi>,
     folders: List<BookmarkFolderUi>,
     profiles: Map<String, ProfileContent>,
@@ -585,7 +587,7 @@ private fun ReorderableBookmarks(
                     onOpenEventSearch = onOpenEventSearch,
                     onDelete = { viewModel.deleteBookmark(bookmark.id) },
                     onMove = { targetFolder ->
-                        viewModel.moveBookmarkEverywhere(bookmark, selectedFolder, targetFolder)
+                        viewModel.moveBookmarkEverywhere(bookmark, currentFolder, targetFolder)
                     },
                     dragHandle = Modifier.pointerInput(bookmark.id, bookmarks) {
                         detectDragGesturesAfterLongPress(
