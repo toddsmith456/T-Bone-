@@ -38,6 +38,7 @@ class NotificationsViewModel @Inject constructor(
     private val repository: NotificationsRepository,
     private val appSettings: AppSettings,
     private val muteRepository: social.tbone.lists.MuteListRepository,
+    private val accountRepository: social.tbone.account.AccountRepository,
     profileRepository: ProfileRepository,
 ) : ViewModel() {
 
@@ -53,6 +54,7 @@ class NotificationsViewModel @Inject constructor(
         val blocked: Set<String>,
         val nsfwMode: social.tbone.settings.NsfwMode,
         val hideWords: Set<social.tbone.settings.FilterWord>,
+        val followed: Set<String> = emptySet(),
     )
 
     private val filterConfig = combine(
@@ -60,8 +62,17 @@ class NotificationsViewModel @Inject constructor(
         muteRepository.effectiveMuted,
         appSettings.nsfwMode,
         appSettings.hideWords,
-    ) { enabled, blocked, nsfwMode, hideWords ->
-        NotificationFilterConfig(enabled, blocked, nsfwMode, hideWords)
+        accountRepository.activeAccount,
+    ) { enabled, blocked, nsfwMode, hideWords, account ->
+        NotificationFilterConfig(
+            enabled = enabled,
+            blocked = blocked,
+            nsfwMode = nsfwMode,
+            hideWords = hideWords,
+            // A followed author's notification stays visible even when the note
+            // references someone you muted.
+            followed = account?.follows?.toSet().orEmpty(),
+        )
     }
 
     private fun notificationVisible(
@@ -78,6 +89,7 @@ class NotificationsViewModel @Inject constructor(
             config.nsfwMode,
             config.hideWords,
             referencedEvents,
+            config.followed,
         )
     }
 

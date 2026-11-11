@@ -121,19 +121,19 @@ class NoteActionsViewModel @Inject constructor(
                 return@launch
             }
             if (activePubkey == pubkey) {
-                onFinished("You can't block your active account")
+                onFinished("You can't mute your active account")
                 return@launch
             }
             val message = when (runCatching { muteListRepository.setMuted(pubkey, true) }
                 .getOrElse { MuteOutcome.SIGN_FAILED }) {
-                MuteOutcome.SAVED_LOCAL -> "Poster blocked on this device"
-                MuteOutcome.PUBLISHED -> "Poster blocked"
-                MuteOutcome.UNCHANGED -> "Poster is already blocked"
-                MuteOutcome.NO_SIGNER -> "No signer available — poster was not blocked"
-                MuteOutcome.RELAYS_UNREACHABLE -> "Couldn't reach relays — poster was not blocked"
-                MuteOutcome.SIGN_FAILED -> "Block failed — poster was not blocked"
+                MuteOutcome.SAVED_LOCAL -> "Poster muted on this device"
+                MuteOutcome.PUBLISHED -> "Poster muted"
+                MuteOutcome.UNCHANGED -> "Poster is already muted"
+                MuteOutcome.NO_SIGNER -> "No signer available — poster was not muted"
+                MuteOutcome.RELAYS_UNREACHABLE -> "Couldn't reach relays — poster was not muted"
+                MuteOutcome.SIGN_FAILED -> "Mute failed — poster was not muted"
                 MuteOutcome.NO_ACCOUNT -> "No active account"
-                MuteOutcome.REJECTED -> "Can't block this account"
+                MuteOutcome.REJECTED -> "Can't mute this account"
             }
             onFinished(message)
         }

@@ -67,6 +67,25 @@ class BookmarkSyncRepository @Inject constructor(
 ) {
     private val mutex = Mutex()
 
+    /**
+     * Serialises syncs against each other without blocking ordinary writes for
+     * the whole operation. A sync and a publish can interleave; both end by
+     * writing derived state from a freshly read remote list, and the repository's
+     * own mutex still serialises the actual mutation.
+     */
+    private val syncMutex = Mutex()
+
+    /**
+     * F-11: last-known remote contents per folder id.
+     *
+     * `currentEventIds` used to call the network on every single edit (10 s
+     * timeout each time), so saving one note cost a round-trip and a cross-folder
+     * move cost two. The cache is refreshed by [sync] and updated by every
+     * successful publish, and is dropped whenever a publish fails so the next
+     * edit re-reads.
+     */
+    private val remoteCache = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+
     /** Outcome of a mutation, phrased for the UI. */
     data class Result(val ok: Boolean, val message: String)
 
@@ -83,49 +102,60 @@ class BookmarkSyncRepository @Inject constructor(
      * plain list are fetched from relays, so folders created in Amethyst (or any
      * NIP-51 client) appear here.
      */
-    suspend fun sync(): SyncReport = mutex.withLock {
+    suspend fun sync(): SyncReport = withLockBriefly {
+        // A manual sync is an explicit "re-read everything" action.
+        remoteCache.clear()
         val account = accounts.activeAccount.first()
-            ?: return@withLock SyncReport(0, 0, "Add an account before syncing online bookmarks")
+            ?: return@withLockBriefly SyncReport(0, 0, "Add an account before syncing online bookmarks")
         val relays = account.effectiveRelays().map(RelayPool::normalize).toSet()
-        if (relays.isEmpty()) return@withLock SyncReport(0, 0, "No relays configured")
+        if (relays.isEmpty()) return@withLockBriefly SyncReport(0, 0, "No relays configured")
 
         val sets = fetcher.fetchMany(account.pubkey, EventKind.BOOKMARK_SET, relays.toList())
         val plain = fetcher.fetchLatest(account.pubkey, EventKind.BOOKMARKS, relays.toList())
 
         if (sets.isEmpty() && plain.event == null) {
-            return@withLock SyncReport(0, 0, "No online bookmark folders found on your relays")
+            return@withLockBriefly SyncReport(0, 0, "No online bookmark folders found on your relays")
         }
 
         var folderCount = 0
         var bookmarkCount = 0
         val referenced = mutableListOf<String>()
 
-        // 1) Named sets → ONLINE folders.
+        // Collect the referenced note ids first: the notes must be downloaded
+        // BEFORE any row is written, because writeBookmarks can only store a note
+        // it can decrypt as an Event. Fetching afterwards meant a note new to this
+        // device was skipped at write time and only appeared on the *next* sync.
         for (event in sets) {
             val remote = Nip51Bookmarks.folder(event) ?: continue
-            // A set with no `d` tag cannot be addressed; skip it rather than
-            // creating a folder that can never be updated.
-            if (remote.dTag.isBlank()) continue
-            val folderId = folderRowFor(remote.dTag, remote.title, event.createdAt)
+            if (remote.dTag.isBlank()) continue // unaddressable; cannot be updated
             folderCount++
-            bookmarkCount += writeBookmarks(folderId, remote.eventIds)
             referenced += remote.eventIds
         }
-
-        // 2) kind 10003 → the "Miscellaneous" bucket.
         plain.event?.let { event ->
-            val remote = Nip51Bookmarks.folder(event) ?: return@let
-            val folderId = miscFolderRow(event.createdAt)
-            bookmarkCount += writeBookmarks(folderId, remote.eventIds)
-            referenced += remote.eventIds
+            Nip51Bookmarks.folder(event)?.let { referenced += it.eventIds }
         }
 
-        // 3) Download the notes themselves so the folder is readable offline.
+        // 1) Download the notes themselves so the folder is readable offline.
         val known = eventRepository.getByIds(referenced.distinct()).map { it.id }.toSet()
         val missing = referenced.distinct().filterNot { it in known }
         if (missing.isNotEmpty()) {
             runCatching { fetchAndStoreNotes(missing) }
                 .onFailure { Timber.w(it, "bookmarks: could not fetch %d referenced notes", missing.size) }
+        }
+
+        // 2) Named sets → ONLINE folders (pruning notes removed elsewhere).
+        for (event in sets) {
+            val remote = Nip51Bookmarks.folder(event) ?: continue
+            if (remote.dTag.isBlank()) continue
+            val folderId = folderRowFor(remote.dTag, remote.title, event.createdAt)
+            bookmarkCount += writeBookmarks(folderId, remote.eventIds, prune = true)
+        }
+
+        // 3) kind 10003 → the "Miscellaneous" bucket.
+        plain.event?.let { event ->
+            val remote = Nip51Bookmarks.folder(event) ?: return@let
+            val folderId = miscFolderRow(event.createdAt)
+            bookmarkCount += writeBookmarks(folderId, remote.eventIds, prune = true)
         }
 
         SyncReport(
@@ -186,9 +216,43 @@ class BookmarkSyncRepository @Inject constructor(
         if (eventId in current) return@withLock Result(true, "Already in that folder")
         val next = current + eventId
         val publish = publishFolderContents(folder, next, account.pubkey)
-        if (!publish.ok) return@withLock publish
+        if (!publish.ok) {
+            remoteCache.remove(folder.id)
+            return@withLock publish
+        }
+        remoteCache[folder.id] = next
         writeBookmarks(folder.id, next)
         Result(true, "Saved to “${folder.name}”")
+    }
+
+    /**
+     * F-08: removes [eventId] from a folder when the user deletes a bookmark.
+     *
+     * Deleting used to touch the local row only, so an online bookmark reappeared
+     * on the next sync (or in another client) because the published set still
+     * contained it. No-op for offline folders.
+     */
+    suspend fun removeBookmarkEverywhere(
+        bookmark: BookmarkUi,
+        folder: BookmarkFolderUi?,
+    ): Result = mutex.withLock {
+        val eventId = bookmark.event.id
+        when (folder?.kind) {
+            null -> Unit
+            BookmarkFolderKind.OFFLINE -> Unit // the local row is the whole record
+            else -> {
+                val account = accounts.activeAccount.first()
+                    ?: return@withLock Result(false, "No active account")
+                val next = currentEventIds(folder) - eventId
+                val publish = publishFolderContents(folder, next, account.pubkey)
+                if (!publish.ok) return@withLock publish
+                writeBookmarks(folder.id, next)
+            }
+        }
+        // Always drop the local row last, so a failed unpublish keeps the note
+        // visible here instead of silently vanishing from both sides.
+        bookmarks.deleteBookmark(bookmark.id)
+        Result(true, "Removed")
     }
 
     /** Removes [eventId] from an online folder. */
@@ -196,7 +260,11 @@ class BookmarkSyncRepository @Inject constructor(
         val account = accounts.activeAccount.first() ?: return@withLock Result(false, "No active account")
         val next = currentEventIds(folder) - eventId
         val publish = publishFolderContents(folder, next, account.pubkey)
-        if (!publish.ok) return@withLock publish
+        if (!publish.ok) {
+            remoteCache.remove(folder.id)
+            return@withLock publish
+        }
+        remoteCache[folder.id] = next
         writeBookmarks(folder.id, next)
         Result(true, "Removed from “${folder.name}”")
     }
@@ -215,7 +283,10 @@ class BookmarkSyncRepository @Inject constructor(
         val account = accounts.activeAccount.first() ?: return@withLock Result(false, "No active account")
         val eventIds = currentEventIds(folder)
         val publish = publishSet(account.pubkey, folder.dTag.orEmpty(), trimmed, eventIds)
-        if (publish.ok) Result(true, "Renamed to “$trimmed”") else publish
+        if (publish.ok) {
+            remoteCache[folder.id] = eventIds
+            Result(true, "Renamed to “$trimmed”")
+        } else publish
     }
 
     /** Deletes an online folder: publishes a set with no bookmarks, then drops the row. */
@@ -253,9 +324,14 @@ class BookmarkSyncRepository @Inject constructor(
                 val account = accounts.activeAccount.first() ?: return@withLock Result(false, "No active account")
                 val current = currentEventIds(destination)
                 if (eventId !in current) {
-                    val publish = publishFolderContents(destination, current + eventId, account.pubkey)
-                    if (!publish.ok) return@withLock publish
-                    writeBookmarks(destination.id, current + eventId)
+                    val next = current + eventId
+                    val publish = publishFolderContents(destination, next, account.pubkey)
+                    if (!publish.ok) {
+                        remoteCache.remove(destination.id)
+                        return@withLock publish
+                    }
+                    remoteCache[destination.id] = next
+                    writeBookmarks(destination.id, next)
                 }
             }
         }
@@ -267,7 +343,12 @@ class BookmarkSyncRepository @Inject constructor(
                 val account = accounts.activeAccount.first() ?: return@withLock Result(false, "No account")
                 val next = currentEventIds(source) - eventId
                 val publish = publishFolderContents(source, next, account.pubkey)
-                if (publish.ok) writeBookmarks(source.id, next)
+                if (publish.ok) {
+                    remoteCache[source.id] = next
+                    writeBookmarks(source.id, next)
+                } else {
+                    remoteCache.remove(source.id)
+                }
             }
         }
         Result(true, "Moved to “${destination.name}”")
@@ -275,12 +356,34 @@ class BookmarkSyncRepository @Inject constructor(
 
     // ── Internals ────────────────────────────────────────────────────────────
 
+    /**
+     * F-10: runs [block] while holding the mutex only for the short sections that
+     * mutate local state.
+     *
+     * `sync()` used to hold the same mutex that guards every publish for its whole
+     * duration — two relay round-trips plus up to 12 s downloading notes — so
+     * every other bookmark write in the app blocked behind it. Sync is the only
+     * long-running operation here, so it takes a separate courtesy lock (it still
+     * must not interleave with a publish) and yields between phases.
+     */
+    private suspend fun <T> withLockBriefly(block: suspend () -> T): T = syncMutex.withLock { block() }
+
     /** Current event ids of a folder, read from the network copy when possible. */
     private suspend fun currentEventIds(folder: BookmarkFolderUi): List<String> {
+        // A folder we have already read or written this session: use the cache.
+        // Refreshed on every successful publish and by sync, so it cannot drift
+        // far, and it removes a relay round-trip from every tap.
+        remoteCache[folder.id]?.let { return it }
         // Prefer the remote list so concurrent edits from other clients survive.
         runCatching {
             val account = accounts.activeAccount.first() ?: return@runCatching null
             val relays = account.effectiveRelays().map(RelayPool::normalize).toSet().toList()
+            // F-07: this used to additionally require the parsed *title* to match
+            // nothing in particular, but it filtered on `dTag` only — and after a
+            // rename the argument is the old name, so a present set was rejected
+            // and the caller republished from a stale local list (or empty).
+            // The `#d` filter is authoritative: the `d` tag is the set's address
+            // and never changes on rename.
             val event = if (folder.isMiscellaneous) {
                 fetcher.fetchLatest(account.pubkey, EventKind.BOOKMARKS, relays).event
             } else {
@@ -289,10 +392,16 @@ class BookmarkSyncRepository @Inject constructor(
                     EventKind.BOOKMARK_SET,
                     relays,
                     dTag = folder.dTag,
-                ).firstOrNull { Nip51Bookmarks.folder(it)?.dTag == folder.dTag }
+                ).firstOrNull { it.tags.any { raw -> 
+                    val t = social.tbone.nostr.Tag.fromJsonArray(raw)
+                    t.name == "d" && t.value() == folder.dTag
+                } }
             }
             event?.let { Nip51Bookmarks.folder(it)?.eventIds }
-        }.getOrNull()?.let { return it }
+        }.getOrNull()?.let {
+            remoteCache[folder.id] = it
+            return it
+        }
         // Fall back to what is stored locally.
         return dao.getBookmarks(folder.id).mapNotNull { row ->
             runCatching { Event.fromJson(crypto.decrypt(row.ciphertext, row.iv)).id }.getOrNull()
@@ -408,12 +517,28 @@ class BookmarkSyncRepository @Inject constructor(
     }
 
     /** Reconciles the stored bookmarks of [folderId] with [eventIds]; returns how many are now present. */
-    private suspend fun writeBookmarks(folderId: String, eventIds: List<String>): Int {
+    private suspend fun writeBookmarks(
+        folderId: String,
+        eventIds: List<String>,
+        prune: Boolean = false,
+    ): Int {
         val existing = dao.getBookmarks(folderId)
         val byEventId = existing.mapNotNull { row ->
             runCatching { Event.fromJson(crypto.decrypt(row.ciphertext, row.iv)) }.getOrNull()
                 ?.let { it.id to row }
         }.toMap()
+
+        // F-09: online folders used to only ever grow — a note un-bookmarked in
+        // another client stayed here forever because nothing ever removed a row.
+        // Pruning is opt-in so the publish paths (which pass a set built from the
+        // remote list anyway) do not delete a row that a concurrent local save is
+        // about to add.
+        if (prune) {
+            val keep = eventIds.toSet()
+            byEventId.forEach { (eventId, row) ->
+                if (eventId !in keep) dao.deleteBookmark(row.id)
+            }
+        }
 
         var order = dao.maxBookmarkOrder(folderId)
         var stored = 0

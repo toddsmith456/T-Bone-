@@ -273,7 +273,7 @@ fun NoteActionsMenu(
                     }
                 }
                 if (moderationActionsEnabled) {
-                    NoteActionMenuItem(Icons.Outlined.Block, "Block poster") {
+                    NoteActionMenuItem(Icons.Outlined.Block, "Mute poster") {
                         expanded = false
                         showBlockDialog = true
                     }
@@ -345,7 +345,7 @@ fun NoteActionsMenu(
             containerColor = BonyColors.Surface,
             titleContentColor = BonyColors.Text,
             textContentColor = BonyColors.TextDim,
-            title = { Text("Block poster?", style = BonyType.body.copy(color = BonyColors.Text)) },
+            title = { Text("Mute poster?", style = BonyType.body.copy(color = BonyColors.Text)) },
             text = {
                 Text(
                     "This adds them to your active mute list. Online lists publish a NIP-51 update; offline lists stay on this device.",

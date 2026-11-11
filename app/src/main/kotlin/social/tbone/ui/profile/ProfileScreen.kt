@@ -353,7 +353,7 @@ fun ProfileScreen(
                             )
                             Spacer(Modifier.width(8.dp))
                             BonyButton(
-                                label = if (isBlocked) "UNBLOCK" else "BLOCK",
+                                label = if (isBlocked) "UNMUTE" else "MUTE",
                                 primary = false,
                                 enabled = !isBlockLoading,
                                 onClick = viewModel::toggleBlock,
@@ -398,9 +398,9 @@ fun ProfileScreen(
                             Spacer(Modifier.height(6.dp))
                             Text(
                                 text = when {
-                                    followIsLocal && blockIsLocal -> "offline lists on · follow and block stay on this device only"
+                                    followIsLocal && blockIsLocal -> "offline lists on · follow and mute stay on this device only"
                                     followIsLocal -> "offline follow list on · follow stays on this device only"
-                                    else -> "offline block list on · block stays on this device only"
+                                    else -> "offline mute list on · mute stays on this device only"
                                 },
                                 style = BonyType.caption.copy(color = BonyColors.TextMute),
                             )

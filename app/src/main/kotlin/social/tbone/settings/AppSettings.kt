@@ -113,6 +113,16 @@ class AppSettings @Inject constructor(
         // Blossom media uploads: enabled servers (defaults + custom), the
         // preferred default server, and whether uploads are compressed.
         private val BLOSSOM_SERVERS = stringSetPreferencesKey("blossom_servers")
+
+        /**
+         * Whether the server list has ever been written.
+         *
+         * Needed because an *empty* stored set is ambiguous: it means both "this
+         * install has never configured servers" (→ seed the defaults) and "the
+         * user removed every server" (→ must stay empty). Without this flag,
+         * removing all the defaults silently resurrected them on next launch.
+         */
+        private val BLOSSOM_SERVERS_CONFIGURED = booleanPreferencesKey("blossom_servers_configured")
         private val BLOSSOM_DEFAULT_SERVER = stringPreferencesKey("blossom_default_server")
         private val BLOSSOM_COMPRESS = booleanPreferencesKey("blossom_compress")
         private val BLOSSOM_AUDIO_COMPRESS = booleanPreferencesKey("blossom_audio_compress")
@@ -526,7 +536,11 @@ class AppSettings @Inject constructor(
                     ?.mapNotNull { BlossomServerUrl.normalize(it) }
                     ?.toSet()
                     .orEmpty()
-                _blossomServers.value = storedServers.ifEmpty { BLOSSOM_DEFAULTS }
+                // Seed the defaults only on a genuine first run. Once the user has
+                // saved a list, an empty set means "no servers", not "unset".
+                val configured = prefs[BLOSSOM_SERVERS_CONFIGURED]
+                    ?: storedServers.isNotEmpty()
+                _blossomServers.value = if (configured) storedServers else BLOSSOM_DEFAULTS
                 _blossomDefaultServer.value =
                     prefs[BLOSSOM_DEFAULT_SERVER]?.let { BlossomServerUrl.normalize(it) }
                         ?.takeIf { it in storedServers }
@@ -789,7 +803,12 @@ class AppSettings @Inject constructor(
 
     suspend fun setBlossomServers(servers: Set<String>) {
         _blossomServers.value = servers
-        dataStore.edit { it[BLOSSOM_SERVERS] = servers }
+        dataStore.edit {
+            it[BLOSSOM_SERVERS] = servers
+            // Marks the list as configured, so an empty set survives a restart
+            // instead of being replaced by the defaults.
+            it[BLOSSOM_SERVERS_CONFIGURED] = true
+        }
     }
 
     suspend fun addBlossomServer(url: String) {
@@ -798,13 +817,19 @@ class AppSettings @Inject constructor(
         val normalized = BlossomServerUrl.normalize(url) ?: return
         val next = (_blossomServers.value + normalized)
         _blossomServers.value = next
-        dataStore.edit { it[BLOSSOM_SERVERS] = next }
+        dataStore.edit {
+            it[BLOSSOM_SERVERS] = next
+            it[BLOSSOM_SERVERS_CONFIGURED] = true
+        }
     }
 
     suspend fun removeBlossomServer(url: String) {
         val next = _blossomServers.value - url
         _blossomServers.value = next
-        dataStore.edit { it[BLOSSOM_SERVERS] = next }
+        dataStore.edit {
+            it[BLOSSOM_SERVERS] = next
+            it[BLOSSOM_SERVERS_CONFIGURED] = true
+        }
         if (_blossomDefaultServer.value == url) {
             _blossomDefaultServer.value = null
             dataStore.edit { it.remove(BLOSSOM_DEFAULT_SERVER) }

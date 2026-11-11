@@ -152,6 +152,10 @@ fun NoteCard(
             contentFilter.nsfwMode,
             contentFilter.hideWords,
             referencedNotes,
+            // A block on someone else must not blank a followed author's note
+            // here either — this pass runs after the view model already decided
+            // the note is visible, so omitting it left an empty gap.
+            contentFilter.followedPubkeys,
         )
     ) return
 
@@ -647,6 +651,7 @@ fun QuotedNoteCard(
             contentFilter.nsfwMode,
             contentFilter.hideWords,
             quotedEvents,
+            contentFilter.followedPubkeys,
         )
     ) {
         Text(

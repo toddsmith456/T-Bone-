@@ -174,7 +174,7 @@ fun FollowListsScreen(
                     listOf(
                         FollowListsTab.FOLLOWING to "FOLLOWING",
                         FollowListsTab.FOLLOWERS to "FOLLOWERS",
-                        FollowListsTab.BLOCKED to "BLOCKED",
+                        FollowListsTab.BLOCKED to "MUTED",
                         // Offline mute list. Lives here now that mutes moved into
                         // the follow tool, so it stays reachable next to BLOCKED.
                         FollowListsTab.MUTES to "MUTES",
@@ -585,17 +585,17 @@ private fun BlockedTab(
             Column(
                 modifier = Modifier.fillMaxWidth().padding(14.dp).appBorder(1.dp, BonyColors.Rule).background(BonyColors.Surface).padding(12.dp)
             ) {
-                Text("${mutedList.size} blocked", style = BonyType.body.copy(color = BonyColors.Text))
+                Text("${mutedList.size} muted", style = BonyType.body.copy(color = BonyColors.Text))
                 Text(
-                    if (blockedOfflineEnabled) "offline block list on · local only" else "using relay mute list (kind 10000)",
+                    if (blockedOfflineEnabled) "offline mute list on · local only" else "using relay mute list (kind 10000)",
                     style = BonyType.meta.copy(color = if (blockedOfflineEnabled) BonyColors.Accent else BonyColors.TextMute)
                 )
                 Spacer(Modifier.height(8.dp))
-                Text("Block/unblock on profiles edits ${if (blockedOfflineEnabled) "only this device" else "your relays"}. Manage blocked users here or from their profile.", style = BonyType.metaDim.copy(color = BonyColors.TextMute))
+                Text("Mute/unmute from a profile edits ${if (blockedOfflineEnabled) "only this device" else "your relays"}. Manage muted accounts here or from their profile.", style = BonyType.metaDim.copy(color = BonyColors.TextMute))
             }
         }
         item {
-            SectionHeader("BLOCKED")
+            SectionHeader("MUTED")
             OutlinedTextField(
                 value = filter,
                 onValueChange = { filter = it },
@@ -611,7 +611,7 @@ private fun BlockedTab(
             name.contains(q) || pk.lowercase().contains(q)
         }
         if (shown.isEmpty()) {
-            item { Text("no blocked users", style = BonyType.meta.copy(color = BonyColors.TextMute), modifier = Modifier.padding(14.dp)) }
+            item { Text("no muted accounts", style = BonyType.meta.copy(color = BonyColors.TextMute), modifier = Modifier.padding(14.dp)) }
         } else {
             items(shown, key = { it }) { pk ->
                 FollowRow(
@@ -622,7 +622,7 @@ private fun BlockedTab(
                     onOpen = { onProfileClick(pk) },
                     onUnfollow = null,
                     onToggleMute = { viewModel.toggleMute(pk) },
-                    muteLabel = "UNBLOCK",
+                    muteLabel = "UNMUTE",
                 )
             }
         }
@@ -682,8 +682,9 @@ private fun OfflineMutesTab(
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "While this is on, blocking records the person only on this device and nothing is sent to your relays. " +
-                        "Mutes you already have are copied here when you sync. Turning it off goes back to your published relay mute list.",
+                    "While this is on, muting records the person only on this device and nothing is sent to your relays. " +
+                        "Syncing adds your relay mutes to this list and keeps everything already here. " +
+                        "Turning it off goes back to your published relay mute list.",
                     style = BonyType.metaDim.copy(color = BonyColors.TextMute),
                 )
                 Spacer(Modifier.height(10.dp))
@@ -694,19 +695,6 @@ private fun OfflineMutesTab(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-        }
-
-        if (entries.isEmpty()) {
-            item {
-                Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                    Text(
-                        if (offlineMutesEnabled) "no one muted on this device yet"
-                        else "turn the offline mute list on to mute without a network",
-                        style = BonyType.meta.copy(color = BonyColors.TextMute),
-                    )
-                }
-            }
-            return@LazyColumn
         }
 
         item {
@@ -750,12 +738,24 @@ private fun OfflineMutesTab(
             )
         }
 
+        if (entries.isEmpty()) {
+            item {
+                Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        if (offlineMutesEnabled) "no one muted on this device yet — add one above, or mute from a profile"
+                        else "turn the offline mute list on to mute without a network",
+                        style = BonyType.meta.copy(color = BonyColors.TextMute),
+                    )
+                }
+            }
+        }
+
         val q = filter.trim().lowercase()
         val shown = if (q.isEmpty()) muted else muted.filter { pk ->
             val name = profiles[pk]?.bestName?.lowercase().orEmpty()
             name.contains(q) || pk.lowercase().contains(q)
         }
-        if (shown.isEmpty()) {
+        if (shown.isEmpty() && entries.isNotEmpty()) {
             item {
                 Text(
                     "no matches",
@@ -792,7 +792,7 @@ private fun FollowRow(
     onToggleMute: () -> Unit,
     isFollowing: Boolean? = null,
     onFollow: (() -> Unit)? = null,
-    muteLabel: String = if (isMuted) "UNBLOCK" else "MUTE",
+    muteLabel: String = if (isMuted) "UNMUTE" else "MUTE",
 ) {
     val handle = remember(entry.pubkey) { Phrase.wordsFor(entry.pubkey, 3).joinToString("·") }
     val npubShort = remember(entry.pubkey) { Nip19.hexToNpub(entry.pubkey).take(10) + "…" + Nip19.hexToNpub(entry.pubkey).takeLast(6) }

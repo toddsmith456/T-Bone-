@@ -411,7 +411,7 @@ private fun SettingsFollowListsLink(onFollowLists: () -> Unit, compact: Boolean,
         Column(modifier = Modifier.weight(1f)) {
             Text("follow lists", style = BonyType.body.copy(color = BonyColors.TextDim))
             Text(
-                text = "following · followers · blocked — offline or relay",
+                text = "following · followers · mutes — offline or relay",
                 style = BonyType.meta.copy(color = BonyColors.TextMute),
             )
         }
@@ -451,8 +451,8 @@ private fun SettingsNoteActionsSection(noteMenuModerationEnabled: Boolean, clien
     SettingsCategoryHeader("NOTE ACTIONS", compact, expanded, onToggle)
     if (compact && !expanded) return
     SettingsSwitchRow(
-        title = "show block/report actions",
-        description = "Adds block poster and public NIP-56 report to note menus · off by default",
+        title = "show mute/report actions",
+        description = "Adds mute poster and public NIP-56 report to note menus · off by default",
         checked = noteMenuModerationEnabled,
         onCheckedChange = viewModel::setNoteMenuModerationEnabled,
     )

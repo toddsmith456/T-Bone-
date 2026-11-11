@@ -7,7 +7,7 @@ import kotlinx.serialization.Serializable
  *
  *  - [FOLLOWS] mirrors the NIP-02 contact list (kind 3).
  *  - [MUTES]   mirrors the NIP-51 mute list (kind 10000). In the UI the mute
- *              list is surfaced as BLOCK / UNBLOCK.
+ *              list is surfaced as MUTE / UNMUTE.
  *
  * Both lists follow exactly the same rules, so everything below is generic
  * over [ListType].
@@ -21,7 +21,7 @@ enum class ListType(
     val noun: String,
     /** Title used for screens ("offline follow list"). */
     val title: String,
-    /** Name of the list itself, for sentences ("follow list", "block (mute) list"). */
+    /** Name of the list itself, for sentences ("follow list", "mute list"). */
     val listName: String,
     /** Plural for counts ("follows", "muted users"). */
     val plural: String,
@@ -40,10 +40,10 @@ enum class ListType(
     MUTES(
         kind = 10000,
         slug = "mutes",
-        noun = "block",
-        title = "offline block (mute) list",
-        listName = "block (mute) list",
-        plural = "blocked users",
+        noun = "mute",
+        title = "offline mute list",
+        listName = "mute list",
+        plural = "muted users",
         acceptedImportKinds = setOf(10000),
     );
 

@@ -455,6 +455,12 @@ class ThreadViewModel @Inject constructor(
         }
     }
 
+    /** Followed accounts, for the block-inheritance exemption. */
+    private val followedPubkeys: kotlinx.coroutines.flow.StateFlow<Set<String>> =
+        accountRepository.activeAccount
+            .map { it?.follows?.toSet().orEmpty() }
+            .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, emptySet())
+
     // ── Tree rebuild ──────────────────────────────────────────────────────────
 
     private fun rebuild() {
@@ -464,12 +470,16 @@ class ThreadViewModel @Inject constructor(
         val blocked = muteRepository.effectiveMuted.value
         val nsfwMode = appSettings.nsfwMode.value
         val hideWords = appSettings.hideWords.value
+        // Same rule as the feed: a mute on someone else must not hide a followed
+        // author's own reply. `activeAccount` is a cold Flow, so the follow set is
+        // cached in a StateFlow rather than read synchronously here.
+        val followed = followedPubkeys.value
         val visibleEvents = snapshot.filter {
-            !ContentFilter.shouldHide(it, blocked, nsfwMode, hideWords, contextEvents)
+            !ContentFilter.shouldHide(it, blocked, nsfwMode, hideWords, contextEvents, followed)
         }
         val focused = _uiState.value.focused
         val focusedHidden = focused != null &&
-            ContentFilter.shouldHide(focused, blocked, nsfwMode, hideWords, contextEvents)
+            ContentFilter.shouldHide(focused, blocked, nsfwMode, hideWords, contextEvents, followed)
         val focusedId = focused?.id?.takeUnless { focusedHidden }
         val items = ThreadTree.build(
             rootId = rootId,

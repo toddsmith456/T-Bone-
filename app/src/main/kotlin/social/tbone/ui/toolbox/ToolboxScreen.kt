@@ -108,7 +108,7 @@ fun ToolboxScreen(
         put("updates", ToolEntry(Icons.Outlined.Update, "update center",
             "check & install updates", onUpdateCenter, hasBadge = hasUpdate))
         put("followlists", ToolEntry(Icons.Outlined.Groups, "follow lists",
-            "following, followers & blocks", onFollowLists))
+            "following, followers & mutes", onFollowLists))
 
     }
 

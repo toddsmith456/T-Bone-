@@ -142,14 +142,17 @@ fun BookmarksScreen(
                 }
             }
             if (selectedFolder == null) {
+                // Siblings, not nested: the sync button used to be an IconButton
+                // *inside* the add button, so the two icons drew on top of each
+                // other and only one was reliably tappable.
+                IconButton(onClick = { viewModel.syncOnline() }, enabled = !syncing) {
+                    Icon(
+                        imageVector = Icons.Outlined.CloudDownload,
+                        contentDescription = "Load online bookmark folders from your relays",
+                        tint = if (syncing) BonyColors.TextMute else BonyColors.Accent,
+                    )
+                }
                 IconButton(onClick = { creatingFolder = true }) {
-                    IconButton(onClick = { viewModel.syncOnline() }, enabled = !syncing) {
-                        Icon(
-                            imageVector = Icons.Outlined.CloudDownload,
-                            contentDescription = "Load online bookmark folders from your relays",
-                            tint = if (syncing) BonyColors.TextMute else BonyColors.Accent,
-                        )
-                    }
                     Icon(Icons.Outlined.Add, contentDescription = "Create bookmark folder", tint = BonyColors.Accent)
                 }
             } else {
@@ -291,6 +294,13 @@ fun BookmarksScreen(
             title = "New bookmark folder",
             initialName = "",
             confirmLabel = "CREATE",
+            // F-02: these three were never passed, so the OFFLINE / ONLINE picker
+            // never rendered and every folder was created offline. The choice is
+            // offered at the root of the tool (where you are not already inside a
+            // folder) and when you are inside an online folder.
+            allowKindChoice = selectedFolder == null || selectedFolder.isOnline,
+            online = newFolderOnline,
+            onOnlineChange = { newFolderOnline = it },
             onDismiss = { creatingFolder = false; newFolderOnline = false },
             onConfirm = { name ->
                 val online = newFolderOnline
@@ -585,7 +595,7 @@ private fun ReorderableBookmarks(
                     folders = folders,
                     dragging = isDragging,
                     onOpenEventSearch = onOpenEventSearch,
-                    onDelete = { viewModel.deleteBookmark(bookmark.id) },
+                    onDelete = { viewModel.deleteBookmark(bookmark, currentFolder) },
                     onMove = { targetFolder ->
                         viewModel.moveBookmarkEverywhere(bookmark, currentFolder, targetFolder)
                     },
@@ -673,6 +683,10 @@ private fun BookmarkCard(
                 }
                 DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                     Text("move to folder", style = BonyType.caption.copy(color = BonyColors.TextMute), modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                    // F-11: Miscellaneous is derived from the published list and
+                    // cannot be renamed or deleted, so it is offered as a target
+                    // only when the note is not already in it — but not as a
+                    // destination you can create, edit or remove.
                     folders.filter { it.id != bookmark.folderId }.forEach { folder ->
                         DropdownMenuItem(
                             text = {

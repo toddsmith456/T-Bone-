@@ -191,7 +191,7 @@ fun OfflineListScreen(
                                 enabled && type == ListType.FOLLOWS ->
                                     "Your relay follow list is not read and never changed. FOLLOW / UNFOLLOW on profiles edit this local list only."
                                 enabled ->
-                                    "Your relay mute list is not read and never changed. BLOCK / UNBLOCK on profiles edit this local list only."
+                                    "Your relay mute list is not read and never changed. MUTE / UNMUTE on profiles edit this local list only."
                                 !st.initialSyncDone ->
                                     "The first time you turn this on, your ${type.plural} are copied once from your relays. After that it never syncs by itself."
                                 else ->

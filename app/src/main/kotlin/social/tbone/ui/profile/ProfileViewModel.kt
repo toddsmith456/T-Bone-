@@ -123,11 +123,27 @@ class ProfileViewModel @Inject constructor(
     private val _quotedEvents = MutableStateFlow<Map<String, Event>>(emptyMap())
     val quotedEvents: StateFlow<Map<String, Event>> = _quotedEvents.asStateFlow()
 
+    /**
+     * Accounts the active user follows, for the same block-inheritance rule the
+     * feed uses. `activeAccount` is a cold Flow, so this is cached rather than
+     * read synchronously.
+     */
+    private val followedPubkeys: kotlinx.coroutines.flow.StateFlow<Set<String>> =
+        accountRepository.activeAccount
+            .map { it?.follows?.toSet().orEmpty() }
+            .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, emptySet())
+
     val pinnedNotes: StateFlow<List<Event>> = combine(pins.lists, _quotedEvents, _notes) { lists, quotes, notes ->
         val byId = notes.associateBy { it.id } + quotes
         pins.ids(lists[pubkey]).mapNotNull { byId[it] }.filterNot { event ->
-            social.tbone.settings.ContentFilter.shouldHide(event, muteRepository.effectiveMuted.value,
-                appSettings.nsfwMode.value, appSettings.hideWords.value, byId)
+            social.tbone.settings.ContentFilter.shouldHide(
+                event,
+                muteRepository.effectiveMuted.value,
+                appSettings.nsfwMode.value,
+                appSettings.hideWords.value,
+                byId,
+                followedPubkeys.value,
+            )
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -201,12 +217,12 @@ class ProfileViewModel @Inject constructor(
             val outcome = runCatching { muteRepository.setMuted(pubkey, wantMuted) }
                 .getOrElse { Timber.w(it, "toggleBlock failed"); MuteOutcome.SIGN_FAILED }
             when (outcome) {
-                MuteOutcome.NO_SIGNER -> _messages.tryEmit("No signer available — block list not changed")
+                MuteOutcome.NO_SIGNER -> _messages.tryEmit("No signer available — mute list not changed")
                 MuteOutcome.RELAYS_UNREACHABLE ->
                     _messages.tryEmit("Couldn't reach your relays to read your mute list — nothing changed")
-                MuteOutcome.SIGN_FAILED -> _messages.tryEmit("Signing failed — block list not changed")
+                MuteOutcome.SIGN_FAILED -> _messages.tryEmit("Signing failed — mute list not changed")
                 MuteOutcome.NO_ACCOUNT -> Unit
-                MuteOutcome.REJECTED -> _messages.tryEmit("Can't block that account")
+                MuteOutcome.REJECTED -> _messages.tryEmit("Can't mute that account")
                 MuteOutcome.SAVED_LOCAL, MuteOutcome.PUBLISHED, MuteOutcome.UNCHANGED -> Unit
             }
             _isBlockLoading.update { false }
@@ -359,6 +375,7 @@ class ProfileViewModel @Inject constructor(
                 appSettings.nsfwMode.value,
                 appSettings.hideWords.value,
                 contextEvents,
+                followedPubkeys.value,
             )
         }
         _notes.value = visible

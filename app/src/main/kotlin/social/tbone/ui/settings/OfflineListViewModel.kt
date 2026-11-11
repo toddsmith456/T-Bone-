@@ -67,7 +67,7 @@ data class OfflineListUi(
 data class OfflineListMessage(val text: String, val undo: ListEntry? = null)
 
 /**
- * Drives the "offline follow list" / "offline block list" screen. The same
+ * Drives the "offline follow list" / "offline mute list" screen. The same
  * ViewModel serves both lists — the route argument `type` picks which.
  */
 @OptIn(ExperimentalCoroutinesApi::class)

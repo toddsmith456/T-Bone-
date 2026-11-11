@@ -289,12 +289,12 @@ class FollowListsViewModel @Inject constructor(
             val isBlocked = pubkeyHex in effectiveMuted.value
             val outcome = muteRepository.setMuted(pubkeyHex, !isBlocked)
             when (outcome) {
-                MuteOutcome.SAVED_LOCAL -> say(if (!isBlocked) "Blocked (offline)" else "Unblocked (offline)")
-                MuteOutcome.PUBLISHED -> say(if (!isBlocked) "Blocked" else "Unblocked")
-                MuteOutcome.UNCHANGED -> say("Already ${if (isBlocked) "blocked" else "unblocked"}")
+                MuteOutcome.SAVED_LOCAL -> say(if (!isBlocked) "Muted (offline)" else "Unmuted (offline)")
+                MuteOutcome.PUBLISHED -> say(if (!isBlocked) "Muted" else "Unmuted")
+                MuteOutcome.UNCHANGED -> say("Already ${if (isBlocked) "muted" else "unmuted"}")
                 MuteOutcome.RELAYS_UNREACHABLE -> say("Couldn't reach relays — not changed")
                 MuteOutcome.NO_SIGNER -> say("No signer — not changed")
-                else -> say("Couldn't change block")
+                else -> say("Couldn't change mute")
             }
         }
     }
@@ -376,7 +376,7 @@ class FollowListsViewModel @Inject constructor(
         viewModelScope.launch {
             offline.setEnabled(ListType.MUTES, acct.pubkey, enabled)
             say(
-                if (enabled) "Offline mute list ON — blocks are saved on this device only"
+                if (enabled) "Offline mute list ON — mutes are saved on this device only"
                 else "Offline mute list OFF — using your relay mute list"
             )
         }
@@ -406,13 +406,40 @@ class FollowListsViewModel @Inject constructor(
         }
     }
 
-    /** Pulls the relay mute list into the local one, replacing it. */
+    /**
+     * Pulls the relay mute list into the local one.
+     *
+     * F-04: this used to call `replaceFromSync`, which assigns the relay list
+     * wholesale — silently deleting every mute added on this device — while the
+     * panel above the button promised "mutes you already have are copied here
+     * when you sync". It now unions: relay mutes are added, local ones are kept.
+     * An explicitly *replacing* sync is not what a button labelled "sync" should
+     * do, and there is no UI to warn about the loss.
+     */
     fun syncOfflineMutes() {
         val acct = account.value ?: return
         viewModelScope.launch {
             when (val r = offline.fetchOnline(ListType.MUTES, acct.pubkey, acct.relays)) {
-                is OnlineFetch.Found ->
-                    say("Synced ${offline.replaceFromSync(ListType.MUTES, acct.pubkey, r.entries, enable = true)} mutes from your relays")
+                is OnlineFetch.Found -> {
+                    val local = offline.snapshot(ListType.MUTES, acct.pubkey).entries
+                    // Local entries win: they carry the petname/relay hint the user
+                    // may have set here, which the relay copy would overwrite.
+                    val merged = local + r.entries.filterNot { relay ->
+                        local.any { it.pubkey == relay.pubkey }
+                    }
+                    val existing = local.map { it.pubkey }.toSet()
+                    val added = merged.map { it.pubkey }.toSet().size - existing.size
+                    val stored = offline.replaceFromSync(
+                        ListType.MUTES,
+                        acct.pubkey,
+                        merged,
+                        enable = true,
+                    )
+                    say(
+                        "Synced $stored mutes from your relays" +
+                            if (added > 0) " — $added new, your local mutes were kept" else " — your local mutes were kept",
+                    )
+                }
                 OnlineFetch.Empty ->
                     say("No relay mute list found — offline list left unchanged")
                 OnlineFetch.Unreachable ->

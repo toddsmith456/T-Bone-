@@ -21,6 +21,16 @@ data class ContentFilterData(
     val nsfwMode: NsfwMode = NsfwMode.OFF,
     val bleepWords: Set<FilterWord> = emptySet(),
     val hideWords: Set<FilterWord> = emptySet(),
+    /**
+     * Accounts the user follows.
+     *
+     * Carried here so that render-time filtering ([NoteCard]) applies the same
+     * rule as the view models: a block on someone *else* must never hide a
+     * followed author's own note. Without it the note view model classified a
+     * note as visible and this second pass then drew nothing, leaving a blank gap
+     * in the timeline.
+     */
+    val followedPubkeys: Set<String> = emptySet(),
 ) {
     val hasBleep: Boolean get() = bleepWords.isNotEmpty()
 }
@@ -31,14 +41,24 @@ val LocalContentFilter = staticCompositionLocalOf { ContentFilterData() }
 class ContentFilterViewModel @Inject constructor(
     appSettings: AppSettings,
     muteRepository: social.tbone.lists.MuteListRepository,
+    accountRepository: social.tbone.account.AccountRepository,
 ) : ViewModel() {
     val data: StateFlow<ContentFilterData> = combine(
         muteRepository.effectiveMuted,
         appSettings.nsfwMode,
         appSettings.bleepWords,
         appSettings.hideWords,
-    ) { blocked, nsfwMode, bleep, hide ->
-        ContentFilterData(blocked, nsfwMode, bleep, hide)
+        accountRepository.activeAccount,
+    ) { blocked, nsfwMode, bleep, hide, account ->
+        ContentFilterData(
+            blockedPubkeys = blocked,
+            nsfwMode = nsfwMode,
+            bleepWords = bleep,
+            hideWords = hide,
+            // The account's cached follow set is the same source the feed view
+            // model uses, so both passes agree on who is followed.
+            followedPubkeys = account?.follows?.toSet().orEmpty(),
+        )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, ContentFilterData())
 }
 

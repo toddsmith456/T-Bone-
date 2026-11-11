@@ -38,7 +38,7 @@ import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** What happened when the user pressed BLOCK / UNBLOCK. */
+/** What happened when the user pressed MUTE / UNMUTE. */
 enum class MuteOutcome {
     /** Offline mode: saved to the local list only (nothing sent anywhere). */
     SAVED_LOCAL,
@@ -74,7 +74,7 @@ enum class MuteOutcome {
  *    (kind 10000, public `p` tags) plus any pre-existing device-local blocks from
  *    before this feature existed (so nobody silently becomes un-blocked on update).
  *
- * BLOCK/UNBLOCK ([setMuted]) edits whichever list is active, and only that one.
+ * MUTE/UNMUTE ([setMuted]) edits whichever list is active, and only that one.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @Singleton
@@ -180,10 +180,10 @@ class MuteListRepository @Inject constructor(
         if (accepted) saveCache(pk, e.createdAt, publicMuted(e, pk))
     }
 
-    // ── BLOCK / UNBLOCK ───────────────────────────────────────────────────────
+    // ── MUTE / UNMUTE ─────────────────────────────────────────────────────────
 
     /**
-     * Blocks ([muted] = true) or unblocks [target] in whichever list is active.
+     * Mutes ([muted] = true) or unmutes [target] in whichever list is active.
      *
      * Offline: edits the local list only. Online: signs and publishes an updated
      * NIP-51 mute list that is based on the LATEST list read from the relays
@@ -215,7 +215,7 @@ class MuteListRepository @Inject constructor(
         // ── Online mode ──────────────────────────────────────────────────────
         if (target == owner) return MuteOutcome.REJECTED
 
-        // Device-local blocks from before this feature: an UNBLOCK always clears them.
+        // Device-local mutes from before this feature: an UNMUTE always clears them.
         val hadLegacy = target in appSettings.blockedPubkeys.value
         if (!muted && hadLegacy) appSettings.setBlockedPubkeys(appSettings.blockedPubkeys.value - target)
 

@@ -994,7 +994,7 @@ private fun HiddenGroupRow(
                 // account — which is what made a followed author look blocked.
                 val reason = when (val r = entry.reason) {
                     is HideReason.BlockedAuthor ->
-                        if (r.direct) "you blocked this author" else "references an author you blocked"
+                        if (r.direct) "you muted this author" else "references an author you muted"
                     is HideReason.HideWord -> "hide word '${r.word}'"
                     HideReason.ContentWarning -> "content warning (hide mode)"
                 }

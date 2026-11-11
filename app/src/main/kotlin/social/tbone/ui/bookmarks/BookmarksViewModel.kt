@@ -173,8 +173,28 @@ class BookmarksViewModel @Inject constructor(
         }
     }
 
-    fun deleteBookmark(bookmarkId: String, onFinished: (Result<Unit>) -> Unit = {}) {
-        viewModelScope.launch { onFinished(runCatching { bookmarksRepository.deleteBookmark(bookmarkId) }) }
+    /**
+     * Deletes a bookmark, unpublishing it from the network when the folder is
+     * online.
+     *
+     * F-08: this used to touch the local row only, so deleting from an online
+     * folder left the note in the published set and the next sync put it straight
+     * back.
+     */
+    fun deleteBookmark(
+        bookmark: BookmarkUi,
+        folder: BookmarkFolderUi?,
+        onFinished: (Result<Unit>) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            if (folder?.isOnline != true) {
+                onFinished(runCatching { bookmarksRepository.deleteBookmark(bookmark.id) })
+                return@launch
+            }
+            val result = syncRepository.removeBookmarkEverywhere(bookmark, folder)
+            if (!result.ok) _onlineMessage.value = result.message
+            onFinished(if (result.ok) Result.success(Unit) else Result.failure(IllegalStateException(result.message)))
+        }
     }
 
     fun moveBookmark(bookmarkId: String, targetFolderId: String, onFinished: (Result<Unit>) -> Unit = {}) {
