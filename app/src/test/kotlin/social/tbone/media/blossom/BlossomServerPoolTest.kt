@@ -65,7 +65,8 @@ class BlossomServerPoolTest {
             shuffle = noShuffle,
         )
         assertEquals("https://added.example.com", ordered.first())
-        assertEquals(pool + "https://added.example.com", ordered.distinct())
+        // The pick leads, then the whole pool remains available as failover.
+        assertEquals(listOf("https://added.example.com") + pool, ordered)
     }
 
     @Test
