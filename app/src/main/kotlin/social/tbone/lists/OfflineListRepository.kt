@@ -80,12 +80,19 @@ class OfflineListRepository @Inject constructor(
      * Returns the resulting `enabled` value.
      */
     suspend fun setEnabled(type: ListType, pubkey: String, enabled: Boolean): Boolean =
-        // Always honour the request. This used to refuse to switch on until
-        // initialSyncDone was true, which meant that on a fresh install the
-        // switch silently did nothing — the toggle snapped back to OFF with no
-        // explanation. An offline list is useful precisely before any sync
-        // exists, so there is no reason to gate it.
-        update(type, pubkey) { cur -> cur.copy(enabled = enabled) }.enabled
+        update(type, pubkey) { cur ->
+            // The follow list must be synced before it can be switched on: an
+            // empty local list standing in for "who I follow" would read as
+            // "I follow nobody" and empty the home feed.
+            //
+            // Mutes have no such risk. Refusing to switch on until a sync had
+            // happened meant the offline mute switch silently did nothing on a
+            // fresh install — the control looked broken because it snapped back
+            // to OFF, and muting quietly kept going to the relay list. An
+            // offline mute list is useful precisely *before* any sync exists.
+            if (enabled && !cur.initialSyncDone && type != ListType.MUTES) cur
+            else cur.copy(enabled = enabled)
+        }.enabled
 
     // ── Manual edits ──────────────────────────────────────────────────────────
 

@@ -58,6 +58,28 @@ class OfflineListRepositoryTest {
         assertFalse(state(ListType.FOLLOWS, alice).enabled)
     }
 
+    /**
+     * Mutes are the exception: switching them on must work immediately. Gating
+     * it on a sync made the offline mute switch do nothing at all on a fresh
+     * install, which is exactly how it looked to the user — a toggle that would
+     * not stay on, with muting quietly going to the relay list instead.
+     */
+    @Test fun mutesSwitchOnWithoutAnInitialSync() = runBlocking {
+        assertTrue(repo.setEnabled(ListType.MUTES, alice, true))
+        val st = state(ListType.MUTES, alice)
+        assertTrue(st.enabled)
+        assertEquals(0, st.size)
+        // And it switches back off again, keeping whatever was stored.
+        assertFalse(repo.setEnabled(ListType.MUTES, alice, false))
+        assertFalse(state(ListType.MUTES, alice).enabled)
+    }
+
+    /** The follow list still refuses, because an empty list would empty the feed. */
+    @Test fun followsStillRequireSyncBeforeSwitchingOn() = runBlocking {
+        assertFalse(repo.setEnabled(ListType.FOLLOWS, alice, true))
+        assertFalse(state(ListType.FOLLOWS, alice).enabled)
+    }
+
     @Test fun initialSyncEnablesAndSwitchRemembersState() = runBlocking {
         repo.replaceFromSync(ListType.FOLLOWS, alice, listOf(ListEntry(pk(1)), ListEntry(pk(2), "wss://r", "p")), enable = true)
         var st = state(ListType.FOLLOWS, alice)
