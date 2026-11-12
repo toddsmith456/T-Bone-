@@ -46,7 +46,7 @@ class HomeFeedsViewModel @Inject constructor(
         _notice.value = null
     }
 
-    private fun nudge(action: Nudge.Action, feedName: String, target: Nudge.Target) {
+    private fun nudge(action: Nudge.Action, feedName: String, target: Target) {
         _notice.value = Nudge(action = action, feedName = feedName, target = target)
     }
 
