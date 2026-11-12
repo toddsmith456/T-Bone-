@@ -31,7 +31,6 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import social.tbone.home.FeedSlot
 import social.tbone.home.FeedSource
-import social.tbone.home.HomeLayout
 import androidx.compose.ui.graphics.vector.ImageVector
 import social.tbone.ui.feed.FeedTabIcons
 import social.tbone.ui.theme.BonyColors
@@ -52,7 +51,6 @@ fun HomeFeedsScreen(
     viewModel: HomeFeedsViewModel = hiltViewModel(),
 ) {
     val layout by viewModel.layout.collectAsStateWithLifecycle()
-    val message by viewModel.message.collectAsStateWithLifecycle()
     val notice by viewModel.notice.collectAsStateWithLifecycle()
 
     // Non-null while a slot's tab is being re-pointed at a different feed.
@@ -95,17 +93,6 @@ fun HomeFeedsScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 14.dp, vertical = 8.dp)
                     .clickable { viewModel.dismissNotice() },
-            )
-        }
-
-        message?.let { text ->
-            Text(
-                text = text,
-                style = BonyType.meta.copy(color = BonyColors.Accent),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 8.dp)
-                    .clickable { viewModel.clearMessage() },
             )
         }
 
@@ -360,6 +347,14 @@ internal fun nudgeHint(nudge: HomeFeedsViewModel.Nudge): String {
             "keep at least one feed visible — a tab bar with nothing on it is a dead end"
         HomeFeedsViewModel.Target.MAX_SLOTS ->
             "eight feeds is the limit; hide or remove one first"
+        HomeFeedsViewModel.Target.ALREADY_THERE ->
+            "there is already a $name feed — edit that one instead"
+        HomeFeedsViewModel.Target.EMPTY_INPUT ->
+            "type a $name to follow"
+        HomeFeedsViewModel.Target.BAD_RELAY ->
+            "that does not look like a relay address — try wss://relay.example"
+        HomeFeedsViewModel.Target.NO_KEYS ->
+            "no $name in there — paste npub or 64-character hex keys"
     }
 }
 

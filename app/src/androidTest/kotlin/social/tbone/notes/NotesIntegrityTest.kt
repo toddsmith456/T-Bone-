@@ -319,10 +319,17 @@ class NotesIntegrityTest {
         val tamperedFile = java.io.File(context.cacheDir, "integrity-${java.util.UUID.randomUUID()}-bad.tbbackup")
         try {
             val coordinator = NoteWriteCoordinator(owner)
+            // The layout repository needs its own small store; the backup only
+            // reads and writes it as a JSON document.
+            val layoutStoreFile = java.io.File(context.cacheDir, "layout-${java.util.UUID.randomUUID()}.preferences_pb")
+            val layoutStore = androidx.datastore.preferences.core.PreferenceDataStoreFactory.create(
+                scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+            ) { layoutStoreFile }
             val backups = social.tbone.backup.EncryptedBackupRepository(
                 context, db, db.noteDao(), db.noteFolderDao(), db.noteAttachmentDao(), db.calendarEventDao(),
                 NotesCrypto(), social.tbone.calendar.CalendarCrypto(),
                 social.tbone.calendar.CalendarAlarmScheduler(context), coordinator,
+                social.tbone.home.HomeLayoutRepository(layoutStore),
             )
             real.saveText("r", "original title", "original body", null)
             val attachment = real.addAttachment("r", "image", "image/png", byteArrayOf(3, 2, 1))

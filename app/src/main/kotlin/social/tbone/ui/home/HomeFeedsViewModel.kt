@@ -28,10 +28,6 @@ class HomeFeedsViewModel @Inject constructor(
 
     val layout: StateFlow<HomeLayout> = layouts.layout
 
-    /** One-shot confirmation line; the screen shows it and clears it. */
-    private val _message = MutableStateFlow<String?>(null)
-    val message: StateFlow<String?> = _message.asStateFlow()
-
     /**
      * Non-blocking notice for an action that was silently ignored.
      *
@@ -51,7 +47,7 @@ class HomeFeedsViewModel @Inject constructor(
     }
 
     /** The reason a feed name is being shown back to the user. */
-    enum class Target { FOLLOWS, LAST_VISIBLE, MAX_SLOTS }
+    enum class Target { FOLLOWS, LAST_VISIBLE, MAX_SLOTS, ALREADY_THERE, EMPTY_INPUT, BAD_RELAY, NO_KEYS }
 
     /**
      * What could not happen, in the three shapes it can happen in.
@@ -61,10 +57,6 @@ class HomeFeedsViewModel @Inject constructor(
      */
     data class Nudge(val action: Action, val feedName: String, val target: Target) {
         enum class Action { REMOVE, MOVE, HIDE, ADD }
-    }
-
-    fun clearMessage() {
-        _message.value = null
     }
 
     /** Moves a slot one position up. Slot 1 cannot move: it is the follow feed. */
@@ -131,6 +123,13 @@ class HomeFeedsViewModel @Inject constructor(
     }
 
     fun addSource(source: FeedSource) {
+        // Two identical tabs are never what somebody meant, and the second one
+        // duplicates every relay subscription for no visible difference.
+        val duplicate = layout.value.slots.any { it.source == source }
+        if (duplicate) {
+            nudge(Nudge.Action.ADD, source.label, Target.ALREADY_THERE)
+            return
+        }
         viewModelScope.launch {
             val added = layouts.add(source)
             if (added == null) {
@@ -142,7 +141,6 @@ class HomeFeedsViewModel @Inject constructor(
     fun reset() {
         viewModelScope.launch {
             layouts.resetToDefaults()
-            _message.value = "Feeds reset to the defaults."
         }
     }
 
@@ -153,7 +151,7 @@ class HomeFeedsViewModel @Inject constructor(
     fun addHashtag(tag: String) {
         val clean = tag.trim().removePrefix("#").lowercase()
         if (clean.isBlank()) {
-            _message.value = "Enter a hashtag."
+            nudge(Nudge.Action.ADD, "hashtag", Target.EMPTY_INPUT)
             return
         }
         addSource(FeedSource.Hashtag(tags = listOf(clean)))
@@ -162,7 +160,7 @@ class HomeFeedsViewModel @Inject constructor(
     fun addRelay(url: String) {
         val clean = url.trim().let { if (it.startsWith("ws://") || it.startsWith("wss://")) it else "wss://$it" }
         if (!social.tbone.nostr.relay.RelayPool.isValidRelayUrl(clean)) {
-            _message.value = "That does not look like a relay address."
+            nudge(Nudge.Action.ADD, "relay address", Target.BAD_RELAY)
             return
         }
         addSource(FeedSource.Relay(urls = listOf(clean)))
@@ -187,7 +185,7 @@ class HomeFeedsViewModel @Inject constructor(
             }
             .distinct()
         if (parsed.isEmpty()) {
-            _message.value = "No valid npub or hex keys found."
+            nudge(Nudge.Action.ADD, "keys", Target.NO_KEYS)
             return
         }
         addSource(

@@ -11,6 +11,7 @@ import java.io.File
 import java.io.IOException
 import java.util.Arrays
 import java.util.UUID
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.serialization.SerializationException
@@ -50,6 +51,7 @@ class EncryptedBackupRepository @Inject constructor(
     private val calendarCrypto: CalendarCrypto,
     private val alarmScheduler: CalendarAlarmScheduler,
     private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
+    private val homeLayouts: social.tbone.home.HomeLayoutRepository,
 ) {
     private val json = Json {
         encodeDefaults = true
@@ -130,6 +132,7 @@ class EncryptedBackupRepository @Inject constructor(
         val source = context.contentResolver.openInputStream(uri)
             ?: throw IOException("Could not open the selected backup file.")
         var restoredEvents: List<BackupCalendarEvent> = emptyList()
+        var restoredHomeLayout: String? = null
 
         source.use { rawInput ->
             val decrypted = EncryptedBackupCrypto.newDecryptingStream(rawInput, passphrase)
@@ -147,6 +150,9 @@ class EncryptedBackupRepository @Inject constructor(
                 }
                 validateManifest(manifest)
                 restoredEvents = manifest.calendarEvents
+                // Held until the transaction commits, so a rolled-back restore
+                // does not leave the tab strip changed.
+                restoredHomeLayout = manifest.homeLayout
 
                 database.withTransaction {
                     // Replace, never merge: all IDs, order and folder links in
@@ -273,6 +279,15 @@ class EncryptedBackupRepository @Inject constructor(
                 )
             },
         )
+
+        // The home layout is applied after the vault transaction commits, and a
+        // failure here never fails the restore: the notes are the payload, the
+        // tab layout is a preference. A layout this build cannot read leaves the
+        // device's current tabs alone rather than emptying them.
+        restoredHomeLayout?.let { raw: String ->
+            homeLayouts.importJson(raw)
+                .onFailure { Timber.w(it, "restore: home layout was not applied") }
+        }
     }
 
     private suspend fun createManifest(): BackupManifest {
@@ -333,12 +348,19 @@ class EncryptedBackupRepository @Inject constructor(
                 repeatEndMillis = entity.repeatEndMillis,
             )
         }
+        // The layout is read outside the Room transaction because it does not
+        // live in Room; it is a single small JSON document, so there is nothing
+        // to keep consistent with the notes beyond "write it once".
+        val homeLayout = runCatching { homeLayouts.exportJson() }
+            .onFailure { Timber.w(it, "backup: could not read the home layout") }
+            .getOrNull()
         return BackupManifest(
             formatVersion = BACKUP_FORMAT_VERSION,
             notes = notes,
             folders = folders,
             attachments = attachments,
             calendarEvents = events,
+            homeLayout = homeLayout,
         )
     }
 
@@ -381,6 +403,9 @@ class EncryptedBackupRepository @Inject constructor(
             require(event.repeatUnit in RepeatUnit.entries.map { it.name }) { "The backup contains an unknown calendar recurrence." }
             require(event.repeatInterval >= 0) { "A calendar recurrence interval is invalid." }
         }
+        manifest.homeLayout?.let { raw ->
+            require(raw.length <= MAX_HOME_LAYOUT_CHARS) { "The backup contains an oversized home layout." }
+        }
     }
 
     private fun requireValidId(id: String) {
@@ -394,5 +419,6 @@ class EncryptedBackupRepository @Inject constructor(
         const val MAX_MANIFEST_BYTES = 32 * 1024 * 1024
         const val MAX_ATTACHMENT_BYTES = 64L * 1024L * 1024L
         const val MAX_RECORDS = 50_000
+        const val MAX_HOME_LAYOUT_CHARS = 256 * 1024
     }
 }

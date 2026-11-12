@@ -10,6 +10,19 @@ data class BackupManifest(
     val folders: List<BackupFolder>,
     val attachments: List<BackupAttachment>,
     val calendarEvents: List<BackupCalendarEvent>,
+    /**
+     * The home-tab layout, as the same JSON the layout editor exports.
+     *
+     * Stored as a string rather than as typed slots on purpose: the backup
+     * format is a *transport*, and the layout already has its own versioned,
+     * tolerant codec. Re-modelling it here would create a second schema that
+     * can drift from the first one — and a backup written by a newer build
+     * would be rejected by an older one instead of degrading to defaults.
+     *
+     * Absent in backups made before home feeds existed; restoring one of those
+     * leaves whatever layout the device already has.
+     */
+    val homeLayout: String? = null,
 )
 
 @Serializable
