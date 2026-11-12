@@ -52,6 +52,11 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 
 private sealed interface FabAction {
     data object NewNote : FabAction
@@ -100,7 +105,17 @@ fun NotesScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    // Side insets matter here: the app is edge-to-edge, and a side system bar or a
+    // cutout in landscape previously overlapped this screen — the floating
+    // add button ended up half off the edge and the top bar was clipped. Padding
+    // the container is enough for both, because the button is aligned inside it.
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(
+                WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
+            )),
+    ) {
         NotesMainContent(
             notes = notes,
             folders = folders,
@@ -435,6 +450,9 @@ private fun NotesAddButton(modifier: Modifier, onClick: () -> Unit) {
     Box(
         modifier = modifier
             .navigationBarsPadding()
+            // Insets are also applied by the caller's container; the extra padding
+            // here is what keeps the button visibly inside the screen edge instead
+            // of flush against it.
             .padding(end = 16.dp, bottom = 12.dp)
             .appBorder(1.dp, BonyColors.AccentDim)
             .background(BonyColors.Surface)

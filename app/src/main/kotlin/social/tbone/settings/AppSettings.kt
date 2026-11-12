@@ -13,6 +13,7 @@ import social.tbone.nostr.geohash.GeohashChannelStore
 import androidx.datastore.preferences.core.edit
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
@@ -60,6 +61,14 @@ class AppSettings @Inject constructor(
         private val AVATAR_ANIMATED = booleanPreferencesKey("avatar_animated")
         // Enabled notification-type filters (names of NotifFilter). Empty set = all on.
         private val NOTIFICATION_ENABLED_TYPES = stringSetPreferencesKey("notification_enabled_types")
+        /**
+         * Set once the filter defaults have been migrated. A stored filter set
+         * cannot express "the user never chose"; a stored *empty* set is
+         * indistinguishable from "never set", so without this flag the
+         * migration below would re-enable filters somebody deliberately turned
+         * off on every launch.
+         */
+        private val NOTIFICATION_FILTERS_MIGRATED = booleanPreferencesKey("notification_filters_migrated")
         // Global relay list — separate from personal relay list, used only for the Global feed.
         private val GLOBAL_RELAYS = stringSetPreferencesKey("global_relays")
         private val GLOBAL_ACTIVE_RELAYS = stringSetPreferencesKey("global_active_relays")
@@ -261,6 +270,15 @@ class AppSettings @Inject constructor(
     /** Enabled notification-type filters. Empty set = all types shown. */
     private val _notificationEnabledTypes = MutableStateFlow<Set<String>>(emptySet())
     val notificationEnabledTypes = _notificationEnabledTypes.asStateFlow()
+
+    /**
+     * True for exactly one launch: the first run of a build that added zap
+     * notifications to the default filter set. The notifications screen consults
+     * it to say so out loud, because a zap filter missing from somebody's saved
+     * settings would otherwise keep hiding their zaps with no explanation.
+     */
+    private val _notificationFiltersMigrated = MutableStateFlow(false)
+    val notificationFiltersMigrated = _notificationFiltersMigrated.asStateFlow()
 
     private val _themeMode = MutableStateFlow(ThemeMode.DARK)
     val themeMode = _themeMode.asStateFlow()
@@ -496,7 +514,22 @@ class AppSettings @Inject constructor(
                 _imageCacheLightweight.value = prefs[IMAGE_CACHE_LIGHTWEIGHT] ?: false
                 _avatarMode.value = AvatarMode.fromPref(prefs[AVATAR_MODE])
                 _avatarAnimated.value = prefs[AVATAR_ANIMATED] ?: true
-                _notificationEnabledTypes.value = prefs[NOTIFICATION_ENABLED_TYPES] ?: emptySet()
+                val storedFilters = prefs[NOTIFICATION_ENABLED_TYPES]
+                // Zap notifications existed as a row type before they existed as
+                // a filter, and a filter name that is absent from the saved set
+                // reads as "switched off". So anybody who had ever narrowed
+                // their filters never saw a single zap arrive — the symptom was
+                // "zaps are invisible until I tap the zap button".
+                val zapsAddedByThisMigration = !storedFilters.isNullOrEmpty() &&
+                    NotifFilterNames.ZAPS !in storedFilters &&
+                    prefs[NOTIFICATION_FILTERS_MIGRATED] != true
+                _notificationEnabledTypes.value = when {
+                    // Never set = every filter on.
+                    storedFilters.isNullOrEmpty() -> NotifFilterNames.ALL
+                    zapsAddedByThisMigration -> storedFilters + NotifFilterNames.ZAPS
+                    else -> storedFilters
+                }
+                _notificationFiltersMigrated.value = zapsAddedByThisMigration
                 _themeMode.value = ThemeMode.fromPref(prefs[THEME_MODE])
                 _accentColor.value = prefs[ACCENT_COLOR]
                 _uiTheme.value = UiTheme.fromPref(prefs[UI_THEME])
@@ -557,6 +590,14 @@ class AppSettings @Inject constructor(
                 val storedActive = prefs[GLOBAL_ACTIVE_RELAYS]?.mapNotNull { normalizeGlobalRelay(it) }?.toSet()
                 _globalActiveRelays.value = storedActive?.intersect(_globalRelays.value) ?: _globalRelays.value
                 _initialized.value = true
+            }
+        }
+        // Record the migration as complete so the one-time heads-up (and the
+        // forced zap filter) cannot come back on the next launch.
+        if (_notificationFiltersMigrated.value) {
+            // Launch a coroutine rather than a suspend call: this is `init`.
+            CoroutineScope(Dispatchers.IO).launch {
+                runCatching { dataStore.edit { it[NOTIFICATION_FILTERS_MIGRATED] = true } }
             }
         }
     }
@@ -683,8 +724,16 @@ class AppSettings @Inject constructor(
     }
 
     /** Persist the enabled notification-type filters (empty set = all on). */
+    fun dismissNotificationFiltersMigrated() {
+        _notificationFiltersMigrated.value = false
+    }
+
     suspend fun setNotificationEnabledTypes(names: Set<String>) {
-        dataStore.edit { it[NOTIFICATION_ENABLED_TYPES] = names }
+        dataStore.edit {
+            it[NOTIFICATION_ENABLED_TYPES] = names
+            // An explicit choice supersedes the one-time zap migration.
+            it[NOTIFICATION_FILTERS_MIGRATED] = true
+        }
     }
 
     suspend fun setThemeMode(mode: ThemeMode) {
@@ -1172,4 +1221,26 @@ class AppSettings @Inject constructor(
         }
     }
 
+}
+
+
+/**
+ * Names of every notification filter, mirroring `NotifFilter` in the UI layer.
+ *
+ * The settings layer must not depend on a UI enum, so the one place that needs
+ * to know "the full default set" keeps its own list. `NotifFilterTest` asserts
+ * the two lists agree, so a new filter cannot be added to one and forgotten in
+ * the other — which is exactly how zaps went missing.
+ */
+object NotifFilterNames {
+    const val REPLIES = "REPLIES"
+    const val REACTIONS = "REACTIONS"
+    const val REPOSTS = "REPOSTS"
+    const val MENTIONS = "MENTIONS"
+    const val VOTES = "VOTES"
+    const val ZAPS = "ZAPS"
+    const val CALENDAR = "CALENDAR"
+
+    /** Every filter enabled — the state a brand-new install starts in. */
+    val ALL: Set<String> = setOf(REPLIES, REACTIONS, REPOSTS, MENTIONS, VOTES, ZAPS, CALENDAR)
 }

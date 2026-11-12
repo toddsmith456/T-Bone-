@@ -374,10 +374,16 @@ class FollowListsViewModel @Inject constructor(
     fun setOfflineMutesEnabled(enabled: Boolean) {
         val acct = account.value ?: return
         viewModelScope.launch {
-            offline.setEnabled(ListType.MUTES, acct.pubkey, enabled)
+            val now = offline.setEnabled(ListType.MUTES, acct.pubkey, enabled)
+            // Report what actually happened rather than what was asked for, so a
+            // switch that fails to move can never look like it succeeded.
             say(
-                if (enabled) "Offline mute list ON — mutes are saved on this device only"
-                else "Offline mute list OFF — using your relay mute list"
+                when {
+                    enabled && now -> "Offline mute list ON — mutes are saved on this device only"
+                    enabled && !now -> "Could not switch the offline mute list on"
+                    !enabled && !now -> "Offline mute list OFF — using your relay mute list"
+                    else -> "Could not switch the offline mute list off"
+                }
             )
         }
     }

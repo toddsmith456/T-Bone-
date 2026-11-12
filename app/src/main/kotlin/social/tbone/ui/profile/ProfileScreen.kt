@@ -95,6 +95,7 @@ fun ProfileScreen(
     val notes by viewModel.notes.collectAsStateWithLifecycle()
     val replyNotes by viewModel.replyNotes.collectAsStateWithLifecycle()
     val pinnedNotes by viewModel.pinnedNotes.collectAsStateWithLifecycle()
+    val allNotes by viewModel.allNotes.collectAsStateWithLifecycle()
     val mediaItems by viewModel.mediaItems.collectAsStateWithLifecycle()
     val quotedEvents by viewModel.quotedEvents.collectAsStateWithLifecycle()
     val unresolvedQuoteIds by viewModel.unresolvedQuoteIds.collectAsStateWithLifecycle()
@@ -119,13 +120,19 @@ fun ProfileScreen(
     val pubkey = viewModel.pubkey
 
     val context = LocalContext.current
-    // Which cards the current tab shows. "all" keeps every note plus reposts,
-    // "replies" is filtered to replies only, and "media" is the gallery below.
-    val visibleNotes = when (selectedTab) {
-        ProfileTab.ALL -> notes
+    // Which cards the current tab shows. NOTES is top-level notes, ALL adds
+    // replies and reposts, REPLIES is replies only, and MEDIA is the gallery.
+    // Pinned notes have no tab of their own any more: they are lifted to the top
+    // of NOTES and ALL so they are seen without hunting for a separate tab.
+    val tabNotes = when (selectedTab) {
+        ProfileTab.NOTES -> notes
+        ProfileTab.ALL -> allNotes
         ProfileTab.REPLIES -> replyNotes
         ProfileTab.MEDIA -> emptyList()
-        ProfileTab.PINNED -> pinnedNotes
+    }
+    val visibleNotes = when (selectedTab) {
+        ProfileTab.NOTES, ProfileTab.ALL -> viewModel.pinnedFirst(tabNotes, pinnedNotes)
+        else -> tabNotes
     }
 
     // Index of the tapped gallery image (null = viewer closed).
@@ -476,7 +483,7 @@ fun ProfileScreen(
                 if (visibleNotes.isEmpty() && !isLoading) {
                     item {
                         EmptyTabLabel(
-                            if (selectedTab == ProfileTab.REPLIES) "no replies yet" else if (selectedTab == ProfileTab.PINNED) "no pinned notes found" else "no notes yet",
+                            if (selectedTab == ProfileTab.REPLIES) "no replies yet" else "no notes yet",
                         )
                     }
                 }

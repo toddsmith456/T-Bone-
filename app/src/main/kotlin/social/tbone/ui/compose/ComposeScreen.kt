@@ -102,8 +102,14 @@ import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.ui.theme.appCornerShape
 
-/** The token being typed after "@" — letters, digits, _ . - (e.g. "@jack_1"). */
-private val MENTION_TOKEN_REGEX = Regex("""(?:^|\s)@([\p{L}\p{N}_.\-]*)$""")
+/**
+ * The token being typed after "@" — letters, digits, _ . - (e.g. "@jack_1").
+ * The character before the @ may be whitespace, start-of-text, or an opening
+ * bracket/quote, so a handle typed after "(" or '"' still opens the picker.
+ */
+private val MENTION_TOKEN_REGEX = Regex(
+    """(?:^|[\s(\[{<"'`\u201C\u2018])@([\p{L}\p{N}_.\-]*)$""",
+)
 
 @Composable
 fun ComposeScreen(
@@ -336,10 +342,13 @@ fun ComposeScreen(
                                 val finalText = social.tbone.util.LinkCleaner.cleanUrlsInText(
                                     resolveMentions(fieldValue.text, mentionMap),
                                 )
+                                // Only tag handles that actually made it into the published text:
+                                // a mention label with the @ removed by the user, or one that failed
+                                // its boundary check, must not produce a dangling p-tag.
                                 val npubs = tagList.filter { it.startsWith("npub1") } +
                                     mentionMap.values.mapNotNull { hex ->
                                         runCatching { Nip19.hexToNpub(hex) }.getOrNull()
-                                    }
+                                    }.filter { npub -> finalText.contains("nostr:$npub") }
                                 val hashtags = tagList.filter { it.startsWith("#") }
                                 viewModel.publish(finalText, npubs, hashtags)
                             } else Modifier)
@@ -661,23 +670,6 @@ private fun mentionQueryAt(text: String, caret: Int): String? {
     val m = MENTION_TOKEN_REGEX.find(before) ?: return null
     if (m.range.last + 1 != caret) return null
     return m.groupValues[1]
-}
-
-/**
- * Turns the remembered "@Name" mention labels back into nostr:npub1… URIs so
- * the published note renders a clickable @Name and other clients can resolve
- * the mention. Longest labels first so a label that prefixes another wins.
- */
-private fun resolveMentions(content: String, mentions: Map<String, String>): String {
-    if (mentions.isEmpty()) return content
-    var out = content
-    mentions.entries.sortedByDescending { it.key.length }.forEach { (name, hex) ->
-        if (name.isNotBlank() && out.contains("@$name")) {
-            val npub = runCatching { Nip19.hexToNpub(hex) }.getOrNull() ?: return@forEach
-            out = out.replace("@$name", "nostr:$npub")
-        }
-    }
-    return out
 }
 
 private fun abbreviateNpub(hex: String): String =

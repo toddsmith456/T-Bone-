@@ -151,15 +151,31 @@ class NotificationsViewModel @Inject constructor(
     /** Referenced notes that never arrived, so cards can stop saying "loading…". */
     val unresolvedReferencedIds: StateFlow<Set<String>> = repository.unresolvedReferencedIds
 
+    /**
+     * True until the first launch's zap-filter migration has been acknowledged.
+     * Lets the screen explain why zaps started appearing.
+     */
+    val filtersMigrated: StateFlow<Boolean> = appSettings.notificationFiltersMigrated
+
     init {
-        // Persisted filter set → enabled filters (null = never set = all on).
+        // Persisted filter set → enabled filters. AppSettings resolves the
+        // absent case to "everything on" and hands back a non-empty set, so the
+        // old `null = never set = all on` handling here is gone: an empty set
+        // arriving here now genuinely means the user turned every filter off.
         viewModelScope.launch {
             appSettings.notificationEnabledTypes
                 .map { names ->
                     names.mapNotNull { NotifFilter.fromName(it) }.toSet()
+                        // An unknown name (a filter from a newer build) must not
+                        // silently disable everything else.
+                        .ifEmpty { if (names.isEmpty()) emptySet() else NotifFilter.entries.toSet() }
                 }
                 .collect { _enabledFilters.value = it }
         }
+    }
+
+    fun dismissFiltersMigrated() {
+        viewModelScope.launch { appSettings.dismissNotificationFiltersMigrated() }
     }
 
     // ── Filtering (Wisp semantics) ────────────────────────────────────────────

@@ -57,12 +57,20 @@ import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
-/** Profile feed tabs. */
+/**
+ * Profile feed tabs, in display order.
+ *
+ * NOTES is the default and holds only top-level notes: conversations belong in
+ * REPLIES, and a feed whose main tab is mostly other people's half of a
+ * conversation is hard to read. Pinned notes are no longer a tab of their own —
+ * they are lifted to the top of NOTES and ALL instead, where they are actually
+ * seen. The enum is ordered because the tab strip renders `entries`.
+ */
 enum class ProfileTab(val label: String) {
+    NOTES("NOTES"),
     ALL("ALL"),
     REPLIES("REPLIES"),
     MEDIA("MEDIA"),
-    PINNED("PINNED"),
 }
 
 /** One image or video attachment in the profile's media gallery. */
@@ -97,7 +105,7 @@ class ProfileViewModel @Inject constructor(
     val profiles: StateFlow<Map<String, ProfileContent>> = profileRepository.profiles
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
-    private val _tab = MutableStateFlow(ProfileTab.ALL)
+    private val _tab = MutableStateFlow(ProfileTab.NOTES)
     /** Which feed the profile is showing. */
     val tab: StateFlow<ProfileTab> = _tab.asStateFlow()
 
@@ -105,9 +113,16 @@ class ProfileViewModel @Inject constructor(
         if (_tab.value != newTab) _tab.value = newTab
     }
 
-    /** Every event on the profile feed, newest first (notes, polls and reposts). */
+    /**
+     * Top-level notes only — what the NOTES tab shows. Replies (NIP-10 replies
+     * and NIP-22 comments) are excluded; they live in [replyNotes].
+     */
     private val _notes = MutableStateFlow<List<Event>>(emptyList())
     val notes: StateFlow<List<Event>> = _notes.asStateFlow()
+
+    /** Everything: top-level notes plus replies and reposts. Drives the ALL tab. */
+    private val _allNotes = MutableStateFlow<List<Event>>(emptyList())
+    val allNotes: StateFlow<List<Event>> = _allNotes.asStateFlow()
     /** Raw relay events retained so changing filters can update the visible tabs. */
     private val profileEvents = ConcurrentHashMap<String, Event>()
 
@@ -133,7 +148,25 @@ class ProfileViewModel @Inject constructor(
             .map { it?.follows?.toSet().orEmpty() }
             .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, emptySet())
 
-    val pinnedNotes: StateFlow<List<Event>> = combine(pins.lists, _quotedEvents, _notes) { lists, quotes, notes ->
+    /**
+     * Pinned notes in pin-list order, lifted to the top of the feed the way
+     * every other client does it. [pinnedFirst] is what the NOTES and ALL tabs
+     * render; [pinnedNotes] is kept for callers that want the pins alone.
+     */
+    fun pinnedFirst(events: List<Event>, pinned: List<Event>): List<Event> {
+        if (pinned.isEmpty()) return events
+        val pinnedIds = pinned.map { it.id }.toSet()
+        val byId = events.associateBy { it.id }
+        // A pin whose note is not in this feed view (a reply pinned while the
+        // NOTES tab hides replies) is still shown: pinning it is an explicit
+        // choice and it must not silently disappear.
+        val head = pinned.map { byId[it.id] ?: it }
+        return head + events.filterNot { it.id in pinnedIds }
+    }
+
+    // Resolved against the FULL feed, not the top-level notes: a pinned reply is
+    // a legitimate pin and would otherwise never resolve to an event.
+    val pinnedNotes: StateFlow<List<Event>> = combine(pins.lists, _quotedEvents, _allNotes) { lists, quotes, notes ->
         val byId = notes.associateBy { it.id } + quotes
         pins.ids(lists[pubkey]).mapNotNull { byId[it] }.filterNot { event ->
             social.tbone.settings.ContentFilter.shouldHide(
@@ -351,8 +384,16 @@ class ProfileViewModel @Inject constructor(
     }
 
     /**
-     * Adds an event to the profile feed and refreshes the three derived views:
-     * all, replies-only, and the media gallery.
+     * A reply, by either convention: NIP-22 comments (kind 1111) are replies by
+     * definition, and plain notes count when they carry a NIP-10 reply marker.
+     */
+    private fun isReply(event: Event): Boolean =
+        event.kind == EventKind.COMMENT ||
+            (event.kind == EventKind.TEXT_NOTE && event.parsedTags.isReply)
+
+    /**
+     * Adds an event to the profile feed and refreshes the derived views:
+     * top-level notes, everything, replies-only, and the media gallery.
      */
     private fun ingest(event: Event) {
         profileEvents[event.id] = event
@@ -378,13 +419,10 @@ class ProfileViewModel @Inject constructor(
                 followedPubkeys.value,
             )
         }
-        _notes.value = visible
-        _replyNotes.value = visible.filter { event ->
-            // NIP-22 comments (kind 1111) are replies by definition; plain notes
-            // count when they carry a NIP-10 reply marker.
-            event.kind == EventKind.COMMENT ||
-                (event.kind == EventKind.TEXT_NOTE && event.parsedTags.isReply)
-        }
+        val replies = visible.filter { event -> isReply(event) }
+        _allNotes.value = visible
+        _notes.value = visible.filterNot { event -> isReply(event) }
+        _replyNotes.value = replies
         _mediaItems.value = visible
             .filter { it.kind == EventKind.TEXT_NOTE || it.kind == EventKind.COMMENT }
             .flatMap { note ->

@@ -102,7 +102,19 @@ class BookmarkSyncRepository @Inject constructor(
      * plain list are fetched from relays, so folders created in Amethyst (or any
      * NIP-51 client) appear here.
      */
-    suspend fun sync(): SyncReport = withLockBriefly {
+    /**
+     * Reconciles local online folders with what the relays publish.
+     *
+     * @param replace true  — local folders become exactly what the relays publish:
+     *                        bookmarks that are only on this device are removed.
+     *                false — merge: everything published is added, and bookmarks
+     *                        that are only on this device are kept.
+     *
+     * Replace is offered because a merge can never remove anything: a note
+     * un-bookmarked in another client would otherwise stay on this device
+     * forever. Merge is the safe default. Same split as the Blossom server list.
+     */
+    suspend fun sync(replace: Boolean = false): SyncReport = withLockBriefly {
         // A manual sync is an explicit "re-read everything" action.
         remoteCache.clear()
         val account = accounts.activeAccount.first()
@@ -148,21 +160,22 @@ class BookmarkSyncRepository @Inject constructor(
             val remote = Nip51Bookmarks.folder(event) ?: continue
             if (remote.dTag.isBlank()) continue
             val folderId = folderRowFor(remote.dTag, remote.title, event.createdAt)
-            bookmarkCount += writeBookmarks(folderId, remote.eventIds, prune = true)
+            bookmarkCount += writeBookmarks(folderId, remote.eventIds, prune = replace)
         }
 
         // 3) kind 10003 → the "Miscellaneous" bucket.
         plain.event?.let { event ->
             val remote = Nip51Bookmarks.folder(event) ?: return@let
             val folderId = miscFolderRow(event.createdAt)
-            bookmarkCount += writeBookmarks(folderId, remote.eventIds, prune = true)
+            bookmarkCount += writeBookmarks(folderId, remote.eventIds, prune = replace)
         }
 
         SyncReport(
             folders = folderCount,
             bookmarks = bookmarkCount,
             message = "Loaded $folderCount online folder${if (folderCount == 1) "" else "s"} " +
-                "and $bookmarkCount bookmark${if (bookmarkCount == 1) "" else "s"} from your relays",
+                "and $bookmarkCount bookmark${if (bookmarkCount == 1) "" else "s"} from your relays" +
+                if (replace) " (replaced local folders)" else " (merged with local folders)",
         )
     }
 

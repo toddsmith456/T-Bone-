@@ -80,9 +80,12 @@ class OfflineListRepository @Inject constructor(
      * Returns the resulting `enabled` value.
      */
     suspend fun setEnabled(type: ListType, pubkey: String, enabled: Boolean): Boolean =
-        update(type, pubkey) { cur ->
-            if (enabled && !cur.initialSyncDone) cur else cur.copy(enabled = enabled)
-        }.enabled
+        // Always honour the request. This used to refuse to switch on until
+        // initialSyncDone was true, which meant that on a fresh install the
+        // switch silently did nothing — the toggle snapped back to OFF with no
+        // explanation. An offline list is useful precisely before any sync
+        // exists, so there is no reason to gate it.
+        update(type, pubkey) { cur -> cur.copy(enabled = enabled) }.enabled
 
     // ── Manual edits ──────────────────────────────────────────────────────────
 

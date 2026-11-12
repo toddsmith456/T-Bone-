@@ -108,6 +108,10 @@ fun BookmarksScreen(
     var editingFolder by remember { mutableStateOf<BookmarkFolderUi?>(null) }
     var deletingFolder by remember { mutableStateOf<BookmarkFolderUi?>(null) }
     var quotingFolder by remember { mutableStateOf(false) }
+    // Sync offers a merge/replace choice instead of silently merging: a merge can
+    // never remove a bookmark that was un-bookmarked in another client, so replace
+    // has to be reachable. Same split as the Blossom server list.
+    var syncChoiceOpen by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -145,7 +149,7 @@ fun BookmarksScreen(
                 // Siblings, not nested: the sync button used to be an IconButton
                 // *inside* the add button, so the two icons drew on top of each
                 // other and only one was reliably tappable.
-                IconButton(onClick = { viewModel.syncOnline() }, enabled = !syncing) {
+                IconButton(onClick = { syncChoiceOpen = true }, enabled = !syncing) {
                     Icon(
                         imageVector = Icons.Outlined.CloudDownload,
                         contentDescription = "Load online bookmark folders from your relays",
@@ -287,6 +291,38 @@ fun BookmarksScreen(
                 )
             }
         }
+    }
+
+    if (syncChoiceOpen) {
+        AlertDialog(
+            onDismissRequest = { syncChoiceOpen = false },
+            containerColor = BonyColors.Surface,
+            title = { Text("Sync online bookmark folders", style = BonyType.body.copy(color = BonyColors.Text)) },
+            text = {
+                Text(
+                    "MERGE adds every folder and bookmark published on your relays and keeps the ones you have on this device.\n\n" +
+                        "REPLACE makes your online folders exactly what your relays publish — bookmarks that are only on this device are removed. Offline folders are never touched.",
+                    style = BonyType.meta.copy(color = BonyColors.TextDim),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    syncChoiceOpen = false
+                    viewModel.syncOnline(replace = false)
+                }) { Text("MERGE", style = BonyType.button.copy(color = BonyColors.Accent)) }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        syncChoiceOpen = false
+                        viewModel.syncOnline(replace = true)
+                    }) { Text("REPLACE", style = BonyType.button.copy(color = BonyColors.Danger)) }
+                    TextButton(onClick = { syncChoiceOpen = false }) {
+                        Text("CANCEL", style = BonyType.button.copy(color = BonyColors.TextMute))
+                    }
+                }
+            },
+        )
     }
 
     if (creatingFolder) {

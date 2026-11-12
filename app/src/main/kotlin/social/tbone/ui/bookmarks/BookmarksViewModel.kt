@@ -72,12 +72,17 @@ class BookmarksViewModel @Inject constructor(
         }
     }
 
-    /** Pulls every online folder (and its notes) from the relays. */
-    fun syncOnline() {
+    /**
+     * Pulls every online folder (and its notes) from the relays.
+     *
+     * @param replace true to make local folders exactly what is published,
+     *                false to merge published folders into the local ones.
+     */
+    fun syncOnline(replace: Boolean = false) {
         if (_syncing.value) return
         viewModelScope.launch {
             _syncing.value = true
-            val report = runCatching { syncRepository.sync() }
+            val report = runCatching { syncRepository.sync(replace = replace) }
             _syncing.value = false
             report.onSuccess {
                 _onlineMessage.value = it.message

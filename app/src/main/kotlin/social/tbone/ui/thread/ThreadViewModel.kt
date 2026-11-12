@@ -180,6 +180,24 @@ class ThreadViewModel @Inject constructor(
     private val eoseRelays = ConcurrentHashMap<String, MutableSet<String>>()
     private val eoseSignals = MutableSharedFlow<String>(extraBufferCapacity = 64)
 
+    /**
+     * Followed accounts, for the mute-inheritance exemption.
+     *
+     * MUST be declared before [init]: the init block starts a collector that can
+     * call [rebuild] before construction finishes (effectiveMuted is an eagerly
+     * started StateFlow), and rebuild() reads this. Declared after init the field
+     * is still null at that point and reading it threw a NullPointerException —
+     * the crash when opening a reply from the notifications tab.
+     */
+    private val followedPubkeys: kotlinx.coroutines.flow.StateFlow<Set<String>> =
+        accountRepository.activeAccount
+            .map { it?.follows?.toSet().orEmpty() }
+            .stateIn(
+                viewModelScope,
+                kotlinx.coroutines.flow.SharingStarted.Eagerly,
+                emptySet(),
+            )
+
     init {
         // Two coroutines on purpose: the message collector must be running while
         // load() is waiting for relays, otherwise the EndOfStoredEvents that
@@ -454,12 +472,6 @@ class ThreadViewModel @Inject constructor(
             merge(flowOf(Unit), eoseSignals).first { eoseCount(subId) >= expectedEose() }
         }
     }
-
-    /** Followed accounts, for the block-inheritance exemption. */
-    private val followedPubkeys: kotlinx.coroutines.flow.StateFlow<Set<String>> =
-        accountRepository.activeAccount
-            .map { it?.follows?.toSet().orEmpty() }
-            .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, emptySet())
 
     // ── Tree rebuild ──────────────────────────────────────────────────────────
 

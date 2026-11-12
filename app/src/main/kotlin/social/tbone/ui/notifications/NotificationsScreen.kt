@@ -1,5 +1,6 @@
 package social.tbone.ui.notifications
 
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import social.tbone.ui.theme.appCornerShape
 import social.tbone.ui.theme.feedShellBackground
@@ -107,6 +108,36 @@ fun NotificationsScreen(
     val hasMore by viewModel.hasMore.collectAsStateWithLifecycle()
     val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
+    val filtersMigrated by viewModel.filtersMigrated.collectAsStateWithLifecycle()
+
+    // The filter defaults changed (zaps are now on by default). Say so once,
+    // instead of leaving somebody wondering why their zap count was zero.
+    var showMigratedNotice by remember { mutableStateOf(false) }
+    LaunchedEffect(filtersMigrated) {
+        if (filtersMigrated) {
+            showMigratedNotice = true
+            viewModel.dismissFiltersMigrated()
+        }
+    }
+    if (showMigratedNotice) {
+        AlertDialog(
+            onDismissRequest = { showMigratedNotice = false },
+            containerColor = BonyColors.Surface,
+            title = { Text("Zap notifications are on", style = BonyType.body.copy(color = BonyColors.Text)) },
+            text = {
+                Text(
+                    "Your notification filters did not include zaps, so incoming zaps were being hidden. " \
+                        + "They are switched on now. You can turn any filter off in the filter settings.",
+                    style = BonyType.meta.copy(color = BonyColors.TextDim),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showMigratedNotice = false }) {
+                    Text("GOT IT", style = BonyType.button.copy(color = BonyColors.Accent))
+                }
+            },
+        )
+    }
 
     // Only one row expanded at a time.
     var expandedId by remember { mutableStateOf<String?>(null) }
