@@ -3,7 +3,6 @@ package social.tbone.home
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -12,9 +11,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -61,33 +58,36 @@ class HomeLayoutRepository @Inject constructor(
     val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
 
     init {
+        // Read ONCE, then own the value in memory.
+        //
+        // This was originally a continuous collector on `store.data`, which is
+        // the usual DataStore idiom — but it is wrong here. Nothing else writes
+        // this file, and a live collector re-emits the previous value after a
+        // write, so a fast sequence (add a slot, then reset) could resurrect the
+        // pre-reset layout in memory while the store held the new one. A single
+        // read makes the race impossible: memory is the truth after load, and
+        // the store is just where it is kept.
         scope.launch {
-            store.data
-                .catch { error ->
-                    // A corrupt or unreadable store must not take the home screen
-                    // down with it; fall back to the defaults and carry on.
-                    Timber.w(error, "home layout: store unreadable, using defaults")
-                    emit(emptyPreferences())
-                }
-                .map { prefs -> prefs[KEY] }
-                .collect { raw ->
-                    val decoded = HomeLayoutCodec.decode(raw)
-                    // null = absent, unreadable, or written by a build we cannot
-                    // parse. Keep defaults rather than blanking the screen.
-                    _layout.value = decoded ?: HomeLayout.default()
-                    _loaded.value = true
-                }
+            val stored = runCatching {
+                store.data.first()[KEY]
+            }.onFailure { Timber.w(it, "home layout: read failed, using defaults") }
+                .getOrNull()
+            _layout.value = HomeLayoutCodec.decode(stored) ?: HomeLayout.default()
+            _loaded.value = true
         }
     }
 
     // ── Reads ────────────────────────────────────────────────────────────────
 
-    /** Suspends until the stored layout has been read once. */
+    /**
+     * Suspends until the stored layout has been read once.
+     *
+     * The init read always completes, so this waits for it rather than reading
+     * the store a second time — two independent reads could disagree.
+     */
     suspend fun awaitLoaded(): HomeLayout {
-        if (_loaded.value) return _layout.value
-        return store.data.map { prefs -> prefs[KEY] }.first().let { raw ->
-            HomeLayoutCodec.decode(raw) ?: HomeLayout.default()
-        }
+        _loaded.first { it }
+        return _layout.value
     }
 
     // ── Writes ───────────────────────────────────────────────────────────────
