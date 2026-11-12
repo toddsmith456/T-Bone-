@@ -118,13 +118,17 @@ object HomeLayoutCodec {
             "type" to JsonPrimitive("global"),
             "label" to JsonPrimitive(source.label),
         )
-        is FeedSource.People -> buildJsonObjectOf(
-            "type" to JsonPrimitive("people"),
-            "name" to JsonPrimitive(source.name),
-            "pubkeys" to JsonArray(source.pubkeys.map(::JsonPrimitive)),
-            "origin" to JsonPrimitive(source.origin.name),
-            "label" to JsonPrimitive(source.label),
-        ) + (source.dTag?.let { mapOf("dTag" to JsonPrimitive(it)) } ?: emptyMap())
+        is FeedSource.People -> JsonObject(
+            buildMap {
+                put("type", JsonPrimitive("people"))
+                put("name", JsonPrimitive(source.name))
+                put("pubkeys", JsonArray(source.pubkeys.map(::JsonPrimitive)))
+                put("origin", JsonPrimitive(source.origin.name))
+                put("label", JsonPrimitive(source.label))
+                // Only written when the list came from a published set.
+                source.dTag?.let { put("dTag", JsonPrimitive(it)) }
+            },
+        )
         is FeedSource.Relay -> buildJsonObjectOf(
             "type" to JsonPrimitive("relay"),
             "urls" to JsonArray(source.urls.map(::JsonPrimitive)),
