@@ -85,7 +85,7 @@ class FeedSlotEngineTest {
     // ── Ownership ────────────────────────────────────────────────────────────
 
     @Test
-    fun `switching closes every other slot's subscriptions`() {
+    fun `switching tears down the previous slot's subscriptions`() {
         val (engine, home) = engineWith(FeedSource.Follows(), FeedSource.Clock(), FeedSource.Global())
         val a = home.slots[0]
         val b = home.slots[1]
@@ -96,40 +96,54 @@ class FeedSlotEngineTest {
         engine.activate(b.id, query())
         engine.registerSub(b.id, "sub-b")
 
-        // Two slots have live subs even though only one is active — the exact
-        // situation the engine must clean up.
-        assertTrue(engine.runtime(a.id)!!.subIds.isEmpty())
+        // Activating b already dropped a's subscription: only the active slot
+        // is allowed to keep a REQ open.
+        assertTrue("the previous slot must not keep its REQ", engine.runtime(a.id)!!.subIds.isEmpty())
 
         val change = engine.activate(c.id, query())
         assertTrue(change is SlotChange.Switch)
-        val closed = (change as SlotChange.Switch).closeSlots.map { it.slotId }
-        assertTrue(closed.contains(b.id))
+        // The ids to unsubscribe travel in `teardown`, which is what the caller
+        // hands to `unsub` — that is the contract worth pinning.
+        assertEquals(listOf("sub-b"), (change as SlotChange.Switch).teardown)
         assertTrue(engine.runtime(b.id)!!.subIds.isEmpty())
     }
 
     @Test
-    fun `a subscription id belongs to exactly one slot`() {
+    fun `a slot that lost focus has no subscriptions left`() {
         val (engine, home) = engineWith(FeedSource.Clock(hours = 1), FeedSource.Clock(hours = 24))
         val hour = home.slots[0]
         val day = home.slots[1]
+
         engine.activate(hour.id, query())
         engine.registerSub(hour.id, "clock-1h")
+        assertEquals(hour.id, engine.slotForSub("clock-1h")?.slotId)
+
         engine.activate(day.id, query())
         engine.registerSub(day.id, "clock-24h")
 
-        assertEquals(hour.id, engine.slotForSub("clock-1h")?.slotId)
         assertEquals(day.id, engine.slotForSub("clock-24h")?.slotId)
+        assertNull("the 1h slot must have been detached", engine.slotForSub("clock-1h"))
         assertNull(engine.slotForSub("nothing"))
     }
 
     @Test
-    fun `forgetting a subscription removes it from whichever slot held it`() {
-        val (engine, home) = engineWith(FeedSource.Follows())
-        val slot = home.slots[0]
-        engine.activate(slot.id, query())
-        engine.registerSub(slot.id, "sub-a")
-        engine.forgetSub("sub-a")
-        assertTrue(engine.runtime(slot.id)!!.subIds.isEmpty())
+    fun `the engine detects a subscription shared by two slots`() {
+        val (engine, home) = engineWith(FeedSource.Clock(hours = 1), FeedSource.Clock(hours = 24))
+        val hour = home.slots[0]
+        val day = home.slots[1]
+        engine.activate(hour.id, query())
+
+        // Simulate the bug the guard exists for: an id copied into a second slot
+        // by a careless refactor. It must fail loudly rather than let one feed
+        // silently starve.
+        engine.registerSub(hour.id, "shared")
+        engine.registerSub(day.id, "shared")
+
+        val error = runCatching {
+            engine.runtime(day.id)!!.assertExclusive(engine.all())
+        }.exceptionOrNull()
+        assertNotNull("a shared subscription id must be rejected", error)
+        assertTrue(error!!.message.orEmpty().contains("shares subscription ids"))
     }
 
     // ── Two slots of the same kind ───────────────────────────────────────────
