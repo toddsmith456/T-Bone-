@@ -201,6 +201,9 @@ class FeedViewModel @Inject constructor(
     private val _activeSlot = MutableStateFlow<FeedSlot?>(null)
     val activeSlot: StateFlow<FeedSlot?> = _activeSlot.asStateFlow()
 
+    /** The active slot as a plain tab, mirrored so the hot path stays synchronous. */
+    private val _currentFeed = MutableStateFlow(FeedTab.HOME)
+
     /** The stored home layout, so the UI can render the tab strip from data. */
     val homeLayout: StateFlow<HomeLayout> = homeLayouts.layout
 
@@ -213,9 +216,13 @@ class FeedViewModel @Inject constructor(
      * relay feed. Deriving it makes that impossible: one source of truth, the
      * slot, and this is a read-only view of it.
      */
-    val currentFeed: StateFlow<FeedTab> = _activeSlot
-        .map { slot -> slot?.let { legacyTabFor(it.source) } ?: FeedTab.HOME }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, FeedTab.HOME)
+    val currentFeed: StateFlow<FeedTab> = _currentFeed.asStateFlow()
+
+    /** Moves the mirror whenever the active slot changes. */
+    private fun setActiveSlot(slot: FeedSlot?) {
+        _activeSlot.value = slot
+        _currentFeed.value = slot?.let { legacyTabFor(it.source) } ?: FeedTab.HOME
+    }
 
     private val _quotedEvents = MutableStateFlow<Map<String, Event>>(emptyMap())
     val quotedEvents: StateFlow<Map<String, Event>> = _quotedEvents.asStateFlow()
@@ -532,7 +539,7 @@ class FeedViewModel @Inject constructor(
         val account = activeAccount.value ?: return
         val isSameSlot = _activeSlot.value?.id == slot.id
         if (isSameSlot) _scrollToTop.tryEmit(Unit)
-        _activeSlot.value = slot
+        setActiveSlot(slot)
         homeLayouts.rememberActiveSlot(slot.id)
 
         viewModelScope.launch {
@@ -719,12 +726,12 @@ class FeedViewModel @Inject constructor(
         val landing = layout.landingSlot ?: return
         val account = activeAccount.value
         if (account == null) {
-            _activeSlot.value = landing
+            setActiveSlot(landing)
             return
         }
         // Nothing on screen yet (first launch): load the landing slot outright.
         if (_activeSlot.value == null) {
-            _activeSlot.value = landing
+            setActiveSlot(landing)
             viewModelScope.launch {
                 val plan = planFor(landing.source, account)
                 when (val change = slotEngine.activate(landing.id, plan)) {
@@ -736,10 +743,10 @@ class FeedViewModel @Inject constructor(
             }
             return
         }
-        // Already running: keep the current slot if it survived the edit.
+        // Already running: keep the current slot if it survived the edit, and move
+        // to the landing slot if it was the one removed.
         val current = _activeSlot.value
         if (current != null && layout.slot(current.id) == null) {
-            _activeSlot.value = landing
             switchToSlot(landing)
         }
     }
@@ -1899,8 +1906,6 @@ class FeedViewModel @Inject constructor(
             // Built-in loaders: keep the shared-set behaviour they were written for.
             return false
         }
-        // A clock window is anchored in the past; nothing newer belongs in it.
-        if (active.isClock && event.createdAt >= active.anchor) return true
         if (!active.settled) {
             active.pending.add(event)
             return true
