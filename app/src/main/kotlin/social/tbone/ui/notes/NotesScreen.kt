@@ -57,6 +57,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.defaultMinSize
 
 private sealed interface FabAction {
     data object NewNote : FabAction
@@ -112,9 +113,15 @@ fun NotesScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .windowInsetsPadding(WindowInsets.safeDrawing.only(
-                WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
-            )),
+            .windowInsetsPadding(
+                WindowInsets.safeDrawing.only(
+                    WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
+                ),
+            ),
+        // Alignment belongs on the container: a child-side align() depends on
+        // the parent actually being a Box with this scope, and when that was not
+        // the case the button was laid out from the wrong origin.
+        contentAlignment = Alignment.BottomEnd,
     ) {
         NotesMainContent(
             notes = notes,
@@ -131,7 +138,7 @@ fun NotesScreen(
             onFolderLongClick = { folderTarget = it },
         )
         NotesAddButton(
-            modifier = Modifier.align(Alignment.BottomEnd),
+            modifier = Modifier,
             onClick = { fabMenu = true },
         )
     }
@@ -445,21 +452,33 @@ private fun NotesDivider() {
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 }
 
+/**
+ * The floating add button for the notes list.
+ *
+ * It used to take an `align(Alignment.BottomEnd)` from the caller and pad only
+ * `end`, which meant a single wrong measurement or a resolved-to-start alignment
+ * left the whole button hanging off the left edge of the screen. The margin is
+ * now symmetric (`horizontal`, not `end`) and the box has a floor on its size,
+ * so the button stays on screen no matter how the parent resolves its
+ * alignment — and it is a real tap target rather than a thin chip.
+ */
 @Composable
 private fun NotesAddButton(modifier: Modifier, onClick: () -> Unit) {
     Box(
         modifier = modifier
             .navigationBarsPadding()
-            // Insets are also applied by the caller's container; the extra padding
-            // here is what keeps the button visibly inside the screen edge instead
-            // of flush against it.
-            .padding(end = 16.dp, bottom = 12.dp)
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .defaultMinSize(minWidth = 44.dp, minHeight = 40.dp)
             .appBorder(1.dp, BonyColors.AccentDim)
             .background(BonyColors.Surface)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 12.dp),
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(text = "+", style = BonyType.button.copy(color = BonyColors.Accent))
+        Text(
+            text = "+",
+            style = BonyType.button.copy(color = BonyColors.Accent),
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+        )
     }
 }
 
@@ -481,7 +500,7 @@ private fun FabMenuOverlay(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .navigationBarsPadding()
-                .padding(end = 16.dp, bottom = 12.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
                 .appBorder(1.dp, BonyColors.RuleStrong)
                 .background(BonyColors.Surface)
                 .clickable(enabled = false) {}

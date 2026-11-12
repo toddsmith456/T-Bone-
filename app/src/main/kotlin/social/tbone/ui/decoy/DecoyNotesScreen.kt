@@ -54,6 +54,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.layout.defaultMinSize
 
 private sealed interface FabAction {
     data object NewNote : FabAction
@@ -102,7 +103,12 @@ fun DecoyNotesScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        // Same fix as the real notepad: alignment on the container, and the
+        // button's margin is symmetric so it cannot hang off an edge.
+        contentAlignment = Alignment.BottomEnd,
+    ) {
         NotesMainContent(
             notes = notes,
             folders = folders,
@@ -118,7 +124,7 @@ fun DecoyNotesScreen(
             onFolderLongClick = { folderTarget = it },
         )
         NotesAddButton(
-            modifier = Modifier.align(Alignment.BottomEnd),
+            modifier = Modifier,
             onClick = { fabMenu = true },
         )
     }
@@ -407,13 +413,20 @@ private fun NotesAddButton(modifier: Modifier, onClick: () -> Unit) {
     Box(
         modifier = modifier
             .navigationBarsPadding()
-            .padding(end = 16.dp, bottom = 12.dp)
+            // Symmetric margin, floor size — see NotesScreen: an `end`-only
+            // margin plus a resolved alignment left this hanging off the edge.
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .defaultMinSize(minWidth = 44.dp, minHeight = 40.dp)
             .appBorder(1.dp, BonyColors.AccentDim)
             .background(BonyColors.Surface)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 12.dp),
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(text = "+", style = BonyType.button.copy(color = BonyColors.Accent))
+        Text(
+            text = "+",
+            style = BonyType.button.copy(color = BonyColors.Accent),
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+        )
     }
 }
 
