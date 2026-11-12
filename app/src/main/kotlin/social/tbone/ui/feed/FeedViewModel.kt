@@ -75,6 +75,7 @@ import social.tbone.home.HomeLayoutRepository
 import social.tbone.home.PoolChoice
 import social.tbone.home.SlotChange
 import social.tbone.home.SlotRuntime
+import kotlinx.coroutines.flow.drop
 
 /**
  * The four feeds, in tab order.
@@ -188,7 +189,20 @@ class FeedViewModel @Inject constructor(
 
     private val globalSession = GlobalRelaySession(globalPool)
     private var feedVisible = false
-    private val _currentFeed = MutableStateFlow(FeedTab.HOME)
+    /**
+     * The slot currently on screen; null until the first layout is applied.
+     *
+     * Declared here, above everything that reads it, on purpose. Kotlin
+     * initialises properties in declaration order, so a property that derives
+     * from this one and is declared earlier would capture a null — which is
+     * exactly the initialisation-order crash this release fixed elsewhere in
+     * the app.
+     */
+    private val _activeSlot = MutableStateFlow<FeedSlot?>(null)
+    val activeSlot: StateFlow<FeedSlot?> = _activeSlot.asStateFlow()
+
+    /** The stored home layout, so the UI can render the tab strip from data. */
+    val homeLayout: StateFlow<HomeLayout> = homeLayouts.layout
 
     /**
      * The legacy tab, DERIVED from the active slot.
@@ -314,13 +328,6 @@ class FeedViewModel @Inject constructor(
      * same source type — all of that state is per slot. See [SlotRuntime].
      */
     private val slotEngine = FeedSlotEngine()
-
-    /** The slot currently on screen; null until the first layout is applied. */
-    private val _activeSlot = MutableStateFlow<FeedSlot?>(null)
-    val activeSlot: StateFlow<FeedSlot?> = _activeSlot.asStateFlow()
-
-    /** The stored home layout, so the UI can render the tab strip from data. */
-    val homeLayout: StateFlow<HomeLayout> = homeLayouts.layout
 
     private var collectJob: Job? = null
     private var feedSubId: String? = null
@@ -542,7 +549,9 @@ class FeedViewModel @Inject constructor(
                     closeSlots(slotEngine.all())
                     clearFeedForBlocked(change.reason)
                 }
-                SlotChange.None -> Unit
+                // `when` over a sealed interface must name every branch; the
+                // else keeps it compiling if a branch is added later.
+                else -> Unit
             }
         }
         // Leave the global pool connected only while a global feed is on screen;
@@ -578,6 +587,9 @@ class FeedViewModel @Inject constructor(
      * they share this path — the differences are entirely in the plan.
      */
     private fun activateGeneric(runtime: SlotRuntime, plan: FeedPlan, source: FeedSource) {
+        // Narrowed once: the callers only get here with a Query, and doing it here
+        // keeps every subsequent `plan.filters` / `plan.pool` statically typed.
+        val query = plan as? FeedPlan.Query ?: return
         resetFeedState()
         lastLoadedPubkey = null
         _uiState.update {
@@ -587,7 +599,7 @@ class FeedViewModel @Inject constructor(
         collectJob = viewModelScope.launch(Dispatchers.Default) { collectMessages() }
 
         loadJob = viewModelScope.launch {
-            val relays = when (plan.pool) {
+            val relays = when (query.pool) {
                 PoolChoice.GLOBAL -> appSettings.globalActiveRelays.value
                     .map(RelayPool::normalize).toSet()
                 PoolChoice.SPECIFIC -> (source as? FeedSource.Relay)?.urls.orEmpty()
@@ -595,10 +607,10 @@ class FeedViewModel @Inject constructor(
                 PoolChoice.PERSONAL -> emptySet()
             }
             val label = "slot-${runtime.slotId.take(4)}"
-            plan.filters.forEach { filter ->
+            query.filters.forEach { filter ->
                 // A relay feed talks only to its own relays. `subscribeTo` is the
                 // scoped form of `sub` and is what location channels already use.
-                val id = if (plan.pool == PoolChoice.SPECIFIC && relays.isNotEmpty()) {
+                val id = if (query.pool == PoolChoice.SPECIFIC && relays.isNotEmpty()) {
                     val id = UUID.randomUUID().toString().take(8)
                     activeSubIds.add(id)
                     pool.subscribeTo(listOf(filter), id = id, label = label, relays = relays)
@@ -609,7 +621,7 @@ class FeedViewModel @Inject constructor(
                 runtime.subIds.add(id)
                 slotEngine.registerSub(runtime.slotId, id)
             }
-            slotEngine.markLoaded(runtime.slotId, currentPubkeyForSlots(), plan.anchor ?: 0L)
+            slotEngine.markLoaded(runtime.slotId, currentPubkeyForSlots(), query.anchor ?: 0L)
             viewModelScope.launch {
                 delay(SETTLE_TIMEOUT_MS)
                 if (!runtime.settled) settleSlot(runtime)
