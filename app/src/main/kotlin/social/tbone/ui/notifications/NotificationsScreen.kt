@@ -126,8 +126,8 @@ fun NotificationsScreen(
             title = { Text("Zap notifications are on", style = BonyType.body.copy(color = BonyColors.Text)) },
             text = {
                 Text(
-                    "Your notification filters did not include zaps, so incoming zaps were being hidden. " \
-                        + "They are switched on now. You can turn any filter off in the filter settings.",
+                    "Your notification filters did not include zaps, so incoming zaps were being hidden. " +
+                        "They are switched on now. You can turn any filter off in the filter settings.",
                     style = BonyType.meta.copy(color = BonyColors.TextDim),
                 )
             },
