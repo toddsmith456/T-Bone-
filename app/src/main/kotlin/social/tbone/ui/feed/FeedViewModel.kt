@@ -535,7 +535,7 @@ class FeedViewModel @Inject constructor(
      * original loaders remain only for the sources they came from — anything new
      * (people, relay, hashtag, polls) goes through [activateGeneric].
      */
-    private fun switchToSlot(slot: FeedSlot) {
+    fun switchToSlot(slot: FeedSlot) {
         val account = activeAccount.value ?: return
         val isSameSlot = _activeSlot.value?.id == slot.id
         if (isSameSlot) _scrollToTop.tryEmit(Unit)
@@ -709,6 +709,11 @@ class FeedViewModel @Inject constructor(
         }
         switchToSlot(slot)
     }
+
+    /** The four sources that predate the layout, which have bespoke loaders. */
+    private fun isLegacyFeedKind(source: FeedSource): Boolean =
+        source is FeedSource.Follows || source is FeedSource.Clock ||
+            source is FeedSource.Suggested || source is FeedSource.Global
 
     /** True when two sources are the same *kind* of feed, ignoring parameters. */
     private fun sameFeedKind(a: FeedSource, b: FeedSource): Boolean =
@@ -1127,6 +1132,22 @@ class FeedViewModel @Inject constructor(
 
     fun refresh() {
         val account = activeAccount.value ?: return
+        // Custom feeds have no legacy tab, so a pull-to-refresh would otherwise
+        // fall through to the follow loader and tear down the slot's own
+        // subscriptions. Re-activate the slot instead, which is the same path a
+        // layout edit takes.
+        val slot = _activeSlot.value
+        if (slot != null && !isLegacyFeedKind(slot.source)) {
+            viewModelScope.launch {
+                when (val change = slotEngine.activate(slot.id, planFor(slot.source, account))) {
+                    is SlotChange.Switch -> loadSlot(change.load, change.plan, account)
+                    is SlotChange.Reload -> loadSlot(change.runtime, change.plan, account)
+                    is SlotChange.Blocked -> clearFeedForBlocked(change.reason)
+                    SlotChange.None -> Unit
+                }
+            }
+            return
+        }
         when (_currentFeed.value) {
             FeedTab.GLOBAL -> loadGlobalFeed(account)
             FeedTab.CLOCK -> loadClockFeed(account)

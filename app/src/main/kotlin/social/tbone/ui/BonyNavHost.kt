@@ -91,6 +91,7 @@ import social.tbone.ui.toolbox.calendar.CalendarScreen
 import social.tbone.ui.toolbox.geohash.GeohashChannelScreen
 import social.tbone.ui.toolbox.geohash.GeohashChatScreen
 import social.tbone.ui.feed.FeedScreen
+import social.tbone.ui.home.HomeFeedsScreen
 import social.tbone.ui.bookmarks.BookmarksScreen
 import social.tbone.ui.hashtag.HashtagFeedScreen
 import social.tbone.ui.onboarding.OnboardingScreen
@@ -116,6 +117,7 @@ private const val ROUTE_FEED              = "feed"
 private const val ROUTE_THREAD            = "thread/{eventId}"
 private const val ROUTE_COMPOSE           = "compose?replyToId={replyToId}&quoteToId={quoteToId}&quoteFolderId={quoteFolderId}&draft={draft}&audioPath={audioPath}"
 private const val ROUTE_SETTINGS          = "settings"
+private const val ROUTE_HOME_FEEDS        = "home_feeds"
 private const val ROUTE_CONTENT_FILTERS   = "content_filters"
 private const val ROUTE_BLOSSOM           = "blossom_settings"
 private const val ROUTE_OFFLINE_LIST      = "offline_list/{type}"
@@ -614,6 +616,10 @@ fun BonyNavHost() {
                             onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
                         )
                     }
+                    composable(ROUTE_HOME_FEEDS) {
+                        HomeFeedsScreen(onBack = { navController.popBackStack() })
+                    }
+
                     composable(ROUTE_SETTINGS) {
                         SettingsScreen(
                             onBack = { navController.popBackStack() },
@@ -625,6 +631,7 @@ fun BonyNavHost() {
                             onFollowLists = { navController.navigate(ROUTE_FOLLOW_LISTS) },
                             onProfileEdit = { navController.navigate(ROUTE_PROFILE_EDIT) },
                             onContentFilters = { navController.navigate(ROUTE_CONTENT_FILTERS) },
+                            onHomeFeeds = { navController.navigate(ROUTE_HOME_FEEDS) },
                             onPinSetup = { navController.navigate("pin_setup?duress=false") },
                             onDuressPinSetup = { navController.navigate("pin_setup?duress=true") },
                         )

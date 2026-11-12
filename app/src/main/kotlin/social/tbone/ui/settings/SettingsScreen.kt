@@ -83,6 +83,7 @@ fun SettingsScreen(
     onAccountManagement: () -> Unit,
     onRelayManagement: () -> Unit,
     onContentFilters: () -> Unit = {},
+    onHomeFeeds: () -> Unit = {},
     onPinSetup: () -> Unit = {},
     onDuressPinSetup: () -> Unit = {},
     onBlossom: () -> Unit = {},
@@ -163,6 +164,11 @@ fun SettingsScreen(
         SettingsContentFiltersSection(
             onContentFilters, compact = declutterMode, expanded = sectionExpanded("content"),
             onToggle = { toggleSection("content") },
+        )
+        SettingsHomeFeedsLink(
+            onHomeFeeds = onHomeFeeds,
+            compact = declutterMode, expanded = sectionExpanded("home_feeds"),
+            onToggle = { toggleSection("home_feeds") },
         )
         SettingsNoteActionsSection(
             noteMenuModerationEnabled, clientTagEnabled, viewModel,
@@ -437,6 +443,31 @@ private fun SettingsContentFiltersSection(onContentFilters: () -> Unit, compact:
             Text("content filters", style = BonyType.body.copy(color = BonyColors.TextDim))
             Text(
                 text = "filters · parental controls · screen time",
+                style = BonyType.meta.copy(color = BonyColors.TextMute),
+            )
+        }
+        Text("→", style = BonyType.body.copy(color = BonyColors.TextMute))
+    }
+    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+}
+
+/** Entry point to the home-feed layout editor. */
+@Composable
+private fun SettingsHomeFeedsLink(onHomeFeeds: () -> Unit, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
+    SettingsCategoryHeader("HOME FEEDS", compact, expanded, onToggle)
+    if (compact && !expanded) return
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onHomeFeeds() }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("home feeds", style = BonyType.body.copy(color = BonyColors.TextDim))
+            Text(
+                text = "swap, reorder or hide the tabs on the home screen",
                 style = BonyType.meta.copy(color = BonyColors.TextMute),
             )
         }

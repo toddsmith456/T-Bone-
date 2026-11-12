@@ -82,7 +82,7 @@ object FeedTabIcons {
         close()
         // hands: 12 → 12 o'clock, 12 → 4 o'clock
         moveTo(12.0f, 7.1f)
-        verticalLineTo(12.0f)
+        lineTo(12.0f, 12.0f)
         lineTo(15.4f, 14.0f)
     }
 
@@ -186,7 +186,7 @@ object FeedTabIcons {
         ) {
             moveTo(7.18f, 5.22f)
             curveTo(7.18f, 5.02f, 7.34f, 4.95f, 7.55f, 4.95f)
-            horizontalLineTo(16.45f)
+            lineTo(16.45f, 4.95f)
             curveTo(16.66f, 4.95f, 16.82f, 5.02f, 16.82f, 5.22f)
         }
         // root canal, hanging from the bar
@@ -221,14 +221,105 @@ object FeedTabIcons {
         close()
         // equator
         moveTo(3.4f, 12.0f)
-        horizontalLineTo(20.6f)
+        lineTo(20.6f, 12.0f)
     }
 
-    /** The glyph shown for a feed tab. */
+    /** The glyph shown for a built-in feed tab. */
     fun forTab(tab: FeedTab): ImageVector = when (tab) {
         FeedTab.HOME -> following
         FeedTab.CLOCK -> clock
         FeedTab.SUGGESTED -> tbone
         FeedTab.GLOBAL -> global
+    }
+
+    /**
+     * The glyph for any feed source, built-in or user-made.
+     *
+     * One glyph per source *kind* rather than per feed: two clock feeds at 1h and
+     * 24h share the clock glyph and are told apart by their labels. The app has
+     * no natural glyph for "a group I invented", so `people` is a cluster and
+     * `unsupported` is a question mark — both drawn in the same 1.7-unit stroke
+     * so a user-made tab never looks pasted in from another app.
+     */
+    fun forSource(source: social.tbone.home.FeedSource): ImageVector = when (source) {
+        is social.tbone.home.FeedSource.Follows -> following
+        is social.tbone.home.FeedSource.Clock -> clock
+        is social.tbone.home.FeedSource.Suggested -> tbone
+        is social.tbone.home.FeedSource.Global -> global
+        is social.tbone.home.FeedSource.People -> people
+        is social.tbone.home.FeedSource.Relay -> relayTower
+        is social.tbone.home.FeedSource.Hashtag -> tag
+        is social.tbone.home.FeedSource.Polls -> poll
+        is social.tbone.home.FeedSource.Unsupported -> unknown
+    }
+
+    /** people — two heads and a shared shoulder line: a group, not a person. */
+    val people: ImageVector = icon("feed_people") {
+        moveTo(9.0f, 10.4f)
+        curveTo(10.9f, 10.4f, 12.4f, 8.9f, 12.4f, 7.0f)
+        curveTo(12.4f, 5.1f, 10.9f, 3.6f, 9.0f, 3.6f)
+        curveTo(7.1f, 3.6f, 5.6f, 5.1f, 5.6f, 7.0f)
+        curveTo(5.6f, 8.9f, 7.1f, 10.4f, 9.0f, 10.4f)
+        close()
+        // second, smaller head behind
+        moveTo(16.2f, 10.0f)
+        curveTo(17.6f, 10.0f, 18.7f, 8.9f, 18.7f, 7.5f)
+        curveTo(18.7f, 6.1f, 17.6f, 5.0f, 16.2f, 5.0f)
+        // shared shoulders
+        moveTo(3.8f, 19.6f)
+        curveTo(3.8f, 15.9f, 6.2f, 13.4f, 9.0f, 13.4f)
+        curveTo(11.8f, 13.4f, 14.2f, 15.9f, 14.2f, 19.6f)
+        moveTo(15.4f, 13.8f)
+        curveTo(18.1f, 13.8f, 20.2f, 16.1f, 20.2f, 19.6f)
+    }
+
+    /** relay — a mast with two waves: one relay talking, nothing else. */
+    val relayTower: ImageVector = icon("feed_relay") {
+        moveTo(12.0f, 20.4f)
+        lineTo(12.0f, 9.6f)
+        moveTo(8.6f, 20.4f)
+        lineTo(15.4f, 20.4f)
+        // broadcast arcs, left and right
+        moveTo(9.2f, 8.4f)
+        curveTo(7.6f, 6.9f, 7.6f, 4.6f, 9.2f, 3.1f)
+        moveTo(14.8f, 8.4f)
+        curveTo(16.4f, 6.9f, 16.4f, 4.6f, 14.8f, 3.1f)
+        moveTo(12.0f, 6.6f)
+        curveTo(11.2f, 5.9f, 11.2f, 4.7f, 12.0f, 4.0f)
+    }
+
+    /** hashtag for a tag feed. */
+    val tag: ImageVector = icon("feed_tag") {
+        moveTo(9.4f, 4.0f)
+        lineTo(7.6f, 20.0f)
+        moveTo(16.4f, 4.0f)
+        lineTo(14.6f, 20.0f)
+        moveTo(4.6f, 9.2f)
+        lineTo(19.4f, 9.2f)
+        moveTo(3.8f, 14.8f)
+        lineTo(18.6f, 14.8f)
+    }
+
+    /** poll — a bar chart, which is also how a poll result reads. */
+    val poll: ImageVector = icon("feed_poll") {
+        moveTo(4.4f, 20.0f)
+        lineTo(19.6f, 20.0f)
+        // three columns of different heights
+        moveTo(7.4f, 20.0f)
+        lineTo(7.4f, 13.6f)
+        moveTo(12.0f, 20.0f)
+        lineTo(12.0f, 7.6f)
+        moveTo(16.6f, 20.0f)
+        lineTo(16.6f, 10.8f)
+    }
+
+    /** unknown — a feed type from a newer build. */
+    val unknown: ImageVector = icon("feed_unknown") {
+        moveTo(9.2f, 8.6f)
+        curveTo(9.2f, 6.9f, 10.5f, 5.6f, 12.2f, 5.6f)
+        curveTo(13.9f, 5.6f, 15.2f, 6.9f, 15.2f, 8.5f)
+        curveTo(15.2f, 10.6f, 12.2f, 10.9f, 12.2f, 13.2f)
+        moveTo(12.2f, 17.2f)
+        lineTo(12.21f, 17.2f)
     }
 }

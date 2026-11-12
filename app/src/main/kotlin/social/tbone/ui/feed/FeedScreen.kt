@@ -86,6 +86,9 @@ import social.tbone.ui.theme.BonyType
 import dev.youniversal.theme.YouniversalEmptyState
 import social.tbone.ui.theme.appCornerShape
 import social.tbone.ui.theme.feedPageBackground
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.foundation.rememberScrollState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -107,6 +110,8 @@ fun FeedScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val pendingEventScroll by viewModel.pendingEventScroll.collectAsStateWithLifecycle()
     val currentFeed by viewModel.currentFeed.collectAsStateWithLifecycle()
+    val homeLayout by viewModel.homeLayout.collectAsStateWithLifecycle()
+    val activeSlot by viewModel.activeSlot.collectAsStateWithLifecycle()
     val activeAccount by viewModel.activeAccount.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
@@ -209,9 +214,12 @@ fun FeedScreen(
         )
 
         // ── Feed tab strip ───────────────────────────────────────────────────
+        // Rendered from the stored layout rather than from the FeedTab enum, so a
+        // swapped, reordered or hidden feed shows up here with no other change.
         FeedTabStrip(
-            currentFeed = currentFeed,
-            onSwitch = viewModel::switchFeed,
+            slots = homeLayout.visibleSlots,
+            activeSlotId = activeSlot?.id,
+            onSelect = viewModel::switchToSlot,
             compact = uiDeclutter,
         )
 
@@ -743,88 +751,81 @@ private fun TorPill(torEnabled: Boolean, connected: Boolean, onClick: () -> Unit
 
 @Composable
 private fun FeedTabStrip(
-    currentFeed: FeedTab,
-    onSwitch: (FeedTab) -> Unit,
+    slots: List<social.tbone.home.FeedSlot>,
+    activeSlotId: String?,
+    onSelect: (social.tbone.home.FeedSlot) -> Unit,
     compact: Boolean,
 ) {
     val youniversal = YouniversalTheme.enabled
     val effectiveFontScale = LocalDensity.current.fontScale.coerceAtLeast(0.1f)
     // Youniversal composes its text scale with Android's system scale. Cap the
     // rendered tab-label size so large accessibility/theme scales cannot force a
-    // quarter-width tab outside the screen.
-    // Four tabs on one row leaves ~90 dp per tab even on a small phone, so the
-    // label has a hard ceiling: 9 dp normally, and never more than 12 dp when
-    // Youniversal composes its scale on top of the system one. Dividing by the
-    // effective scale keeps the *rendered* size fixed instead of letting a 2x
-    // accessibility setting push "SUGGESTED" out of its slot.
+    // tab outside its slot.
     val labelDp = if (youniversal) (9f * effectiveFontScale).coerceAtMost(12f) else 9f
     val tabLabelSize = (labelDp / effectiveFontScale).sp
     val tabLetterSpacing = (0.2f / effectiveFontScale).sp
+
+    /**
+     * Adaptive strip (decision 2B).
+     *
+     * Up to four tabs keep the equal-width row this screen has always had, so an
+     * untouched install looks pixel-identical to the build before this change.
+     * Beyond four — or when the labels genuinely cannot fit — it becomes a
+     * horizontal scroller. Measuring the labels rather than the count matters:
+     * four long custom names overflow even at four tabs, and four short built-ins
+     * fit at five.
+     */
+    val availableWidth = LocalConfiguration.current.screenWidthDp - 16 // outer padding
+    val perTabBudget = 96
+    val estimateWidth = slots.size * perTabBudget
+    val useScroller = slots.size > 4 || estimateWidth > availableWidth
+
+    val scrollState = rememberScrollState()
+    val density = LocalDensity.current
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                // Inset so the active tab's rounded border is not clipped by the
-                // screen edge and is not overdrawn by the hairline below.
                 .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)
-                .background(BonyColors.Surface),
+                .background(BonyColors.Surface)
+                .then(if (useScroller) Modifier.horizontalScroll(scrollState) else Modifier),
         ) {
-            FeedTab.values().forEach { tab ->
-                val active = currentFeed == tab
-                val tabShape = appCornerShape(MaterialTheme.shapes.small, RectangleShape)
-                // Tint animates so switching feels like the same control moving,
-                // not four unrelated buttons lighting up.
-                val tint by animateColorAsState(
-                    targetValue = if (active) BonyColors.Accent else BonyColors.TextMute,
-                    animationSpec = tween(160),
-                    label = "feedTabTint",
+            if (slots.isEmpty()) {
+                // Only possible if a stored layout failed to parse and was
+                // replaced by defaults; the repository guarantees this cannot
+                // happen, and this keeps the strip from collapsing to nothing.
+                Text(
+                    text = "no feeds",
+                    style = BonyType.tag.copy(color = BonyColors.TextMute),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                 )
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(tabShape)
-                        .clickable { onSwitch(tab) }
-                        .background(BonyColors.Surface, tabShape)
-                        .then(
-                            if (active) Modifier.border(
-                                width = 1.dp, color = BonyColors.Accent, shape = tabShape,
-                            ) else Modifier
-                        )
-                        .heightIn(min = if (compact) 36.dp else 50.dp)
-                        .padding(horizontal = 2.dp, vertical = if (compact) 4.dp else 7.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    Icon(
-                        imageVector = FeedTabIcons.forTab(tab),
-                        // The label below is the accessible name; announcing both
-                        // would read each tab twice.
-                        contentDescription = if (compact) tab.label else null,
-                        tint = tint,
-                        modifier = Modifier.size(17.dp),
-                    )
-                    if (!compact) {
-                        Spacer(Modifier.height(3.dp))
-                        Text(
-                            text = tab.label,
-                            style = BonyType.tag.copy(
-                                fontSize = tabLabelSize,
-                                letterSpacing = tabLetterSpacing,
-                                color = tint,
-                            ),
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Clip,
-                        )
-                    }
+            }
+            slots.forEach { slot ->
+                FeedTabItem(
+                    slot = slot,
+                    active = slot.id == activeSlotId,
+                    compact = compact,
+                    labelSize = tabLabelSize,
+                    letterSpacing = tabLetterSpacing,
+                    // Equal columns only while everything fits; in the scroller
+                    // each tab takes the width its label needs.
+                    modifier = if (useScroller) Modifier else Modifier.weight(1f),
+                ) { onSelect(slot) }
+            }
+        }
+        // Auto-scroll so the active tab is never off-screen in the scroller case.
+        LaunchedEffect(activeSlotId, useScroller) {
+            if (useScroller && activeSlotId != null) {
+                val index = slots.indexOfFirst { it.id == activeSlotId }
+                if (index >= 0) {
+                    val tabPx = with(density) { (perTabBudget.dp).toPx() }
+                    scrollState.animateScrollTo((index * tabPx).toInt())
                 }
             }
         }
-        // Full-width bottom hairline, now below the outer padding instead of
-        // overlapping the active tab's border.
+        // Full-width bottom hairline, below the outer padding so it cannot
+        // overlap the active tab's border.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -834,14 +835,64 @@ private fun FeedTabStrip(
     }
 }
 
-/** Short label under each tab icon. */
-private val FeedTab.label: String
-    get() = when (this) {
-        FeedTab.HOME -> "FOLLOWS"
-        FeedTab.CLOCK -> "CLOCK"
-        FeedTab.SUGGESTED -> "SUGGESTED"
-        FeedTab.GLOBAL -> "GLOBAL"
+/** One tab: glyph, optional label, and the active border. */
+@Composable
+private fun FeedTabItem(
+    slot: social.tbone.home.FeedSlot,
+    active: Boolean,
+    compact: Boolean,
+    labelSize: androidx.compose.ui.unit.TextUnit,
+    letterSpacing: androidx.compose.ui.unit.TextUnit,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val tabShape = appCornerShape(MaterialTheme.shapes.small, RectangleShape)
+    // Tint animates so switching feels like the same control moving, not
+    // unrelated buttons lighting up.
+    val tint by animateColorAsState(
+        targetValue = if (active) BonyColors.Accent else BonyColors.TextMute,
+        animationSpec = tween(160),
+        label = "feedTabTint",
+    )
+    Column(
+        modifier = modifier
+            .clip(tabShape)
+            .clickable(onClick = onClick)
+            .background(BonyColors.Surface, tabShape)
+            .then(
+                if (active) Modifier.border(width = 1.dp, color = BonyColors.Accent, shape = tabShape)
+                else Modifier,
+            )
+            .heightIn(min = if (compact) 36.dp else 50.dp)
+            .padding(horizontal = if (compact) 8.dp else 2.dp, vertical = if (compact) 4.dp else 7.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            imageVector = FeedTabIcons.forSource(slot.source),
+            // The label is the accessible name; announcing both reads it twice.
+            contentDescription = if (compact) slot.source.label else null,
+            tint = tint,
+            modifier = Modifier.size(17.dp),
+        )
+        if (!compact) {
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = slot.source.label,
+                style = BonyType.tag.copy(
+                    fontSize = labelSize,
+                    letterSpacing = letterSpacing,
+                    color = tint,
+                ),
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Clip,
+            )
+        }
     }
+}
 
 // ── Clock feed: hour selector ────────────────────────────────────────────────
 
