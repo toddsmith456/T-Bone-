@@ -6,6 +6,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
+import social.tbone.nostr.isReply
 
 /**
  * Profile feed shape: NOTES is top-level only, ALL includes replies, and pinned
@@ -44,7 +45,7 @@ class ProfileFeedShapeTest {
     )
 
     /** Mirrors ProfileViewModel.isReply — the split must stay identical. */
-    private fun isReply(event: Event): Boolean =
+    private fun isReplyNote(event: Event): Boolean =
         event.kind == EventKind.COMMENT ||
             (event.kind == EventKind.TEXT_NOTE && event.parsedTags.isReply)
 
@@ -58,9 +59,9 @@ class ProfileFeedShapeTest {
         )
         assertEquals(
             listOf("a", "d"),
-            feed.filterNot { isReply(it) }.map { it.id },
+            feed.filterNot { isReplyNote(it) }.map { it.id },
         )
-        assertEquals(listOf("b", "c"), feed.filter { isReply(it) }.map { it.id })
+        assertEquals(listOf("b", "c"), feed.filter { isReplyNote(it) }.map { it.id })
     }
 
     @Test
