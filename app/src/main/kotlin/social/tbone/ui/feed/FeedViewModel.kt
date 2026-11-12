@@ -65,6 +65,16 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.UUID
 import javax.inject.Inject
+import social.tbone.home.FeedPlan
+import social.tbone.home.FeedPlanner
+import social.tbone.home.FeedSlot
+import social.tbone.home.FeedSlotEngine
+import social.tbone.home.FeedSource
+import social.tbone.home.HomeLayout
+import social.tbone.home.HomeLayoutRepository
+import social.tbone.home.PoolChoice
+import social.tbone.home.SlotChange
+import social.tbone.home.SlotRuntime
 
 /**
  * The four feeds, in tab order.
@@ -150,6 +160,8 @@ class FeedViewModel @Inject constructor(
     private val eventOpenCoordinator: EventOpenCoordinator,
     private val updateManager: UpdateManager,
     private val suggestedFollows: SuggestedFollows,
+    private val homeLayouts: HomeLayoutRepository,
+    private val feedPlanner: FeedPlanner,
 ) : ViewModel() {
 
     // The suggested feed's roster is known at construction, so the header can
@@ -177,7 +189,19 @@ class FeedViewModel @Inject constructor(
     private val globalSession = GlobalRelaySession(globalPool)
     private var feedVisible = false
     private val _currentFeed = MutableStateFlow(FeedTab.HOME)
-    val currentFeed: StateFlow<FeedTab> = _currentFeed.asStateFlow()
+
+    /**
+     * The legacy tab, DERIVED from the active slot.
+     *
+     * Nine places in this class ask "am I the global feed?" and several loaders
+     * still branch on it. Keeping the two in sync by assigning a flow would let
+     * them disagree — and the disagreement is silent, showing global paging on a
+     * relay feed. Deriving it makes that impossible: one source of truth, the
+     * slot, and this is a read-only view of it.
+     */
+    val currentFeed: StateFlow<FeedTab> = _activeSlot
+        .map { slot -> slot?.let { legacyTabFor(it.source) } ?: FeedTab.HOME }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, FeedTab.HOME)
 
     private val _quotedEvents = MutableStateFlow<Map<String, Event>>(emptyMap())
     val quotedEvents: StateFlow<Map<String, Event>> = _quotedEvents.asStateFlow()
@@ -251,7 +275,9 @@ class FeedViewModel @Inject constructor(
         viewModelScope.launch {
             appSettings.setClockFeedHours(safe)
             val account = activeAccount.value ?: return@launch
-            if (_currentFeed.value == FeedTab.CLOCK) reanchorClockFeed(account, safe)
+            // Re-anchor when a clock feed is what is actually on screen — which is
+            // now a question about the active slot, not about the legacy tab.
+            if (_activeSlot.value?.source is FeedSource.Clock) reanchorClockFeed(account, safe)
         }
     }
 
@@ -278,6 +304,23 @@ class FeedViewModel @Inject constructor(
 
     // One-shot subscriptions for fetching author metadata — closed on EOSE
     private val metadataFetchSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /**
+     * Per-slot feed state.
+     *
+     * The four original loaders owned their fields directly on this class, which
+     * only worked because a tab and its loader were the same thing. Now that a
+     * slot's contents come from the stored layout — and two slots may be the
+     * same source type — all of that state is per slot. See [SlotRuntime].
+     */
+    private val slotEngine = FeedSlotEngine()
+
+    /** The slot currently on screen; null until the first layout is applied. */
+    private val _activeSlot = MutableStateFlow<FeedSlot?>(null)
+    val activeSlot: StateFlow<FeedSlot?> = _activeSlot.asStateFlow()
+
+    /** The stored home layout, so the UI can render the tab strip from data. */
+    val homeLayout: StateFlow<HomeLayout> = homeLayouts.layout
 
     private var collectJob: Job? = null
     private var feedSubId: String? = null
@@ -342,6 +385,20 @@ class FeedViewModel @Inject constructor(
     private val pendingBuffer = ConcurrentLinkedQueue<Event>()
 
     init {
+        // The stored layout decides which feeds exist and which one the app opens
+        // on. Applying it here (rather than on first tab tap) is what makes an
+        // existing install behave identically: the default layout is exactly the
+        // four tabs this screen has always had.
+        viewModelScope.launch {
+            homeLayouts.loaded.first { it }
+            applyLayout(homeLayouts.layout.value)
+        }
+        viewModelScope.launch {
+            // Layout edits take effect without a restart (rename, hide, reorder).
+            homeLayouts.layout
+                .drop(1)
+                .collect { layout -> applyLayout(layout) }
+        }
         viewModelScope.launch {
             eventOpenCoordinator.events.collect { event -> openEventInMainFeed(event) }
         }
@@ -353,12 +410,14 @@ class FeedViewModel @Inject constructor(
             accountRepository.activeAccount
                 .distinctUntilChanged { old, new -> old?.pubkey == new?.pubkey }
                 .collect { account ->
+                    // Every slot's cached contents came from the previous account,
+                    // so all of them are dropped — a hidden slot must not reappear
+                    // with someone else's people when it is next tapped.
+                    closeSlots(slotEngine.all())
+                    slotEngine.resetForAccountSwitch()
                     when {
                         account == null -> clearFeed()
-                        _currentFeed.value == FeedTab.GLOBAL -> loadGlobalFeed(account)
-                        _currentFeed.value == FeedTab.CLOCK -> loadClockFeed(account)
-                        _currentFeed.value == FeedTab.SUGGESTED -> loadSuggestedFeed(account)
-                        else -> loadFeed(account)
+                        else -> _activeSlot.value?.let { switchToSlot(it) }
                     }
                 }
         }
@@ -428,20 +487,257 @@ class FeedViewModel @Inject constructor(
         super.onCleared()
     }
 
+    // ── Slot-driven feeds ─────────────────────────────────────────────────────
+
+    /** Maps a legacy tab onto the feed type it stands for. */
+    private fun legacySource(tab: FeedTab): FeedSource = when (tab) {
+        FeedTab.HOME -> FeedSource.Follows()
+        FeedTab.CLOCK -> FeedSource.Clock(hours = appSettings.clockFeedHours.value)
+        FeedTab.SUGGESTED -> FeedSource.Suggested()
+        FeedTab.GLOBAL -> FeedSource.Global()
+    }
+
+    /**
+     * Asks the planner for the exchange this slot needs right now.
+     *
+     * Everything the planner needs is gathered here, at the boundary: the follow
+     * set, the clock window, and the enabled global relays. The clock hours and
+     * the global relay set are read at call time rather than captured, so moving
+     * the hour strip or editing global relays is picked up by the next plan.
+     */
+    private suspend fun planFor(source: FeedSource, account: Account): FeedPlan =
+        feedPlanner.plan(
+            source = source,
+            account = account,
+            now = nowSeconds(),
+            globalRelays = appSettings.globalActiveRelays.value,
+        )
+
+    /**
+     * Switches to the slot the user tapped.
+     *
+     * This replaces the old `when (tab) { … }`, which hard-coded which loader ran
+     * for which tab. Now the slot's *stored source* decides, and the four
+     * original loaders remain only for the sources they came from — anything new
+     * (people, relay, hashtag, polls) goes through [activateGeneric].
+     */
+    private fun switchToSlot(slot: FeedSlot) {
+        val account = activeAccount.value ?: return
+        val isSameSlot = _activeSlot.value?.id == slot.id
+        if (isSameSlot) _scrollToTop.tryEmit(Unit)
+        _activeSlot.value = slot
+        homeLayouts.rememberActiveSlot(slot.id)
+
+        viewModelScope.launch {
+            val plan = planFor(slot.source, account)
+            val change = slotEngine.activate(slot.id, plan)
+            when (change) {
+                is SlotChange.Switch -> {
+                    closeSlots(change.closeSlots)
+                    change.teardown.forEach { unsub(it) }
+                    loadSlot(change.load, change.plan, account)
+                }
+                is SlotChange.Reload -> loadSlot(change.runtime, change.plan, account)
+                is SlotChange.Blocked -> {
+                    closeSlots(slotEngine.all())
+                    clearFeedForBlocked(change.reason)
+                }
+                SlotChange.None -> Unit
+            }
+        }
+        // Leave the global pool connected only while a global feed is on screen;
+        // any other slot tears it down, exactly as the old tab switch did.
+        if (slot.source !is FeedSource.Global) globalSession.reconcile(false, emptySet())
+    }
+
+    /** Closes the subscriptions of slots that are no longer active. */
+    private fun closeSlots(slots: List<SlotRuntime>) {
+        slots.forEach { runtime ->
+            runtime.subIds.toList().forEach { unsub(it) }
+            runtime.subIds.clear()
+        }
+    }
+
+    /** Loads a slot according to its plan, dispatching on the source kind. */
+    private fun loadSlot(runtime: SlotRuntime, plan: FeedPlan, account: Account) {
+        if (plan !is FeedPlan.Query) return
+        when (val source = runtime.source) {
+            is FeedSource.Follows -> loadFeed(account)
+            is FeedSource.Clock -> loadClockFeed(account)
+            is FeedSource.Suggested -> loadSuggestedFeed(account)
+            is FeedSource.Global -> loadGlobalFeed(account)
+            else -> activateGeneric(runtime, plan, source)
+        }
+    }
+
+    /**
+     * Loads a feed type that has no bespoke loader: one REQ per planned filter,
+     * merged into the slot's own event set.
+     *
+     * People, relay, hashtag and poll feeds all behave the same way, which is why
+     * they share this path — the differences are entirely in the plan.
+     */
+    private fun activateGeneric(runtime: SlotRuntime, plan: FeedPlan, source: FeedSource) {
+        resetFeedState()
+        lastLoadedPubkey = null
+        _uiState.update {
+            it.copy(events = emptyList(), isLoading = true, error = null, clockAnchor = 0L)
+        }
+
+        collectJob = viewModelScope.launch(Dispatchers.Default) { collectMessages() }
+
+        loadJob = viewModelScope.launch {
+            val relays = when (plan.pool) {
+                PoolChoice.GLOBAL -> appSettings.globalActiveRelays.value
+                    .map(RelayPool::normalize).toSet()
+                PoolChoice.SPECIFIC -> (source as? FeedSource.Relay)?.urls.orEmpty()
+                    .map(RelayPool::normalize).toSet()
+                PoolChoice.PERSONAL -> emptySet()
+            }
+            val label = "slot-${runtime.slotId.take(4)}"
+            plan.filters.forEach { filter ->
+                // A relay feed talks only to its own relays. `subscribeTo` is the
+                // scoped form of `sub` and is what location channels already use.
+                val id = if (plan.pool == PoolChoice.SPECIFIC && relays.isNotEmpty()) {
+                    val id = UUID.randomUUID().toString().take(8)
+                    activeSubIds.add(id)
+                    pool.subscribeTo(listOf(filter), id = id, label = label, relays = relays)
+                    id
+                } else {
+                    sub(listOf(filter), label = label)
+                }
+                runtime.subIds.add(id)
+                slotEngine.registerSub(runtime.slotId, id)
+            }
+            slotEngine.markLoaded(runtime.slotId, currentPubkeyForSlots(), plan.anchor ?: 0L)
+            viewModelScope.launch {
+                delay(SETTLE_TIMEOUT_MS)
+                if (!runtime.settled) settleSlot(runtime)
+            }
+        }
+    }
+
+    private fun currentPubkeyForSlots(): String = activeAccount.value?.pubkey.orEmpty()
+
+    /** Settles a slot: reveals what it buffered and stops the spinner. */
+    private fun settleSlot(runtime: SlotRuntime) {
+        slotEngine.markSettled(runtime.slotId)
+        publishSlot(runtime)
+        _uiState.update { it.copy(isLoading = false, error = null) }
+    }
+
+    /**
+     * Puts a slot's events on screen, through the shared content filter.
+     *
+     * Every path ends up here — generic slot loads and the four original loaders
+     * alike — so no feed type can bypass mutes, NSFW rules or hidden words.
+     */
+    private fun publishSlot(runtime: SlotRuntime) {
+        val snapshot = runtime.snapshot(feedEventLimit())
+        _uiState.update { state ->
+            state.withContentFilter(applyContentFilter(snapshot))
+        }
+    }
+
+    /** Shows a slot's message instead of a spinner that never resolves. */
+    private fun clearFeedForBlocked(reason: String) {
+        loadJob?.cancel()
+        collectJob?.cancel()
+        refreshBlockedSlots()
+        _uiState.update {
+            it.copy(events = emptyList(), isLoading = false, error = reason)
+        }
+    }
+
+    /**
+     * Re-reads every slot whose source can only be planned, and keeps the active
+     * one's error current. Used when a layout edit introduces an invalid feed.
+     */
+    private fun refreshBlockedSlots() {
+        val account = activeAccount.value ?: return
+        viewModelScope.launch {
+            slotEngine.all().forEach { runtime ->
+                val plan = planFor(runtime.source, account)
+                if (plan is FeedPlan.Blocked && runtime.slotId == slotEngine.activeSlotId) {
+                    _uiState.update { it.copy(isLoading = false, error = plan.reason) }
+                }
+            }
+        }
+    }
+
+    /**
+     * Legacy entry point: the screen still names a tab, and this maps it onto a
+     * slot before switching.
+     *
+     * The mapping is by source type rather than by position, so a layout whose
+     * clock feed sits first still treats the CLOCK tab as the clock feed. Once
+     * the strip renders slots directly, the screen calls [switchToSlot] and this
+     * disappears.
+     */
     fun switchFeed(tab: FeedTab) {
-        if (_currentFeed.value == tab) {
+        val wanted = legacySource(tab)
+        val layout = homeLayouts.layout.value
+        val slot = layout.slots.firstOrNull { sameFeedKind(it.source, wanted) }
+        if (slot == null) {
+            // The user hid or removed this feed. Nothing to select — but the tap
+            // must not do nothing silently, so it is treated as a no-op switch.
             _scrollToTop.tryEmit(Unit)
             return
         }
-        _currentFeed.update { tab }
-        if (tab != FeedTab.GLOBAL) globalSession.reconcile(false, emptySet())
-        val account = activeAccount.value ?: return
-        when (tab) {
-            FeedTab.HOME -> loadFeed(account)
-            FeedTab.CLOCK -> loadClockFeed(account)
-            FeedTab.SUGGESTED -> loadSuggestedFeed(account)
-            FeedTab.GLOBAL -> loadGlobalFeed(account)
+        if (_activeSlot.value?.id == slot.id) {
+            _scrollToTop.tryEmit(Unit)
+            return
         }
+        switchToSlot(slot)
+    }
+
+    /** True when two sources are the same *kind* of feed, ignoring parameters. */
+    private fun sameFeedKind(a: FeedSource, b: FeedSource): Boolean =
+        a::class == b::class
+
+    /**
+     * Applies the stored layout: syncs the slot runtimes and opens the slot the
+     * app should land on.
+     *
+     * Called once when the layout first loads, and again whenever it is edited,
+     * so a change made in the editor takes effect without a restart.
+     */
+    private fun applyLayout(layout: HomeLayout) {
+        slotEngine.sync(layout)
+        val landing = layout.landingSlot ?: return
+        val account = activeAccount.value
+        if (account == null) {
+            _activeSlot.value = landing
+            return
+        }
+        // Nothing on screen yet (first launch): load the landing slot outright.
+        if (_activeSlot.value == null) {
+            _activeSlot.value = landing
+            viewModelScope.launch {
+                val plan = planFor(landing.source, account)
+                when (val change = slotEngine.activate(landing.id, plan)) {
+                    is SlotChange.Switch -> loadSlot(change.load, change.plan, account)
+                    is SlotChange.Reload -> loadSlot(change.runtime, change.plan, account)
+                    is SlotChange.Blocked -> clearFeedForBlocked(change.reason)
+                    SlotChange.None -> Unit
+                }
+            }
+            return
+        }
+        // Already running: keep the current slot if it survived the edit.
+        val current = _activeSlot.value
+        if (current != null && layout.slot(current.id) == null) {
+            _activeSlot.value = landing
+            switchToSlot(landing)
+        }
+    }
+
+    /** The legacy tab a source stands for, so existing UI checks keep working. */
+    private fun legacyTabFor(source: FeedSource): FeedTab = when (source) {
+        is FeedSource.Clock -> FeedTab.CLOCK
+        is FeedSource.Suggested -> FeedTab.SUGGESTED
+        is FeedSource.Global -> FeedTab.GLOBAL
+        else -> FeedTab.HOME
     }
 
     /** Fetch the next 100 events strictly older than the oldest Global item. */
@@ -1577,8 +1873,44 @@ class FeedViewModel @Inject constructor(
         unsub(relayListSubId); relayListSubId = null
     }
 
+    /**
+     * Files an event under the slot whose subscription delivered it.
+     *
+     * The four original loaders still append into the shared sorted set, so this
+     * returns false for their events and they behave exactly as before. Generic
+     * slots (people / relay / hashtag / polls) own their events outright, which is
+     * what lets two slots of the same kind hold different results.
+     */
+    private fun routeToSlot(event: Event): Boolean {
+        val active = slotEngine.active() ?: return false
+        if (active.isFollows || active.isClock || active.isSuggested || active.isGlobal) {
+            // Built-in loaders: keep the shared-set behaviour they were written for.
+            return false
+        }
+        // A clock window is anchored in the past; nothing newer belongs in it.
+        if (active.isClock && event.createdAt >= active.anchor) return true
+        if (!active.settled) {
+            active.pending.add(event)
+            return true
+        }
+        active.events.add(event)
+        publishSlot(active)
+        return true
+    }
+
     private fun addToFeed(event: Event) {
         if (EventKind.isPrivateMessaging(event.kind)) return
+        // Route into the owning slot first. Nothing else may run before this, or a
+        // note can reach the shared set during a switch and then reappear under a
+        // slot it never belonged to.
+        if (routeToSlot(event)) {
+            fetchQuotesForEvents(listOf(event))
+            fetchProfilesForEvents(listOf(event))
+            reactionsRepository.subscribeTo(listOf(event.id))
+            repliesRepository.subscribeTo(listOf(event.id))
+            if (event.kind == EventKind.POLL) pollsRepository.subscribeTo(listOf(event.id))
+            return
+        }
         // Only persist home feed events — global/clock/suggested are views and must
         // not pollute the cache that getRecentFeedEvents returns on next home load.
         if (_currentFeed.value == FeedTab.HOME) {
