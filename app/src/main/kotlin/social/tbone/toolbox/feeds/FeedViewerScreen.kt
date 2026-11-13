@@ -231,7 +231,6 @@ fun FeedViewerScreen(
                     }
                 }
             }
-            }
         }
     }
 }
