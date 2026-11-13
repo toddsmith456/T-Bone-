@@ -76,6 +76,16 @@ class FeedToolViewModel @Inject constructor(
     @GlobalFeedPool private val globalPool: RelayPool,
 ) : ViewModel() {
 
+    /**
+     * The signed-in account, held as state.
+     *
+     * A plain `StateFlow` rather than the raw `Flow`: [load] needs the account
+     * synchronously when a tab is opened, and suspending the tap handler to read
+     * a DataStore-backed flow would make opening a tab feel laggy for no reason.
+     */
+    private val activeAccount: StateFlow<Account?> = accountRepository.activeAccount
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     /** Tabs currently open, left to right. */
     private val _tabs = MutableStateFlow<List<FeedTabState>>(emptyList())
     val tabs: StateFlow<List<FeedTabState>> = _tabs.asStateFlow()
@@ -112,7 +122,7 @@ class FeedToolViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            accountRepository.activeAccount
+            activeAccount
                 .distinctUntilChanged { old, new -> old?.pubkey == new?.pubkey }
                 .collect { account ->
                     // A tab's contents came from the previous account's follows and
@@ -219,7 +229,7 @@ class FeedToolViewModel @Inject constructor(
     }
 
     private fun load(tabId: String) {
-        val account = accountRepository.activeAccount.value ?: return
+        val account = activeAccount.value ?: return
         val tab = _tabs.value.firstOrNull { it.tabId == tabId } ?: return
         val active = _activeTabId.value == tabId
         if (!active) return

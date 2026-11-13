@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import social.tbone.home.FeedSource
 import social.tbone.ui.feed.FeedTabIcons
 import social.tbone.ui.feed.NoteCard
 import social.tbone.ui.theme.BonyColors
@@ -52,6 +53,7 @@ import social.tbone.ui.theme.appBorder
  * trace, which is the point of having it beside the home screen rather than
  * instead of it.
  */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun FeedViewerScreen(
     onBack: () -> Unit,
@@ -145,7 +147,7 @@ fun FeedViewerScreen(
                 Text(
                     text = "close all",
                     style = BonyType.caption.copy(color = BonyColors.TextMute),
-                    modifier = Modifier.clickable(viewModel::closeAll),
+                    modifier = Modifier.clickable { viewModel.closeAll() },
                 )
             }
         }
@@ -322,7 +324,7 @@ private fun EmptyViewer(onOpenPicker: () -> Unit) {
             style = BonyType.tag.copy(color = BonyColors.Accent),
             modifier = Modifier
                 .appBorder(1.dp, BonyColors.AccentDim)
-                .clickable { picking = true }
+                .clickable(onClick = onOpenPicker)
                 .padding(horizontal = 14.dp, vertical = 8.dp),
         )
     }

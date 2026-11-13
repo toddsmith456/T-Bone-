@@ -1,5 +1,6 @@
 package social.tbone.toolbox.feeds
 
+import social.tbone.home.FeedSource
 import social.tbone.nostr.Event
 import java.util.concurrent.ConcurrentHashMap
 
