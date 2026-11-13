@@ -86,9 +86,16 @@ import social.tbone.ui.theme.BonyType
 import dev.youniversal.theme.YouniversalEmptyState
 import social.tbone.ui.theme.appCornerShape
 import social.tbone.ui.theme.feedPageBackground
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalHapticFeedback
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -749,6 +756,27 @@ private fun TorPill(torEnabled: Boolean, connected: Boolean, onClick: () -> Unit
 
 // ── Feed tab strip ────────────────────────────────────────────────────────────
 
+/**
+ * The home tab strip: a four-wide window that slides over however many feeds the
+ * user has.
+ *
+ * ### Why a window rather than growing tabs
+ * Adding a fifth feed used to squeeze five tabs into the width of four, which
+ * looked like a bug — the labels shrank and the row stopped being a row. The
+ * strip is therefore a fixed four-column track that can hold any number of tabs
+ * and shows four at a time. The fifth sits immediately off the right edge, so a
+ * swipe brings it on and pushes the first one off.
+ *
+ * ### Why snapping is done by the strip, not by Compose's fling
+ * Paging with `animateScrollTo` after a fling is what makes a strip feel broken:
+ * the fling competes with the animation and the row lands between two positions.
+ * Instead the drag is consumed here and the offset is a plain, animated state.
+ * The finger moves the row 1:1 for the first [dragResistance] fraction of a tab,
+ * which is the friction the user asked for — a small nudge does nothing visible
+ * except hint that there is another tab — and past that it snaps to the next
+ * position as soon as the finger lifts. A flick is converted into exactly one
+ * tab of movement, whatever its speed, so the row can never overshoot.
+ */
 @Composable
 private fun FeedTabStrip(
     slots: List<social.tbone.home.FeedSlot>,
@@ -765,23 +793,37 @@ private fun FeedTabStrip(
     val tabLabelSize = (labelDp / effectiveFontScale).sp
     val tabLetterSpacing = (0.2f / effectiveFontScale).sp
 
-    /**
-     * Adaptive strip (decision 2B).
-     *
-     * Up to four tabs keep the equal-width row this screen has always had, so an
-     * untouched install looks pixel-identical to the build before this change.
-     * Beyond four — or when the labels genuinely cannot fit — it becomes a
-     * horizontal scroller. Measuring the labels rather than the count matters:
-     * four long custom names overflow even at four tabs, and four short built-ins
-     * fit at five.
-     */
-    val availableWidth = LocalConfiguration.current.screenWidthDp - 16 // outer padding
-    val perTabBudget = 96
-    val estimateWidth = slots.size * perTabBudget
-    val useScroller = slots.size > 4 || estimateWidth > availableWidth
+    val windowSize = VISIBLE_TABS
+    val maxStart = (slots.size - windowSize).coerceAtLeast(0)
 
-    val scrollState = rememberScrollState()
-    val density = LocalDensity.current
+    // Which tab starts the window. Driven by the selection, and settable by the
+    // swipe, so the two never disagree.
+    var firstVisible by remember(slots.size) {
+        mutableIntStateOf(slots.indexOfFirst { it.id == activeSlotId }.coerceIn(0, maxStart))
+    }
+    // Whole-tab offset animated state: -1..1 of a tab width, always snapped back
+    // to 0 once the gesture ends and `firstVisible` has moved.
+    val dragOffset = remember { Animatable(0f) }
+    var screenWidthPx by remember { mutableIntStateOf(0) }
+
+    val scope = rememberCoroutineScope()
+    val tabWidthPx = if (screenWidthPx > 0) screenWidthPx.toFloat() / windowSize else 0f
+    val haptics = LocalHapticFeedback.current
+
+    // Selecting a tab that is off-window slides the window to cover it.
+    LaunchedEffect(activeSlotId) {
+        val index = slots.indexOfFirst { it.id == activeSlotId }
+        if (index < 0) return@LaunchedEffect
+        val desired = when {
+            index < firstVisible -> index
+            index > firstVisible + windowSize - 1 -> index - windowSize + 1
+            else -> firstVisible
+        }.coerceIn(0, maxStart)
+        if (desired != firstVisible) {
+            firstVisible = desired
+            dragOffset.snapTo(0f)
+        }
+    }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -789,7 +831,49 @@ private fun FeedTabStrip(
                 .fillMaxWidth()
                 .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)
                 .background(BonyColors.Surface)
-                .then(if (useScroller) Modifier.horizontalScroll(scrollState) else Modifier),
+                .onSizeChanged { screenWidthPx = it.width }
+                .pointerInput(slots, maxStart, tabWidthPx) {
+                    if (maxStart == 0 || tabWidthPx <= 0f) return@pointerInput
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            val travel = dragOffset.value
+                            val steps = when {
+                                // Past the resistance point, one tab; a short nudge
+                                // that never crossed it falls back.
+                                kotlin.math.abs(travel) >= SNAP_THRESHOLD -> -kotlin.math.sign(travel).toInt()
+                                else -> 0
+                            }
+                            val next = (firstVisible + steps).coerceIn(0, maxStart)
+                            scope.launch {
+                                if (next != firstVisible) {
+                                    firstVisible = next
+                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                }
+                                dragOffset.animateTo(0f, tween(SETTLE_MS, easing = FastOutSlowInEasing))
+                            }
+                        },
+                        onDragCancel = {
+                            scope.launch { dragOffset.animateTo(0f, tween(SETTLE_MS)) }
+                        },
+                    ) { change, dragAmount ->
+                        change.consume()
+                        // Only allow movement in a direction that has a tab to
+                        // reach; at either end the row stops dead instead of
+                        // stretching into empty space.
+                        val movingLeft = dragAmount < 0
+                        val atEnd = (movingLeft && firstVisible >= maxStart) ||
+                            (!movingLeft && firstVisible <= 0)
+                        if (atEnd) return@detectHorizontalDragGestures
+                        scope.launch {
+                            val raw = (dragOffset.value + dragAmount / tabWidthPx)
+                            // Friction: the first tenth of a tab moves at 30% so a
+                            // stray horizontal swipe while scrolling vertically
+                            // barely disturbs the row.
+                            val resisted = if (kotlin.math.abs(raw) <= FRICTION_ZONE) raw * 0.3f else raw
+                            dragOffset.snapTo(resisted.coerceIn(-1f, 1f))
+                        }
+                    }
+                },
         ) {
             if (slots.isEmpty()) {
                 // Only possible if a stored layout failed to parse and was
@@ -801,26 +885,26 @@ private fun FeedTabStrip(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                 )
             }
-            slots.forEach { slot ->
-                FeedTabItem(
-                    slot = slot,
-                    active = slot.id == activeSlotId,
-                    compact = compact,
-                    labelSize = tabLabelSize,
-                    letterSpacing = tabLetterSpacing,
-                    // Equal columns only while everything fits; in the scroller
-                    // each tab takes the width its label needs.
-                    modifier = if (useScroller) Modifier else Modifier.weight(1f),
-                ) { onSelect(slot) }
-            }
-        }
-        // Auto-scroll so the active tab is never off-screen in the scroller case.
-        LaunchedEffect(activeSlotId, useScroller) {
-            if (useScroller && activeSlotId != null) {
-                val index = slots.indexOfFirst { it.id == activeSlotId }
-                if (index >= 0) {
-                    val tabPx = with(density) { (perTabBudget.dp).toPx() }
-                    scrollState.animateScrollTo((index * tabPx).toInt())
+            // One seamless track of every tab, shifted so the window starts at
+            // `firstVisible`. Rendering the whole track (rather than a window of
+            // four) is what lets the fifth tab physically slide in from the edge
+            // instead of appearing where the first one was.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .graphicsLayer {
+                        translationX = -(firstVisible + dragOffset.value) * (size.width / windowSize)
+                    },
+            ) {
+                slots.forEach { slot ->
+                    FeedTabItem(
+                        slot = slot,
+                        active = slot.id == activeSlotId,
+                        compact = compact,
+                        labelSize = tabLabelSize,
+                        letterSpacing = tabLetterSpacing,
+                        modifier = Modifier.weight(1f),
+                    ) { onSelect(slot) }
                 }
             }
         }
@@ -835,7 +919,7 @@ private fun FeedTabStrip(
     }
 }
 
-/** One tab: glyph, optional label, and the active border. */
+/** A tab: glyph, optional label, and the active border. */
 @Composable
 private fun FeedTabItem(
     slot: social.tbone.home.FeedSlot,
@@ -893,6 +977,18 @@ private fun FeedTabItem(
         }
     }
 }
+
+/** How many feeds the strip shows at once. Four is the app's original tab count. */
+private const val VISIBLE_TABS = 4
+
+/** Fraction of a tab that has to be dragged before it counts as a swipe. */
+private const val SNAP_THRESHOLD = 0.28f
+
+/** How much of a tab's travel is spent in the "nothing happens yet" zone. */
+private const val FRICTION_ZONE = 0.12f
+
+/** Snap-back duration. Short enough to feel like a release, not an animation. */
+private const val SETTLE_MS = 220
 
 // ── Clock feed: hour selector ────────────────────────────────────────────────
 

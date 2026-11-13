@@ -91,6 +91,7 @@ import social.tbone.ui.toolbox.calendar.CalendarScreen
 import social.tbone.ui.toolbox.geohash.GeohashChannelScreen
 import social.tbone.ui.toolbox.geohash.GeohashChatScreen
 import social.tbone.ui.feed.FeedScreen
+import social.tbone.toolbox.feeds.FeedViewerScreen
 import social.tbone.ui.home.HomeFeedsScreen
 import social.tbone.ui.bookmarks.BookmarksScreen
 import social.tbone.ui.hashtag.HashtagFeedScreen
@@ -118,6 +119,7 @@ private const val ROUTE_THREAD            = "thread/{eventId}"
 private const val ROUTE_COMPOSE           = "compose?replyToId={replyToId}&quoteToId={quoteToId}&quoteFolderId={quoteFolderId}&draft={draft}&audioPath={audioPath}"
 private const val ROUTE_SETTINGS          = "settings"
 private const val ROUTE_HOME_FEEDS        = "home_feeds"
+private const val ROUTE_FEED_VIEWER       = "feed_viewer"
 private const val ROUTE_CONTENT_FILTERS   = "content_filters"
 private const val ROUTE_BLOSSOM           = "blossom_settings"
 private const val ROUTE_OFFLINE_LIST      = "offline_list/{type}"
@@ -336,6 +338,7 @@ fun BonyNavHost() {
                             onUpdateCenter = { navController.navigate(ROUTE_UPDATE_CENTER) },
                             onFollowLists = { navController.navigate(ROUTE_FOLLOW_LISTS) },
                             onToolboxSettings = { navController.navigate(ROUTE_TOOLBOX_SETTINGS) },
+                            onFeedViewer = { navController.navigate(ROUTE_FEED_VIEWER) },
                         )
                     }
                 }
@@ -618,6 +621,18 @@ fun BonyNavHost() {
                     }
                     composable(ROUTE_HOME_FEEDS) {
                         HomeFeedsScreen(onBack = { navController.popBackStack() })
+                    }
+
+                    composable(ROUTE_FEED_VIEWER) {
+                        // The launcher is drawn by the viewer itself rather than
+                        // being a separate route, so choosing a feed hands it
+                        // straight to the same view model that owns the tabs.
+                        FeedViewerScreen(
+                            onBack = { navController.popBackStack() },
+                            onThreadClick = { eventId -> navController.navigate("thread/$eventId") },
+                            onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
+                            onHashtagClick = { tag -> navController.navigate("hashtag/$tag") },
+                        )
                     }
 
                     composable(ROUTE_SETTINGS) {

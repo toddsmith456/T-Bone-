@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.CalendarMonth
@@ -76,6 +77,7 @@ fun ToolboxScreen(
     onWallet: () -> Unit,
     onUpdateCenter: () -> Unit,
     onFollowLists: () -> Unit,
+    onFeedViewer: () -> Unit,
     onToolboxSettings: () -> Unit,
     viewModel: ToolboxViewModel = hiltViewModel(),
     lockViewModel: ToolboxLockViewModel = hiltViewModel(),
@@ -109,6 +111,8 @@ fun ToolboxScreen(
             "check & install updates", onUpdateCenter, hasBadge = hasUpdate))
         put("followlists", ToolEntry(Icons.Outlined.Groups, "follow lists",
             "following, followers & mutes", onFollowLists))
+        put("feedviewer", ToolEntry(Icons.AutoMirrored.Outlined.Article, "feed viewer",
+            "read any feed without saving it", onFeedViewer))
 
     }
 
