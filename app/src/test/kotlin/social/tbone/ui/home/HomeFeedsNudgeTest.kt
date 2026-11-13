@@ -26,20 +26,33 @@ class HomeFeedsNudgeTest {
         },
     )
 
-    @Test fun everyNudgeNameSaysWhatHappened() {
-        val copy = HomeFeedsViewModel.Nudge.Action.entries.flatMap { action ->
-            HomeFeedsViewModel.Target.entries.map { target ->
-                nudgeHint(HomeFeedsViewModel.Nudge(action, "clock", target))
+    @Test fun everyRefusalSaysSomething() {
+        // Not every (action, target) pair is distinct copy, and it should not be:
+        // "eight feeds is the limit" is the same answer whether the user was
+        // adding a hashtag or a relay. What matters is that no combination is
+        // blank and none shouts.
+        HomeFeedsViewModel.Nudge.Action.entries.forEach { action ->
+            HomeFeedsViewModel.Target.entries.forEach { target ->
+                val line = nudgeHint(HomeFeedsViewModel.Nudge(action, "clock", target))
+                assertTrue("empty copy for $action/$target", line.isNotBlank())
+                assertTrue("copy should read as a sentence fragment: '$line'", line[0].isLowerCase())
+                assertTrue("copy should not end in a full stop: '$line'", !line.endsWith("."))
             }
         }
-        copy.forEach { line ->
-            assertTrue("empty copy for a refusal: '$line'", line.isNotBlank())
-            assertTrue("a refusal must not be capitalised mid-sentence-shouty: '$line'", line[0].isLowerCase())
+    }
+
+    @Test fun thePinnedFollowsFeedExplainsEachOfItsThreeRefusalsDifferently() {
+        // Hiding, moving and removing the follows feed are three different
+        // refusals with three different reasons; collapsing them into one line
+        // would tell the user the wrong thing two times out of three.
+        val lines = listOf(
+            HomeFeedsViewModel.Nudge.Action.HIDE,
+            HomeFeedsViewModel.Nudge.Action.MOVE,
+            HomeFeedsViewModel.Nudge.Action.REMOVE,
+        ).map { action ->
+            nudgeHint(HomeFeedsViewModel.Nudge(action, "FOLLOWS", HomeFeedsViewModel.Target.FOLLOWS))
         }
-        assertEquals(
-            HomeFeedsViewModel.Nudge.Action.entries.size * HomeFeedsViewModel.Target.entries.size,
-            copy.toSet().size,
-        )
+        assertEquals(3, lines.toSet().size)
     }
 
     @Test fun refusalsNameTheFeedThatCausedThem() {
