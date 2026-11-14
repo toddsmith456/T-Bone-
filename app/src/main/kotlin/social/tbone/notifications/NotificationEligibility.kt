@@ -68,7 +68,7 @@ internal fun classifyNotification(
                 else -> NotificationClass.ZAP
             }
         }
-        EventKind.TEXT_NOTE, EventKind.COMMENT -> {
+        EventKind.TEXT_NOTE, EventKind.COMMENT, EventKind.POLL -> {
             val quoteIds = notificationQuoteIds(event)
             val replyId = event.parsedTags.replyEventId
             when {

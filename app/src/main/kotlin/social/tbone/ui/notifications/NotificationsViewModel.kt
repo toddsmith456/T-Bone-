@@ -24,6 +24,7 @@ import social.tbone.notifications.summarizeNotifications
 import social.tbone.nostr.Event
 import social.tbone.nostr.ProfileContent
 import social.tbone.profile.ProfileRepository
+import social.tbone.reactions.PollsRepository
 import social.tbone.settings.AppSettings
 import social.tbone.settings.ContentFilter
 import javax.inject.Inject
@@ -39,6 +40,7 @@ class NotificationsViewModel @Inject constructor(
     private val appSettings: AppSettings,
     private val muteRepository: social.tbone.lists.MuteListRepository,
     private val accountRepository: social.tbone.account.AccountRepository,
+    private val pollsRepository: PollsRepository,
     profileRepository: ProfileRepository,
 ) : ViewModel() {
 
@@ -151,11 +153,14 @@ class NotificationsViewModel @Inject constructor(
     /** Referenced notes that never arrived, so cards can stop saying "loading…". */
     val unresolvedReferencedIds: StateFlow<Set<String>> = repository.unresolvedReferencedIds
 
-    /**
-     * True until the first launch's zap-filter migration has been acknowledged.
-     * Lets the screen explain why zaps started appearing.
-     */
-    val filtersMigrated: StateFlow<Boolean> = appSettings.notificationFiltersMigrated
+    val pollVoteCounts: StateFlow<Map<String, Map<String, Int>>> = pollsRepository.counts
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    val pollTotalVotes: StateFlow<Map<String, Int>> = pollsRepository.totalVotes
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    val pollMyVotes: StateFlow<Map<String, List<String>>> = pollsRepository.myVotes
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     init {
         // Persisted filter set → enabled filters. AppSettings resolves the
@@ -174,8 +179,12 @@ class NotificationsViewModel @Inject constructor(
         }
     }
 
-    fun dismissFiltersMigrated() {
-        viewModelScope.launch { appSettings.dismissNotificationFiltersMigrated() }
+    fun subscribePoll(pollId: String) {
+        pollsRepository.subscribeTo(listOf(pollId))
+    }
+
+    fun voteOnPoll(poll: Event, optionIds: List<String>) {
+        pollsRepository.vote(poll, optionIds)
     }
 
     // ── Filtering (Wisp semantics) ────────────────────────────────────────────

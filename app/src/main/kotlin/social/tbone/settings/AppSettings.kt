@@ -279,15 +279,6 @@ class AppSettings @Inject constructor(
     private val _notificationEnabledTypes = MutableStateFlow<Set<String>>(emptySet())
     val notificationEnabledTypes = _notificationEnabledTypes.asStateFlow()
 
-    /**
-     * True for exactly one launch: the first run of a build that added zap
-     * notifications to the default filter set. The notifications screen consults
-     * it to say so out loud, because a zap filter missing from somebody's saved
-     * settings would otherwise keep hiding their zaps with no explanation.
-     */
-    private val _notificationFiltersMigrated = MutableStateFlow(false)
-    val notificationFiltersMigrated = _notificationFiltersMigrated.asStateFlow()
-
     private val _themeMode = MutableStateFlow(ThemeMode.DARK)
     val themeMode = _themeMode.asStateFlow()
 
@@ -563,19 +554,29 @@ class AppSettings @Inject constructor(
                 val storedFilters = prefs[NOTIFICATION_ENABLED_TYPES]
                 // Zap notifications existed as a row type before they existed as
                 // a filter, and a filter name that is absent from the saved set
-                // reads as "switched off". So anybody who had ever narrowed
-                // their filters never saw a single zap arrive — the symptom was
-                // "zaps are invisible until I tap the zap button".
+                // reads as "switched off". Silently add ZAPS once for users who
+                // narrowed their filters before ZAPS existed, and persist so it
+                // never overrides a later opt-out.
                 val zapsAddedByThisMigration = !storedFilters.isNullOrEmpty() &&
                     NotifFilterNames.ZAPS !in storedFilters &&
                     prefs[NOTIFICATION_FILTERS_MIGRATED] != true
-                _notificationEnabledTypes.value = when {
+                val effectiveFilters = when {
                     // Never set = every filter on.
                     storedFilters.isNullOrEmpty() -> NotifFilterNames.ALL
                     zapsAddedByThisMigration -> storedFilters + NotifFilterNames.ZAPS
                     else -> storedFilters
                 }
-                _notificationFiltersMigrated.value = zapsAddedByThisMigration
+                _notificationEnabledTypes.value = effectiveFilters
+                if (zapsAddedByThisMigration) {
+                    scope.launch {
+                        runCatching {
+                            dataStore.edit { editPrefs ->
+                                editPrefs[NOTIFICATION_ENABLED_TYPES] = effectiveFilters
+                                editPrefs[NOTIFICATION_FILTERS_MIGRATED] = true
+                            }
+                        }
+                    }
+                }
                 _themeMode.value = ThemeMode.fromPref(prefs[THEME_MODE])
                 _accentColor.value = prefs[ACCENT_COLOR]
                 _uiTheme.value = UiTheme.fromPref(prefs[UI_THEME])
@@ -646,14 +647,6 @@ class AppSettings @Inject constructor(
                 val storedActive = prefs[GLOBAL_ACTIVE_RELAYS]?.mapNotNull { normalizeGlobalRelay(it) }?.toSet()
                 _globalActiveRelays.value = storedActive?.intersect(_globalRelays.value) ?: _globalRelays.value
                 _initialized.value = true
-            }
-        }
-        // Record the migration as complete so the one-time heads-up (and the
-        // forced zap filter) cannot come back on the next launch.
-        if (_notificationFiltersMigrated.value) {
-            // Launch a coroutine rather than a suspend call: this is `init`.
-            CoroutineScope(Dispatchers.IO).launch {
-                runCatching { dataStore.edit { it[NOTIFICATION_FILTERS_MIGRATED] = true } }
             }
         }
     }
@@ -780,10 +773,6 @@ class AppSettings @Inject constructor(
     }
 
     /** Persist the enabled notification-type filters (empty set = all on). */
-    fun dismissNotificationFiltersMigrated() {
-        _notificationFiltersMigrated.value = false
-    }
-
     suspend fun setNotificationEnabledTypes(names: Set<String>) {
         dataStore.edit {
             it[NOTIFICATION_ENABLED_TYPES] = names

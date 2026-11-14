@@ -358,37 +358,8 @@ fun FeedScreen(
         ) {
             when {
                 uiState.isLoading && uiState.events.isEmpty() -> {
-                    // The spinner is always accompanied by a way out. A feed that
-                    // is waiting on relays looks identical to a feed that has
-                    // silently died, and the user reported exactly that: relays
-                    // all connected, spinner forever. After a few seconds the
-                    // retry affordance appears so the wait is never a dead end.
-                    var showRetry by remember(uiState.isLoading) { mutableStateOf(false) }
-                    LaunchedEffect(uiState.isLoading) {
-                        if (uiState.isLoading) {
-                            delay(LOADING_RETRY_HINT_MS)
-                            showRetry = true
-                        }
-                    }
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator(color = BonyColors.Accent, strokeWidth = 1.dp)
-                            if (showRetry) {
-                                Spacer(Modifier.height(14.dp))
-                                Text(
-                                    text = "still waiting on relays…",
-                                    style = BonyType.caption.copy(color = BonyColors.TextMute),
-                                )
-                                Spacer(Modifier.height(6.dp))
-                                Text(
-                                    text = "try again",
-                                    style = BonyType.tag.copy(color = BonyColors.Accent),
-                                    modifier = Modifier
-                                        .clickable { isRefreshing = true; viewModel.refresh() }
-                                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                                )
-                            }
-                        }
+                        CircularProgressIndicator(color = BonyColors.Accent, strokeWidth = 1.dp)
                     }
                 }
                 uiState.events.isEmpty() && !isRefreshing -> {
@@ -1034,9 +1005,6 @@ private fun FeedTabItem(
         }
     }
 }
-
-/** How long a spinner waits before offering a retry, in ms. */
-private const val LOADING_RETRY_HINT_MS = 6_000L
 
 /** How many feeds the strip shows at once — always, whatever the layout holds. */
 private const val VISIBLE_TABS = 4

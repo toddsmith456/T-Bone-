@@ -71,6 +71,7 @@ data class Filter(
             kinds = listOf(
                 EventKind.TEXT_NOTE,
                 EventKind.COMMENT,
+                EventKind.POLL,
                 EventKind.REACTION,
                 EventKind.REPOST,
                 EventKind.POLL_RESPONSE,

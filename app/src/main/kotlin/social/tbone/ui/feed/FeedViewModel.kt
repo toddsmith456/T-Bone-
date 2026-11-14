@@ -3,6 +3,7 @@ package social.tbone.ui.feed
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
@@ -295,15 +297,25 @@ class FeedViewModel @Inject constructor(
         if (safe == appSettings.clockFeedHours.value) return
         viewModelScope.launch {
             appSettings.setClockFeedHours(safe)
-            val account = activeAccount.value ?: return@launch
+            val account = currentAccount() ?: return@launch
             // Re-anchor when a clock feed is what is actually on screen — which is
             // now a question about the active slot, not about the legacy tab.
             if (_activeSlot.value?.source is FeedSource.Clock) reanchorClockFeed(account, safe)
         }
     }
 
+    /**
+     * Kept hot for the ViewModel's lifetime (`Eagerly`) instead of `WhileSubscribed`:
+     * internal feed loaders, live event handlers (`addToFeed`, `expandFeedToFollows`),
+     * and cold-start slot activation all read the active account before Compose
+     * attaches — and while the user visits another screen for > 5 seconds.
+     */
     val activeAccount: StateFlow<Account?> = accountRepository.activeAccount
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    @Volatile private var latestAccount: Account? = null
+
+    private fun currentAccount(): Account? = latestAccount ?: activeAccount.value
 
     val relayStatuses: StateFlow<Map<String, RelayStatus>> = combine(
         accountRepository.activeAccount, pool.relayStatuses, globalPool.relayStatuses,
@@ -335,6 +347,11 @@ class FeedViewModel @Inject constructor(
      * same source type — all of that state is per slot. See [SlotRuntime].
      */
     private val slotEngine = FeedSlotEngine()
+
+    private var slotActivateJob: Job? = null
+    private val acquiredSlotRelays: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    @Volatile private var pendingGlobalLoadOnVisible = false
+    @Volatile private var subscribedFollowSet: Set<String>? = null
 
     private var collectJob: Job? = null
     private var feedSubId: String? = null
@@ -408,41 +425,47 @@ class FeedViewModel @Inject constructor(
     private val pendingBuffer = ConcurrentLinkedQueue<Event>()
 
     init {
-        // The stored layout decides which feeds exist and which one the app opens
-        // on. Applying it here (rather than on first tab tap) is what makes an
-        // existing install behave identically: the default layout is exactly the
-        // four tabs this screen has always had.
+        // Keep latestAccount fresh on every account update (relays, follows, profile)
+        // without restarting the active feed.
         viewModelScope.launch {
-            homeLayouts.loaded.first { it }
-            applyLayout(homeLayouts.layout.value)
+            accountRepository.activeAccount.collect { latestAccount = it }
+        }
+
+        // Deterministic startup + account-switch coordinator: waits for the stored
+        // layout once, then drives initial load and account switches from a single
+        // place with the emitted Account passed directly. Eliminates the cold-start
+        // race where layout loading and a WhileSubscribed activeAccount flow starved
+        // each other and left FeedUiState(isLoading = true) spinning forever.
+        viewModelScope.launch {
+            coordinateFeedStartup(
+                awaitInitialLayout = { homeLayouts.awaitLoaded() },
+                syncLayout = { layout -> slotEngine.sync(layout) },
+                currentLayout = { homeLayouts.layout.value },
+                currentActiveSlotId = { _activeSlot.value?.id },
+                accounts = accountRepository.activeAccount,
+                onAccountObserved = { account ->
+                    latestAccount = account
+                    closeSlots(slotEngine.all())
+                    slotEngine.resetForAccountSwitch()
+                },
+                onClear = { clearFeed() },
+                onActivate = { slot, account ->
+                    activateSlotForAccount(slot, account, remember = false)
+                },
+            )
         }
         viewModelScope.launch {
             // Layout edits take effect without a restart (rename, hide, reorder).
+            // Compare only `slots` so `rememberActiveSlot` (which updates only
+            // `lastActiveSlotId`) never triggers a redundant layout re-apply.
+            homeLayouts.awaitLoaded()
             homeLayouts.layout
+                .distinctUntilChangedBy { it.slots }
                 .drop(1)
-                .collect { layout -> applyLayout(layout) }
+                .collect { layout -> applyLayoutEdit(layout) }
         }
         viewModelScope.launch {
             eventOpenCoordinator.events.collect { event -> openEventInMainFeed(event) }
-        }
-        viewModelScope.launch {
-            // Only reload the feed when the active pubkey changes, not on every
-            // account property update (relays, follows, displayName, etc.).
-            // Incremental updates like relay selection and follow list persist
-            // to the account but must not restart the feed.
-            accountRepository.activeAccount
-                .distinctUntilChanged { old, new -> old?.pubkey == new?.pubkey }
-                .collect { account ->
-                    // Every slot's cached contents came from the previous account,
-                    // so all of them are dropped — a hidden slot must not reappear
-                    // with someone else's people when it is next tapped.
-                    closeSlots(slotEngine.all())
-                    slotEngine.resetForAccountSwitch()
-                    when {
-                        account == null -> clearFeed()
-                        else -> _activeSlot.value?.let { switchToSlot(it) }
-                    }
-                }
         }
 
         // Offline follow list: rebuild the HOME feed when the switch flips or the local
@@ -463,7 +486,7 @@ class FeedViewModel @Inject constructor(
                     // Only HOME rebuilds from the offline list; CLOCK resolves its own
                     // authors on load and SUGGESTED never uses the user's follows.
                     if (mode == applied || _currentFeed.value != FeedTab.HOME) return@collect
-                    activeAccount.value?.takeIf { it.pubkey == pk }?.let { loadFeed(it, clearEvents = false) }
+                    currentAccount()?.takeIf { it.pubkey == pk }?.let { loadFeed(it, clearEvents = false) }
                 }
         }
 
@@ -479,7 +502,7 @@ class FeedViewModel @Inject constructor(
                 .distinctUntilChanged()
                 .collect {
                     if (feedVisible && _currentFeed.value == FeedTab.GLOBAL && appSettings.initialized.value) {
-                        activeAccount.value?.let { account -> loadGlobalFeed(account) }
+                        currentAccount()?.let { account -> loadGlobalFeed(account) }
                     }
                 }
         }
@@ -510,11 +533,13 @@ class FeedViewModel @Inject constructor(
         if (!visible) {
             globalSession.reconcile(false, emptySet())
         } else if (_currentFeed.value == FeedTab.GLOBAL) {
-            activeAccount.value?.let { loadGlobalFeed(it) }
+            pendingGlobalLoadOnVisible = false
+            currentAccount()?.let { loadGlobalFeed(it) }
         }
     }
 
     override fun onCleared() {
+        releaseSlotRelays()
         globalSession.reconcile(false, emptySet())
         super.onCleared()
     }
@@ -554,13 +579,28 @@ class FeedViewModel @Inject constructor(
      * (people, relay, hashtag, polls) goes through [activateGeneric].
      */
     fun switchToSlot(slot: FeedSlot) {
-        val account = activeAccount.value ?: return
+        val account = currentAccount() ?: return
         val isSameSlot = _activeSlot.value?.id == slot.id
         if (isSameSlot) _scrollToTop.tryEmit(Unit)
-        setActiveSlot(slot)
-        homeLayouts.rememberActiveSlot(slot.id)
+        activateSlotForAccount(slot, account, remember = true)
+    }
 
-        viewModelScope.launch {
+    /**
+     * Activates [slot] for [account], serialising concurrent activations so two
+     * overlapping `planFor()` coroutines can never start competing loads.
+     */
+    private fun activateSlotForAccount(slot: FeedSlot, account: Account, remember: Boolean) {
+        setActiveSlot(slot)
+        if (remember) homeLayouts.rememberActiveSlot(slot.id)
+        // Leave the global pool connected only while a global feed is on screen;
+        // any other slot tears it down, exactly as the old tab switch did.
+        if (slot.source !is FeedSource.Global) {
+            pendingGlobalLoadOnVisible = false
+            globalSession.reconcile(false, emptySet())
+        }
+
+        slotActivateJob?.cancel()
+        slotActivateJob = viewModelScope.launch {
             val plan = planFor(slot.source, account)
             val change = slotEngine.activate(slot.id, plan)
             when (change) {
@@ -574,14 +614,16 @@ class FeedViewModel @Inject constructor(
                     closeSlots(slotEngine.all())
                     clearFeedForBlocked(change.reason)
                 }
-                // `when` over a sealed interface must name every branch; the
-                // else keeps it compiling if a branch is added later.
-                else -> Unit
+                SlotChange.None -> Unit
             }
         }
-        // Leave the global pool connected only while a global feed is on screen;
-        // any other slot tears it down, exactly as the old tab switch did.
-        if (slot.source !is FeedSource.Global) globalSession.reconcile(false, emptySet())
+    }
+
+    /** Releases any temporary relays leased for a custom Relay slot. */
+    private fun releaseSlotRelays() {
+        val toRelease = acquiredSlotRelays.toList()
+        acquiredSlotRelays.clear()
+        toRelease.forEach { pool.releaseRelay(it) }
     }
 
     /** Closes the subscriptions of slots that are no longer active. */
@@ -590,6 +632,7 @@ class FeedViewModel @Inject constructor(
             runtime.subIds.toList().forEach { unsub(it) }
             runtime.subIds.clear()
         }
+        releaseSlotRelays()
     }
 
     /** Loads a slot according to its plan, dispatching on the source kind. */
@@ -600,7 +643,7 @@ class FeedViewModel @Inject constructor(
             is FeedSource.Clock -> loadClockFeed(account)
             is FeedSource.Suggested -> loadSuggestedFeed(account)
             is FeedSource.Global -> loadGlobalFeed(account)
-            else -> activateGeneric(runtime, plan, source)
+            else -> activateGeneric(runtime, plan, source, account)
         }
     }
 
@@ -611,7 +654,7 @@ class FeedViewModel @Inject constructor(
      * People, relay, hashtag and poll feeds all behave the same way, which is why
      * they share this path — the differences are entirely in the plan.
      */
-    private fun activateGeneric(runtime: SlotRuntime, plan: FeedPlan, source: FeedSource) {
+    private fun activateGeneric(runtime: SlotRuntime, plan: FeedPlan, source: FeedSource, account: Account) {
         // Narrowed once: the callers only get here with a Query, and doing it here
         // keeps every subsequent `plan.filters` / `plan.pool` statically typed.
         val query = plan as? FeedPlan.Query ?: return
@@ -621,15 +664,19 @@ class FeedViewModel @Inject constructor(
             it.copy(events = emptyList(), isLoading = true, error = null, clockAnchor = 0L)
         }
 
-        collectJob = viewModelScope.launch(Dispatchers.Default) { collectMessages() }
-
         loadJob = viewModelScope.launch {
+            startMessageCollector()
             val relays = when (query.pool) {
                 PoolChoice.GLOBAL -> appSettings.globalActiveRelays.value
                     .map(RelayPool::normalize).toSet()
                 PoolChoice.SPECIFIC -> (source as? FeedSource.Relay)?.urls.orEmpty()
                     .map(RelayPool::normalize).toSet()
                 PoolChoice.PERSONAL -> emptySet()
+            }
+            if (query.pool == PoolChoice.SPECIFIC && relays.isNotEmpty()) {
+                relays.forEach { url ->
+                    if (acquiredSlotRelays.add(url)) pool.acquireRelay(url)
+                }
             }
             val label = "slot-${runtime.slotId.take(4)}"
             query.filters.forEach { filter ->
@@ -646,7 +693,7 @@ class FeedViewModel @Inject constructor(
                 runtime.subIds.add(id)
                 slotEngine.registerSub(runtime.slotId, id)
             }
-            slotEngine.markLoaded(runtime.slotId, currentPubkeyForSlots(), query.anchor ?: 0L)
+            slotEngine.markLoaded(runtime.slotId, account.pubkey, query.anchor ?: 0L)
             loadWatchdog.start(
                 timeoutMs = SETTLE_TIMEOUT_MS,
                 isEmpty = { runtime.events.isEmpty() },
@@ -657,7 +704,7 @@ class FeedViewModel @Inject constructor(
         }
     }
 
-    private fun currentPubkeyForSlots(): String = activeAccount.value?.pubkey.orEmpty()
+    private fun currentPubkeyForSlots(): String = currentAccount()?.pubkey.orEmpty()
 
     /**
      * Settles a slot: reveals what it buffered and stops the spinner.
@@ -710,7 +757,7 @@ class FeedViewModel @Inject constructor(
      * one's error current. Used when a layout edit introduces an invalid feed.
      */
     private fun refreshBlockedSlots() {
-        val account = activeAccount.value ?: return
+        val account = currentAccount() ?: return
         viewModelScope.launch {
             slotEngine.all().forEach { runtime ->
                 val plan = planFor(runtime.source, account)
@@ -757,39 +804,23 @@ class FeedViewModel @Inject constructor(
         a::class == b::class
 
     /**
-     * Applies the stored layout: syncs the slot runtimes and opens the slot the
-     * app should land on.
-     *
-     * Called once when the layout first loads, and again whenever it is edited,
-     * so a change made in the editor takes effect without a restart.
+     * Applies a live layout edit (rename, hide, reorder, source edit, removal)
+     * without requiring a restart.
      */
-    private fun applyLayout(layout: HomeLayout) {
+    private fun applyLayoutEdit(layout: HomeLayout) {
         slotEngine.sync(layout)
         val landing = layout.landingSlot ?: return
-        val account = activeAccount.value
-        if (account == null) {
-            setActiveSlot(landing)
-            return
-        }
-        // Nothing on screen yet (first launch): load the landing slot outright.
-        if (_activeSlot.value == null) {
-            setActiveSlot(landing)
-            viewModelScope.launch {
-                val plan = planFor(landing.source, account)
-                when (val change = slotEngine.activate(landing.id, plan)) {
-                    is SlotChange.Switch -> loadSlot(change.load, change.plan, account)
-                    is SlotChange.Reload -> loadSlot(change.runtime, change.plan, account)
-                    is SlotChange.Blocked -> clearFeedForBlocked(change.reason)
-                    SlotChange.None -> Unit
-                }
-            }
-            return
-        }
-        // Already running: keep the current slot if it survived the edit, and move
-        // to the landing slot if it was the one removed.
+        val account = currentAccount()
         val current = _activeSlot.value
-        if (current != null && layout.slot(current.id) == null) {
-            switchToSlot(landing)
+        if (account == null) {
+            if (current == null || layout.slot(current.id) == null) setActiveSlot(landing)
+            return
+        }
+        val updatedCurrent = current?.let { layout.slot(it.id) }
+        when {
+            updatedCurrent == null -> activateSlotForAccount(landing, account, remember = false)
+            updatedCurrent.source != current?.source -> activateSlotForAccount(updatedCurrent, account, remember = false)
+            else -> setActiveSlot(updatedCurrent)
         }
     }
 
@@ -1168,15 +1199,19 @@ class FeedViewModel @Inject constructor(
         if (_currentFeed.value == FeedTab.GLOBAL) globalVisibleLimit.coerceIn(1, MAX_GLOBAL_EVENTS) else MAX_FEED_EVENTS
 
     fun refresh() {
-        val account = activeAccount.value ?: return
+        val account = currentAccount() ?: return
         // Custom feeds have no legacy tab, so a pull-to-refresh would otherwise
         // fall through to the follow loader and tear down the slot's own
         // subscriptions. Re-activate the slot instead, which is the same path a
         // layout edit takes.
         val slot = _activeSlot.value
         if (slot != null && !isLegacyFeedKind(slot.source)) {
-            viewModelScope.launch {
-                when (val change = slotEngine.activate(slot.id, planFor(slot.source, account))) {
+            slotActivateJob?.cancel()
+            slotActivateJob = viewModelScope.launch {
+                val plan = planFor(slot.source, account)
+                val runtime = slotEngine.runtime(slot.id)
+                if (runtime != null) runtime.settled = false
+                when (val change = slotEngine.activate(slot.id, plan)) {
                     is SlotChange.Switch -> loadSlot(change.load, change.plan, account)
                     is SlotChange.Reload -> loadSlot(change.runtime, change.plan, account)
                     is SlotChange.Blocked -> clearFeedForBlocked(change.reason)
@@ -1194,6 +1229,7 @@ class FeedViewModel @Inject constructor(
     }
 
     private fun loadFeed(account: Account, clearEvents: Boolean = true) {
+        releaseSlotRelays()
         collectJob?.cancel()
         activeSubIds.clear()
         unsub(feedSubId); feedSubId = null
@@ -1211,6 +1247,7 @@ class FeedViewModel @Inject constructor(
         unsub(followsRelayListSubId); followsRelayListSubId = null
         followsForRelaySelection = emptyList()
         followRelayMap.clear()
+        subscribedFollowSet = null
 
         feedSettled = false
         followsReceived = false
@@ -1244,9 +1281,10 @@ class FeedViewModel @Inject constructor(
         appliedFollowMode = null
         appliedForPubkey = null
 
-        // Preload cached events on restart (same account). Skip on account switch to
-        // avoid showing stale events from a different account's follow graph.
-        val isSameAccount = lastLoadedPubkey == account.pubkey
+        // Preload cached events on cold start and same-account refreshes (the DB
+        // query is strictly keyed by account.pubkey). Skip only on account switch
+        // so another account's feed never flashes on screen.
+        val isSameAccount = shouldPreloadAccountCache(lastLoadedPubkey, account.pubkey)
         lastLoadedPubkey = account.pubkey
 
         loadJob = viewModelScope.launch {
@@ -1295,6 +1333,11 @@ class FeedViewModel @Inject constructor(
                 }
             }
 
+            // Guarantee the message collector is actively subscribed to both pools
+            // BEFORE issuing any REQ so fast or local relays can never drop kind-3
+            // or EOSE between subscribe and collect.
+            startMessageCollector()
+
             if (offlineMode) {
                 // Offline follow list: no kind-3 request at all. The feed is built straight
                 // from the local list; "follow list received" is true from the start.
@@ -1302,6 +1345,7 @@ class FeedViewModel @Inject constructor(
                 val followed = local.entries.map { it.pubkey }
                 if (followed.isEmpty()) {
                     // Nobody followed locally: just show your own notes.
+                    subscribedFollowSet = emptySet()
                     feedSubId = sub(listOf(
                         Filter(
                             authors = listOf(account.pubkey),
@@ -1312,9 +1356,16 @@ class FeedViewModel @Inject constructor(
                 } else {
                     applyFollowedSet(account.pubkey, followed)
                 }
+            } else if (account.follows.isNotEmpty()) {
+                // Cached follows are already known: subscribe to the full follow feed
+                // on the first round-trip instead of blocking on kind-3, and still
+                // fetch kind-3 in parallel to pick up any remote follow-list changes.
+                applyFollowedSet(account.pubkey, account.follows)
+                followSubId = sub(listOf(
+                    Filter(authors = listOf(account.pubkey), kinds = listOf(EventKind.FOLLOW_LIST), limit = 1)
+                ))
             } else {
-                // Own notes first; events buffer until EOSE, then the follow list subscription
-                // replaces this and buffers again until its own EOSE — feed appears atomically.
+                // First login (no cached follows yet): own notes first + kind-3 in parallel.
                 feedSubId = sub(listOf(
                     Filter(
                         authors = listOf(account.pubkey),
@@ -1328,12 +1379,10 @@ class FeedViewModel @Inject constructor(
                 ))
             }
 
-            // Own profile (kind-0) and relay list (kind-10002) in parallel
+            // Own profile (kind-0) in parallel
             metadataSubId = sub(listOf(
                 Filter(authors = listOf(account.pubkey), kinds = listOf(EventKind.METADATA), limit = 1)
             ))
-
-            collectJob = viewModelScope.launch(Dispatchers.Default) { collectMessages() }
 
             // Safety net. The old version cleared the spinner as a separate,
             // later statement and could be skipped entirely when a newer load
@@ -1361,14 +1410,12 @@ class FeedViewModel @Inject constructor(
     }
 
     private fun loadGlobalFeed(account: Account) {
-        if (!feedVisible) return
-        if (!appSettings.initialized.value) {
-            viewModelScope.launch {
-                appSettings.initialized.first { it }
-                if (feedVisible && _currentFeed.value == FeedTab.GLOBAL) activeAccount.value?.let { loadGlobalFeed(it) }
-            }
+        if (!feedVisible) {
+            pendingGlobalLoadOnVisible = true
             return
         }
+        pendingGlobalLoadOnVisible = false
+        releaseSlotRelays()
         loadJob?.cancel()
         appliedFollowMode = null
         appliedForPubkey = null
@@ -1389,6 +1436,7 @@ class FeedViewModel @Inject constructor(
         unsub(followsRelayListSubId); followsRelayListSubId = null
         followsForRelaySelection = emptyList()
         followRelayMap.clear()
+        subscribedFollowSet = null
 
         feedSettled = false
         pendingBuffer.clear()
@@ -1419,51 +1467,54 @@ class FeedViewModel @Inject constructor(
             )
         }
 
-        // Dedicated pool: global requests cannot leak into personal subscriptions or publishing.
-        val globalRelays = appSettings.globalActiveRelays.value.map(RelayPool::normalize).toSet()
-        globalSession.reconcile(true, globalRelays)
-        if (globalRelays.isEmpty()) {
-            _uiState.update { it.copy(isLoading = false, error = "No Global relays enabled. Configure Global relays to load this feed.") }
-            return
-        }
-        globalInitialExpectedRelays = globalRelays.map(RelayPool::normalize).toSet()
-        globalInitialEoseRelays.clear()
-
-        // Register the message collector before sending REQ: a fast EOSE or
-        // event must not be lost between subscription and collection.
-        val initialSubId = UUID.randomUUID().toString().take(8)
-        feedSubId = initialSubId
-        activeSubIds.add(initialSubId)
-        followsReceived = true
-        collectJob = viewModelScope.launch(Dispatchers.Default) {
-            collectMessages {
-                if (feedVisible && _currentFeed.value == FeedTab.GLOBAL && feedSubId == initialSubId) {
-                    globalPool.subscribeTo(
-                        listOf(Filter(kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL), limit = GLOBAL_PAGE_SIZE)),
-                        id = initialSubId,
-                        label = "global-feed",
-                        relays = globalInitialExpectedRelays,
-                    )
-                }
+        loadJob = viewModelScope.launch {
+            if (!appSettings.initialized.value) {
+                appSettings.initialized.first { it }
             }
-        }
+            if (!feedVisible || _currentFeed.value != FeedTab.GLOBAL) return@launch
 
-        loadWatchdog.start(
-            timeoutMs = GLOBAL_PAGE_TIMEOUT_MS,
-            isEmpty = { _uiState.value.events.isEmpty() },
-            onTimeout = { nothingArrived ->
-                if (feedVisible && _currentFeed.value == FeedTab.GLOBAL && feedSubId == initialSubId) {
-                    settleGlobalInitial(
-                        if (nothingArrived) {
-                            "Your Global relays are connected but sent nothing back. They may be " +
-                                "rate-limiting this client — try again in a minute."
-                        } else {
-                            null
-                        },
-                    )
-                }
-            },
-        )
+            // Dedicated pool: global requests cannot leak into personal subscriptions or publishing.
+            val globalRelays = appSettings.globalActiveRelays.value.map(RelayPool::normalize).toSet()
+            globalSession.reconcile(true, globalRelays)
+            if (globalRelays.isEmpty()) {
+                endLoad("No Global relays enabled. Configure Global relays to load this feed.")
+                return@launch
+            }
+            globalInitialExpectedRelays = globalRelays
+            globalInitialEoseRelays.clear()
+
+            // Register the message collector before sending REQ: a fast EOSE or
+            // event must not be lost between subscription and collection.
+            startMessageCollector()
+
+            val initialSubId = UUID.randomUUID().toString().take(8)
+            feedSubId = initialSubId
+            activeSubIds.add(initialSubId)
+            followsReceived = true
+            globalPool.subscribeTo(
+                listOf(Filter(kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL), limit = GLOBAL_PAGE_SIZE)),
+                id = initialSubId,
+                label = "global-feed",
+                relays = globalInitialExpectedRelays,
+            )
+
+            loadWatchdog.start(
+                timeoutMs = GLOBAL_PAGE_TIMEOUT_MS,
+                isEmpty = { _uiState.value.events.isEmpty() },
+                onTimeout = { nothingArrived ->
+                    if (feedVisible && _currentFeed.value == FeedTab.GLOBAL && feedSubId == initialSubId) {
+                        settleGlobalInitial(
+                            if (nothingArrived) {
+                                "Your Global relays are connected but sent nothing back. They may be " +
+                                    "rate-limiting this client — try again in a minute."
+                            } else {
+                                null
+                            },
+                        )
+                    }
+                },
+            )
+        }
     }
 
     /**
@@ -1474,6 +1525,7 @@ class FeedViewModel @Inject constructor(
      * missed field here would leak events between feeds.
      */
     private fun resetFeedState(clearEvents: Boolean = true) {
+        releaseSlotRelays()
         loadJob?.cancel()
         appliedFollowMode = null
         appliedForPubkey = null
@@ -1495,6 +1547,7 @@ class FeedViewModel @Inject constructor(
         unsub(followsRelayListSubId); followsRelayListSubId = null
         followsForRelaySelection = emptyList()
         followRelayMap.clear()
+        subscribedFollowSet = null
 
         clockAuthors = emptyList()
 
@@ -1544,8 +1597,6 @@ class FeedViewModel @Inject constructor(
             )
         }
 
-        collectJob = viewModelScope.launch(Dispatchers.Default) { collectMessages() }
-
         loadJob = viewModelScope.launch {
             // Same follow source as HOME: the offline list wins when it is switched on.
             val local = offlineLists.snapshot(ListType.FOLLOWS, account.pubkey)
@@ -1554,6 +1605,7 @@ class FeedViewModel @Inject constructor(
             val authors = (follows + account.pubkey).distinct()
             clockAuthors = authors
 
+            startMessageCollector()
             followsReceived = true
             feedSubId = sub(
                 listOf(
@@ -1625,10 +1677,19 @@ class FeedViewModel @Inject constructor(
             ),
             label = "clock",
         )
-        viewModelScope.launch {
-            delay(SETTLE_TIMEOUT_MS)
-            if (feedSubId != null) _uiState.update { it.copy(isLoading = false) }
-        }
+        loadWatchdog.start(
+            timeoutMs = SETTLE_TIMEOUT_MS,
+            isEmpty = { _uiState.value.events.isEmpty() },
+            onTimeout = { nothingArrived ->
+                settleWindowFeed(
+                    if (nothingArrived) {
+                        "Nothing in this window. Try a longer window, or pull to refresh."
+                    } else {
+                        null
+                    },
+                )
+            },
+        )
     }
 
     /**
@@ -1662,40 +1723,43 @@ class FeedViewModel @Inject constructor(
 
         suggestedEoseChunks.clear()
 
-        followsReceived = true
-        collectJob = viewModelScope.launch(Dispatchers.Default) { collectMessages() }
-
         if (chunks.isEmpty()) {
             feedSettled = true
-            _uiState.update { it.copy(isLoading = false, suggestedLoading = false) }
+            endLoad()
+            _uiState.update { it.copy(suggestedLoading = false) }
             return
         }
 
-        // Enough per chunk to fill MAX_FEED_EVENTS across all of them, capped so a
-        // single chunk cannot dominate the merged timeline.
-        val perChunk = ((MAX_FEED_EVENTS.toFloat() / chunks.size).toInt() + 8).coerceIn(12, 40)
-        chunks.forEach { chunk ->
-            val id = sub(
-                listOf(Filter(authors = chunk, kinds = FEED_KINDS, limit = perChunk)),
-                label = "suggested",
-            )
-            suggestedSubIds.add(id)
-        }
+        loadJob = viewModelScope.launch {
+            startMessageCollector()
+            followsReceived = true
 
-        loadWatchdog.start(
-            timeoutMs = SUGGESTED_TIMEOUT_MS,
-            isEmpty = { _uiState.value.events.isEmpty() },
-            onTimeout = { nothingArrived ->
-                settleSuggested(
-                    if (nothingArrived) {
-                        "None of the suggested accounts answered. Their relays may be blocking " +
-                            "this client — pull to refresh, or read your follow feed instead."
-                    } else {
-                        null
-                    },
+            // Enough per chunk to fill MAX_FEED_EVENTS across all of them, capped so a
+            // single chunk cannot dominate the merged timeline.
+            val perChunk = ((MAX_FEED_EVENTS.toFloat() / chunks.size).toInt() + 8).coerceIn(12, 40)
+            chunks.forEach { chunk ->
+                val id = sub(
+                    listOf(Filter(authors = chunk, kinds = FEED_KINDS, limit = perChunk)),
+                    label = "suggested",
                 )
-            },
-        )
+                suggestedSubIds.add(id)
+            }
+
+            loadWatchdog.start(
+                timeoutMs = SUGGESTED_TIMEOUT_MS,
+                isEmpty = { _uiState.value.events.isEmpty() },
+                onTimeout = { nothingArrived ->
+                    settleSuggested(
+                        if (nothingArrived) {
+                            "None of the suggested accounts answered. Their relays may be blocking " +
+                                "this client — pull to refresh, or read your follow feed instead."
+                        } else {
+                            null
+                        },
+                    )
+                },
+            )
+        }
     }
 
     /** Flushes once every chunk has been answered (or the timeout wins). */
@@ -1782,97 +1846,129 @@ class FeedViewModel @Inject constructor(
         globalPool.unsubscribe(id)
     }
 
-    private suspend fun collectMessages(onGlobalSubscribed: (() -> Unit)? = null) {
-        merge(pool.messages, globalPool.messages.onSubscription { onGlobalSubscribed?.invoke() }).collect { poolMessage ->
-            when (val msg = poolMessage.message) {
-                is RelayMessage.EventMessage -> {
-                    when {
-                        msg.subscriptionId == globalOlderSubId -> {
-                            if (msg.event.verify()) handleGlobalPageEvent(globalOlderRequest, msg.event)
-                        }
-                        msg.subscriptionId == globalNewerSubId -> {
-                            if (msg.event.verify()) handleGlobalPageEvent(globalNewerRequest, msg.event)
-                        }
-                        msg.subscriptionId in activeSubIds -> {
-                            if (msg.event.verify()) handleEvent(msg.event)
-                        }
-                        msg.subscriptionId in quoteSubIds -> {
-                            if (msg.event.verify()) handleQuoteEvent(msg.event)
-                        }
-                    }
-                }
-                is RelayMessage.EndOfStoredEvents -> {
-                    when {
-                        msg.subscriptionId in quoteSubIds -> {
-                            // First EOSE = fastest relay only. Keep listening so a
-                            // slower relay holding the note can still deliver it.
-                            val sid = msg.subscriptionId
-                            viewModelScope.launch {
-                                kotlinx.coroutines.delay(QUOTE_GRACE_MS)
-                                if (quoteSubIds.remove(sid)) { pool.unsubscribe(sid); globalPool.unsubscribe(sid) }
-                                // Lookup finished: whatever is still missing is
-                                // genuinely unavailable, not "loading".
-                                refreshUnresolvedQuotes()
-                            }
-                        }
-                        msg.subscriptionId in metadataFetchSubIds -> {
-                            metadataFetchSubIds.remove(msg.subscriptionId)
-                            unsub(msg.subscriptionId)
-                        }
-                        msg.subscriptionId in suggestedSubIds -> {
-                            // Settle once every chunk has been answered by at least one
-                            // relay, so the merged timeline appears in one go instead of
-                            // chunk by chunk.
-                            suggestedEoseChunks.add(msg.subscriptionId)
-                            if (suggestedChunks > 0 && suggestedEoseChunks.size >= suggestedChunks) {
-                                settleSuggested()
-                            }
-                        }
-                        msg.subscriptionId == globalOlderSubId -> {
-                            handleGlobalPageEose(globalOlderRequest, poolMessage.relayUrl)
-                        }
-                        msg.subscriptionId == globalNewerSubId -> {
-                            handleGlobalPageEose(globalNewerRequest, poolMessage.relayUrl)
-                        }
-                        // The clock feed's own subscription settles through its own
-                        // path; the generic branch below only knows about Global paging.
-                        msg.subscriptionId == feedSubId && _currentFeed.value == FeedTab.CLOCK -> {
-                            settleWindowFeed()
-                        }
-                        msg.subscriptionId == feedSubId && _currentFeed.value == FeedTab.GLOBAL -> {
-                            globalInitialEoseRelays.add(RelayPool.normalize(poolMessage.relayUrl))
-                            if (globalInitialExpectedRelays.isEmpty() ||
-                                globalInitialEoseRelays.containsAll(globalInitialExpectedRelays)
-                            ) settleGlobalInitial()
-                        }
-                        msg.subscriptionId !in activeSubIds -> return@collect
-                        msg.subscriptionId == followsRelayListSubId -> {
-                            unsub(followsRelayListSubId); followsRelayListSubId = null
-                            val follows = followsForRelaySelection
-                            if (follows.isNotEmpty()) selectAndApplyRelays(follows)
-                        }
-                        // Expanded feed (after follow list) is ready — show everything.
-                        msg.subscriptionId == feedSubId && followsReceived && !feedSettled -> {
-                            feedSettled = true
-                            flushBuffer()
-                            val canLoadOlder = _currentFeed.value == FeedTab.GLOBAL &&
-                                synchronized(feedEvents) { feedEvents.size >= GLOBAL_PAGE_SIZE }
-                            _uiState.update {
-                                it.copy(isLoading = false, globalCanLoadOlder = canLoadOlder)
-                            }
-                        }
-                        // Follow subscription returned nothing (user has no follows) —
-                        // fall back to showing own notes.
-                        msg.subscriptionId == followSubId && !followsReceived && !feedSettled -> {
-                            feedSettled = true
-                            flushBuffer()
-                            _uiState.update { it.copy(isLoading = false) }
-                        }
-                        else -> _uiState.update { it.copy(isLoading = false) }
-                    }
-                }
-                else -> Unit
+    /**
+     * Launches the message collector on [Dispatchers.Default] and suspends until
+     * BOTH `pool.messages` and `globalPool.messages` have active subscribers, so
+     * no fast relay event or EOSE can ever be missed between `sub(...)` and
+     * collection starting.
+     */
+    private suspend fun startMessageCollector() {
+        collectJob?.cancel()
+        val personalReady = CompletableDeferred<Unit>()
+        val globalReady = CompletableDeferred<Unit>()
+        collectJob = viewModelScope.launch(Dispatchers.Default) {
+            merge(
+                pool.messages.onSubscription { personalReady.complete(Unit) },
+                globalPool.messages.onSubscription { globalReady.complete(Unit) },
+            ).collect { poolMessage ->
+                handlePoolMessage(poolMessage)
             }
+        }
+        personalReady.await()
+        globalReady.await()
+    }
+
+    private fun handlePoolMessage(poolMessage: social.tbone.nostr.relay.PoolMessage) {
+        when (val msg = poolMessage.message) {
+            is RelayMessage.EventMessage -> {
+                when {
+                    msg.subscriptionId == globalOlderSubId -> {
+                        if (msg.event.verify()) handleGlobalPageEvent(globalOlderRequest, msg.event)
+                    }
+                    msg.subscriptionId == globalNewerSubId -> {
+                        if (msg.event.verify()) handleGlobalPageEvent(globalNewerRequest, msg.event)
+                    }
+                    msg.subscriptionId in activeSubIds -> {
+                        if (msg.event.verify()) handleEvent(msg.event)
+                    }
+                    msg.subscriptionId in quoteSubIds -> {
+                        if (msg.event.verify()) handleQuoteEvent(msg.event)
+                    }
+                }
+            }
+            is RelayMessage.EndOfStoredEvents -> {
+                when {
+                    msg.subscriptionId in quoteSubIds -> {
+                        // First EOSE = fastest relay only. Keep listening so a
+                        // slower relay holding the note can still deliver it.
+                        val sid = msg.subscriptionId
+                        viewModelScope.launch {
+                            kotlinx.coroutines.delay(QUOTE_GRACE_MS)
+                            if (quoteSubIds.remove(sid)) { pool.unsubscribe(sid); globalPool.unsubscribe(sid) }
+                            // Lookup finished: whatever is still missing is
+                            // genuinely unavailable, not "loading".
+                            refreshUnresolvedQuotes()
+                        }
+                    }
+                    msg.subscriptionId in metadataFetchSubIds -> {
+                        metadataFetchSubIds.remove(msg.subscriptionId)
+                        unsub(msg.subscriptionId)
+                    }
+                    msg.subscriptionId == metadataSubId -> {
+                        // Own profile kind-0 EOSE must never clear the feed's
+                        // loading spinner before the timeline itself settles.
+                        unsub(metadataSubId); metadataSubId = null
+                    }
+                    msg.subscriptionId in suggestedSubIds -> {
+                        // Settle once every chunk has been answered by at least one
+                        // relay, so the merged timeline appears in one go instead of
+                        // chunk by chunk.
+                        suggestedEoseChunks.add(msg.subscriptionId)
+                        if (suggestedChunks > 0 && suggestedEoseChunks.size >= suggestedChunks) {
+                            settleSuggested()
+                        }
+                    }
+                    msg.subscriptionId == globalOlderSubId -> {
+                        handleGlobalPageEose(globalOlderRequest, poolMessage.relayUrl)
+                    }
+                    msg.subscriptionId == globalNewerSubId -> {
+                        handleGlobalPageEose(globalNewerRequest, poolMessage.relayUrl)
+                    }
+                    // The clock feed's own subscription settles through its own
+                    // path; the generic branch below only knows about Global paging.
+                    msg.subscriptionId == feedSubId && _currentFeed.value == FeedTab.CLOCK -> {
+                        settleWindowFeed()
+                    }
+                    msg.subscriptionId == feedSubId && _currentFeed.value == FeedTab.GLOBAL -> {
+                        globalInitialEoseRelays.add(RelayPool.normalize(poolMessage.relayUrl))
+                        if (globalInitialExpectedRelays.isEmpty() ||
+                            globalInitialEoseRelays.containsAll(globalInitialExpectedRelays)
+                        ) settleGlobalInitial()
+                    }
+                    msg.subscriptionId !in activeSubIds -> return
+                    msg.subscriptionId == followsRelayListSubId -> {
+                        unsub(followsRelayListSubId); followsRelayListSubId = null
+                        val follows = followsForRelaySelection
+                        if (follows.isNotEmpty()) selectAndApplyRelays(follows)
+                    }
+                    // Generic custom slots (people, relay, hashtag, polls): settle as
+                    // soon as every filter subscription for the slot has reported EOSE.
+                    slotEngine.slotForSub(msg.subscriptionId) != null -> {
+                        val runtime = slotEngine.slotForSub(msg.subscriptionId)
+                        if (runtime != null && !runtime.settled) {
+                            runtime.eoseChunks.add(msg.subscriptionId)
+                            if (runtime.subIds.isNotEmpty() && runtime.eoseChunks.containsAll(runtime.subIds)) {
+                                settleSlot(runtime)
+                            }
+                        }
+                    }
+                    // Expanded feed (after follow list) is ready — show everything.
+                    msg.subscriptionId == feedSubId && followsReceived && !feedSettled -> {
+                        feedSettled = true
+                        flushBuffer()
+                        endLoad()
+                    }
+                    // Follow subscription returned nothing (user has no follows) —
+                    // fall back to showing own notes.
+                    msg.subscriptionId == followSubId && !followsReceived && !feedSettled -> {
+                        feedSettled = true
+                        flushBuffer()
+                        endLoad()
+                    }
+                    else -> Unit
+                }
+            }
+            else -> Unit
         }
     }
 
@@ -1900,7 +1996,7 @@ class FeedViewModel @Inject constructor(
             EventKind.FOLLOW_LIST -> expandFeedToFollows(event)
             EventKind.METADATA    -> {
                 profileRepository.processEvent(event)
-                val selfPubkey = activeAccount.value?.pubkey ?: return
+                val selfPubkey = currentAccount()?.pubkey ?: return
                 if (event.pubkey == selfPubkey) {
                     val content = ProfileContent.parse(event.content) ?: return
                     viewModelScope.launch {
@@ -1911,7 +2007,7 @@ class FeedViewModel @Inject constructor(
                 }
             }
             EventKind.RELAY_LIST  -> {
-                val selfPubkey = activeAccount.value?.pubkey ?: return
+                val selfPubkey = currentAccount()?.pubkey ?: return
                 if (event.pubkey == selfPubkey) handleRelayList(event)
                 else handleFollowRelayList(event)
             }
@@ -1935,9 +2031,29 @@ class FeedViewModel @Inject constructor(
 
         unsub(followSubId); followSubId = null
 
-        val selfPubkey = activeAccount.value?.pubkey ?: return
+        val selfPubkey = currentAccount()?.pubkey ?: return
 
-        applyFollowedSet(selfPubkey, followed)
+        if (!isSameSubscribedFollowSet(followsReceived, subscribedFollowSet, followed)) {
+            appliedFollowMode = FollowMode(offline = false, follows = followed.toSet())
+            applyFollowedSet(selfPubkey, followed)
+            loadWatchdog.start(
+                timeoutMs = HOME_LOAD_TIMEOUT_MS,
+                isEmpty = { _uiState.value.events.isEmpty() },
+                onTimeout = { nothingArrived ->
+                    if (!feedSettled) {
+                        feedSettled = true
+                        flushBuffer()
+                    }
+                    endLoad(
+                        if (nothingArrived) {
+                            "No notes arrived. Your follows may be on relays that are not answering — pull to refresh."
+                        } else {
+                            null
+                        },
+                    )
+                },
+            )
+        }
 
         // Persist follow list with full relay hints so toggleFollow can preserve them.
         // selfPubkey is captured from above — stable, never changes for the active account.
@@ -1971,6 +2087,7 @@ class FeedViewModel @Inject constructor(
 
         // Follow list known — expand to full feed and wait for its EOSE.
         followsReceived = true
+        subscribedFollowSet = followed.toSet()
         unsub(feedSubId)
         feedSettled = false
         feedSubId = sub(listOf(
@@ -2041,7 +2158,7 @@ class FeedViewModel @Inject constructor(
         // Only persist home feed events — global/clock/suggested are views and must
         // not pollute the cache that getRecentFeedEvents returns on next home load.
         if (_currentFeed.value == FeedTab.HOME) {
-            val accountPubkey = activeAccount.value?.pubkey ?: return
+            val accountPubkey = currentAccount()?.pubkey ?: return
             viewModelScope.launch { eventRepository.save(event, accountPubkey) }
         }
         // The clock feed is anchored in the past: a note published after the anchor
@@ -2099,8 +2216,8 @@ class FeedViewModel @Inject constructor(
      */
     private fun endLoad(emptyMessage: String? = null) {
         loadWatchdog.finish()
-        val empty = _uiState.value.events.isEmpty()
         _uiState.update { state ->
+            val empty = state.events.isEmpty()
             when {
                 empty && emptyMessage != null -> state.copy(isLoading = false, error = emptyMessage)
                 empty -> state.copy(isLoading = false)
@@ -2210,10 +2327,15 @@ class FeedViewModel @Inject constructor(
     }
 
     private fun clearFeed() {
+        slotActivateJob?.cancel()
+        loadWatchdog.finish()
+        pendingGlobalLoadOnVisible = false
+        releaseSlotRelays()
         globalSession.reconcile(false, emptySet())
         loadJob?.cancel()
         appliedFollowMode = null
         appliedForPubkey = null
+        subscribedFollowSet = null
         collectJob?.cancel()
         activeSubIds.clear()
         unsub(feedSubId); feedSubId = null

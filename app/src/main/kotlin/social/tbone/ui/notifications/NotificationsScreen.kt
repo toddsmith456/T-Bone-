@@ -1,8 +1,5 @@
 package social.tbone.ui.notifications
 
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.MaterialTheme
-import social.tbone.ui.theme.appCornerShape
 import social.tbone.ui.theme.feedShellBackground
 import dev.youniversal.theme.YouniversalEmptyState
 import dev.youniversal.theme.YouniversalTheme
@@ -11,7 +8,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,9 +46,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.foundation.shape.RoundedCornerShape
-import coil.compose.AsyncImage
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -68,17 +61,17 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import social.tbone.nostr.Event
+import social.tbone.nostr.EventKind
 import social.tbone.nostr.Nip19
 import social.tbone.nostr.ProfileContent
 import social.tbone.nostr.identity.Phrase
+import social.tbone.nostr.quotedEventId
 import social.tbone.notifications.FlatNotifItem
 import social.tbone.notifications.NotifFilter
 import social.tbone.notifications.NotifSummary
 import social.tbone.notifications.NotifType
 import social.tbone.ui.components.UserAvatar
-import social.tbone.ui.feed.MediaItem
 import social.tbone.ui.feed.QuotedNoteCard
-import social.tbone.ui.feed.parseNoteContent
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.ui.theme.appBorder
@@ -107,41 +100,28 @@ fun NotificationsScreen(
     val hasUnread by viewModel.hasUnread.collectAsStateWithLifecycle()
     val hasMore by viewModel.hasMore.collectAsStateWithLifecycle()
     val loadingMore by viewModel.loadingMore.collectAsStateWithLifecycle()
+    val pollVoteCounts by viewModel.pollVoteCounts.collectAsStateWithLifecycle()
+    val pollTotalVotes by viewModel.pollTotalVotes.collectAsStateWithLifecycle()
+    val pollMyVotes by viewModel.pollMyVotes.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
-    val filtersMigrated by viewModel.filtersMigrated.collectAsStateWithLifecycle()
-
-    // The filter defaults changed (zaps are now on by default). Say so once,
-    // instead of leaving somebody wondering why their zap count was zero.
-    var showMigratedNotice by remember { mutableStateOf(false) }
-    LaunchedEffect(filtersMigrated) {
-        if (filtersMigrated) {
-            showMigratedNotice = true
-            viewModel.dismissFiltersMigrated()
-        }
-    }
-    if (showMigratedNotice) {
-        AlertDialog(
-            onDismissRequest = { showMigratedNotice = false },
-            containerColor = BonyColors.Surface,
-            title = { Text("Zap notifications are on", style = BonyType.body.copy(color = BonyColors.Text)) },
-            text = {
-                Text(
-                    "Your notification filters did not include zaps, so incoming zaps were being hidden. " +
-                        "They are switched on now. You can turn any filter off in the filter settings.",
-                    style = BonyType.meta.copy(color = BonyColors.TextDim),
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { showMigratedNotice = false }) {
-                    Text("GOT IT", style = BonyType.button.copy(color = BonyColors.Accent))
-                }
-            },
-        )
-    }
 
     // Only one row expanded at a time.
     var expandedId by remember { mutableStateOf<String?>(null) }
     var showFilterSheet by remember { mutableStateOf(false) }
+
+    // Subscribe to poll votes whenever an expanded notification involves a poll.
+    LaunchedEffect(expandedId, items, referencedNotes) {
+        val current = expandedId?.let { id -> items.firstOrNull { it.id == id } } ?: return@LaunchedEffect
+        val ref = current.referencedEventId?.let { referencedNotes[it] }
+        val candidates = buildList {
+            current.note?.let { add(it) }
+            ref?.let { add(it) }
+            val nestedId = current.note?.parsedTags?.quotedEventId
+                ?: ref?.parsedTags?.quotedEventId
+            nestedId?.let { referencedNotes[it] }?.let { add(it) }
+        }
+        candidates.filter { it.kind == EventKind.POLL }.forEach { viewModel.subscribePoll(it.id) }
+    }
 
     LaunchedEffect(Unit) { viewModel.markRead() }
     LaunchedEffect(hasUnread) { if (hasUnread) viewModel.markRead() }
@@ -261,6 +241,10 @@ fun NotificationsScreen(
                             onOpenProfile = onProfileClick,
                             onReply = onReplyClick,
                             quotedEvents = referencedNotes,
+                            pollVoteCounts = pollVoteCounts,
+                            pollTotalVotes = pollTotalVotes,
+                            pollMyVotes = pollMyVotes,
+                            onPollVote = viewModel::voteOnPoll,
                         )
                         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
                     }
@@ -506,6 +490,10 @@ private fun NotificationRow(
     referencedNote: Event?,
     /** Resolved referenced notes — lets nested quotes render inside the card. */
     quotedEvents: Map<String, Event> = emptyMap(),
+    pollVoteCounts: Map<String, Map<String, Int>> = emptyMap(),
+    pollTotalVotes: Map<String, Int> = emptyMap(),
+    pollMyVotes: Map<String, List<String>> = emptyMap(),
+    onPollVote: (Event, List<String>) -> Unit = { _, _ -> },
     isExpanded: Boolean,
     onToggle: () -> Unit,
     onOpenThread: (String) -> Unit,
@@ -521,16 +509,11 @@ private fun NotificationRow(
     }
 
     val actorName = profile?.bestName ?: item.actorPubkey.phraseHandle()
-    val imagePreview = remember(item.id, referencedNote?.id) {
-        sequenceOf(item.note, referencedNote)
-            .filterNotNull()
-            .flatMap { note -> parseNoteContent(note.content).mediaItems.asSequence() }
-            .filterIsInstance<MediaItem.Image>()
-            .firstOrNull()
-    }
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        // Compact row — always visible.
+        // Compact row — always visible. Note pictures are intentionally NOT
+        // shown while collapsed so rows keep a uniform height and never jump
+        // around as referenced notes finish loading.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -574,17 +557,6 @@ private fun NotificationRow(
                     )
                 }
             }
-            if (imagePreview != null) {
-                AsyncImage(
-                    model = imagePreview.url,
-                    contentDescription = "notification image",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(8.dp))),
-                )
-                Spacer(Modifier.width(8.dp))
-            }
             Spacer(Modifier.width(8.dp))
             Text(
                 text = remember(item.timestamp) { item.timestamp.formatNotifTimestamp() },
@@ -592,7 +564,8 @@ private fun NotificationRow(
             )
         }
 
-        // Expanded section — just reveal the note the notification is about.
+        // Expanded section — reveals the note (including any picture or poll
+        // options) the notification is about.
         AnimatedVisibility(
             visible = isExpanded,
             enter = expandVertically(),
@@ -616,6 +589,21 @@ private fun NotificationRow(
                                 modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 6.dp),
                             )
                         }
+                        if (referencedNote != null) {
+                            QuotedNoteCard(
+                                event = referencedNote,
+                                profile = profiles[referencedNote.pubkey],
+                                profiles = profiles,
+                                quotedEvents = quotedEvents,
+                                pollVoteCounts = pollVoteCounts,
+                                pollTotalVotes = pollTotalVotes,
+                                pollMyVotes = pollMyVotes,
+                                onPollVote = onPollVote,
+                                onThreadClick = onOpenThread,
+                                onProfileClick = onOpenProfile,
+                                modifier = Modifier.padding(start = 16.dp, end = 14.dp, bottom = 10.dp),
+                            )
+                        }
                     }
                 }
                 NotifType.REPLY -> {
@@ -637,6 +625,10 @@ private fun NotificationRow(
                                 profile = profiles[referencedNote.pubkey],
                                 profiles = profiles,
                                 quotedEvents = quotedEvents,
+                                pollVoteCounts = pollVoteCounts,
+                                pollTotalVotes = pollTotalVotes,
+                                pollMyVotes = pollMyVotes,
+                                onPollVote = onPollVote,
                                 onThreadClick = onOpenThread,
                                 onProfileClick = onOpenProfile,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
@@ -665,6 +657,10 @@ private fun NotificationRow(
                                 profile = profiles[reply.pubkey],
                                 profiles = profiles,
                                 quotedEvents = quotedEvents,
+                                pollVoteCounts = pollVoteCounts,
+                                pollTotalVotes = pollTotalVotes,
+                                pollMyVotes = pollMyVotes,
+                                onPollVote = onPollVote,
                                 onThreadClick = onOpenThread,
                                 onProfileClick = onOpenProfile,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
@@ -693,7 +689,7 @@ private fun NotificationRow(
                                 )
                             }
                         }
-                        // The poll itself.
+                        // The poll itself (with options).
                         val target = referencedNote ?: item.note
                         if (target != null) {
                             QuotedNoteCard(
@@ -701,6 +697,10 @@ private fun NotificationRow(
                                 profile = profiles[target.pubkey],
                                 profiles = profiles,
                                 quotedEvents = quotedEvents,
+                                pollVoteCounts = pollVoteCounts,
+                                pollTotalVotes = pollTotalVotes,
+                                pollMyVotes = pollMyVotes,
+                                onPollVote = onPollVote,
                                 onThreadClick = onOpenThread,
                                 onProfileClick = onOpenProfile,
                                 modifier = Modifier.padding(start = 56.dp, end = 14.dp, bottom = 10.dp),
@@ -722,6 +722,10 @@ private fun NotificationRow(
                                 profile = profiles[note.pubkey],
                                 profiles = profiles,
                                 quotedEvents = quotedEvents,
+                                pollVoteCounts = pollVoteCounts,
+                                pollTotalVotes = pollTotalVotes,
+                                pollMyVotes = pollMyVotes,
+                                onPollVote = onPollVote,
                                 onThreadClick = onOpenThread,
                                 onProfileClick = onOpenProfile,
                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
@@ -739,6 +743,10 @@ private fun NotificationRow(
                             profile = profiles[target.pubkey],
                             profiles = profiles,
                             quotedEvents = quotedEvents,
+                            pollVoteCounts = pollVoteCounts,
+                            pollTotalVotes = pollTotalVotes,
+                            pollMyVotes = pollMyVotes,
+                            onPollVote = onPollVote,
                             onThreadClick = onOpenThread,
                             onProfileClick = onOpenProfile,
                             modifier = Modifier.padding(start = 56.dp, end = 14.dp, bottom = 10.dp),

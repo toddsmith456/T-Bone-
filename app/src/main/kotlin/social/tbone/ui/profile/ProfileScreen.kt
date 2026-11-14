@@ -134,6 +134,7 @@ fun ProfileScreen(
         ProfileTab.NOTES, ProfileTab.ALL -> viewModel.pinnedFirst(tabNotes, pinnedNotes)
         else -> tabNotes
     }
+    val pinnedIds = remember(pinnedNotes) { pinnedNotes.map { it.id }.toSet() }
 
     // Index of the tapped gallery image (null = viewer closed).
     var galleryViewerIndex by remember { mutableStateOf<Int?>(null) }
@@ -562,6 +563,7 @@ fun ProfileScreen(
                         pollVoteVersion = pollVoteVersion,
                         onPollVote = viewModel::voteOnPoll,
                         activePubkey = activePubkey,
+                        isPinned = event.id in pinnedIds,
                     )
                 }
             }

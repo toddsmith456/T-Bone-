@@ -154,6 +154,37 @@ class NotificationEligibilityTest {
     }
 
     @Test
+    fun `a poll tagging me is a mention and exposes its options`() {
+        val poll = event(
+            EventKind.POLL,
+            tags = listOf(
+                tag("p", me),
+                tag("option", "opt1", "Coffee"),
+                tag("option", "opt2", "Tea"),
+                tag("polltype", "singlechoice"),
+            ),
+            content = "Morning drink?",
+        )
+        assertEquals(NotificationClass.MENTION, classify(poll))
+        val options = social.tbone.nostr.Nip88.parsePollOptions(poll)
+        assertEquals(listOf("Coffee", "Tea"), options.map { it.label })
+    }
+
+    @Test
+    fun `a poll quoting my note is a quote`() {
+        val poll = event(
+            EventKind.POLL,
+            tags = listOf(
+                tag("q", myNote),
+                tag("option", "yes", "Yes"),
+                tag("option", "no", "No"),
+            ),
+            content = "Agree?",
+        )
+        assertEquals(NotificationClass.QUOTE, classify(poll))
+    }
+
+    @Test
     fun `my own events never notify`() {
         val e = event(EventKind.TEXT_NOTE, pubkey = me, tags = listOf(tag("p", me)))
         assertNull(classify(e))

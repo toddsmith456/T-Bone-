@@ -102,6 +102,18 @@ class ProfileFeedShapeTest {
         assertEquals(ProfileTab.NOTES, ProfileTab.entries.first())
     }
 
+    @Test
+    fun `pinned id lookup marks only pinned posts so the pin symbol appears on them`() {
+        val feed = listOf(note("a", 5), note("b", 4), note("c", 3))
+        val pinned = listOf(feed[2])
+        val ordered = pinnedFirst(feed, pinned)
+        val pinnedIds = pinned.map { it.id }.toSet()
+        assertEquals(
+            listOf("c" to true, "a" to false, "b" to false),
+            ordered.map { it.id to (it.id in pinnedIds) },
+        )
+    }
+
     /** Copy of ProfileViewModel.pinnedFirst so the ordering rules are locked in. */
     private fun pinnedFirst(events: List<Event>, pinned: List<Event>): List<Event> {
         if (pinned.isEmpty()) return events

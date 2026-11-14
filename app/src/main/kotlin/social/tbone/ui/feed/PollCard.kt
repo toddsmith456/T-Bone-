@@ -5,8 +5,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -74,10 +74,13 @@ fun PollCard(
             .background(BonyColors.SurfaceAlt, pollShape),
     ) {
         if (showResults) {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth().heightIn(max = POLL_OPTIONS_MAX_HEIGHT),
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = POLL_OPTIONS_MAX_HEIGHT)
+                    .verticalScroll(rememberScrollState()),
             ) {
-                itemsIndexed(options) { index, option ->
+                options.forEachIndexed { index, option ->
                     if (index > 0) PollDivider()
                     val count = (voteCounts[option.id] ?: 0).coerceAtLeast(0)
                     val percentage = if (total > 0) count.toFloat() / total else 0f
@@ -97,10 +100,13 @@ fun PollCard(
             )
         } else {
             if (pollType == Nip88.PollType.SINGLECHOICE) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = POLL_OPTIONS_MAX_HEIGHT),
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = POLL_OPTIONS_MAX_HEIGHT)
+                        .verticalScroll(rememberScrollState()),
                 ) {
-                    itemsIndexed(options) { index, option ->
+                    options.forEachIndexed { index, option ->
                         if (index > 0) PollDivider()
                         PollOptionRow(
                             label = option.label,
@@ -113,10 +119,13 @@ fun PollCard(
             } else {
                 // Multiple choice — local selection, submit via VOTE button.
                 var selected by remember(poll.id) { mutableStateOf<Set<String>>(emptySet()) }
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = POLL_OPTIONS_MAX_HEIGHT),
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = POLL_OPTIONS_MAX_HEIGHT)
+                        .verticalScroll(rememberScrollState()),
                 ) {
-                    itemsIndexed(options) { index, option ->
+                    options.forEachIndexed { index, option ->
                         if (index > 0) PollDivider()
                         PollOptionRow(
                             label = option.label,
@@ -147,6 +156,58 @@ fun PollCard(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Compact read-only preview of a NIP-88 poll's options for embedded/quoted
+ * cards where no interactive vote handler is supplied.
+ */
+@Composable
+fun PollOptionsPreview(
+    poll: Event,
+    modifier: Modifier = Modifier,
+) {
+    val options = remember(poll.id) { Nip88.parsePollOptions(poll) }
+    if (options.isEmpty()) return
+
+    val isRadio = remember(poll.id) { Nip88.parsePollType(poll) == Nip88.PollType.SINGLECHOICE }
+    val isEnded = remember(poll.id) { Nip88.isPollEnded(poll) }
+    val pollShape = appCornerShape(MaterialTheme.shapes.small, RectangleShape)
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(pollShape)
+            .border(1.dp, BonyColors.Rule, pollShape)
+            .background(BonyColors.Surface, pollShape),
+    ) {
+        options.forEachIndexed { index, option ->
+            if (index > 0) PollDivider()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = if (isRadio) "○" else "☐",
+                    style = BonyType.meta.copy(color = BonyColors.TextMute),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = option.label.ifBlank { "(untitled)" },
+                    style = BonyType.meta.copy(color = BonyColors.Text),
+                )
+            }
+        }
+        if (isEnded) {
+            PollDivider()
+            Text(
+                text = "poll ended",
+                style = BonyType.caption.copy(color = BonyColors.TextMute),
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            )
         }
     }
 }

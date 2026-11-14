@@ -2,6 +2,7 @@ package social.tbone.ui.feed
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Repeat
 import androidx.compose.material.icons.outlined.FormatQuote
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -139,6 +140,8 @@ fun NoteCard(
      * draws its own nesting rails, so the extra line there is just noise.
      */
     showReplyContext: Boolean = true,
+    /** When true, displays a pin badge at the top of the card (profile pinned posts). */
+    isPinned: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val contentFilter = LocalContentFilter.current
@@ -203,11 +206,16 @@ fun NoteCard(
                     else Modifier,
                 ),
         ) {
+            if (isPinned) {
+                PinnedPostBadge(
+                    modifier = Modifier.padding(start = 14.dp, top = 10.dp, end = 14.dp),
+                )
+            }
             // Boost header
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .padding(start = 14.dp, top = 10.dp, end = 14.dp, bottom = 4.dp)
+                    .padding(start = 14.dp, top = if (isPinned) 4.dp else 10.dp, end = 14.dp, bottom = 4.dp)
                     .then(
                         if (onProfileClick != null)
                             Modifier.clickable { onProfileClick(event.pubkey) }
@@ -237,6 +245,10 @@ fun NoteCard(
                     onProfileClick = onProfileClick,
                     onHashtagClick = onHashtagClick,
                     fullContent = fullContent,
+                    pollVoteCounts = pollVoteCounts,
+                    pollTotalVotes = pollTotalVotes,
+                    pollMyVotes = pollMyVotes,
+                    onPollVote = onPollVote,
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
                 )
                 NoteEngagementRow(
@@ -286,6 +298,9 @@ fun NoteCard(
                 )
                 .padding(start = 14.dp, end = 14.dp, top = 14.dp, bottom = 12.dp),
         ) {
+            if (isPinned) {
+                PinnedPostBadge(modifier = Modifier.padding(bottom = 6.dp))
+            }
             // Author row
             Row(verticalAlignment = Alignment.Top) {
                 UserAvatar(
@@ -406,6 +421,10 @@ fun NoteCard(
             )
             .padding(start = 14.dp, end = 14.dp, top = 14.dp, bottom = 12.dp),
     ) {
+        if (isPinned) {
+            PinnedPostBadge(modifier = Modifier.padding(bottom = 6.dp))
+        }
+
         // Reply context line
         if (showReplyContext && event.parsedTags.isReply) {
             val replyPubkeys = event.parsedTags.replyToPubkeys
@@ -625,6 +644,27 @@ private fun ReferencePlaceholder(
     }
 }
 
+@Composable
+private fun PinnedPostBadge(modifier: Modifier = Modifier) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier,
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.PushPin,
+            contentDescription = "pinned post",
+            tint = BonyColors.Accent,
+            modifier = Modifier.size(13.dp),
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(
+            text = "pinned",
+            style = BonyType.metaDim.copy(color = BonyColors.Accent),
+            maxLines = 1,
+        )
+    }
+}
+
 /** Body lines shown inside a quoted note before "show more". */
 private const val QUOTED_MAX_LINES = 6
 
@@ -646,6 +686,11 @@ fun QuotedNoteCard(
     modifier: Modifier = Modifier,
     quoteAncestors: Set<String> = emptySet(),
     referenceUri: String? = null,
+    /** NIP-88 poll vote data and vote callback when rendering a poll event. */
+    pollVoteCounts: Map<String, Map<String, Int>> = emptyMap(),
+    pollTotalVotes: Map<String, Int> = emptyMap(),
+    pollMyVotes: Map<String, List<String>> = emptyMap(),
+    onPollVote: ((Event, List<String>) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val contentFilter = LocalContentFilter.current
@@ -769,6 +814,32 @@ fun QuotedNoteCard(
             NoteMediaContent(mediaItems = parsed.mediaItems, authorPubkey = event.pubkey)
         }
 
+        // NIP-88 poll options: render interactive PollCard when vote wiring is
+        // provided (e.g. expanded notifications, reposts) or a compact option
+        // list when embedded read-only, so poll options are never missing.
+        if (event.kind == EventKind.POLL) {
+            val pollOptions = remember(event.id) { Nip88.parsePollOptions(event) }
+            if (pollOptions.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                if (onPollVote != null) {
+                    PollCard(
+                        poll = event,
+                        voteCounts = pollVoteCounts[event.id] ?: emptyMap(),
+                        totalVotes = pollTotalVotes[event.id]
+                            ?: (pollVoteCounts[event.id]?.values?.sum() ?: 0),
+                        userVotes = pollMyVotes[event.id] ?: emptyList(),
+                        onVote = { ids -> onPollVote(event, ids) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    PollOptionsPreview(
+                        poll = event,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        }
+
         // Quote of a quote still renders (one level, so a cycle cannot recurse).
         val nested = nestedId?.let { quotedEvents[it] }
         if (nestedId != null &&
@@ -795,6 +866,10 @@ fun QuotedNoteCard(
                 quotedEvents = quotedEvents,
                 nestingDepth = nestingDepth + 1,
                 quoteAncestors = quoteAncestors + event.id,
+                pollVoteCounts = pollVoteCounts,
+                pollTotalVotes = pollTotalVotes,
+                pollMyVotes = pollMyVotes,
+                onPollVote = onPollVote,
             )
         }
     }
