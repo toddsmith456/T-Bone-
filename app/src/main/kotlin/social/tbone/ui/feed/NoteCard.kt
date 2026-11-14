@@ -499,7 +499,11 @@ fun NoteCard(
                 // Media placeholder(s)
                 if (parsed.mediaItems.isNotEmpty()) {
                     Spacer(Modifier.height(if (bodyText.isNotEmpty()) 8.dp else 0.dp))
-                    NoteMediaContent(mediaItems = parsed.mediaItems, modifier = Modifier.fillMaxWidth())
+                    NoteMediaContent(
+                        mediaItems = parsed.mediaItems,
+                        modifier = Modifier.fillMaxWidth(),
+                        authorPubkey = event.pubkey,
+                    )
                 }
 
                 // Quoted note
@@ -672,7 +676,7 @@ fun QuotedNoteCard(
         return
     }
 
-    val parsed = remember(event.id) { parseNoteContent(event.content, profiles) }
+    val parsed = remember(event.id) { parseEventContent(event) }
     val nestedId = event.parsedTags.quotedEventId
         ?: event.parsedTags.firstOrNull { it.name == "q" }?.value()
     // The nested quote is drawn by the dedicated card below, not as a second
@@ -762,7 +766,7 @@ fun QuotedNoteCard(
         // why an image in a quoted note was invisible on the feed.
         if (parsed.mediaItems.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
-            NoteMediaContent(mediaItems = parsed.mediaItems)
+            NoteMediaContent(mediaItems = parsed.mediaItems, authorPubkey = event.pubkey)
         }
 
         // Quote of a quote still renders (one level, so a cycle cannot recurse).

@@ -43,6 +43,9 @@ class DataWiper @Inject constructor(
     private val geohashCache: social.tbone.ui.toolbox.geohash.GeohashMessageCache,
     private val geohashMonitor: social.tbone.ui.toolbox.geohash.GeohashPinnedMonitor,
     private val followMutations: social.tbone.lists.FollowMutationCoordinator,
+    private val aiModelManager: social.tbone.ai.AiModelManager,
+    private val aiEngine: social.tbone.ai.NsfwEngine,
+    private val mediaScanCache: social.tbone.ai.MediaScanCache,
 ) {
 
     /**
@@ -80,6 +83,11 @@ class DataWiper @Inject constructor(
             // Clear the in-memory channel state before watchers can resume,
             // not only the underlying DataStore on its later flow emission.
             steps.run("clear geohash settings") { appSettings.clearGeohashData() }
+            steps.run("wipe offline ai models and scan cache") {
+                aiModelManager.wipeForDuress()
+                aiEngine.unloadAll()
+                mediaScanCache.clearMemory()
+            }
             steps.run("clear database") { appDatabase.clearAllTables() }
 
             // The live DataStore file must never be deleted behind its active
@@ -98,7 +106,12 @@ class DataWiper @Inject constructor(
                 checkNotNull(context.codeCacheDir.listFiles()) { "cannot enumerate code cache" }
                     .forEach { check(it.deleteRecursively()) { "code cache deletion failed" } }
             }
-            listOf("tbone_notes_key", "tbone_local_key_encryption", "tbone_calendar_key").forEach { alias ->
+            listOf(
+                "tbone_notes_key",
+                "tbone_local_key_encryption",
+                "tbone_calendar_key",
+                social.tbone.ai.ScanKeyHasher.KEYSTORE_ALIAS,
+            ).forEach { alias ->
                 steps.run("remove owned key") {
                     val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
                     ks.deleteEntry(alias)

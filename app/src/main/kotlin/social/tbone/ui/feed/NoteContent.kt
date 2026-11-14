@@ -62,10 +62,18 @@ import social.tbone.util.BlurHash
 import coil.request.ImageRequest
 import coil.size.Precision
 import social.tbone.R
+import social.tbone.ai.AiCoilParams
+import social.tbone.ai.NsfwBlockedException
+import social.tbone.ai.ScanDecision
+import social.tbone.ai.ScanSurface
+import social.tbone.ai.ScanVerdict
 import social.tbone.nostr.Nip19
 import social.tbone.nostr.ProfileContent
 import social.tbone.settings.ImageLoadMode
+import social.tbone.settings.LocalContentFilter
+import social.tbone.settings.NsfwMode
 import social.tbone.settings.VideoQuality
+import social.tbone.ui.media.AiNsfwMediaVeil
 import social.tbone.ui.media.ImageViewer
 import social.tbone.ui.media.InlineAudioPlayer
 import social.tbone.ui.media.LocalImageLoadMode
@@ -130,6 +138,7 @@ data class MediaMeta(
     val blurhash: String? = null,
     val thumbhash: String? = null,
     val image: String? = null,
+    val sha256: String? = null,
 ) {
     /** Width/height ratio from [dimension], or null when unstated/invalid. */
     val aspectRatio: Float? get() = parseMediaAspectRatio(dimension)
@@ -214,14 +223,20 @@ private fun abbreviateNpub(hex: String): String =
     Nip19.hexToNpub(hex).let { "${it.take(9)}…${it.takeLast(4)}" }
 
 @Composable
-fun NoteMediaContent(mediaItems: List<MediaItem>, modifier: Modifier = Modifier) {
+fun NoteMediaContent(
+    mediaItems: List<MediaItem>,
+    modifier: Modifier = Modifier,
+    authorPubkey: String? = null,
+) {
     if (mediaItems.isEmpty()) return
     val imageMode = LocalImageLoadMode.current
     val videoQuality = LocalVideoQuality.current
     var imageViewerUrl by remember { mutableStateOf<String?>(null) }
+    var imageViewerSha256 by remember { mutableStateOf<String?>(null) }
     var videoViewerUrl by remember { mutableStateOf<String?>(null) }
     // Image reveal state remains local to this note.
     var revealedImages by remember { mutableStateOf(setOf<String>()) }
+    var aiRevealedUrls by remember { mutableStateOf(setOf<String>()) }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         mediaItems.forEach { item ->
@@ -229,15 +244,48 @@ fun NoteMediaContent(mediaItems: List<MediaItem>, modifier: Modifier = Modifier)
                 is MediaItem.Image -> when (imageMode) {
                     ImageLoadMode.OFF -> {
                         if (item.url in revealedImages) {
-                            InlineImage(url = item.url, meta = item.meta, lowQuality = false, onOpen = { imageViewerUrl = item.url })
+                            InlineImage(
+                                url = item.url,
+                                meta = item.meta,
+                                lowQuality = false,
+                                authorPubkey = authorPubkey,
+                                aiRevealed = item.url in aiRevealedUrls,
+                                onAiReveal = { aiRevealedUrls = aiRevealedUrls + item.url },
+                                onOpen = {
+                                    imageViewerSha256 = item.meta?.sha256
+                                    imageViewerUrl = item.url
+                                },
+                            )
                         } else {
                             MediaPlaceholder(label = "[ image · tap to show ]", url = item.url, onOpen = { revealedImages = revealedImages + item.url })
                         }
                     }
                     ImageLoadMode.ON ->
-                        InlineImage(url = item.url, meta = item.meta, lowQuality = false, onOpen = { imageViewerUrl = item.url })
+                        InlineImage(
+                            url = item.url,
+                            meta = item.meta,
+                            lowQuality = false,
+                            authorPubkey = authorPubkey,
+                            aiRevealed = item.url in aiRevealedUrls,
+                            onAiReveal = { aiRevealedUrls = aiRevealedUrls + item.url },
+                            onOpen = {
+                                imageViewerSha256 = item.meta?.sha256
+                                imageViewerUrl = item.url
+                            },
+                        )
                     ImageLoadMode.LOW_QUALITY ->
-                        InlineImage(url = item.url, meta = item.meta, lowQuality = true, onOpen = { imageViewerUrl = item.url })
+                        InlineImage(
+                            url = item.url,
+                            meta = item.meta,
+                            lowQuality = true,
+                            authorPubkey = authorPubkey,
+                            aiRevealed = item.url in aiRevealedUrls,
+                            onAiReveal = { aiRevealedUrls = aiRevealedUrls + item.url },
+                            onOpen = {
+                                imageViewerSha256 = item.meta?.sha256
+                                imageViewerUrl = item.url
+                            },
+                        )
                 }
                 is MediaItem.Audio -> InlineAudioPlayer(url = item.url)
                 is MediaItem.Video -> {
@@ -266,6 +314,9 @@ fun NoteMediaContent(mediaItems: List<MediaItem>, modifier: Modifier = Modifier)
                         VideoPlaceholder(
                             url = item.url,
                             meta = item.meta,
+                            authorPubkey = authorPubkey,
+                            aiRevealed = item.url in aiRevealedUrls,
+                            onAiReveal = { aiRevealedUrls = aiRevealedUrls + item.url },
                             onOpen = { ActiveInlineVideo.owner = token },
                             onFullscreen = {
                                 ActiveInlineVideo.owner = null
@@ -283,7 +334,13 @@ fun NoteMediaContent(mediaItems: List<MediaItem>, modifier: Modifier = Modifier)
             onDismissRequest = { imageViewerUrl = null },
             properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
-            ImageViewer(url = url, onClose = { imageViewerUrl = null })
+            ImageViewer(
+                url = url,
+                onClose = { imageViewerUrl = null },
+                aiBypass = url in aiRevealedUrls,
+                authorPubkey = authorPubkey,
+                imetaSha256 = imageViewerSha256,
+            )
         }
     }
     videoViewerUrl?.let { url ->
@@ -476,21 +533,45 @@ private fun VideoPlayBadge() {
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun InlineImage(url: String, meta: MediaMeta? = null, lowQuality: Boolean, onOpen: () -> Unit) {
+private fun InlineImage(
+    url: String,
+    meta: MediaMeta? = null,
+    lowQuality: Boolean,
+    authorPubkey: String? = null,
+    aiRevealed: Boolean = false,
+    onAiReveal: () -> Unit = {},
+    onOpen: () -> Unit,
+) {
     val context = LocalContext.current
     val fittedEnabled = mediaFittedEnabled()
+    val contentFilter = LocalContentFilter.current
+    val aiConfig = contentFilter.aiFilterConfig
+    val aiActive = contentFilter.aiScannerActive
     // The note's stated shape sizes the frame before anything downloads;
     // the loaded image's real shape refines it afterwards.
     var aspectRatio by remember(url, lowQuality) { mutableStateOf(meta?.aspectRatio) }
+    var blockedVerdict by remember(url, aiRevealed, aiConfig, contentFilter.aiHasInstalledModel) {
+        mutableStateOf<ScanVerdict?>(null)
+    }
     // Keep the complete URL: query parameters can identify different media.
     val cacheKey = remember(url) { "inline-image-animated:$url" }
-    val request = remember(url, lowQuality) {
+    val request = remember(url, lowQuality, aiRevealed, aiConfig, contentFilter.aiHasInstalledModel, authorPubkey, meta?.sha256) {
         ImageRequest.Builder(context)
             .data(url)
             .memoryCacheKey(cacheKey)
             .diskCacheKey(cacheKey)
             .crossfade(false)
+            .setParameter(AiCoilParams.SURFACE, ScanSurface.FEED_MEDIA.name, memoryCacheKey = null)
             .apply {
+                if (aiRevealed) {
+                    setParameter(AiCoilParams.BYPASS, true, memoryCacheKey = null)
+                }
+                meta?.sha256?.let { sha ->
+                    setParameter(AiCoilParams.IMETA_SHA256, sha, memoryCacheKey = null)
+                }
+                authorPubkey?.let { pk ->
+                    setParameter(AiCoilParams.AUTHOR_PUBKEY, pk, memoryCacheKey = null)
+                }
                 if (url.substringBefore('?').substringBefore('#').endsWith(".gif", ignoreCase = true)) {
                     decoderFactory(GifDecoder.Factory())
                 }
@@ -505,6 +586,16 @@ private fun InlineImage(url: String, meta: MediaMeta? = null, lowQuality: Boolea
             .build()
     }
 
+    // In HIDE mode, once the offline AI scanner flags this media item, collapse the tall box
+    // to a compact muted strip (no tap-to-open or reveal).
+    val hideVerdict = blockedVerdict?.takeIf { it.decision == ScanDecision.HIDE }
+    if (hideVerdict != null) {
+        AiNsfwMediaVeil(verdict = hideVerdict, onReveal = {})
+        return
+    }
+
+    val suppressBlur = aiActive && !aiRevealed && (aiConfig.action == NsfwMode.HIDE || aiConfig.parentalPinActive)
+
     BoxWithConstraints(
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.Center,
@@ -516,12 +607,17 @@ private fun InlineImage(url: String, meta: MediaMeta? = null, lowQuality: Boolea
         } else {
             null
         }
-        val blurPainter = if (fittedEnabled) rememberBlurPainter(meta) else null
+        val blurPainter = if (fittedEnabled && !suppressBlur) rememberBlurPainter(meta) else null
         val shape = appCornerShape(MaterialTheme.shapes.medium)
         val frameModifier = if (fittedSize != null) {
             Modifier.width(fittedSize.width).height(fittedSize.height)
         } else {
             Modifier.fillMaxWidth().height(INLINE_IMAGE_HEIGHT)
+        }
+        val interactiveModifier = if (blockedVerdict == null) {
+            Modifier.combinedClickable(onClick = onOpen, onLongClick = { copyNoteLink(context, url) })
+        } else {
+            Modifier
         }
         SubcomposeAsyncImage(
             model = request,
@@ -531,13 +627,18 @@ private fun InlineImage(url: String, meta: MediaMeta? = null, lowQuality: Boolea
                 .clip(shape)
                 .background(BonyColors.SurfaceAlt, shape)
                 .border(1.dp, BonyColors.Rule, shape)
-                .combinedClickable(onClick = onOpen, onLongClick = { copyNoteLink(context, url) }),
+                .then(interactiveModifier),
             onSuccess = { result ->
+                blockedVerdict = null
                 val size = result.painter.intrinsicSize
                 if (size.width > 0f && size.height > 0f) {
                     val ratio = size.width / size.height
                     if (ratio.isFinite() && ratio > 0f) aspectRatio = ratio
                 }
+            },
+            onError = { state ->
+                val blocked = state.result.throwable as? NsfwBlockedException
+                blockedVerdict = blocked?.verdict
             },
             loading = {
                 if (blurPainter != null) {
@@ -551,16 +652,24 @@ private fun InlineImage(url: String, meta: MediaMeta? = null, lowQuality: Boolea
                     MediaStripes(Modifier.fillMaxSize())
                 }
             },
-            error = {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    MediaStripes(Modifier.fillMaxSize())
-                    Text(
-                        text = "[ image · tap to expand ]",
-                        style = BonyType.meta.copy(color = BonyColors.TextMute),
-                        modifier = Modifier
-                            .background(BonyColors.SurfaceAlt.copy(alpha = 0.85f))
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
+            error = { state ->
+                val blocked = state.result.throwable as? NsfwBlockedException
+                if (blocked != null) {
+                    AiNsfwMediaVeil(
+                        verdict = blocked.verdict,
+                        onReveal = onAiReveal,
                     )
+                } else {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        MediaStripes(Modifier.fillMaxSize())
+                        Text(
+                            text = "[ image · tap to expand ]",
+                            style = BonyType.meta.copy(color = BonyColors.TextMute),
+                            modifier = Modifier
+                                .background(BonyColors.SurfaceAlt.copy(alpha = 0.85f))
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                        )
+                    }
                 }
             },
         )
@@ -569,13 +678,46 @@ private fun InlineImage(url: String, meta: MediaMeta? = null, lowQuality: Boolea
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun VideoPlaceholder(url: String, meta: MediaMeta? = null, onOpen: () -> Unit, onFullscreen: () -> Unit) {
+private fun VideoPlaceholder(
+    url: String,
+    meta: MediaMeta? = null,
+    authorPubkey: String? = null,
+    aiRevealed: Boolean = false,
+    onAiReveal: () -> Unit = {},
+    onOpen: () -> Unit,
+    onFullscreen: () -> Unit,
+) {
     val context = LocalContext.current
     val shape = appCornerShape(MaterialTheme.shapes.medium)
     val thumbnailsEnabled = LocalVideoThumbnails.current
     val fittedEnabled = mediaFittedEnabled()
+    val contentFilter = LocalContentFilter.current
+    val aiConfig = contentFilter.aiFilterConfig
     val posterUrl = meta?.image?.takeIf { thumbnailsEnabled }
-    val blurPainter = if (posterUrl != null || fittedEnabled) rememberBlurPainter(meta) else null
+    val suppressBlur = contentFilter.aiScannerActive && !aiRevealed && (aiConfig.action == NsfwMode.HIDE || aiConfig.parentalPinActive)
+    val blurPainter = if ((posterUrl != null || fittedEnabled) && !suppressBlur) rememberBlurPainter(meta) else null
+    var posterBlocked by remember(posterUrl, aiRevealed, aiConfig, contentFilter.aiHasInstalledModel) {
+        mutableStateOf<ScanVerdict?>(null)
+    }
+
+    val hideVerdict = posterBlocked?.takeIf { it.decision == ScanDecision.HIDE }
+    if (hideVerdict != null) {
+        AiNsfwMediaVeil(verdict = hideVerdict, onReveal = {})
+        return
+    }
+
+    val posterRequest = remember(posterUrl, aiRevealed, aiConfig, contentFilter.aiHasInstalledModel, authorPubkey) {
+        posterUrl?.let { pUrl ->
+            ImageRequest.Builder(context)
+                .data(pUrl)
+                .setParameter(AiCoilParams.SURFACE, ScanSurface.FEED_MEDIA.name, memoryCacheKey = null)
+                .apply {
+                    if (aiRevealed) setParameter(AiCoilParams.BYPASS, true, memoryCacheKey = null)
+                    authorPubkey?.let { pk -> setParameter(AiCoilParams.AUTHOR_PUBKEY, pk, memoryCacheKey = null) }
+                }
+                .build()
+        }
+    }
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         val fittedSize = if (fittedEnabled) {
@@ -591,21 +733,49 @@ private fun VideoPlaceholder(url: String, meta: MediaMeta? = null, onOpen: () ->
         Box(
             modifier = Modifier.testTag("video-placeholder").then(frameModifier).clip(shape)
                 .background(BonyColors.SurfaceAlt, shape).border(1.dp, BonyColors.Rule, shape)
-                .combinedClickable(onClick = onOpen, onLongClick = { copyNoteLink(context, url) }),
+                .then(
+                    if (posterBlocked == null) {
+                        Modifier.combinedClickable(onClick = onOpen, onLongClick = { copyNoteLink(context, url) })
+                    } else {
+                        Modifier
+                    },
+                ),
             contentAlignment = Alignment.Center,
         ) {
             MediaStripes(Modifier.matchParentSize())
-            if (posterUrl != null) {
-                // The still the poster supplied with the note (NIP-92 imeta
-                // "image"). Nothing is extracted on-device; when no still
-                // was supplied, the blurred preview / stripes remain.
-                AsyncImage(
-                    model = posterUrl,
+            if (posterRequest != null) {
+                SubcomposeAsyncImage(
+                    model = posterRequest,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
-                    placeholder = blurPainter,
-                    error = blurPainter,
                     modifier = Modifier.matchParentSize(),
+                    onSuccess = { posterBlocked = null },
+                    onError = { state ->
+                        posterBlocked = (state.result.throwable as? NsfwBlockedException)?.verdict
+                    },
+                    loading = {
+                        if (blurPainter != null) {
+                            Image(
+                                painter = blurPainter,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    },
+                    error = { state ->
+                        val blocked = state.result.throwable as? NsfwBlockedException
+                        if (blocked != null) {
+                            AiNsfwMediaVeil(verdict = blocked.verdict, onReveal = onAiReveal)
+                        } else if (blurPainter != null) {
+                            Image(
+                                painter = blurPainter,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    },
                 )
             } else if (blurPainter != null) {
                 Image(
@@ -615,8 +785,10 @@ private fun VideoPlaceholder(url: String, meta: MediaMeta? = null, onOpen: () ->
                     modifier = Modifier.matchParentSize(),
                 )
             }
-            VideoPlayBadge()
-            FullscreenButton(onFullscreen, Modifier.align(Alignment.BottomEnd))
+            if (posterBlocked == null) {
+                VideoPlayBadge()
+                FullscreenButton(onFullscreen, Modifier.align(Alignment.BottomEnd))
+            }
         }
     }
 }

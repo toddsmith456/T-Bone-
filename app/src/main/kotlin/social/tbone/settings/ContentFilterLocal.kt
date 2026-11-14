@@ -13,6 +13,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import social.tbone.ai.AiFilterConfig
+import social.tbone.ai.AiModelManager
+import social.tbone.security.PinHasher
 import javax.inject.Inject
 
 /** Snapshot of the content filters, read anywhere in the UI. */
@@ -31,19 +34,28 @@ data class ContentFilterData(
      * in the timeline.
      */
     val followedPubkeys: Set<String> = emptySet(),
+    /** Offline on-device AI NSFW scanner preferences. */
+    val aiFilterConfig: AiFilterConfig = AiFilterConfig(),
+    /** True when at least one verified `.tflite` add-on model is installed on-device. */
+    val aiHasInstalledModel: Boolean = false,
 ) {
     val hasBleep: Boolean get() = bleepWords.isNotEmpty()
+    val aiScannerActive: Boolean get() = aiFilterConfig.active && aiHasInstalledModel
 }
 
 val LocalContentFilter = staticCompositionLocalOf { ContentFilterData() }
 
+/** Verifies a 4-digit Parental PIN attempt from any UI surface (e.g. revealing AI-veiled media). */
+val LocalParentalPinVerifier = staticCompositionLocalOf<suspend (String) -> Boolean> { { false } }
+
 @HiltViewModel
 class ContentFilterViewModel @Inject constructor(
-    appSettings: AppSettings,
+    private val appSettings: AppSettings,
     muteRepository: social.tbone.lists.MuteListRepository,
     accountRepository: social.tbone.account.AccountRepository,
+    aiModelManager: AiModelManager,
 ) : ViewModel() {
-    val data: StateFlow<ContentFilterData> = combine(
+    private val baseData = combine(
         muteRepository.effectiveMuted,
         appSettings.nsfwMode,
         appSettings.bleepWords,
@@ -59,15 +71,34 @@ class ContentFilterViewModel @Inject constructor(
             // model uses, so both passes agree on who is followed.
             followedPubkeys = account?.follows?.toSet().orEmpty(),
         )
+    }
+
+    val data: StateFlow<ContentFilterData> = combine(
+        baseData,
+        appSettings.aiFilterConfig,
+        aiModelManager.hasAnyInstalled,
+    ) { base, aiConfig, hasModel ->
+        base.copy(
+            aiFilterConfig = aiConfig,
+            aiHasInstalledModel = hasModel,
+        )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, ContentFilterData())
+
+    suspend fun verifyParentalPin(input: String): Boolean {
+        val hash = appSettings.getParentalPinHash() ?: return false
+        return PinHasher.verify(input, hash)
+    }
 }
 
-/** Provides [LocalContentFilter] to everything below. */
+/** Provides [LocalContentFilter] and [LocalParentalPinVerifier] to everything below. */
 @Composable
 fun ContentFilterProvider(content: @Composable () -> Unit) {
     val viewModel: ContentFilterViewModel = hiltViewModel()
     val data by viewModel.data.collectAsStateWithLifecycle()
-    CompositionLocalProvider(LocalContentFilter provides data) {
+    CompositionLocalProvider(
+        LocalContentFilter provides data,
+        LocalParentalPinVerifier provides viewModel::verifyParentalPin,
+    ) {
         content()
     }
 }

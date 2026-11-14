@@ -1,12 +1,16 @@
 package social.tbone.ui.settings
 
 import social.tbone.ui.theme.appBorder
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,10 +34,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import social.tbone.ai.AiFilterConfig
+import social.tbone.ai.AiModelCatalog
+import social.tbone.ai.AiModelId
+import social.tbone.ai.AiModelSpec
+import social.tbone.ai.AiScanMode
+import social.tbone.ai.AiSensitivity
+import social.tbone.ai.ModelInstallState
 import social.tbone.ui.lock.PinKeypad
 import social.tbone.settings.FilterWord
 import social.tbone.settings.NsfwMode
@@ -65,8 +78,18 @@ fun ContentFiltersScreen(
     val nsfwMode by viewModel.nsfwMode.collectAsStateWithLifecycle()
     val bleepWords by viewModel.bleepWords.collectAsStateWithLifecycle()
     val hideWords by viewModel.hideWords.collectAsStateWithLifecycle()
+    val aiConfig by viewModel.aiFilterConfig.collectAsStateWithLifecycle()
+    val aiModelStates by viewModel.aiModelStates.collectAsStateWithLifecycle()
+    val aiHasInstalledModel by viewModel.aiHasInstalledModel.collectAsStateWithLifecycle()
+    val aiStatusMessage by viewModel.aiStatusMessage.collectAsStateWithLifecycle()
     val parentalEnabled by viewModel.parentalPinEnabled.collectAsStateWithLifecycle()
     val filtersUnlocked by viewModel.filtersUnlocked.collectAsStateWithLifecycle()
+
+    val importModelLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) viewModel.importAiModel(uri)
+    }
 
     var showSetPin by remember { mutableStateOf(false) }
 
@@ -179,6 +202,29 @@ fun ContentFiltersScreen(
                         style = BonyType.metaDim.copy(color = BonyColors.TextMute),
                     )
                 }
+            }
+
+            // ── Offline AI NSFW media scanner (optional add-on models) ───────
+            item {
+                OfflineAiScannerSection(
+                    config = aiConfig,
+                    modelStates = aiModelStates,
+                    hasInstalledModel = aiHasInstalledModel,
+                    statusMessage = aiStatusMessage,
+                    parentalEnabled = parentalEnabled,
+                    onSetMode = viewModel::setAiNsfwMode,
+                    onSetSensitivity = viewModel::setAiSensitivity,
+                    onSetScanMode = viewModel::setAiScanMode,
+                    onSetScanAvatars = viewModel::setAiScanAvatars,
+                    onSetScanBanners = viewModel::setAiScanBanners,
+                    onSetExemptFollows = viewModel::setAiExemptFollows,
+                    onSetRequirePin = viewModel::setAiRequirePinToReveal,
+                    onDownloadModel = viewModel::downloadAiModel,
+                    onCancelDownload = viewModel::cancelAiModelDownload,
+                    onRemoveModel = viewModel::removeAiModel,
+                    onImportLocal = { importModelLauncher.launch(arrayOf("*/*")) },
+                    onClearCache = viewModel::clearAiScanCache,
+                )
             }
 
             // ── Bleep words ────────────────────────────────────────────────────
@@ -602,5 +648,378 @@ private fun FilterWordChips(
                 )
             }
         }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun OfflineAiScannerSection(
+    config: AiFilterConfig,
+    modelStates: Map<AiModelId, ModelInstallState>,
+    hasInstalledModel: Boolean,
+    statusMessage: String?,
+    parentalEnabled: Boolean,
+    onSetMode: (NsfwMode) -> Unit,
+    onSetSensitivity: (AiSensitivity) -> Unit,
+    onSetScanMode: (AiScanMode) -> Unit,
+    onSetScanAvatars: (Boolean) -> Unit,
+    onSetScanBanners: (Boolean) -> Unit,
+    onSetExemptFollows: (Boolean) -> Unit,
+    onSetRequirePin: (Boolean) -> Unit,
+    onDownloadModel: (AiModelId) -> Unit,
+    onCancelDownload: (AiModelId) -> Unit,
+    onRemoveModel: (AiModelId) -> Unit,
+    onImportLocal: () -> Unit,
+    onClearCache: () -> Unit,
+) {
+    val fastInstalled = modelStates[AiModelId.FAST_MNV2] is ModelInstallState.Installed
+    val accurateInstalled = modelStates[AiModelId.ACCURATE_MARQO] is ModelInstallState.Installed
+    val bothInstalled = fastInstalled && accurateInstalled
+
+    FilterSection("offline ai media scanner") {
+        Text(
+            text = "scans unlabelled feed images on-device for nudity & explicit content. zero cloud calls; models are optional add-ons stored locally and erased on duress wipe.",
+            style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+        )
+        Spacer(Modifier.height(8.dp))
+
+        // Action mode: off / cover / hide
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(
+                NsfwMode.OFF to "off",
+                NsfwMode.COVER to "cover",
+                NsfwMode.HIDE to "hide",
+            ).forEach { (mode, label) ->
+                val active = config.action == mode
+                Text(
+                    text = if (active) "● $label" else "○ $label",
+                    style = BonyType.meta.copy(
+                        color = if (active) BonyColors.Accent else BonyColors.TextMute,
+                    ),
+                    modifier = Modifier
+                        .appBorder(1.dp, if (active) BonyColors.AccentDim else BonyColors.Rule)
+                        .clickable { onSetMode(mode) }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = when {
+                config.action == NsfwMode.OFF -> "offline ai scanning is off"
+                !hasInstalledModel -> "install at least one add-on model below to begin scanning"
+                config.action == NsfwMode.COVER -> "detected explicit media is hidden behind a veil before it can appear on screen"
+                else -> "detected explicit media is collapsed with no reveal button"
+            },
+            style = BonyType.metaDim.copy(
+                color = if (config.active && !hasInstalledModel) BonyColors.Warn else BonyColors.TextMute,
+            ),
+        )
+
+        // ── Add-on model packs ──────────────────────────────────────────────
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = "add-on models (not bundled in apk)",
+            style = BonyType.tag.copy(color = BonyColors.TextDim),
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = "install high-accuracy alone for best accuracy, fast alone for speed, or both for automatic 2-stage cascade. downloads follow your tor setting and verify sha-256.",
+            style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+        )
+        Spacer(Modifier.height(8.dp))
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            AiModelCatalog.all.forEach { spec ->
+                val state = modelStates[spec.id] ?: ModelInstallState.NotInstalled
+                AiModelAddonCard(
+                    spec = spec,
+                    state = state,
+                    onDownload = { onDownloadModel(spec.id) },
+                    onCancel = { onCancelDownload(spec.id) },
+                    onRemove = { onRemoveModel(spec.id) },
+                )
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "[ import local .tflite ]",
+                style = BonyType.meta.copy(color = BonyColors.TextDim),
+                modifier = Modifier
+                    .appBorder(1.dp, BonyColors.Rule)
+                    .clickable(onClick = onImportLocal)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            )
+            Text(
+                text = "[ clear scan cache ]",
+                style = BonyType.meta.copy(color = BonyColors.TextDim),
+                modifier = Modifier
+                    .appBorder(1.dp, BonyColors.Rule)
+                    .clickable(onClick = onClearCache)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            )
+        }
+
+        if (!statusMessage.isNullOrBlank()) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = statusMessage,
+                style = BonyType.metaDim.copy(color = BonyColors.Accent),
+            )
+        }
+
+        // ── Sensitivity ─────────────────────────────────────────────────────
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = "sensitivity",
+            style = BonyType.tag.copy(color = BonyColors.TextDim),
+        )
+        Spacer(Modifier.height(6.dp))
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            AiSensitivity.entries.forEach { level ->
+                val active = config.sensitivity == level
+                Text(
+                    text = if (active) "● ${level.label}" else "○ ${level.label}",
+                    style = BonyType.meta.copy(
+                        color = if (active) BonyColors.Accent else BonyColors.TextMute,
+                    ),
+                    modifier = Modifier
+                        .appBorder(1.dp, if (active) BonyColors.AccentDim else BonyColors.Rule)
+                        .clickable { onSetSensitivity(level) }
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                )
+            }
+        }
+
+        // ── Scan engine routing (shown when both models are installed) ──────
+        if (bothInstalled) {
+            Spacer(Modifier.height(14.dp))
+            Text(
+                text = "engine mode",
+                style = BonyType.tag.copy(color = BonyColors.TextDim),
+            )
+            Spacer(Modifier.height(6.dp))
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                AiScanMode.entries.forEach { mode ->
+                    val active = config.scanMode == mode
+                    Text(
+                        text = if (active) "● ${mode.label}" else "○ ${mode.label}",
+                        style = BonyType.meta.copy(
+                            color = if (active) BonyColors.Accent else BonyColors.TextMute,
+                        ),
+                        modifier = Modifier
+                            .appBorder(1.dp, if (active) BonyColors.AccentDim else BonyColors.Rule)
+                            .clickable { onSetScanMode(mode) }
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                    )
+                }
+            }
+        }
+
+        // ── Scope & parental controls ───────────────────────────────────────
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = "scope",
+            style = BonyType.tag.copy(color = BonyColors.TextDim),
+        )
+        Spacer(Modifier.height(6.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            AiToggleRow(
+                title = "scan profile banners",
+                subtitle = "fall back to stripe banner if explicit",
+                checked = config.scanBanners,
+                onToggle = { onSetScanBanners(!config.scanBanners) },
+            )
+            AiToggleRow(
+                title = "scan profile avatars",
+                subtitle = "fall back to initial square if explicit",
+                checked = config.scanAvatars,
+                onToggle = { onSetScanAvatars(!config.scanAvatars) },
+            )
+            if (!parentalEnabled) {
+                AiToggleRow(
+                    title = "exempt followed accounts",
+                    subtitle = "skip ai scan for profiles you follow (disabled under parental pin)",
+                    checked = config.exemptFollowedAuthors,
+                    onToggle = { onSetExemptFollows(!config.exemptFollowedAuthors) },
+                )
+            } else {
+                AiToggleRow(
+                    title = "require parental pin to reveal",
+                    subtitle = "entering your 4-digit parental pin is required to un-veil covered images",
+                    checked = config.requirePinToReveal,
+                    onToggle = { onSetRequirePin(!config.requirePinToReveal) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiModelAddonCard(
+    spec: AiModelSpec,
+    state: ModelInstallState,
+    onDownload: () -> Unit,
+    onCancel: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val sizeMb = String.format(java.util.Locale.US, "%.1f MB", spec.expectedSizeBytes / (1024.0 * 1024.0))
+    val borderColor = when (state) {
+        is ModelInstallState.Installed -> BonyColors.AccentDim
+        is ModelInstallState.Error -> BonyColors.Danger
+        else -> BonyColors.Rule
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .appBorder(1.dp, borderColor)
+            .background(BonyColors.SurfaceAlt)
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = spec.displayName,
+                style = BonyType.meta.copy(
+                    color = BonyColors.Text,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "$sizeMb · ${spec.license}",
+                style = BonyType.caption.copy(color = BonyColors.TextMute),
+            )
+        }
+        Text(
+            text = spec.badge,
+            style = BonyType.metaDim.copy(color = BonyColors.Accent),
+        )
+        Text(
+            text = spec.description,
+            style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+        )
+
+        Spacer(Modifier.height(4.dp))
+        when (state) {
+            is ModelInstallState.NotInstalled -> {
+                Text(
+                    text = "[ download ($sizeMb) ]",
+                    style = BonyType.meta.copy(color = BonyColors.Accent),
+                    modifier = Modifier
+                        .appBorder(1.dp, BonyColors.AccentDim)
+                        .clickable(onClick = onDownload)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
+            is ModelInstallState.Downloading -> {
+                LinearProgressIndicator(
+                    progress = { (state.progressPercent / 100f).coerceIn(0f, 1f) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp),
+                    color = BonyColors.Accent,
+                    trackColor = BonyColors.Rule,
+                )
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = "downloading… ${state.progressPercent}%",
+                        style = BonyType.metaDim.copy(color = BonyColors.TextDim),
+                    )
+                    Text(
+                        text = "[ cancel ]",
+                        style = BonyType.meta.copy(color = BonyColors.Danger),
+                        modifier = Modifier
+                            .clickable(onClick = onCancel)
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                    )
+                }
+            }
+            is ModelInstallState.Installed -> {
+                val installedMb = String.format(java.util.Locale.US, "%.1f MB", state.sizeBytes / (1024.0 * 1024.0))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = "● installed · $installedMb · verified sha-256",
+                        style = BonyType.metaDim.copy(color = BonyColors.Accent),
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = "[ remove ]",
+                        style = BonyType.meta.copy(color = BonyColors.Danger),
+                        modifier = Modifier
+                            .appBorder(1.dp, BonyColors.Rule)
+                            .clickable(onClick = onRemove)
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                    )
+                }
+            }
+            is ModelInstallState.Error -> {
+                Text(
+                    text = state.message,
+                    style = BonyType.metaDim.copy(color = BonyColors.Danger),
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "[ retry download ]",
+                    style = BonyType.meta.copy(color = BonyColors.Accent),
+                    modifier = Modifier
+                        .appBorder(1.dp, BonyColors.AccentDim)
+                        .clickable(onClick = onDownload)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .appBorder(1.dp, if (checked) BonyColors.AccentDim else BonyColors.Rule)
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = BonyType.meta.copy(color = BonyColors.TextDim))
+            Text(subtitle, style = BonyType.metaDim.copy(color = BonyColors.TextMute))
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = if (checked) "ON" else "OFF",
+            style = BonyType.tag.copy(
+                color = if (checked) BonyColors.Accent else BonyColors.TextMute,
+            ),
+        )
     }
 }

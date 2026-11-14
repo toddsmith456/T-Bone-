@@ -121,6 +121,11 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Keep release & beta APKs lean by shipping ARM device ABIs only
+            // (debug keeps all ABIs so x86_64 emulators continue to work).
+            ndk {
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            }
         }
         create("beta") {
             initWith(getByName("release"))
@@ -238,6 +243,9 @@ dependencies {
 
     // QR code
     implementation(libs.zxing.core)
+
+    // Offline AI media filtering (LiteRT 1.4.2; bare .tflite add-on weights loaded on demand)
+    implementation(libs.litert)
 
     // Media3 — video compression/transcoding (also strips embedded metadata)
     implementation(libs.media3.transformer)

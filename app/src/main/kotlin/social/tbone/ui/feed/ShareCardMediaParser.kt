@@ -14,6 +14,7 @@ internal data class ShareCardMedia(
     val blurhash: String? = null,
     val thumbhash: String? = null,
     val posterUrl: String? = null,
+    val sha256: String? = null,
 )
 
 /** Understands both extension-bearing URLs and NIP-92 `imeta` MIME hints. */
@@ -40,6 +41,7 @@ internal object ShareCardMediaParser {
                     blurhash = field(fields, "blurhash")?.trim(),
                     thumbhash = field(fields, "thumbhash")?.trim(),
                     posterUrl = field(fields, "image")?.trim(),
+                    sha256 = field(fields, "x")?.trim(),
                 )
                 hints[url.trim()] = mime?.trim()
             }
@@ -64,6 +66,7 @@ internal object ShareCardMediaParser {
                 blurhash = meta?.blurhash,
                 thumbhash = meta?.thumbhash,
                 posterUrl = meta?.posterUrl,
+                sha256 = meta?.sha256,
             )
         }
     }
@@ -113,6 +116,7 @@ fun parseEventContent(event: Event): ParsedContent {
         blurhash = item.blurhash,
         thumbhash = item.thumbhash,
         image = item.posterUrl,
+        sha256 = item.sha256,
     )
     val fromTagsAndUrls = media.map { item ->
         when (item.kind) {

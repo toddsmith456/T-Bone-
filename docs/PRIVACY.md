@@ -42,6 +42,7 @@ network code and talk to no Google server. They are permitted:
 | `com.google.dagger:hilt-*` | Compile-time dependency injection | Codegen + annotations; no network |
 | `com.google.zxing:core` | QR-code generation (Verify Identity screen) | Pure offline computation |
 | `com.google.devtools.ksp` | Kotlin Symbol Processing (Room/Hilt codegen) | Build-time only |
+| `com.google.ai.edge.litert:litert:1.4.2` | On-device neural network runtime (optional offline AI NSFW filter add-on) | Pure offline native C++/XNNPACK inference; zero GMS/Play dependencies, zero network code, zero bundled weights. (Note: LiteRT `2.x` is disallowed because it pulls `com.google.android.play:ai-delivery`.) |
 
 If you are ever unsure whether a `com.google.*` artifact is a service or an
 offline library, assume it is banned until proven otherwise in the PR.
@@ -66,6 +67,12 @@ offline library, assume it is banned until proven otherwise in the PR.
 - `allowBackup=false`. No cloud backup, no automatic upload anywhere.
 - Image fetches respect the Tor toggle; pasted/shared links are stripped of
   tracking parameters (`LinkCleaner`).
+- Optional offline AI NSFW add-on models (`filesDir/ai_models/`) are downloaded
+  only when explicitly triggered by the user (routed through `ImageClientProvider`,
+  respecting Tor/Orbot, and verified against pinned SHA-256 digests) or imported
+  from local storage. Local scan verdicts in `media_scan_cache` are keyed by a
+  device-local Keystore HMAC-SHA256 digest rather than plaintext URLs, and both
+  models and cache are erased on duress wipe.
 
 ## 5. Changing this document
 

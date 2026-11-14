@@ -221,12 +221,42 @@ fun ProfileScreen(
                             .height(BANNER_HEIGHT)
                             .appBackground(BonyColors.SurfaceAlt, MaterialTheme.shapes.medium),
                     ) {
-                        if (profile?.banner != null) {
-                            AsyncImage(
-                                model = profile?.banner,
+                        val bannerUrl = profile?.banner?.takeIf { it.isNotBlank() }
+                        val bannerContext = LocalContext.current
+                        val bannerFilter = social.tbone.settings.LocalContentFilter.current
+                        val bannerAiKey = bannerFilter.aiFilterConfig.takeIf { bannerFilter.aiHasInstalledModel }
+                        if (bannerUrl != null) {
+                            val bannerRequest = remember(bannerUrl, pubkey, bannerAiKey) {
+                                coil.request.ImageRequest.Builder(bannerContext)
+                                    .data(bannerUrl)
+                                    .setParameter(social.tbone.ai.AiCoilParams.SURFACE, social.tbone.ai.ScanSurface.BANNER.name, memoryCacheKey = null)
+                                    .setParameter(social.tbone.ai.AiCoilParams.AUTHOR_PUBKEY, pubkey, memoryCacheKey = null)
+                                    .build()
+                            }
+                            coil.compose.SubcomposeAsyncImage(
+                                model = bannerRequest,
                                 contentDescription = "Banner",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
+                                error = {
+                                    // Fall back cleanly to diagonal stripes if offline AI blocks an explicit banner.
+                                    Canvas(modifier = Modifier.fillMaxSize()) {
+                                        val stripeColor = BonyColors.Rule.copy(alpha = 0.8f)
+                                        val pitch = 16.dp.toPx()
+                                        clipRect {
+                                            var off = -size.height
+                                            while (off < size.width + size.height) {
+                                                drawLine(
+                                                    color = stripeColor,
+                                                    start = Offset(off, 0f),
+                                                    end = Offset(off + size.height, size.height),
+                                                    strokeWidth = 8.dp.toPx(),
+                                                )
+                                                off += pitch
+                                            }
+                                        }
+                                    }
+                                },
                             )
                         } else {
                             // Diagonal stripe placeholder

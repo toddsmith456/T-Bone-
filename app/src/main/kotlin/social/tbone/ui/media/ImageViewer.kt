@@ -43,13 +43,17 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Request
+import social.tbone.ai.AiCoilParams
+import social.tbone.ai.NsfwBlockedException
+import social.tbone.ai.ScanSurface
 import social.tbone.di.ImageClientProvider
+import social.tbone.settings.LocalContentFilter
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 
@@ -70,9 +74,14 @@ import social.tbone.ui.theme.BonyType
 fun ImageViewer(
     url: String,
     onClose: () -> Unit,
+    aiBypass: Boolean = false,
+    authorPubkey: String? = null,
+    imetaSha256: String? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val contentFilter = LocalContentFilter.current
+    var revealedInViewer by remember(url, aiBypass) { mutableStateOf(aiBypass) }
 
     var scale by remember { mutableStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
@@ -144,10 +153,38 @@ fun ImageViewer(
         val maxW = containerSize.width.toFloat().coerceAtLeast(1f)
         val maxH = containerSize.height.toFloat().coerceAtLeast(1f)
 
-        AsyncImage(
-            model = ImageRequest.Builder(context).data(url).build(),
+        val viewerRequest = remember(url, revealedInViewer, authorPubkey, imetaSha256, contentFilter.aiFilterConfig, contentFilter.aiHasInstalledModel) {
+            ImageRequest.Builder(context)
+                .data(url)
+                .setParameter(AiCoilParams.SURFACE, ScanSurface.FEED_MEDIA.name, memoryCacheKey = null)
+                .apply {
+                    if (revealedInViewer) setParameter(AiCoilParams.BYPASS, true, memoryCacheKey = null)
+                    authorPubkey?.let { setParameter(AiCoilParams.AUTHOR_PUBKEY, it, memoryCacheKey = null) }
+                    imetaSha256?.let { setParameter(AiCoilParams.IMETA_SHA256, it, memoryCacheKey = null) }
+                }
+                .build()
+        }
+
+        SubcomposeAsyncImage(
+            model = viewerRequest,
             contentDescription = "image",
             contentScale = ContentScale.Fit,
+            error = { state ->
+                val blocked = state.result.throwable as? NsfwBlockedException
+                if (blocked != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 24.dp, vertical = 72.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        AiNsfwMediaVeil(
+                            verdict = blocked.verdict,
+                            onReveal = { revealedInViewer = true },
+                        )
+                    }
+                }
+            },
             modifier = Modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {

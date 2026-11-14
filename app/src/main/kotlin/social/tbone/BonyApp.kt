@@ -43,6 +43,9 @@ class BonyApp : Application() {
     @Inject lateinit var dataWiper: social.tbone.security.DataWiper
     @Inject lateinit var toolboxSecurity: social.tbone.ui.toolbox.ToolboxSecurity
     @Inject lateinit var legacyCleanup: social.tbone.migration.LegacyMiniAppCleanup
+    @Inject lateinit var nsfwCoilInterceptor: social.tbone.ai.NsfwCoilInterceptor
+    @Inject lateinit var mediaScanCache: social.tbone.ai.MediaScanCache
+    @Inject lateinit var aiEngine: social.tbone.ai.NsfwEngine
 
     override fun onCreate() {
         super.onCreate()
@@ -53,6 +56,7 @@ class BonyApp : Application() {
         Coil.setImageLoader(
             ImageLoader.Builder(this)
                 .okHttpClient(ImageClientProvider.client)
+                .components { add(nsfwCoilInterceptor) }
                 .diskCache(null)
                 .build()
         )
@@ -112,6 +116,9 @@ class BonyApp : Application() {
             try {
                 social.tbone.util.CacheCleaner.cleanup(this@BonyApp)
             } catch (_: Exception) { }
+            try {
+                mediaScanCache.prune()
+            } catch (_: Exception) { }
         }
 
         // Keep Coil's image loader in sync with Tor + lightweight cache toggle.
@@ -131,6 +138,7 @@ class BonyApp : Application() {
                 Coil.setImageLoader(
                     ImageLoader.Builder(this@BonyApp)
                         .okHttpClient(ImageClientProvider.client)
+                        .components { add(nsfwCoilInterceptor) }
                         .diskCache {
                             DiskCache.Builder()
                                 .directory(this@BonyApp.cacheDir.resolve("image_cache"))
@@ -140,6 +148,13 @@ class BonyApp : Application() {
                         .build()
                 )
             }
+        }
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= TRIM_MEMORY_UI_HIDDEN || level >= TRIM_MEMORY_RUNNING_LOW) {
+            aiEngine.unloadAll()
         }
     }
 }

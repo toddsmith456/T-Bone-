@@ -21,8 +21,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DecoyNoteEntity::class,
         DecoyNoteFolderEntity::class,
         DecoyNoteAttachmentEntity::class,
+        MediaScanCacheEntity::class,
     ],
-    version = 18,
+    version = 19,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun eventDao(): EventDao
@@ -37,6 +38,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun decoyNoteDao(): DecoyNoteDao
     abstract fun decoyNoteFolderDao(): DecoyNoteFolderDao
     abstract fun decoyNoteAttachmentDao(): DecoyNoteAttachmentDao
+    abstract fun mediaScanCacheDao(): MediaScanCacheDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -264,6 +266,27 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS index_decoy_note_attachments_noteId " +
                         "ON decoy_note_attachments (noteId)"
+                )
+            }
+        }
+
+        val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Offline AI NSFW scan cache keyed by Keystore HMAC-SHA256.
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `media_scan_cache` (" +
+                        "`keyHmac` TEXT NOT NULL, " +
+                        "`explicitScore` REAL NOT NULL, " +
+                        "`suggestiveScore` REAL NOT NULL, " +
+                        "`stageReached` INTEGER NOT NULL, " +
+                        "`modelVersion` INTEGER NOT NULL, " +
+                        "`scannedAt` INTEGER NOT NULL, " +
+                        "`userOverrideAllow` INTEGER NOT NULL DEFAULT 0, " +
+                        "PRIMARY KEY(`keyHmac`))"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_media_scan_cache_scannedAt` " +
+                        "ON `media_scan_cache` (`scannedAt`)"
                 )
             }
         }

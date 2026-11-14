@@ -1,6 +1,7 @@
 package social.tbone.ui.settings
 
 import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -49,6 +50,8 @@ class SettingsViewModel @Inject constructor(
     private val updateManager: UpdateManager,
     private val stealthManager: StealthManager,
     private val legacyCleanup: social.tbone.migration.LegacyMiniAppCleanup,
+    private val aiModelManager: social.tbone.ai.AiModelManager,
+    private val mediaScanCache: social.tbone.ai.MediaScanCache,
     @ApplicationContext context: Context,
 ) : ViewModel() {
 
@@ -145,6 +148,15 @@ class SettingsViewModel @Inject constructor(
     val nsfwMode: StateFlow<NsfwMode> = appSettings.nsfwMode
     val bleepWords: StateFlow<Set<FilterWord>> = appSettings.bleepWords
     val hideWords: StateFlow<Set<FilterWord>> = appSettings.hideWords
+
+    // ── offline ai media scanner (installable add-on models) ────────────────
+    val aiFilterConfig: StateFlow<social.tbone.ai.AiFilterConfig> = appSettings.aiFilterConfig
+    val aiModelStates: StateFlow<Map<social.tbone.ai.AiModelId, social.tbone.ai.ModelInstallState>> =
+        aiModelManager.states
+    val aiHasInstalledModel: StateFlow<Boolean> = aiModelManager.hasAnyInstalled
+
+    private val _aiStatusMessage = MutableStateFlow<String?>(null)
+    val aiStatusMessage: StateFlow<String?> = _aiStatusMessage.asStateFlow()
 
     // ── blossom media uploads ────────────────────────────────────────────────
     val blossomServers: StateFlow<Set<String>> = appSettings.blossomServers
@@ -362,6 +374,66 @@ class SettingsViewModel @Inject constructor(
 
     fun setNsfwMode(mode: NsfwMode) {
         viewModelScope.launch { appSettings.setNsfwMode(mode) }
+    }
+
+    fun setAiNsfwMode(mode: NsfwMode) {
+        viewModelScope.launch { appSettings.setAiNsfwMode(mode) }
+    }
+
+    fun setAiSensitivity(sensitivity: social.tbone.ai.AiSensitivity) {
+        viewModelScope.launch { appSettings.setAiSensitivity(sensitivity) }
+    }
+
+    fun setAiScanMode(mode: social.tbone.ai.AiScanMode) {
+        viewModelScope.launch { appSettings.setAiScanMode(mode) }
+    }
+
+    fun setAiScanAvatars(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setAiScanAvatars(enabled) }
+    }
+
+    fun setAiScanBanners(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setAiScanBanners(enabled) }
+    }
+
+    fun setAiExemptFollows(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setAiExemptFollows(enabled) }
+    }
+
+    fun setAiRequirePinToReveal(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setAiRequirePinToReveal(enabled) }
+    }
+
+    fun downloadAiModel(id: social.tbone.ai.AiModelId) {
+        _aiStatusMessage.value = null
+        aiModelManager.downloadModel(id)
+    }
+
+    fun cancelAiModelDownload(id: social.tbone.ai.AiModelId) {
+        aiModelManager.cancelDownload(id)
+    }
+
+    fun removeAiModel(id: social.tbone.ai.AiModelId) {
+        _aiStatusMessage.value = null
+        aiModelManager.removeModel(id)
+    }
+
+    fun importAiModel(uri: Uri) {
+        viewModelScope.launch {
+            _aiStatusMessage.value = "verifying local model file…"
+            val result = aiModelManager.importLocalModel(uri)
+            _aiStatusMessage.value = result.fold(
+                onSuccess = { spec -> "installed ${spec.displayName}" },
+                onFailure = { err -> err.message ?: "model import failed" },
+            )
+        }
+    }
+
+    fun clearAiScanCache() {
+        viewModelScope.launch {
+            mediaScanCache.clearAll()
+            _aiStatusMessage.value = "local scan cache cleared"
+        }
     }
     fun addBleepWord(word: String, mode: WordMatchMode = WordMatchMode.WHOLE_WORD) {
         viewModelScope.launch { appSettings.addBleepWord(word, mode) }

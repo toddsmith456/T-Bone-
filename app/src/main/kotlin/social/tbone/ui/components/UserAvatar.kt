@@ -18,8 +18,11 @@ import coil.compose.SubcomposeAsyncImage
 import coil.decode.GifDecoder
 import coil.request.ImageRequest
 import coil.size.Precision
+import social.tbone.ai.AiCoilParams
+import social.tbone.ai.ScanSurface
 import social.tbone.nostr.ProfileContent
 import social.tbone.settings.AvatarMode
+import social.tbone.settings.LocalContentFilter
 import social.tbone.ui.media.LocalAnimatedAvatars
 import social.tbone.ui.media.LocalAvatarMode
 import social.tbone.ui.theme.BonyColors
@@ -66,12 +69,16 @@ fun UserAvatar(
     }
 
     val context = LocalContext.current
+    val filter = LocalContentFilter.current
+    val aiAvatarKey = filter.aiFilterConfig.takeIf { filter.aiHasInstalledModel }
     val avatarCacheKey = remember(picture) { picture.substringBefore('?').substringBefore('#') }
-    val request = remember(picture, mode, animated) {
+    val request = remember(picture, mode, animated, pubkeyHex, aiAvatarKey) {
         ImageRequest.Builder(context)
             .data(picture)
             .memoryCacheKey(avatarCacheKey)
             .diskCacheKey(avatarCacheKey)
+            .setParameter(AiCoilParams.SURFACE, ScanSurface.AVATAR.name, memoryCacheKey = null)
+            .setParameter(AiCoilParams.AUTHOR_PUBKEY, pubkeyHex, memoryCacheKey = null)
             .crossfade(false)
             .apply {
                 if (mode == AvatarMode.LOW) {

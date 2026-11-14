@@ -107,6 +107,14 @@ class AppSettings @Inject constructor(
         private val NSFW_MODE = stringPreferencesKey("nsfw_mode")
         private val BLEEP_WORDS = stringSetPreferencesKey("bleep_words")
         private val HIDE_WORDS = stringSetPreferencesKey("hide_words")
+        // Offline AI NSFW media scanner (optional installable add-on models)
+        private val AI_NSFW_MODE = stringPreferencesKey("ai_nsfw_mode")
+        private val AI_SENSITIVITY = stringPreferencesKey("ai_sensitivity")
+        private val AI_SCAN_MODE = stringPreferencesKey("ai_scan_mode")
+        private val AI_SCAN_AVATARS = booleanPreferencesKey("ai_scan_avatars")
+        private val AI_SCAN_BANNERS = booleanPreferencesKey("ai_scan_banners")
+        private val AI_EXEMPT_FOLLOWS = booleanPreferencesKey("ai_exempt_follows")
+        private val AI_REQUIRE_PIN_REVEAL = booleanPreferencesKey("ai_require_pin_reveal")
         // Parental PIN: locks the content-filter settings behind a 4-digit pin
         // so a child can't change what the parent configured (e.g. NSFW hiding).
         private val PARENTAL_PIN_ENABLED = booleanPreferencesKey("parental_pin_enabled")
@@ -411,6 +419,44 @@ class AppSettings @Inject constructor(
     private val _nsfwMode = MutableStateFlow(NsfwMode.OFF)
     val nsfwMode = _nsfwMode.asStateFlow()
 
+    /** Offline on-device AI NSFW scanner configuration (default OFF until user installs add-on). */
+    private val _aiNsfwMode = MutableStateFlow(NsfwMode.OFF)
+    val aiNsfwMode = _aiNsfwMode.asStateFlow()
+
+    private val _aiSensitivity = MutableStateFlow(social.tbone.ai.AiSensitivity.BALANCED)
+    val aiSensitivity = _aiSensitivity.asStateFlow()
+
+    private val _aiScanMode = MutableStateFlow(social.tbone.ai.AiScanMode.AUTO_CASCADE)
+    val aiScanMode = _aiScanMode.asStateFlow()
+
+    private val _aiScanAvatars = MutableStateFlow(false)
+    val aiScanAvatars = _aiScanAvatars.asStateFlow()
+
+    private val _aiScanBanners = MutableStateFlow(true)
+    val aiScanBanners = _aiScanBanners.asStateFlow()
+
+    private val _aiExemptFollows = MutableStateFlow(false)
+    val aiExemptFollows = _aiExemptFollows.asStateFlow()
+
+    private val _aiRequirePinToReveal = MutableStateFlow(true)
+    val aiRequirePinToReveal = _aiRequirePinToReveal.asStateFlow()
+
+    private val _aiFilterConfig = MutableStateFlow(social.tbone.ai.AiFilterConfig())
+    val aiFilterConfig = _aiFilterConfig.asStateFlow()
+
+    private fun refreshAiFilterConfig() {
+        _aiFilterConfig.value = social.tbone.ai.AiFilterConfig(
+            action = _aiNsfwMode.value,
+            sensitivity = _aiSensitivity.value,
+            scanMode = _aiScanMode.value,
+            scanAvatars = _aiScanAvatars.value,
+            scanBanners = _aiScanBanners.value,
+            exemptFollowedAuthors = _aiExemptFollows.value,
+            parentalPinActive = _parentalPinEnabled.value,
+            requirePinToReveal = _aiRequirePinToReveal.value,
+        )
+    }
+
     /** Words replaced with asterisks in note text (bleep), each with its match mode. */
     private val _bleepWords = MutableStateFlow<Set<FilterWord>>(emptySet())
     val bleepWords = _bleepWords.asStateFlow()
@@ -559,6 +605,16 @@ class AppSettings @Inject constructor(
                 _notepadFrontEnabled.value = prefs[NOTEPAD_FRONT_ENABLED] ?: false
                 _notepadFrontDisclaimerShown.value = prefs[NOTEPAD_FRONT_DISCLAIMER_SHOWN] ?: false
                 _parentalPinEnabled.value = prefs[PARENTAL_PIN_ENABLED] ?: false
+                _aiNsfwMode.value = prefs[AI_NSFW_MODE]?.let { stored ->
+                    runCatching { NsfwMode.valueOf(stored) }.getOrNull()
+                } ?: NsfwMode.OFF
+                _aiSensitivity.value = social.tbone.ai.AiSensitivity.fromKey(prefs[AI_SENSITIVITY])
+                _aiScanMode.value = social.tbone.ai.AiScanMode.fromKey(prefs[AI_SCAN_MODE])
+                _aiScanAvatars.value = prefs[AI_SCAN_AVATARS] ?: false
+                _aiScanBanners.value = prefs[AI_SCAN_BANNERS] ?: true
+                _aiExemptFollows.value = prefs[AI_EXEMPT_FOLLOWS] ?: false
+                _aiRequirePinToReveal.value = prefs[AI_REQUIRE_PIN_REVEAL] ?: true
+                refreshAiFilterConfig()
                 _multiReactionsEnabled.value = prefs[MULTI_REACTIONS_ENABLED] ?: false
                 _reactionEmojis.value = prefs[REACTION_EMOJIS]
                     ?.split("\n")?.filter { it.isNotBlank() }?.take(MAX_REACTION_EMOJIS) ?: emptyList()
@@ -841,6 +897,7 @@ class AppSettings @Inject constructor(
 
     suspend fun setParentalPinEnabled(enabled: Boolean) {
         _parentalPinEnabled.value = enabled
+        refreshAiFilterConfig()
         dataStore.edit { it[PARENTAL_PIN_ENABLED] = enabled }
     }
 
@@ -1011,6 +1068,48 @@ class AppSettings @Inject constructor(
     suspend fun setNsfwMode(mode: NsfwMode) {
         _nsfwMode.value = mode
         dataStore.edit { it[NSFW_MODE] = mode.name }
+    }
+
+    suspend fun setAiNsfwMode(mode: NsfwMode) {
+        _aiNsfwMode.value = mode
+        refreshAiFilterConfig()
+        dataStore.edit { it[AI_NSFW_MODE] = mode.name }
+    }
+
+    suspend fun setAiSensitivity(sensitivity: social.tbone.ai.AiSensitivity) {
+        _aiSensitivity.value = sensitivity
+        refreshAiFilterConfig()
+        dataStore.edit { it[AI_SENSITIVITY] = sensitivity.key }
+    }
+
+    suspend fun setAiScanMode(mode: social.tbone.ai.AiScanMode) {
+        _aiScanMode.value = mode
+        refreshAiFilterConfig()
+        dataStore.edit { it[AI_SCAN_MODE] = mode.key }
+    }
+
+    suspend fun setAiScanAvatars(enabled: Boolean) {
+        _aiScanAvatars.value = enabled
+        refreshAiFilterConfig()
+        dataStore.edit { it[AI_SCAN_AVATARS] = enabled }
+    }
+
+    suspend fun setAiScanBanners(enabled: Boolean) {
+        _aiScanBanners.value = enabled
+        refreshAiFilterConfig()
+        dataStore.edit { it[AI_SCAN_BANNERS] = enabled }
+    }
+
+    suspend fun setAiExemptFollows(enabled: Boolean) {
+        _aiExemptFollows.value = enabled
+        refreshAiFilterConfig()
+        dataStore.edit { it[AI_EXEMPT_FOLLOWS] = enabled }
+    }
+
+    suspend fun setAiRequirePinToReveal(enabled: Boolean) {
+        _aiRequirePinToReveal.value = enabled
+        refreshAiFilterConfig()
+        dataStore.edit { it[AI_REQUIRE_PIN_REVEAL] = enabled }
     }
 
     suspend fun setBleepWords(words: Set<FilterWord>) {

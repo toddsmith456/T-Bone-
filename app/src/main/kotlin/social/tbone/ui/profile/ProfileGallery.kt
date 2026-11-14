@@ -26,8 +26,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
-import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
+import social.tbone.ai.AiCoilParams
+import social.tbone.ai.NsfwBlockedException
+import social.tbone.ai.ScanSurface
+import social.tbone.settings.LocalContentFilter
+import social.tbone.ui.media.AiNsfwMediaVeil
 import social.tbone.ui.media.LocalVideoQuality
 import social.tbone.ui.media.VideoViewerDialog
 import social.tbone.ui.theme.BonyColors
@@ -72,12 +77,15 @@ fun ProfileGalleryRow(
                         Text("VIDEO", style = BonyType.meta.copy(color = BonyColors.TextMute))
                     }
                 } else {
-                    AsyncImage(
+                    val galleryFilter = LocalContentFilter.current
+                    val galleryAiKey = galleryFilter.aiFilterConfig.takeIf { galleryFilter.aiHasInstalledModel }
+                    SubcomposeAsyncImage(
                         // Bounded decode + crossfade: decoding full-size photos for a
                         // 5-wide cell is what made flinging stutter.
-                        model = remember(item.url) {
+                        model = remember(item.url, galleryAiKey) {
                             ImageRequest.Builder(context)
                                 .data(item.url)
+                                .setParameter(AiCoilParams.SURFACE, ScanSurface.FEED_MEDIA.name, memoryCacheKey = null)
                                 .size(THUMBNAIL_PX)
                                 .crossfade(true)
                                 .build()
@@ -85,6 +93,21 @@ fun ProfileGalleryRow(
                         contentDescription = "profile image",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
+                        error = { state ->
+                            if (state.result.throwable is NsfwBlockedException) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(BonyColors.SurfaceAlt),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        text = "AI",
+                                        style = BonyType.meta.copy(color = BonyColors.TextMute),
+                                    )
+                                }
+                            }
+                        },
                     )
                 }
             }
@@ -144,13 +167,41 @@ fun ProfileGalleryViewer(
                     }
                 }
             } else {
-                AsyncImage(
-                    model = item.url,
+                val viewerContext = LocalContext.current
+                val viewerFilter = LocalContentFilter.current
+                var revealed by remember(item.url) { mutableStateOf(false) }
+                val viewerRequest = remember(item.url, revealed, viewerFilter.aiFilterConfig, viewerFilter.aiHasInstalledModel) {
+                    ImageRequest.Builder(viewerContext)
+                        .data(item.url)
+                        .setParameter(AiCoilParams.SURFACE, ScanSurface.FEED_MEDIA.name, memoryCacheKey = null)
+                        .apply {
+                            if (revealed) setParameter(AiCoilParams.BYPASS, true, memoryCacheKey = null)
+                        }
+                        .build()
+                }
+                SubcomposeAsyncImage(
+                    model = viewerRequest,
                     contentDescription = "profile image",
                     contentScale = ContentScale.Fit,
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(vertical = 44.dp),
+                    error = { state ->
+                        val blocked = state.result.throwable as? NsfwBlockedException
+                        if (blocked != null) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 24.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                AiNsfwMediaVeil(
+                                    verdict = blocked.verdict,
+                                    onReveal = { revealed = true },
+                                )
+                            }
+                        }
+                    },
                 )
             }
         }
