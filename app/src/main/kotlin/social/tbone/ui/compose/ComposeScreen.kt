@@ -68,11 +68,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
@@ -81,6 +83,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -197,6 +200,9 @@ fun ComposeScreen(
     }
     val snackbarHostState = remember { SnackbarHostState() }
     val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    var caretGuard by remember { mutableStateOf<ProseCaretGuard?>(null) }
+    var focusRestoreTrigger by remember { mutableIntStateOf(0) }
 
     // The @-mention token currently being typed (null when the caret isn't in one).
     val mentionQuery = mentionQueryAt(fieldValue.text, fieldValue.selection.end)
@@ -214,6 +220,7 @@ fun ComposeScreen(
         val insertion = "@$name"
         val newText = currentText.substring(0, tokenStart) + insertion + " " + currentText.substring(safeEnd)
         val caret = (tokenStart + insertion.length + 1).coerceIn(0, newText.length)
+        caretGuard = null
         fieldValue = TextFieldValue(
             text = newText,
             selection = TextRange(caret),
@@ -228,6 +235,7 @@ fun ComposeScreen(
         val pos = fieldValue.selection.end.coerceIn(0, fieldValue.text.length)
         val newText = fieldValue.text.substring(0, pos) + ch + fieldValue.text.substring(pos)
         val caret = (pos + ch.length).coerceIn(0, newText.length)
+        caretGuard = null
         fieldValue = TextFieldValue(
             text = newText,
             selection = TextRange(caret),
@@ -236,29 +244,19 @@ fun ComposeScreen(
         focusRequester.requestFocus()
     }
 
-    // Uploaded media references live below the writing area. The caret stays
-    // where the user was typing, so the first line remains available for prose.
+    // Uploaded media references live below the writing area. Keep the typing
+    // caret in the top prose region (index 0 when empty, or preserved/snapped
+    // inside the prose block) and restore editor focus + soft keyboard after
+    // returning from the system media picker.
     fun insertReferenceOnSecondLine(url: String) {
-        val original = fieldValue.text
-        val base = original.trimEnd()
-        val referenceSection = base.substringAfterLast("\n\n", missingDelimiterValue = "")
-        val existingReferenceLines = referenceSection.lineSequence().filter { it.isNotBlank() }.toList()
-        val alreadyHasReferenceSection = "\n\n" in base && existingReferenceLines.isNotEmpty() &&
-            existingReferenceLines.all { line ->
-                val reference = line.trim()
-                reference.startsWith("nostr:") || reference.startsWith("https://") || reference.startsWith("http://")
-            }
-        val separator = if (alreadyHasReferenceSection) "\n" else "\n\n"
-        val nextText = "$base$separator$url "
-        val selection = fieldValue.selection
-        fieldValue = TextFieldValue(
-            text = nextText,
-            selection = TextRange(
-                selection.start.coerceIn(0, nextText.length),
-                selection.end.coerceIn(0, nextText.length),
-            ),
-            composition = null,
+        val updated = insertReferenceBelowProse(fieldValue, url)
+        fieldValue = updated
+        caretGuard = ProseCaretGuard(
+            expectedText = updated.text,
+            expectedSelection = updated.selection,
+            expiresAtElapsedMs = android.os.SystemClock.elapsedRealtime() + PROSE_CARET_GUARD_WINDOW_MS,
         )
+        focusRestoreTrigger++
     }
 
     // Queue-backed flows preserve every URL/error when a multi-picker returns
@@ -270,20 +268,47 @@ fun ComposeScreen(
         viewModel.uploadErrors.collect { error -> snackbarHostState.showSnackbar("upload failed: $error") }
     }
 
-    var textInitialized by remember { mutableStateOf(false) }
+    var textInitialized by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(uiState.initialText) {
         if (!textInitialized && uiState.initialText.isNotEmpty()) {
-            val initial = uiState.initialText
-            fieldValue = TextFieldValue(
-                text = initial,
-                selection = TextRange(initial.length),
-                composition = null,
-            )
+            val updated = initialComposeTextFieldValue(uiState.initialText)
+            fieldValue = updated
+            if (updated.selection.end < updated.text.length) {
+                caretGuard = ProseCaretGuard(
+                    expectedText = updated.text,
+                    expectedSelection = updated.selection,
+                    expiresAtElapsedMs = android.os.SystemClock.elapsedRealtime() + PROSE_CARET_GUARD_WINDOW_MS,
+                )
+                focusRestoreTrigger++
+            }
             textInitialized = true
         }
     }
 
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
+
+    LaunchedEffect(focusRestoreTrigger) {
+        if (focusRestoreTrigger == 0) return@LaunchedEffect
+        // Let BasicTextField commit the updated text + top prose selection
+        // before re-attaching focus/IME after the media picker returns.
+        withFrameNanos { }
+        runCatching { focusRequester.requestFocus() }
+        keyboardController?.show()
+        // If focus restoration / IME pushed the selection to the end of the
+        // reference block while text stayed unchanged, snap it back to prose.
+        withFrameNanos { }
+        val guard = caretGuard
+        if (guard != null &&
+            fieldValue.text == guard.expectedText &&
+            fieldValue.selection != guard.expectedSelection
+        ) {
+            fieldValue = TextFieldValue(
+                text = guard.expectedText,
+                selection = guard.expectedSelection,
+                composition = null,
+            )
+        }
+    }
 
     uiState.error?.let { error ->
         LaunchedEffect(error) {
@@ -393,7 +418,7 @@ fun ComposeScreen(
 
             // ── Editor ────────────────────────────────────────────────────────
             Box(modifier = Modifier.weight(1f).padding(14.dp)) {
-                if (fieldValue.text.isEmpty()) {
+                if (showEmptyProsePlaceholder(fieldValue.text)) {
                     Text(
                         text = when {
                             isReply -> "> reply to thread…"
@@ -407,9 +432,17 @@ fun ComposeScreen(
                     value = fieldValue,
                     onValueChange = { nv ->
                         // Auto-strip tracking parameters from pasted links while
-                        // clamping selection & clearing stale IME composition so
-                        // shortening the text can never crash BasicTextField.
-                        fieldValue = cleanPastedTextFieldValue(fieldValue, nv)
+                        // clamping selection & clearing stale IME composition, and
+                        // block transient post-upload focus-restore jumps to the
+                        // end of the appended reference block.
+                        val (resolved, nextGuard) = applyComposerValueChange(
+                            previous = fieldValue,
+                            incoming = nv,
+                            guard = caretGuard,
+                            nowElapsedMs = android.os.SystemClock.elapsedRealtime(),
+                        )
+                        caretGuard = nextGuard
+                        fieldValue = resolved
                     },
                     modifier = Modifier
                         .fillMaxSize()
@@ -1229,4 +1262,114 @@ internal fun cleanPastedTextFieldValue(
         selection = TextRange(safeStart, safeEnd),
         composition = null,
     )
+}
+
+internal const val PROSE_CARET_GUARD_WINDOW_MS = 600L
+
+internal data class ProseCaretGuard(
+    val expectedText: String,
+    val expectedSelection: TextRange,
+    val expiresAtElapsedMs: Long,
+)
+
+private fun isReferenceLine(line: String): Boolean {
+    val trimmed = line.trim()
+    return trimmed.startsWith("nostr:") ||
+        trimmed.startsWith("https://") ||
+        trimmed.startsWith("http://")
+}
+
+private fun hasTrailingReferenceSection(trimmedEndText: String): Boolean {
+    if ("\n\n" !in trimmedEndText) return false
+    val referenceSection = trimmedEndText.substringAfterLast("\n\n", missingDelimiterValue = "")
+    val existingReferenceLines = referenceSection.lineSequence().filter { it.isNotBlank() }.toList()
+    return existingReferenceLines.isNotEmpty() && existingReferenceLines.all(::isReferenceLine)
+}
+
+/**
+ * Returns `true` when the top prose area is still empty — either the entire
+ * editor is empty, or it only contains a `\n\n`-spaced quote/Blossom reference
+ * block below an empty first line.
+ */
+internal fun showEmptyProsePlaceholder(text: String): Boolean {
+    if (text.isEmpty()) return true
+    if (!text.startsWith("\n\n")) return false
+    val trimmedEnd = text.trimEnd()
+    return hasTrailingReferenceSection(trimmedEnd) &&
+        trimmedEnd.substringBeforeLast("\n\n").isEmpty()
+}
+
+/**
+ * Builds the initial [TextFieldValue] for [ComposeUiState.initialText].
+ * Quote prefills start with `\n\nnostr:...`, so the caret belongs at index `0`
+ * on the top prose line; plain drafts place the caret at the end of the text.
+ */
+internal fun initialComposeTextFieldValue(initialText: String): TextFieldValue {
+    val caret = if (initialText.startsWith("\n\n")) 0 else initialText.length
+    return TextFieldValue(
+        text = initialText,
+        selection = TextRange(caret),
+        composition = null,
+    )
+}
+
+/**
+ * Appends a Blossom media [url] in the reference section two lines below the
+ * user's prose (or on the next line if a reference section already exists),
+ * without adding a trailing space after the URL, and keeps the typing caret
+ * inside the top prose region (`0..proseLength`).
+ */
+internal fun insertReferenceBelowProse(
+    current: TextFieldValue,
+    url: String,
+): TextFieldValue {
+    val cleanUrl = url.trim()
+    if (cleanUrl.isEmpty()) return current
+    val base = current.text.trimEnd()
+    val alreadyHasReferenceSection = hasTrailingReferenceSection(base)
+    val proseLength = if (alreadyHasReferenceSection) {
+        base.substringBeforeLast("\n\n").length
+    } else {
+        base.length
+    }
+    val separator = if (alreadyHasReferenceSection) "\n" else "\n\n"
+    val nextText = "$base$separator$cleanUrl"
+    val sel = current.selection
+    val nextSelection = if (sel.min in 0..proseLength && sel.max in 0..proseLength) {
+        sel
+    } else {
+        TextRange(proseLength)
+    }
+    return TextFieldValue(
+        text = nextText,
+        selection = nextSelection,
+        composition = null,
+    )
+}
+
+/**
+ * Applies a [BasicTextField] value change while blocking transient post-upload
+ * focus-restoration / IME jumps that move the selection to the very end of the
+ * reference block without changing any text.
+ */
+internal fun applyComposerValueChange(
+    previous: TextFieldValue,
+    incoming: TextFieldValue,
+    guard: ProseCaretGuard?,
+    nowElapsedMs: Long,
+): Pair<TextFieldValue, ProseCaretGuard?> {
+    if (guard != null && nowElapsedMs <= guard.expiresAtElapsedMs) {
+        val unchangedText = incoming.text == guard.expectedText
+        val jumpedToEnd = incoming.selection == TextRange(incoming.text.length) &&
+            guard.expectedSelection != TextRange(incoming.text.length)
+        if (unchangedText && jumpedToEnd) {
+            return TextFieldValue(
+                text = guard.expectedText,
+                selection = guard.expectedSelection,
+                composition = null,
+            ) to guard
+        }
+    }
+    val cleaned = cleanPastedTextFieldValue(previous, incoming)
+    return cleaned to null
 }

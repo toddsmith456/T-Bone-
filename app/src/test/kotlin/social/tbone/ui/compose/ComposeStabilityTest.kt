@@ -3,6 +3,8 @@ package social.tbone.ui.compose
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -63,5 +65,127 @@ class ComposeStabilityTest {
         // Small image stays unscaled
         assertEquals(1, computeBlurHashSampleSize(120, 90, targetMaxDim = 128))
         assertEquals(1, computeBlurHashSampleSize(0, 0, targetMaxDim = 128))
+    }
+
+    @Test
+    fun `insertReferenceBelowProse keeps caret at top with no trailing space on empty composer`() {
+        val url = "https://blossom.primal.net/abc123.jpg"
+        val updated = insertReferenceBelowProse(TextFieldValue("", TextRange(0)), url)
+
+        assertEquals("\n\n$url", updated.text)
+        assertFalse("Blossom URL must not have a trailing space", updated.text.endsWith(" "))
+        assertEquals(TextRange(0), updated.selection)
+        assertNull(updated.composition)
+    }
+
+    @Test
+    fun `insertReferenceBelowProse stacks multiple uploads and snaps caret back to top prose`() {
+        val first = "https://blossom.primal.net/one.jpg"
+        val second = "https://blossom.primal.net/two.mp4"
+        // Simulate caret having drifted to the end of the first link before the second upload arrives.
+        val afterFirst = TextFieldValue("\n\n$first", TextRange(first.length + 2))
+        val afterSecond = insertReferenceBelowProse(afterFirst, second)
+
+        assertEquals("\n\n$first\n$second", afterSecond.text)
+        assertEquals(TextRange(0), afterSecond.selection)
+    }
+
+    @Test
+    fun `insertReferenceBelowProse preserves caret inside prose and snaps past-prose caret to prose end`() {
+        val url = "https://blossom.primal.net/photo.png"
+
+        // Caret mid-prose stays mid-prose.
+        val midProse = insertReferenceBelowProse(
+            TextFieldValue("Check this out", TextRange(6)),
+            url,
+        )
+        assertEquals("Check this out\n\n$url", midProse.text)
+        assertEquals(TextRange(6), midProse.selection)
+
+        // Caret after trailing blank lines snaps back to end of prose instead of landing on the URL.
+        val trailingNewlines = insertReferenceBelowProse(
+            TextFieldValue("Check this out\n\n", TextRange(16)),
+            url,
+        )
+        assertEquals("Check this out\n\n$url", trailingNewlines.text)
+        assertEquals(TextRange(14), trailingNewlines.selection)
+
+        // Second upload when prose already exists keeps caret at prose end even if selection was at end.
+        val secondUrl = "https://blossom.primal.net/second.png"
+        val withFirst = TextFieldValue(
+            "Check this out\n\n$url",
+            TextRange("Check this out\n\n$url".length),
+        )
+        val withSecond = insertReferenceBelowProse(withFirst, secondUrl)
+        assertEquals("Check this out\n\n$url\n$secondUrl", withSecond.text)
+        assertEquals(TextRange(14), withSecond.selection)
+    }
+
+    @Test
+    fun `initialComposeTextFieldValue puts caret at top for quotes and at end for drafts`() {
+        val quote = initialComposeTextFieldValue("\n\nnostr:nevent1qqsxyz")
+        assertEquals("\n\nnostr:nevent1qqsxyz", quote.text)
+        assertEquals(TextRange(0), quote.selection)
+
+        // Uploading Blossom media onto a quote note keeps caret at 0.
+        val quoteWithMedia = insertReferenceBelowProse(quote, "https://blossom.primal.net/clip.jpg")
+        assertEquals("\n\nnostr:nevent1qqsxyz\nhttps://blossom.primal.net/clip.jpg", quoteWithMedia.text)
+        assertEquals(TextRange(0), quoteWithMedia.selection)
+
+        val draft = initialComposeTextFieldValue("Draft note body")
+        assertEquals("Draft note body", draft.text)
+        assertEquals(TextRange("Draft note body".length), draft.selection)
+    }
+
+    @Test
+    fun `applyComposerValueChange blocks transient post-upload jump to end but allows typing and post-window taps`() {
+        val text = "\n\nhttps://blossom.primal.net/pic.jpg"
+        val current = TextFieldValue(text, TextRange(0))
+        val guard = ProseCaretGuard(
+            expectedText = text,
+            expectedSelection = TextRange(0),
+            expiresAtElapsedMs = 1_600L,
+        )
+
+        // Spurious focus/IME jump to end of URL within window is blocked.
+        val (blocked, guardAfterBlock) = applyComposerValueChange(
+            previous = current,
+            incoming = TextFieldValue(text, TextRange(text.length)),
+            guard = guard,
+            nowElapsedMs = 1_100L,
+        )
+        assertEquals(TextRange(0), blocked.selection)
+        assertNotNull(guardAfterBlock)
+
+        // Real typing at the top immediately passes through and clears the guard.
+        val typedText = "H$text"
+        val (typed, guardAfterType) = applyComposerValueChange(
+            previous = current,
+            incoming = TextFieldValue(typedText, TextRange(1)),
+            guard = guard,
+            nowElapsedMs = 1_150L,
+        )
+        assertEquals(typedText, typed.text)
+        assertEquals(TextRange(1), typed.selection)
+        assertNull(guardAfterType)
+
+        // After the guard window expires, tapping the end of the URL is permitted.
+        val (afterExpiry, guardAfterExpiry) = applyComposerValueChange(
+            previous = current,
+            incoming = TextFieldValue(text, TextRange(text.length)),
+            guard = guard,
+            nowElapsedMs = 1_700L,
+        )
+        assertEquals(TextRange(text.length), afterExpiry.selection)
+        assertNull(guardAfterExpiry)
+    }
+
+    @Test
+    fun `showEmptyProsePlaceholder shows hint for empty or reference-only notes`() {
+        assertTrue(showEmptyProsePlaceholder(""))
+        assertTrue(showEmptyProsePlaceholder("\n\nhttps://blossom.primal.net/pic.jpg"))
+        assertTrue(showEmptyProsePlaceholder("\n\nnostr:nevent1abc\nhttps://blossom.primal.net/pic.jpg"))
+        assertFalse(showEmptyProsePlaceholder("Hello\n\nhttps://blossom.primal.net/pic.jpg"))
+        assertFalse(showEmptyProsePlaceholder("\n\nJust prose on line three"))
     }
 }
