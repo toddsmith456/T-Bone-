@@ -78,7 +78,7 @@ class RelayHintPolicyTest {
         val repostTarget = "cc".repeat(32)
         val nevent = Nip19.hexToNevent(
             idHex = inlineId,
-            relays = listOf("wss://relay.mostr.pub"),
+            relayHints = listOf("wss://relay.mostr.pub"),
             kind = EventKind.TEXT_NOTE,
         )
         val note = Event(

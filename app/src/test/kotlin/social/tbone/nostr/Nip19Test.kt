@@ -42,7 +42,7 @@ class Nip19Test {
             idHex = id,
             authorPubkeyHex = author,
             kind = 1,
-            relays = listOf("wss://relay.mostr.pub", "wss://ditto.pub/relay"),
+            relayHints = listOf("wss://relay.mostr.pub", "wss://ditto.pub/relay"),
         )
         val ref = Nip19.neventToReference("nostr:$nevent")
         assertEquals(id, ref?.idHex)
