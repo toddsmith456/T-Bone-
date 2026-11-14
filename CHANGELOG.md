@@ -5,6 +5,27 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.9] — 2026-11-14
+
+### Added
+- **Offline AI NSFW media scanner (optional add-on).** Filter settings now include an on-device LiteRT image scanner that runs entirely offline with zero telemetry and an HMAC-keyed local scan cache. Two optional downloadable model packs are available — a fast Stage 1 MobileNetV2 FP16 classifier and a high-accuracy Stage 2 Marqo ViT-Tiny-384 FP16 classifier — with selectable sensitivity, scan-mode controls, and Tor-aware model downloads.
+- **NIP-18 generic reposts (kind 16)** are now supported across feeds, note cards, and notifications alongside standard kind-6 reposts.
+- **NIP-19 relay hints and Fediverse bridge lookup support.** Quoted and reposted notes now read `nevent`/`naddr` TLV relay hints (screened through an SSRF- and Tor-safe relay policy) and can query scoped read-only Fediverse bridge relays (Ditto/Mostr `wss://relay.ditto.pub` and Momostr) in a bounded fallback stage. Relay Management includes per-bridge toggles and quick-add controls.
+- **Tap-to-retry on unavailable note cards.** When a quoted or reposted note cannot be fetched immediately (for example while offline or on a slow bridge relay), its placeholder card now shows an in-place retry action and also auto-retries once a relay reconnects.
+- **Pinned post badge** (`pinned` + pin icon) on pinned notes in profiles and note cards.
+
+### Changed
+- **Collapsed notification rows hide inline image thumbnails** so notification lists keep a steady height without jumping; expanding a notification still shows its attached media.
+- **Expanded poll notifications and quoted poll cards** now render full NIP-88 poll options and live vote state.
+- Removed the redundant "Zap notifications are on" startup popup while preserving the silent one-time zap filter migration.
+
+### Fixed
+- **Blossom upload and quote cursor position in the composer.** Adding a Blossom media upload (or opening a quote note) no longer jumps the typing cursor to a trailing space after the link. The trailing space after uploaded URLs has been removed, the cursor stays at the top prose area above the two-line gap (restoring editor focus and the keyboard automatically after returning from the system media picker), and transient Android IME focus-restoration jumps to the end of the reference block are blocked.
+- **Cold-start infinite feed spinner.** Fixed the startup race between account loading, home-layout initialization, and relay subscriptions so feeds immediately subscribe to cached follows on launch, wait for relay subscription collectors before issuing `REQ`s, and reliably clear the loading state when feeds settle.
+- **Missing quoted and reposted notes across feeds, threads, profiles, hashtags, and notifications.** Replaced ad-hoc quote refreshes with a shared `QuoteLookupTracker` / `QuoteLookupSession` that coalesces batched ID lookups (≤50 IDs per filter), skips metadata-only relays such as `purplepag.es` for note EOSE, updates legacy Mostr/Ditto endpoints to the live `wss://relay.ditto.pub` endpoint, waits for connecting relays on cold start, wakes disconnected relays out of backoff when needed, and plans multi-wave fallback queries so slow relays cannot starve others.
+- **App stability and crash hardening.** Synchronized `FeedSlotEngine` and `SlotRuntime` snapshots to prevent concurrent tab-switch crashes; deduplicated account emissions, synchronized the paged buffer, and chunked SQLite deletes/lookups in `NotificationsRepository` and `EventRepository`; downsampled and recycled bitmaps during BlurHash generation to prevent out-of-memory crashes on high-resolution photos; clamped selection and cleared IME composition on URL-cleaning pastes; switched Coil to a dynamic Tor-safe `Call.Factory` with shared OkHttp pools; guarded corrupt cached event rows; and cleaned up `FrameMonitor` on activity teardown.
+
+
 ## [0.5.8] — 2026-11-14
 
 0.5.7 and 0.5.8 are the same build of the app. 0.5.7's published release notes
