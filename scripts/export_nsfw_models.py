@@ -235,20 +235,22 @@ def export_stage2_marqo(work_dir: Path, out_dir: Path) -> tuple[dict, np.ndarray
         shutil.rmtree(tf_out_dir)
 
     print("=== [Stage 2] Running onnx2tf (NCHW -> NHWC SavedModel, onnxsim disabled) ===")
-    subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "onnx2tf",
-            "-i",
-            str(onnx_path),
-            "-o",
-            str(tf_out_dir),
-            "-nuo",
-            "-osd",
-            "-n",
-        ],
-        check=True,
+    import onnx2tf
+    import onnx2tf.onnx2tf as onnx2tf_mod
+    import onnx2tf.utils.common_functions as onnx2tf_cf
+
+    # onnx2tf's built-in calibration sample downloader can fail or fetch a corrupted file
+    # when upstream hosts throttle CI; supply a deterministic in-memory NHWC dummy array instead.
+    dummy_calib = np.random.default_rng(42).uniform(0.0, 255.0, size=(20, 128, 128, 3)).astype(np.float32)
+    onnx2tf_cf.download_test_image_data = lambda: dummy_calib
+    onnx2tf_mod.download_test_image_data = lambda: dummy_calib
+
+    onnx2tf.convert(
+        input_onnx_file_path=str(onnx_path),
+        output_folder_path=str(tf_out_dir),
+        not_use_onnxsim=True,
+        output_signaturedefs=True,
+        non_verbose=True,
     )
 
     saved_model_pb = tf_out_dir / "saved_model.pb"
