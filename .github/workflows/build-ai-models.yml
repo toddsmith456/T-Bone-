@@ -1,0 +1,126 @@
+name: Build Offline AI Model Add-ons
+
+# Triggered on beta when a commit message includes [build ai-models], or via
+# manual workflow_dispatch. Exports & verifies permissively-licensed .tflite
+# model packs for T-Bone's installable AI add-on system without bundling them
+# into the APK. Publishes under prerelease tag `ai-models-v1` (make_latest=false)
+# so it never triggers build-release.yml (v*) or alters /releases/latest.
+
+on:
+  push:
+    branches: [beta]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-ai-models:
+    if: github.ref == 'refs/heads/beta' && (github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build ai-models]'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install conversion toolchain
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/venv-export"
+          "$RUNNER_TEMP/venv-export/bin/pip" install --upgrade pip
+          "$RUNNER_TEMP/venv-export/bin/pip" install \
+            --extra-index-url https://download.pytorch.org/whl/cpu \
+            "torch==2.6.0+cpu" \
+            "timm>=1.0.14" \
+            "pillow>=10.0.0" \
+            "onnx2tf==1.29.24"
+
+      - name: Export and verify Stage 1 & Stage 2 TFLite models
+        id: export
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/ci-log" "$RUNNER_TEMP/work" dist/ai-models
+          "$RUNNER_TEMP/venv-export/bin/python" scripts/export_nsfw_models.py \
+            "$RUNNER_TEMP/work" dist/ai-models 2>&1 \
+            | tee "$RUNNER_TEMP/ci-log/ai-models-export.log"
+
+      - name: Verify both models in isolated LiteRT 1.4.0 runtime (matches Android litert 1.4.2)
+        id: verify_litert14
+        if: steps.export.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python -m venv "$RUNNER_TEMP/venv-litert14"
+          "$RUNNER_TEMP/venv-litert14/bin/pip" install --upgrade pip
+          "$RUNNER_TEMP/venv-litert14/bin/pip" install "ai-edge-litert==1.4.0" "numpy==1.26.4"
+          PYTHONPATH=scripts "$RUNNER_TEMP/venv-litert14/bin/python" scripts/verify_litert14_models.py \
+            "$RUNNER_TEMP/work" dist/ai-models 2>&1 \
+            | tee "$RUNNER_TEMP/ci-log/ai-models-litert14.log"
+
+      - name: Publish diagnostic log & manifest to ci-log branch (always)
+        if: always()
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ci-log"
+          if [ -f dist/ai-models/ai-models-manifest.json ]; then
+            cp dist/ai-models/ai-models-manifest.json "$RUNNER_TEMP/ci-log/"
+          fi
+          if [ -f dist/ai-models/SHA256SUMS.txt ]; then
+            cp dist/ai-models/SHA256SUMS.txt "$RUNNER_TEMP/ci-log/"
+          fi
+          cd "$RUNNER_TEMP/ci-log"
+          if [ -f ai-models-export.log ]; then
+            tail -n 300 ai-models-export.log > ai-models-export.tail.log
+            rm -f ai-models-export.log
+          fi
+          echo "${{ github.sha }}" > sha.txt
+          echo "run=${{ github.run_id }} job=build-ai-models" >> sha.txt
+          git init -q
+          git config user.email "ci@tbone.local"
+          git config user.name "CI Logger"
+          git add -A
+          git commit -q -m "AI models CI log for ${{ github.sha }}" || true
+          git push --force \
+            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
+            HEAD:ci-log
+
+      - name: Fail if export or LiteRT 1.4 verification failed
+        if: steps.export.outcome != 'success' || steps.verify_litert14.outcome != 'success'
+        run: |
+          echo "AI model export or LiteRT 1.4 verification failed. See ci-log branch."
+          exit 1
+
+      - name: Upload AI model packs as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: T-Bone-ai-models-${{ github.run_number }}
+          path: dist/ai-models/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish AI model packs to ai-models-v1 prerelease (does not affect /releases/latest)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ai-models-v1
+          target_commitish: ${{ github.sha }}
+          name: T-Bone Offline AI Add-on Models (v1)
+          prerelease: true
+          make_latest: 'false'
+          body: |
+            Optional, 100% offline on-device `.tflite` model add-ons for T-Bone's AI media scanner.
+            These models are **not** bundled in the T-Bone APK; users opt in from **Settings → Content Filters → Offline AI Media Scanner**.
+
+            - `nsfw_stage1_mnv2_int8.tflite` — Fast Scanner (MobileNetV2-140 INT8, MIT, upstream `GantMan/nsfw_model` v1.2.0)
+            - `nsfw_stage2_marqo384_int8.tflite` — High-Accuracy Scanner (Marqo ViT-Tiny 384 INT8, Apache-2.0, upstream `Marqo/nsfw-image-detection-384`)
+            - `SHA256SUMS.txt` & `ai-models-manifest.json` — pinned integrity metadata verified on-device before loading.
+          files: |
+            dist/ai-models/nsfw_stage1_mnv2_int8.tflite
+            dist/ai-models/nsfw_stage2_marqo384_int8.tflite
+            dist/ai-models/ai-models-manifest.json
+            dist/ai-models/SHA256SUMS.txt
+          fail_on_unmatched_files: true
