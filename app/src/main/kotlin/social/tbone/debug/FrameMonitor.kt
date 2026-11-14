@@ -24,6 +24,8 @@ object FrameMonitor {
     private const val MS = 1_000_000.0
 
     private var thread: HandlerThread? = null
+    private var activeListener: Window.OnFrameMetricsAvailableListener? = null
+    private var attachedWindow: java.lang.ref.WeakReference<Window>? = null
 
     private var frames = 0
     private var janky = 0
@@ -32,28 +34,50 @@ object FrameMonitor {
     private var windowStart = 0L
 
     fun start(activity: Activity) {
-        val handlerThread = HandlerThread("FrameMonitor").apply { start() }
-        thread = handlerThread
-        val handler = Handler(handlerThread.looper)
-        windowStart = System.currentTimeMillis()
+        synchronized(this) {
+            stopLocked(attachedWindow?.get())
+            val handlerThread = HandlerThread("FrameMonitor").apply { start() }
+            thread = handlerThread
+            val handler = Handler(handlerThread.looper)
+            windowStart = System.currentTimeMillis()
+            val listener = Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
+                val total = metrics.getMetric(FrameMetrics.TOTAL_DURATION)
 
-        activity.window.addOnFrameMetricsAvailableListener({ _, metrics, _ ->
-            val total = metrics.getMetric(FrameMetrics.TOTAL_DURATION)
-
-            synchronized(this) {
-                frames++
-                if (total > JANK_BUDGET_NS) {
-                    janky++
-                    if (total > worstTotalNs) {
-                        worstTotalNs = total
-                        worstBreakdown = breakdown(metrics)
+                synchronized(this) {
+                    frames++
+                    if (total > JANK_BUDGET_NS) {
+                        janky++
+                        if (total > worstTotalNs) {
+                            worstTotalNs = total
+                            worstBreakdown = breakdown(metrics)
+                        }
                     }
+                    if (System.currentTimeMillis() - windowStart >= WINDOW_MS) dumpAndReset()
                 }
-                if (System.currentTimeMillis() - windowStart >= WINDOW_MS) dumpAndReset()
             }
-        }, handler)
+            activeListener = listener
+            attachedWindow = java.lang.ref.WeakReference(activity.window)
+            activity.window.addOnFrameMetricsAvailableListener(listener, handler)
+        }
 
         Timber.d("FrameMonitor started")
+    }
+
+    fun stop(activity: Activity) {
+        synchronized(this) {
+            stopLocked(activity.window)
+        }
+    }
+
+    private fun stopLocked(window: Window?) {
+        val listener = activeListener
+        if (listener != null && window != null) {
+            runCatching { window.removeOnFrameMetricsAvailableListener(listener) }
+        }
+        activeListener = null
+        attachedWindow = null
+        thread?.quitSafely()
+        thread = null
     }
 
     /**

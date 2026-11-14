@@ -33,4 +33,33 @@ class Nip19Test {
         assertEquals(null, Nip19.naddrToAddress(naddr.dropLast(1)))
         assertEquals(null, Nip19.nostrUriToEventId(naddr))
     }
+
+    @Test
+    fun `neventToReference extracts relay hints, author pubkey, and kind`() {
+        val id = "ef".repeat(32)
+        val author = "11".repeat(32)
+        val nevent = Nip19.hexToNevent(
+            idHex = id,
+            authorPubkeyHex = author,
+            kind = 1,
+            relays = listOf("wss://relay.mostr.pub", "wss://ditto.pub/relay"),
+        )
+        val ref = Nip19.neventToReference("nostr:$nevent")
+        assertEquals(id, ref?.idHex)
+        assertEquals(author, ref?.authorPubkey)
+        assertEquals(1, ref?.kind)
+        assertEquals(listOf("wss://relay.mostr.pub", "wss://ditto.pub/relay"), ref?.relayHints)
+    }
+
+    @Test
+    fun `naddrToAddress preserves embedded TLV relay hints`() {
+        val address = Nip19.Address(
+            identifier = "fediverse-post",
+            pubkey = "22".repeat(32),
+            kind = 30023,
+            relayHints = listOf("wss://relay.mostr.pub", "wss://relay.momostr.pink"),
+        )
+        val naddr = Nip19.addressToNaddr(address)
+        assertEquals(address, Nip19.naddrToAddress("nostr:$naddr"))
+    }
 }

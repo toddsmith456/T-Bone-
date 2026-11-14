@@ -56,6 +56,26 @@ object Tunables {
         "wss://nos.lol",
     )
 
+    /**
+     * Built-in Fediverse bridge relays (Mostr, Ditto, Momostr).
+     * Used for read-only fallback lookups when enabled in Relay Settings,
+     * and offered as a one-tap preset to add to the user's personal relay list.
+     */
+    val FEDIVERSE_BRIDGE_RELAYS = listOf(
+        "wss://relay.mostr.pub",
+        "wss://ditto.pub/relay",
+        "wss://relay.momostr.pink",
+    )
+
+    /**
+     * Relays that store only profile/relay-list metadata (kinds 0 / 10002),
+     * never kind-1 notes. Their fast empty EOSE must never prematurely finish
+     * a note or quote lookup while general relays are still answering.
+     */
+    val METADATA_ONLY_RELAYS = setOf(
+        "wss://purplepag.es",
+    )
+
     /** NIP-50 search relay. */
     const val SEARCH_RELAY = "wss://relay.nostr.band"
 

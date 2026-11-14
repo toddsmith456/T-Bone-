@@ -2,6 +2,7 @@ package social.tbone.reactions
 
 import android.util.LruCache
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -41,8 +42,15 @@ class PollsRepository @Inject constructor(
     private val accountRepository: AccountRepository,
     private val pollVoteStore: PollVoteStore,
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(
+        SupervisorJob() +
+            Dispatchers.Default +
+            CoroutineExceptionHandler { _, throwable ->
+                Timber.e(throwable, "Uncaught exception in PollsRepository")
+            },
+    )
 
+    private val pollLock = Any()
     private val countsCache = LruCache<String, MutableMap<String, Int>>(Tunables.REACTION_CACHE_SIZE)
     private val votersCache = LruCache<String, MutableMap<String, Pair<Long, List<String>>>>(Tunables.REACTION_CACHE_SIZE)
     private val myVotesCache = LruCache<String, List<String>>(Tunables.REACTION_CACHE_SIZE)
@@ -67,7 +75,7 @@ class PollsRepository @Inject constructor(
         scope.launch {
             accountRepository.activeAccount.distinctUntilChangedBy { it?.pubkey }.collect { account ->
                 activePubkey = account?.pubkey
-                myVotesCache.evictAll()
+                synchronized(pollLock) { myVotesCache.evictAll() }
                 _myVotes.value = emptyMap()
                 if (account != null) {
                     val stored = runCatching { pollVoteStore.getVotes(account.pubkey) }
@@ -83,7 +91,7 @@ class PollsRepository @Inject constructor(
                             applyVote(pollId, account.pubkey, vote.createdAt, optionIds)
                             val effective = currentVote(pollId, account.pubkey)
                                 ?: PersistedPollVote(vote.createdAt, optionIds)
-                            myVotesCache.put(pollId, effective.optionIds)
+                            synchronized(pollLock) { myVotesCache.put(pollId, effective.optionIds) }
                             _myVotes.update { it + (pollId to effective.optionIds) }
                         }
                     }
@@ -126,19 +134,17 @@ class PollsRepository @Inject constructor(
         }
     }
 
-    fun getCounts(pollId: String): Map<String, Int> {
-        val counts = countsCache.get(pollId) ?: return emptyMap()
-        val voters = votersCache.get(pollId) ?: return counts.toMap()
-        return synchronized(voters) { counts.toMap() }
+    fun getCounts(pollId: String): Map<String, Int> = synchronized(pollLock) {
+        countsCache.get(pollId)?.toMap() ?: emptyMap()
     }
 
-    fun getTotalVotes(pollId: String): Int {
-        val voters = votersCache.get(pollId) ?: return 0
-        return synchronized(voters) { voters.size }
+    fun getTotalVotes(pollId: String): Int = synchronized(pollLock) {
+        votersCache.get(pollId)?.size ?: 0
     }
 
-    fun getMyVotes(pollId: String): List<String> =
+    fun getMyVotes(pollId: String): List<String> = synchronized(pollLock) {
         myVotesCache.get(pollId)?.toList() ?: emptyList()
+    }
 
     private fun ingest(vote: Event, pollId: String) {
         val optionIds = runCatching { Nip88.getResponseOptionIds(vote).distinct() }
@@ -170,12 +176,13 @@ class PollsRepository @Inject constructor(
     ): Boolean {
         val cleanOptionIds = optionIds.distinct()
         if (cleanOptionIds.isEmpty()) return false
-        val voters = votersCache.get(pollId)
-            ?: mutableMapOf<String, Pair<Long, List<String>>>().also { votersCache.put(pollId, it) }
-        val counts = countsCache.get(pollId)
-            ?: mutableMapOf<String, Int>().also { countsCache.put(pollId, it) }
-
-        val changed = synchronized(voters) {
+        var snapshot: Map<String, Int> = emptyMap()
+        var total = 0
+        val changed = synchronized(pollLock) {
+            val voters = votersCache.get(pollId)
+                ?: mutableMapOf<String, Pair<Long, List<String>>>().also { votersCache.put(pollId, it) }
+            val counts = countsCache.get(pollId)
+                ?: mutableMapOf<String, Int>().also { countsCache.put(pollId, it) }
             val previous = voters[pubkey]
             if (previous != null && createdAt <= previous.first) {
                 false
@@ -187,28 +194,27 @@ class PollsRepository @Inject constructor(
                 }
                 voters[pubkey] = createdAt to cleanOptionIds
                 cleanOptionIds.forEach { optionId -> counts[optionId] = (counts[optionId] ?: 0) + 1 }
+                snapshot = counts.toMap()
+                total = voters.size
+                if (pubkey == activePubkey) {
+                    myVotesCache.put(pollId, cleanOptionIds)
+                }
                 true
             }
         }
         if (!changed) return false
 
-        val snapshot = synchronized(voters) { counts.toMap() }
         _counts.update { it + (pollId to snapshot) }
-        val total = synchronized(voters) { voters.size }
         _totalVotes.update { it + (pollId to total) }
         if (pubkey == activePubkey) {
-            myVotesCache.put(pollId, cleanOptionIds)
             _myVotes.update { it + (pollId to cleanOptionIds) }
         }
         _voteVersion.update { it + 1 }
         return true
     }
 
-    private fun currentVote(pollId: String, pubkey: String): PersistedPollVote? {
-        val voters = votersCache.get(pollId) ?: return null
-        return synchronized(voters) {
-            voters[pubkey]?.let { PersistedPollVote(it.first, it.second) }
-        }
+    private fun currentVote(pollId: String, pubkey: String): PersistedPollVote? = synchronized(pollLock) {
+        votersCache.get(pollId)?.get(pubkey)?.let { PersistedPollVote(it.first, it.second) }
     }
 
     /** Reverts one optimistic choice only if a newer vote has not replaced it. */
@@ -218,10 +224,12 @@ class PollsRepository @Inject constructor(
         optimisticCreatedAt: Long,
         previous: PersistedPollVote?,
     ) {
-        val voters = votersCache.get(pollId) ?: return
-        val counts = countsCache.get(pollId)
-            ?: mutableMapOf<String, Int>().also { countsCache.put(pollId, it) }
-        val changed = synchronized(voters) {
+        var snapshot: Map<String, Int> = emptyMap()
+        var total = 0
+        val changed = synchronized(pollLock) {
+            val voters = votersCache.get(pollId) ?: return
+            val counts = countsCache.get(pollId)
+                ?: mutableMapOf<String, Int>().also { countsCache.put(pollId, it) }
             val current = voters[pubkey]
             if (current?.first != optimisticCreatedAt) {
                 false
@@ -236,21 +244,23 @@ class PollsRepository @Inject constructor(
                     voters[pubkey] = previous.createdAt to previous.optionIds
                     previous.optionIds.forEach { optionId -> counts[optionId] = (counts[optionId] ?: 0) + 1 }
                 }
+                snapshot = counts.toMap()
+                total = voters.size
+                if (activePubkey == pubkey) {
+                    if (previous == null) myVotesCache.remove(pollId)
+                    else myVotesCache.put(pollId, previous.optionIds)
+                }
                 true
             }
         }
         if (!changed) return
 
-        val snapshot = synchronized(voters) { counts.toMap() }
         _counts.update { it + (pollId to snapshot) }
-        val total = synchronized(voters) { voters.size }
         _totalVotes.update { it + (pollId to total) }
         if (activePubkey == pubkey) {
             if (previous == null) {
-                myVotesCache.remove(pollId)
                 _myVotes.update { it - pollId }
             } else {
-                myVotesCache.put(pollId, previous.optionIds)
                 _myVotes.update { it + (pollId to previous.optionIds) }
             }
         }

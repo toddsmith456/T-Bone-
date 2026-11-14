@@ -122,26 +122,66 @@ object Nip19 {
         bytes.toHex()
     }.getOrNull()
 
+    /** A decoded NIP-19 `nevent1` entity, preserving TLV relay hints and metadata. */
+    data class EventReference(
+        val idHex: String,
+        val relayHints: List<String> = emptyList(),
+        val authorPubkey: String? = null,
+        val kind: Int? = null,
+    )
+
+    /**
+     * Decodes a nevent1… or nostr:nevent1… string into its full TLV fields:
+     * type 0 (32-byte event ID), type 1 (relay URL hints), type 2 (author pubkey),
+     * and type 3 (4-byte big-endian kind).
+     */
+    fun neventToReference(input: String): EventReference? = runCatching {
+        val bech32 = input.removePrefix("nostr:").lowercase()
+        val (hrp, bytes) = decode(bech32) ?: return null
+        if (hrp != "nevent") return null
+        var idHex: String? = null
+        val relays = mutableListOf<String>()
+        var authorPubkey: String? = null
+        var kind: Int? = null
+        var i = 0
+        while (i + 2 <= bytes.size) {
+            val type = bytes[i].toInt() and 0xFF
+            val len = bytes[i + 1].toInt() and 0xFF
+            i += 2
+            if (i + len > bytes.size) break
+            when (type) {
+                0 -> if (len == 32 && idHex == null) {
+                    idHex = bytes.sliceArray(i until i + len).toHex()
+                }
+                1 -> if (len > 0) {
+                    val hint = bytes.copyOfRange(i, i + len).toString(Charsets.UTF_8).trim()
+                    if (hint.isNotEmpty()) relays += hint
+                }
+                2 -> if (len == 32 && authorPubkey == null) {
+                    authorPubkey = bytes.sliceArray(i until i + len).toHex()
+                }
+                3 -> if (len == 4 && kind == null) {
+                    val n = bytes.copyOfRange(i, i + len)
+                        .fold(0L) { acc, b -> (acc shl 8) or (b.toLong() and 0xFF) }
+                    if (n <= Int.MAX_VALUE) kind = n.toInt()
+                }
+            }
+            i += len
+        }
+        val resolvedId = idHex ?: return null
+        EventReference(
+            idHex = resolvedId,
+            relayHints = relays.distinct(),
+            authorPubkey = authorPubkey,
+            kind = kind,
+        )
+    }.getOrNull()
+
     /**
      * Decodes a nevent1… or nostr:nevent1… string to a 64-char hex event ID.
      * nevent1 uses TLV encoding; type 0 (special) is the 32-byte event ID.
      */
-    fun neventToHex(input: String): String? = runCatching {
-        val bech32 = input.removePrefix("nostr:").lowercase()
-        val (hrp, bytes) = decode(bech32) ?: return null
-        if (hrp != "nevent") return null
-        var i = 0
-        while (i + 1 < bytes.size) {
-            val type = bytes[i].toInt() and 0xFF
-            val len  = bytes[i + 1].toInt() and 0xFF
-            i += 2
-            if (type == 0 && len == 32 && i + len <= bytes.size) {
-                return bytes.sliceArray(i until i + len).toHex()
-            }
-            i += len
-        }
-        null
-    }.getOrNull()
+    fun neventToHex(input: String): String? = neventToReference(input)?.idHex
 
     /**
      * Decodes an nprofile1… string to the 64-char hex pubkey it encodes.
@@ -165,7 +205,12 @@ object Nip19 {
     }.getOrNull()
 
     /** An addressable event is identified by kind, author and its d tag, not an event ID. */
-    data class Address(val identifier: String, val pubkey: String, val kind: Int)
+    data class Address(
+        val identifier: String,
+        val pubkey: String,
+        val kind: Int,
+        val relayHints: List<String> = emptyList(),
+    )
 
     fun naddrToAddress(input: String): Address? = runCatching {
         val (hrp, bytes) = decode(input.removePrefix("nostr:").lowercase()) ?: return null
@@ -173,6 +218,7 @@ object Nip19 {
         var identifier: String? = null
         var pubkey: String? = null
         var kind: Int? = null
+        val relays = mutableListOf<String>()
         var i = 0
         while (i < bytes.size) {
             if (i + 2 > bytes.size) return null
@@ -183,6 +229,10 @@ object Nip19 {
             val value = bytes.copyOfRange(i, i + len)
             when (type) {
                 0 -> { if (identifier != null) return null; identifier = value.toString(Charsets.UTF_8) }
+                1 -> {
+                    val hint = value.toString(Charsets.UTF_8).trim()
+                    if (hint.isNotEmpty()) relays += hint
+                }
                 2 -> { if (pubkey != null || len != 32) return null; pubkey = value.toHex() }
                 3 -> {
                     if (kind != null || len != 4) return null
@@ -193,7 +243,7 @@ object Nip19 {
             }
             i += len
         }
-        Address(identifier ?: return null, pubkey ?: return null, kind ?: return null)
+        Address(identifier ?: return null, pubkey ?: return null, kind ?: return null, relays.distinct())
     }.getOrNull()
 
     /** Encode address references, useful for interoperable NIP-19 links. */
@@ -202,10 +252,30 @@ object Nip19 {
         val pubkey = address.pubkey.hexToBytes()
         require(identifier.size <= 255 && pubkey.size == 32 && address.kind >= 0)
         val kind = address.kind
-        val bytes = byteArrayOf(0, identifier.size.toByte()) + identifier +
-            byteArrayOf(2, 32) + pubkey + byteArrayOf(3, 4,
-                (kind ushr 24).toByte(), (kind ushr 16).toByte(), (kind ushr 8).toByte(), kind.toByte())
-        return requireNotNull(encode("naddr", bytes))
+        val tlv = mutableListOf<Byte>()
+        fun addField(type: Int, value: ByteArray) {
+            require(value.size <= 255) { "NIP-19 TLV field too large: ${value.size}" }
+            tlv.add(type.toByte())
+            tlv.add(value.size.toByte())
+            value.forEach { tlv.add(it) }
+        }
+        addField(0, identifier)
+        address.relayHints
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .forEach { addField(1, it.toByteArray(Charsets.UTF_8)) }
+        addField(2, pubkey)
+        addField(
+            3,
+            byteArrayOf(
+                (kind ushr 24).toByte(),
+                (kind ushr 16).toByte(),
+                (kind ushr 8).toByte(),
+                kind.toByte(),
+            ),
+        )
+        return requireNotNull(encode("naddr", tlv.toByteArray()))
     }
 
     /** Extracts a hex event ID from a nostr:note1… or nostr:nevent1… URI. */

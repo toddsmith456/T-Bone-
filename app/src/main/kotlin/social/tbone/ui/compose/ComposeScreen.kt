@@ -205,15 +205,19 @@ fun ComposeScreen(
     // Replaces the in-progress "@query" token with "@Name " and remembers the
     // mapping so SEND can convert it into a nostr:npub1… mention + p-tag.
     fun insertMention(match: ProfileMatch) {
-        val query = mentionQueryAt(fieldValue.text, fieldValue.selection.end) ?: return
+        val currentText = fieldValue.text
+        val safeEnd = fieldValue.selection.end.coerceIn(0, currentText.length)
+        val query = mentionQueryAt(currentText, safeEnd) ?: return
         val name = match.profile?.bestName?.trim()?.takeIf { it.isNotBlank() }
             ?: abbreviateNpub(match.pubkey)
-        val tokenStart = (fieldValue.selection.end - (query.length + 1)).coerceAtLeast(0)
+        val tokenStart = (safeEnd - (query.length + 1)).coerceIn(0, safeEnd)
         val insertion = "@$name"
-        val newText = fieldValue.text.substring(0, tokenStart) + insertion + " " + fieldValue.text.substring(fieldValue.selection.end)
-        fieldValue = fieldValue.copy(
+        val newText = currentText.substring(0, tokenStart) + insertion + " " + currentText.substring(safeEnd)
+        val caret = (tokenStart + insertion.length + 1).coerceIn(0, newText.length)
+        fieldValue = TextFieldValue(
             text = newText,
-            selection = TextRange((tokenStart + insertion.length + 1).coerceAtMost(newText.length)),
+            selection = TextRange(caret),
+            composition = null,
         )
         mentionMap[name] = match.pubkey
         viewModel.setMentionQuery(null)
@@ -223,9 +227,11 @@ fun ComposeScreen(
     fun insertCharAtCaret(ch: String) {
         val pos = fieldValue.selection.end.coerceIn(0, fieldValue.text.length)
         val newText = fieldValue.text.substring(0, pos) + ch + fieldValue.text.substring(pos)
-        fieldValue = fieldValue.copy(
+        val caret = (pos + ch.length).coerceIn(0, newText.length)
+        fieldValue = TextFieldValue(
             text = newText,
-            selection = TextRange((pos + ch.length).coerceAtMost(newText.length)),
+            selection = TextRange(caret),
+            composition = null,
         )
         focusRequester.requestFocus()
     }
@@ -245,12 +251,13 @@ fun ComposeScreen(
         val separator = if (alreadyHasReferenceSection) "\n" else "\n\n"
         val nextText = "$base$separator$url "
         val selection = fieldValue.selection
-        fieldValue = fieldValue.copy(
+        fieldValue = TextFieldValue(
             text = nextText,
             selection = TextRange(
-                selection.start.coerceAtMost(nextText.length),
-                selection.end.coerceAtMost(nextText.length),
+                selection.start.coerceIn(0, nextText.length),
+                selection.end.coerceIn(0, nextText.length),
             ),
+            composition = null,
         )
     }
 
@@ -266,7 +273,12 @@ fun ComposeScreen(
     var textInitialized by remember { mutableStateOf(false) }
     LaunchedEffect(uiState.initialText) {
         if (!textInitialized && uiState.initialText.isNotEmpty()) {
-            fieldValue = fieldValue.copy(text = uiState.initialText)
+            val initial = uiState.initialText
+            fieldValue = TextFieldValue(
+                text = initial,
+                selection = TextRange(initial.length),
+                composition = null,
+            )
             textInitialized = true
         }
     }
@@ -394,12 +406,10 @@ fun ComposeScreen(
                 BasicTextField(
                     value = fieldValue,
                     onValueChange = { nv ->
-                        // Auto-strip tracking parameters from pasted links: a
-                        // big jump in length means a paste — clean any URLs in it.
-                        val jumped = nv.text.length - fieldValue.text.length > 2
-                        fieldValue = if (jumped) {
-                            nv.copy(text = social.tbone.util.LinkCleaner.cleanUrlsInText(nv.text))
-                        } else nv
+                        // Auto-strip tracking parameters from pasted links while
+                        // clamping selection & clearing stale IME composition so
+                        // shortening the text can never crash BasicTextField.
+                        fieldValue = cleanPastedTextFieldValue(fieldValue, nv)
                     },
                     modifier = Modifier
                         .fillMaxSize()
@@ -1196,4 +1206,27 @@ private fun NotePreviewDialog(
             }
         }
     }
+}
+
+/**
+ * Strips tracking parameters when a paste jumps the text length, while
+ * clamping [TextFieldValue.selection] and clearing invalidated IME
+ * [TextFieldValue.composition] so shortening the string can never throw an
+ * out-of-bounds exception inside [BasicTextField].
+ */
+internal fun cleanPastedTextFieldValue(
+    previous: TextFieldValue,
+    next: TextFieldValue,
+): TextFieldValue {
+    val jumped = next.text.length - previous.text.length > 2
+    if (!jumped) return next
+    val cleaned = social.tbone.util.LinkCleaner.cleanUrlsInText(next.text)
+    if (cleaned == next.text) return next
+    val safeStart = next.selection.start.coerceIn(0, cleaned.length)
+    val safeEnd = next.selection.end.coerceIn(0, cleaned.length)
+    return TextFieldValue(
+        text = cleaned,
+        selection = TextRange(safeStart, safeEnd),
+        composition = null,
+    )
 }

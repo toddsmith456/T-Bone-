@@ -20,12 +20,14 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import social.tbone.account.Account
 import social.tbone.account.AccountRepository
+import social.tbone.db.EventRepository
 import social.tbone.di.GlobalFeedPool
 import social.tbone.feed.TimelineSupport
 import social.tbone.home.FeedPlan
 import social.tbone.home.FeedPlanner
 import social.tbone.home.PoolChoice
 import social.tbone.ui.feed.LoadWatchdog
+import social.tbone.ui.feed.QuoteLookupSession
 import social.tbone.nostr.Event
 import social.tbone.nostr.ProfileContent
 import social.tbone.nostr.relay.RelayMessage
@@ -65,6 +67,7 @@ import javax.inject.Inject
 class FeedToolViewModel @Inject constructor(
     private val accountRepository: AccountRepository,
     private val profileRepository: ProfileRepository,
+    private val eventRepository: EventRepository,
     private val appSettings: AppSettings,
     private val planner: FeedPlanner,
     private val muteRepository: MuteListRepository,
@@ -98,6 +101,22 @@ class FeedToolViewModel @Inject constructor(
     private val _scrollToTop = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val scrollToTop: SharedFlow<Unit> = _scrollToTop.asSharedFlow()
 
+    /** Every subscription this view model opened, so sign-out can close them all. */
+    private val openSubIds: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    private val quoteLookup = QuoteLookupSession(
+        scope = viewModelScope,
+        pool = pool,
+        extraPool = globalPool,
+        eventRepository = eventRepository,
+        appSettings = appSettings,
+        labelPrefix = "viewer",
+        onResolved = { ev -> fetchMetadataForPubkeys(listOf(ev.pubkey)) },
+    )
+
+    val quotedEvents: StateFlow<Map<String, Event>> = quoteLookup.quotedEvents
+    val unresolvedQuoteIds: StateFlow<Set<String>> = quoteLookup.unresolvedQuoteIds
+
     /**
      * Guards the active tab's load, so a relay that accepts the REQ and then
      * says nothing cannot leave the viewer spinning. Same failure, same fix as
@@ -110,9 +129,6 @@ class FeedToolViewModel @Inject constructor(
 
     /** The tab whose events the pool currently delivers. */
     private var subscribedTabId: String? = null
-
-    /** Every subscription this view model opened, so sign-out can close them all. */
-    private val openSubIds: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
     /** Global relays the current tab asked the global pool to connect to. */
     private var globalScopeRelays: Set<String> = emptySet()
@@ -127,6 +143,7 @@ class FeedToolViewModel @Inject constructor(
                     // another's name, so every tab is emptied and the active one is
                     // re-read (or emptied outright if there is no account).
                     closeAllSubscriptions()
+                    quoteLookup.reset(clearResolved = true)
                     _tabs.value.forEach {
                         it.clear()
                         it.settled = false
@@ -443,9 +460,25 @@ class FeedToolViewModel @Inject constructor(
 
     // ── Publishing ───────────────────────────────────────────────────────────
 
+    private fun fetchMetadataForPubkeys(pubkeys: List<String>) {
+        val known = profileRepository.profiles.value.keys
+        val missing = pubkeys.filter { it !in known }.distinct()
+        if (missing.isEmpty()) return
+        TimelineSupport.metadataFilters(missing).forEach { filter ->
+            val subId = "viewer-qmeta-${UUID.randomUUID().toString().take(6)}"
+            pool.subscribe(filters = listOf(filter), id = subId, label = "viewer-meta")
+            openSubIds.add(subId)
+            viewModelScope.launch {
+                delay(METADATA_GRACE_MS)
+                if (openSubIds.remove(subId)) pool.unsubscribe(subId)
+            }
+        }
+    }
+
     private fun publish(tab: FeedTabState) {
         loadWatchdog.finish()
         val raw = tab.snapshot(MAX_EVENTS)
+        quoteLookup.requestForEvents(raw)
         viewModelScope.launch {
             _uiState.update {
                 it.copy(
@@ -523,6 +556,7 @@ class FeedToolViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
+        quoteLookup.close()
         closeAllSubscriptions()
         // The global pool is shared; leaving it dialling relays the viewer added
         // would be a leak the home feed never asked for.

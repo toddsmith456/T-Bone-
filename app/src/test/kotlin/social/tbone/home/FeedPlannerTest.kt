@@ -16,7 +16,12 @@ import social.tbone.nostr.EventKind
  */
 class FeedPlannerTest {
 
-    private val kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL)
+    private val kinds = listOf(
+        EventKind.TEXT_NOTE,
+        EventKind.REPOST,
+        EventKind.GENERIC_REPOST,
+        EventKind.POLL,
+    )
 
     @Test
     fun `feed kinds match the existing timeline kinds`() {

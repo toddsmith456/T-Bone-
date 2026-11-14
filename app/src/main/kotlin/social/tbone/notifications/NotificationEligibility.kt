@@ -41,7 +41,7 @@ internal fun classifyNotification(
     if (me.isBlank() || event.pubkey == me) return null
     val hasPTag = event.parsedTags.any { it.name == "p" && it.value() == me }
     return when (event.kind) {
-        EventKind.REACTION, EventKind.REPOST -> {
+        EventKind.REACTION, EventKind.REPOST, EventKind.GENERIC_REPOST -> {
             val refId = event.parsedTags.lastOrNull { it.name == "e" }?.value()
             when {
                 refId == null || !isOwnEvent(refId) -> null

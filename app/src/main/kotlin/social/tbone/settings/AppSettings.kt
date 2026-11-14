@@ -180,6 +180,10 @@ class AppSettings @Inject constructor(
         private val FOLLOWERS_ENABLED = booleanPreferencesKey("followers_enabled")
         private val FOLLOWERS_DISCLAIMER_SHOWN = booleanPreferencesKey("followers_disclaimer_shown")
 
+        // ── Missing notes & Fediverse bridge fallback (Relay Settings) ─────────
+        private val FOLLOW_RELAY_HINTS_MISSING_NOTES = booleanPreferencesKey("follow_relay_hints_missing_notes")
+        private val FEDIVERSE_BRIDGE_RELAYS_ENABLED = booleanPreferencesKey("fediverse_bridge_relays_enabled")
+
         // ── Stealth: Notepad front ──────────────────────────────────────────────
         private val NOTEPAD_FRONT_ENABLED = booleanPreferencesKey("notepad_front_enabled")
         private val NOTEPAD_FRONT_DISCLAIMER_SHOWN = booleanPreferencesKey("notepad_front_disclaimer_shown")
@@ -337,6 +341,22 @@ class AppSettings @Inject constructor(
     /** Add the NIP-89 [client, T-Bone] tag when signing events (on by default). */
     private val _clientTagEnabled = MutableStateFlow(true)
     val clientTagEnabled = _clientTagEnabled.asStateFlow()
+
+    /**
+     * When true, missing quoted/reposted/addressed/referenced notes may
+     * temporarily query read-only relay hints embedded in tags or NIP-19 URIs
+     * (Tor-safe, SSRF-filtered, never added to the user's saved relay list).
+     */
+    private val _followRelayHintsForMissingNotes = MutableStateFlow(true)
+    val followRelayHintsForMissingNotes = _followRelayHintsForMissingNotes.asStateFlow()
+
+    /**
+     * When true, missing quoted/reposted/referenced notes may temporarily
+     * check built-in Fediverse bridge relays (Mostr, Ditto, Momostr) read-only
+     * (Tor-safe, never published to, never added to the user's saved relay list).
+     */
+    private val _fediverseBridgeRelaysEnabled = MutableStateFlow(true)
+    val fediverseBridgeRelaysEnabled = _fediverseBridgeRelaysEnabled.asStateFlow()
 
     /** Whether the content-filters screen is locked behind the parental pin. */
     private val _parentalPinEnabled = MutableStateFlow(false)
@@ -596,6 +616,8 @@ class AppSettings @Inject constructor(
                 _blockedPubkeys.value = prefs[BLOCKED_PUBKEYS] ?: emptySet()
                 _noteMenuModerationEnabled.value = prefs[NOTE_MENU_MODERATION] ?: false
                 _clientTagEnabled.value = prefs[CLIENT_TAG_ENABLED] ?: true
+                _followRelayHintsForMissingNotes.value = prefs[FOLLOW_RELAY_HINTS_MISSING_NOTES] ?: true
+                _fediverseBridgeRelaysEnabled.value = prefs[FEDIVERSE_BRIDGE_RELAYS_ENABLED] ?: true
                 _nsfwMode.value = prefs[NSFW_MODE]?.let { stored ->
                     runCatching { NsfwMode.valueOf(stored) }.getOrNull()
                 } ?: if (prefs[HIDE_NSFW] == true) NsfwMode.HIDE else NsfwMode.OFF
@@ -1307,6 +1329,16 @@ class AppSettings @Inject constructor(
             prefs[GLOBAL_RELAYS] = GLOBAL_RELAY_DEFAULTS
             prefs[GLOBAL_ACTIVE_RELAYS] = GLOBAL_RELAY_DEFAULTS
         }
+    }
+
+    suspend fun setFollowRelayHintsForMissingNotes(enabled: Boolean) {
+        _followRelayHintsForMissingNotes.value = enabled
+        dataStore.edit { it[FOLLOW_RELAY_HINTS_MISSING_NOTES] = enabled }
+    }
+
+    suspend fun setFediverseBridgeRelaysEnabled(enabled: Boolean) {
+        _fediverseBridgeRelaysEnabled.value = enabled
+        dataStore.edit { it[FEDIVERSE_BRIDGE_RELAYS_ENABLED] = enabled }
     }
 
 }

@@ -6,6 +6,7 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -15,6 +16,7 @@ import social.tbone.nostr.relay.RelayPool
 import social.tbone.settings.AppSettings
 import social.tbone.settings.OrbotHelper
 import social.tbone.settings.OrbotStatus
+import timber.log.Timber
 import okhttp3.OkHttpClient
 import javax.inject.Singleton
 import javax.inject.Qualifier
@@ -39,7 +41,13 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideApplicationScope(): CoroutineScope =
-        CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        CoroutineScope(
+            SupervisorJob() +
+                Dispatchers.IO +
+                CoroutineExceptionHandler { _, throwable ->
+                    Timber.e(throwable, "Uncaught exception in applicationScope")
+                },
+        )
 
     @Provides
     @Singleton
@@ -96,13 +104,21 @@ object NetworkModule {
                     if (!ready) return@collect
                     val status = if (useTor) OrbotHelper.getStatus(context) else null
                     val connected = status as? OrbotStatus.InstalledAndConnected
+                    // Build one client per transport role (remote vs local loopback)
+                    // rather than allocating a new client per relay URL.
+                    val remoteClient = RelayConnection.buildClient(
+                        useTor = useTor,
+                        proxyType = connected?.proxyType ?: java.net.Proxy.Type.HTTP,
+                        torPort = connected?.port ?: 8118,
+                        bypassProxy = false,
+                    )
+                    val localClient = RelayConnection.buildClient(
+                        useTor = false,
+                        bypassProxy = true,
+                    )
                     pool.updateConnectionFactory { url ->
-                        RelayConnection(url, RelayConnection.buildClient(
-                            useTor = useTor,
-                            proxyType = connected?.proxyType ?: java.net.Proxy.Type.HTTP,
-                            torPort = connected?.port ?: 8118,
-                            bypassProxy = RelayConnection.isLocalRelayUrl(url),
-                        )).guardedBy(TorCallPolicy.guard, useTor)
+                        val client = if (RelayConnection.isLocalRelayUrl(url)) localClient else remoteClient
+                        RelayConnection(url, client).guardedBy(TorCallPolicy.guard, useTor)
                     }
                 }
         }

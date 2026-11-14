@@ -1,6 +1,8 @@
 package social.tbone.notifications
 
 import android.util.LruCache
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -12,6 +14,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -27,12 +30,15 @@ import social.tbone.nostr.Filter
 import social.tbone.nostr.Nip57
 import social.tbone.nostr.Nip88
 import social.tbone.nostr.NostrJson
+import social.tbone.nostr.relay.RelayHintCache
+import social.tbone.nostr.relay.RelayHintPolicy
 import social.tbone.nostr.relay.RelayMessage
 import social.tbone.nostr.relay.RelayPool
 import social.tbone.nostr.replyEventId
-import social.tbone.ui.feed.extractInlineQuoteIds
 import social.tbone.profile.ProfileRepository
 import social.tbone.settings.AppSettings
+import social.tbone.ui.feed.QuoteLookupSession
+import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -61,7 +67,10 @@ class NotificationsRepository @Inject constructor(
     private val notificationDao: NotificationDao,
     private val calendarRepository: CalendarRepository,
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Timber.e(throwable, "Uncaught exception in NotificationsRepository")
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + exceptionHandler)
 
     private val seenEvents = LruCache<String, Boolean>(4000)
     private val lock = Any()
@@ -80,7 +89,6 @@ class NotificationsRepository @Inject constructor(
     private var ownRefSubId: String? = null
     private var ownRefResubJob: Job? = null
     private var eoseTimeoutJob: Job? = null
-    private val refSubIds = ConcurrentHashMap.newKeySet<String>()
     private val profileSubIds = ConcurrentHashMap.newKeySet<String>()
 
     // "Load more" pagination state. Each query asks for the next page before
@@ -91,8 +99,6 @@ class NotificationsRepository @Inject constructor(
     private val pagedEoseRelays = ConcurrentHashMap.newKeySet<String>()
     private val pagedBuffer = mutableListOf<Event>()
     @Volatile private var pagedUntil: Long = 0L
-    private val refSubToIds = ConcurrentHashMap<String, List<String>>()
-    private val refFetchAttempts = ConcurrentHashMap<String, Int>()
     private val _loadingMore = MutableStateFlow(false)
     val loadingMore: StateFlow<Boolean> = _loadingMore.asStateFlow()
 
@@ -150,25 +156,22 @@ class NotificationsRepository @Inject constructor(
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    private val _referencedNotes = MutableStateFlow<Map<String, Event>>(emptyMap())
-    val referencedNotes: StateFlow<Map<String, Event>> = _referencedNotes.asStateFlow()
+    private val refLookup = QuoteLookupSession(
+        scope = scope,
+        pool = pool,
+        eventRepository = eventRepository,
+        appSettings = appSettings,
+        labelPrefix = "notif",
+        onResolved = { ev -> fetchProfiles(listOf(ev.pubkey)) },
+    )
+
+    val referencedNotes: StateFlow<Map<String, Event>> = refLookup.quotedEvents
 
     /**
-     * Referenced notes that could not be fetched after every retry, so the
-     * notification cards can say "not available" instead of "loading…".
+     * Referenced notes whose lookup genuinely finished without returning an
+     * event, so notification cards can show "not available" instead of "loading…".
      */
-    private val _unresolvedReferencedIds = MutableStateFlow<Set<String>>(emptySet())
-    val unresolvedReferencedIds: StateFlow<Set<String>> = _unresolvedReferencedIds.asStateFlow()
-
-    /** Ids we have given up on (attempts exhausted and still not delivered). */
-    private fun markUnresolved(ids: List<String>) {
-        if (ids.isEmpty()) return
-        _unresolvedReferencedIds.update { it + ids }
-    }
-
-    private fun clearUnresolved(id: String) {
-        _unresolvedReferencedIds.update { if (id in it) it - id else it }
-    }
+    val unresolvedReferencedIds: StateFlow<Set<String>> = refLookup.unresolvedQuoteIds
 
     companion object {
         /** Nostr subscriptions and the summary remain scoped to 24 hours. */
@@ -177,6 +180,7 @@ class NotificationsRepository @Inject constructor(
         private const val SUMMARY_QUERY_LIMIT = 10_000
         private const val PAGE_SIZE = 200
         private const val PAGE_TIMEOUT_MS = 15_000L
+        private const val SQLITE_IN_BATCH = 500
     }
 
     init {
@@ -187,9 +191,11 @@ class NotificationsRepository @Inject constructor(
             }
         }
         scope.launch {
-            accountRepository.activeAccount.collect { account ->
-                if (account != null) start(account.pubkey) else stop()
-            }
+            accountRepository.activeAccount
+                .distinctUntilChangedBy { it?.pubkey }
+                .collect { account ->
+                    if (account != null) start(account.pubkey) else stop()
+                }
         }
         scope.launch {
             for (signal in rebuildSignals) {
@@ -200,71 +206,52 @@ class NotificationsRepository @Inject constructor(
         }
         scope.launch {
             pool.messages.collect { poolMessage ->
-                val msg = poolMessage.message
-                when (msg) {
-                    is RelayMessage.EventMessage -> {
-                        val event = msg.event
-                        if (!event.verify()) return@collect
-                        when {
-                            msg.subscriptionId in refSubIds -> {
-                                _referencedNotes.update { it + (event.id to event) }
-                                clearUnresolved(event.id)
-                                scope.launch { eventRepository.save(event, "") }
-                            }
-                            event.kind == EventKind.METADATA -> profileRepository.processEvent(event)
-                            msg.subscriptionId == pagedSubId -> ingestPaged(event)
-                            msg.subscriptionId == notifSubId -> ingest(event)
-                            msg.subscriptionId == ownRefSubId -> ingest(event)
-                            else -> {
-                                val me = currentPubkey
-                                if (me != null && event.pubkey == me) {
-                                    rememberOwnEvent(event)
-                                }
-                            }
-                        }
-                    }
-                    is RelayMessage.EndOfStoredEvents -> {
-                        when {
-                            msg.subscriptionId == notifSubId && !settled -> {
-                                settled = true
-                                _isLoading.value = false
-                                _hasMore.value = true
-                                rebuildSignals.trySend(Unit)
-                            }
-                            msg.subscriptionId == pagedSubId -> {
-                                pagedEoseRelays.add(RelayPool.normalize(poolMessage.relayUrl))
-                                if (pagedExpectedRelays.isEmpty() ||
-                                    pagedEoseRelays.containsAll(pagedExpectedRelays)
-                                ) {
-                                    finishPaged(msg.subscriptionId)
-                                }
-                            }
-                            msg.subscriptionId in refSubIds -> {
-                                val ids = refSubToIds.remove(msg.subscriptionId)
-                                refSubIds.remove(msg.subscriptionId)
-                                pool.unsubscribe(msg.subscriptionId)
-                                // Parent notes sometimes lag on relays; retry a
-                                // few times with a delay before giving up.
-                                val stillMissing = ids?.filter { it !in _referencedNotes.value }.orEmpty()
-                                val exhausted = stillMissing.filter { (refFetchAttempts[it] ?: 0) >= 3 }
-                                // Out of retries: these notes are gone, not loading.
-                                markUnresolved(exhausted)
-                                if (stillMissing.isNotEmpty() &&
-                                    stillMissing.any { (refFetchAttempts[it] ?: 0) < 3 }
-                                ) {
-                                    scope.launch {
-                                        delay(6_000)
-                                        ensureReferencedNotes()
+                runCatching {
+                    val msg = poolMessage.message
+                    when (msg) {
+                        is RelayMessage.EventMessage -> {
+                            val event = msg.event
+                            if (!event.verify()) return@runCatching
+                            when {
+                                event.kind == EventKind.METADATA -> profileRepository.processEvent(event)
+                                msg.subscriptionId == pagedSubId -> ingestPaged(event)
+                                msg.subscriptionId == notifSubId -> ingest(event)
+                                msg.subscriptionId == ownRefSubId -> ingest(event)
+                                else -> {
+                                    val me = currentPubkey
+                                    if (me != null && event.pubkey == me) {
+                                        rememberOwnEvent(event)
                                     }
                                 }
                             }
-                            msg.subscriptionId in profileSubIds -> {
-                                profileSubIds.remove(msg.subscriptionId)
-                                pool.unsubscribe(msg.subscriptionId)
+                        }
+                        is RelayMessage.EndOfStoredEvents -> {
+                            when {
+                                msg.subscriptionId == notifSubId && !settled -> {
+                                    settled = true
+                                    _isLoading.value = false
+                                    _hasMore.value = true
+                                    rebuildSignals.trySend(Unit)
+                                }
+                                msg.subscriptionId == pagedSubId -> {
+                                    pagedEoseRelays.add(RelayPool.normalize(poolMessage.relayUrl))
+                                    if (pagedExpectedRelays.isEmpty() ||
+                                        pagedEoseRelays.containsAll(pagedExpectedRelays)
+                                    ) {
+                                        finishPaged(msg.subscriptionId)
+                                    }
+                                }
+                                msg.subscriptionId in profileSubIds -> {
+                                    profileSubIds.remove(msg.subscriptionId)
+                                    pool.unsubscribe(msg.subscriptionId)
+                                }
                             }
                         }
+                        else -> Unit
                     }
-                    else -> Unit
+                }.onFailure { t ->
+                    if (t is CancellationException) throw t
+                    Timber.e(t, "NotificationsRepository message handling failed")
                 }
             }
         }
@@ -281,8 +268,7 @@ class NotificationsRepository @Inject constructor(
         settled = false
         _isLoading.value = true
         synchronized(lock) { myOwnEventIds.clear() }
-        _referencedNotes.value = emptyMap()
-        refFetchAttempts.clear()
+        refLookup.reset(clearResolved = true)
 
         // Seed "events I wrote" FIRST (authored notes directly, plus
         // feed-cached notes filtered to this account). A reply/comment may
@@ -337,7 +323,11 @@ class NotificationsRepository @Inject constructor(
         rebuild()
         if (invalidIds.isNotEmpty()) {
             scope.launch {
-                runCatching { notificationDao.deleteByIds(pubkey, invalidIds) }
+                runCatching {
+                    invalidIds.chunked(SQLITE_IN_BATCH).forEach { chunk ->
+                        notificationDao.deleteByIds(pubkey, chunk)
+                    }
+                }
             }
         }
 
@@ -375,13 +365,11 @@ class NotificationsRepository @Inject constructor(
         pagedEoseRelays.clear()
         pagedTimeoutJob?.cancel()
         pagedTimeoutJob = null
-        pagedBuffer.clear()
+        synchronized(lock) { pagedBuffer.clear() }
         _loadingMore.value = false
         eoseTimeoutJob?.cancel()
         eoseTimeoutJob = null
-        refSubIds.forEach { pool.unsubscribe(it) }
-        refSubIds.clear()
-        refSubToIds.clear()
+        refLookup.reset(clearResolved = true)
         profileSubIds.forEach { pool.unsubscribe(it) }
         profileSubIds.clear()
     }
@@ -1017,6 +1005,7 @@ class NotificationsRepository @Inject constructor(
                         EventKind.COMMENT,
                         EventKind.REACTION,
                         EventKind.REPOST,
+                        EventKind.GENERIC_REPOST,
                     ),
                     since = since,
                     limit = 100,
@@ -1039,33 +1028,28 @@ class NotificationsRepository @Inject constructor(
     // ── Referenced notes + profiles ───────────────────────────────────────────
 
     private fun ensureReferencedNotes() {
-        val known = _referencedNotes.value
-        val ids = _flat.value.mapNotNull { it.referencedEventId }
-            .filter { it !in known }
-            .distinct()
-        if (ids.isEmpty()) return
-        scope.launch {
-            val cached = eventRepository.getByIds(ids).associateBy { it.id }
-            if (cached.isNotEmpty()) {
-                _referencedNotes.update { it + cached }
-                fetchProfiles(cached.values.map { e -> e.pubkey })
+        val items = _flat.value
+        val hintsById = LinkedHashMap<String, MutableList<String>>()
+        val ids = mutableListOf<String>()
+        for (item in items) {
+            item.note?.let { note ->
+                val extracted = RelayHintPolicy.extractReferencedEventHints(note)
+                if (extracted.isNotEmpty()) {
+                    RelayHintCache.putAll(extracted)
+                    extracted.forEach { (id, hints) ->
+                        if (hints.isNotEmpty()) {
+                            hintsById.getOrPut(id) { mutableListOf() }.addAll(hints)
+                        }
+                    }
+                }
             }
-            val missing = ids.filter { it !in cached }
-            if (missing.isEmpty()) return@launch
-            // The target can be a text note, poll, repost or NIP-22
-            // comment. An ids-only lookup is intentional: narrowing this to
-            // kind 1 made expanded notifications stay on "loading…" for
-            // every other event kind. Whatever never arrives is reported to
-            // the shared quote state so the row can say so instead of
-            // spinning forever.
-            val subId = pool.subscribe(
-                listOf(Filter(ids = missing)),
-                label = "notif-ref",
-            )
-            refSubIds.add(subId)
-            refSubToIds[subId] = missing
-            missing.forEach { refFetchAttempts[it] = (refFetchAttempts[it] ?: 0) + 1 }
+            val refId = item.referencedEventId
+            if (!refId.isNullOrBlank()) {
+                ids += refId
+            }
         }
+        if (ids.isEmpty()) return
+        refLookup.requestIds(ids.distinct(), hintsById)
     }
 
     private fun fetchProfiles(pubkeys: List<String>) {

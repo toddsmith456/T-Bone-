@@ -150,6 +150,28 @@ class RelayConnection(
             .build()
 
         /**
+         * Shared base clients so relay churn never leaks unbounded OkHttp
+         * thread/connection pools. Direct and Tor clients stay strictly
+         * isolated with separate connection pools so Tor and clearnet sockets
+         * can never be reused across transport modes.
+         */
+        private val SHARED_DIRECT_BASE: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .pingInterval(30, TimeUnit.SECONDS)
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(0, TimeUnit.SECONDS)
+                .build()
+        }
+
+        private val SHARED_TOR_BASE: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .pingInterval(30, TimeUnit.SECONDS)
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(0, TimeUnit.SECONDS)
+                .build()
+        }
+
+        /**
          * @param proxyType HTTP (preferred — no DNS leak) or SOCKS (fallback).
          * @param torPort   Port confirmed reachable by OrbotHelper.
          */
@@ -158,8 +180,10 @@ class RelayConnection(
             proxyType: java.net.Proxy.Type = java.net.Proxy.Type.HTTP,
             torPort: Int = social.tbone.Tunables.TOR_HTTP_PROXY_PORT,
             bypassProxy: Boolean = false,
-        ): OkHttpClient =
-            OkHttpClient.Builder()
+        ): OkHttpClient {
+            val routedViaTor = useTor && !bypassProxy
+            val base = if (routedViaTor) SHARED_TOR_BASE else SHARED_DIRECT_BASE
+            return base.newBuilder()
                 .pingInterval(30, TimeUnit.SECONDS)
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(0, TimeUnit.SECONDS) // WebSocket — no read timeout
@@ -168,7 +192,7 @@ class RelayConnection(
                         // API 26–28: keep platform trust anchors, widen protocol range.
                         connectionSpecs(listOf(TLS_1_2_AND_UP, ConnectionSpec.CLEARTEXT))
                     }
-                    if (useTor && !bypassProxy) {
+                    if (routedViaTor) {
                         proxy(java.net.Proxy(
                             proxyType,
                             java.net.InetSocketAddress("127.0.0.1", torPort),
@@ -176,5 +200,6 @@ class RelayConnection(
                     }
                 }
                 .build()
+        }
     }
 }

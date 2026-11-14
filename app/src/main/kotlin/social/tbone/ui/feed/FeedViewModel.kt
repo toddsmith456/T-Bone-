@@ -226,21 +226,28 @@ class FeedViewModel @Inject constructor(
         _currentFeed.value = slot?.let { legacyTabFor(it.source) } ?: FeedTab.HOME
     }
 
-    private val _quotedEvents = MutableStateFlow<Map<String, Event>>(emptyMap())
-    val quotedEvents: StateFlow<Map<String, Event>> = _quotedEvents.asStateFlow()
+    // One-shot subscriptions for fetching author metadata — closed on EOSE.
+    // Declared before [quoteLookup] because its onResolved callback calls fetchMetadataForAuthors.
+    private val metadataFetchSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    private val quoteLookup = QuoteLookupSession(
+        scope = viewModelScope,
+        pool = pool,
+        extraPool = globalPool,
+        eventRepository = eventRepository,
+        appSettings = appSettings,
+        labelPrefix = "feed",
+        onResolved = { event -> fetchMetadataForAuthors(listOf(event.pubkey)) },
+    )
+
+    val quotedEvents: StateFlow<Map<String, Event>> = quoteLookup.quotedEvents
 
     /**
-     * Referenced notes that were asked for and never arrived, so cards show a
-     * terminal "not available" row instead of "loading…" forever.
+     * Referenced notes whose lookup genuinely finished without any relay
+     * returning the event, so cards show a terminal "not available" row
+     * instead of "loading…" forever — never prematurely while in flight.
      */
-    private val _unresolvedQuoteIds = MutableStateFlow<Set<String>>(emptySet())
-    val unresolvedQuoteIds: StateFlow<Set<String>> = _unresolvedQuoteIds.asStateFlow()
-
-    /** Recomputes [unresolvedQuoteIds] from what was requested vs. resolved. */
-    private fun refreshUnresolvedQuotes() {
-        val resolved = _quotedEvents.value.keys
-        _unresolvedQuoteIds.value = requestedQuoteIds.filterTo(mutableSetOf()) { it !in resolved }
-    }
+    val unresolvedQuoteIds: StateFlow<Set<String>> = quoteLookup.unresolvedQuoteIds
 
     val reactions: StateFlow<Map<String, Set<String>>> = reactionsRepository.reactions
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
@@ -328,15 +335,6 @@ class FeedViewModel @Inject constructor(
 
     val accounts = accountRepository.accounts
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    // Tracks quote IDs already requested so we don't issue duplicate subscriptions
-    private val requestedQuoteIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
-
-    // One-shot subscriptions for fetching quoted/reposted events — handled in collectMessages()
-    private val quoteSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
-
-    // One-shot subscriptions for fetching author metadata — closed on EOSE
-    private val metadataFetchSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /**
      * Per-slot feed state.
@@ -539,6 +537,7 @@ class FeedViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        quoteLookup.close()
         releaseSlotRelays()
         globalSession.reconcile(false, emptySet())
         super.onCleared()
@@ -870,7 +869,7 @@ class FeedViewModel @Inject constructor(
         globalPool.subscribeTo(
             listOf(
                 Filter(
-                    kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL),
+                    kinds = FEED_KINDS,
                     until = oldest - 1,
                     limit = GLOBAL_PAGE_SIZE,
                 ),
@@ -911,7 +910,7 @@ class FeedViewModel @Inject constructor(
         globalPool.subscribeTo(
             listOf(
                 Filter(
-                    kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL),
+                    kinds = FEED_KINDS,
                     since = newest,
                     limit = GLOBAL_NEWER_LIMIT,
                 ),
@@ -941,7 +940,7 @@ class FeedViewModel @Inject constructor(
         if (request.events.size >= MAX_GLOBAL_EVENTS && !request.events.containsKey(event.id)) return
         val isFeedEvent = when (event.kind) {
             EventKind.TEXT_NOTE -> !isReplyEvent(event)
-            EventKind.REPOST, EventKind.POLL -> true
+            EventKind.REPOST, EventKind.GENERIC_REPOST, EventKind.POLL -> true
             else -> false
         }
         if (!isFeedEvent) return
@@ -988,7 +987,7 @@ class FeedViewModel @Inject constructor(
                 globalPool.subscribeTo(
                     listOf(
                         Filter(
-                            kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL),
+                            kinds = FEED_KINDS,
                             since = startNewest,
                             until = pageOldest - 1,
                             limit = GLOBAL_NEWER_LIMIT,
@@ -1146,7 +1145,7 @@ class FeedViewModel @Inject constructor(
         val blocked = muteRepository.effectiveMuted.value
         val nsfwMode = appSettings.nsfwMode.value
         val hideWords = appSettings.hideWords.value
-        val contextEvents = synchronized(feedEvents) { feedEvents.associateBy { it.id } } + _quotedEvents.value
+        val contextEvents = synchronized(feedEvents) { feedEvents.associateBy { it.id } } + quotedEvents.value
         val filtersActive = blocked.isNotEmpty() || nsfwMode == NsfwMode.HIDE || hideWords.isNotEmpty()
 
         val visible = mutableListOf<Event>()
@@ -1254,10 +1253,7 @@ class FeedViewModel @Inject constructor(
         pendingBuffer.clear()
         focusedEventId = null
         _pendingEventScroll.value = null
-        requestedQuoteIds.clear()
-        _unresolvedQuoteIds.value = emptySet()
-        quoteSubIds.forEach { pool.unsubscribe(it); globalPool.unsubscribe(it) }
-        quoteSubIds.clear()
+        quoteLookup.reset()
         metadataFetchSubIds.forEach { pool.unsubscribe(it) }
         metadataFetchSubIds.clear()
         if (clearEvents) synchronized(feedEvents) { feedEvents.clear() }
@@ -1349,7 +1345,7 @@ class FeedViewModel @Inject constructor(
                     feedSubId = sub(listOf(
                         Filter(
                             authors = listOf(account.pubkey),
-                            kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL),
+                            kinds = FEED_KINDS,
                             limit = 50,
                         )
                     ))
@@ -1369,7 +1365,7 @@ class FeedViewModel @Inject constructor(
                 feedSubId = sub(listOf(
                     Filter(
                         authors = listOf(account.pubkey),
-                        kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL),
+                        kinds = FEED_KINDS,
                         limit = 50,
                     )
                 ))
@@ -1440,10 +1436,7 @@ class FeedViewModel @Inject constructor(
 
         feedSettled = false
         pendingBuffer.clear()
-        requestedQuoteIds.clear()
-        _unresolvedQuoteIds.value = emptySet()
-        quoteSubIds.forEach { pool.unsubscribe(it); globalPool.unsubscribe(it) }
-        quoteSubIds.clear()
+        quoteLookup.reset()
         metadataFetchSubIds.forEach { pool.unsubscribe(it) }
         metadataFetchSubIds.clear()
         synchronized(feedEvents) { feedEvents.clear() }
@@ -1492,7 +1485,7 @@ class FeedViewModel @Inject constructor(
             activeSubIds.add(initialSubId)
             followsReceived = true
             globalPool.subscribeTo(
-                listOf(Filter(kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL), limit = GLOBAL_PAGE_SIZE)),
+                listOf(Filter(kinds = FEED_KINDS, limit = GLOBAL_PAGE_SIZE)),
                 id = initialSubId,
                 label = "global-feed",
                 relays = globalInitialExpectedRelays,
@@ -1561,10 +1554,7 @@ class FeedViewModel @Inject constructor(
         pendingBuffer.clear()
         focusedEventId = null
         _pendingEventScroll.value = null
-        requestedQuoteIds.clear()
-        _unresolvedQuoteIds.value = emptySet()
-        quoteSubIds.forEach { pool.unsubscribe(it); globalPool.unsubscribe(it) }
-        quoteSubIds.clear()
+        quoteLookup.reset()
         metadataFetchSubIds.forEach { pool.unsubscribe(it) }
         metadataFetchSubIds.clear()
         if (clearEvents) synchronized(feedEvents) { feedEvents.clear() }
@@ -1861,7 +1851,11 @@ class FeedViewModel @Inject constructor(
                 pool.messages.onSubscription { personalReady.complete(Unit) },
                 globalPool.messages.onSubscription { globalReady.complete(Unit) },
             ).collect { poolMessage ->
-                handlePoolMessage(poolMessage)
+                runCatching { handlePoolMessage(poolMessage) }
+                    .onFailure { t ->
+                        if (t is kotlinx.coroutines.CancellationException) throw t
+                        Timber.e(t, "FeedViewModel handlePoolMessage failed")
+                    }
             }
         }
         personalReady.await()
@@ -1881,25 +1875,10 @@ class FeedViewModel @Inject constructor(
                     msg.subscriptionId in activeSubIds -> {
                         if (msg.event.verify()) handleEvent(msg.event)
                     }
-                    msg.subscriptionId in quoteSubIds -> {
-                        if (msg.event.verify()) handleQuoteEvent(msg.event)
-                    }
                 }
             }
             is RelayMessage.EndOfStoredEvents -> {
                 when {
-                    msg.subscriptionId in quoteSubIds -> {
-                        // First EOSE = fastest relay only. Keep listening so a
-                        // slower relay holding the note can still deliver it.
-                        val sid = msg.subscriptionId
-                        viewModelScope.launch {
-                            kotlinx.coroutines.delay(QUOTE_GRACE_MS)
-                            if (quoteSubIds.remove(sid)) { pool.unsubscribe(sid); globalPool.unsubscribe(sid) }
-                            // Lookup finished: whatever is still missing is
-                            // genuinely unavailable, not "loading".
-                            refreshUnresolvedQuotes()
-                        }
-                    }
                     msg.subscriptionId in metadataFetchSubIds -> {
                         metadataFetchSubIds.remove(msg.subscriptionId)
                         unsub(msg.subscriptionId)
@@ -1972,16 +1951,6 @@ class FeedViewModel @Inject constructor(
         }
     }
 
-    private fun handleQuoteEvent(event: Event) {
-        if (EventKind.isPrivateMessaging(event.kind)) return
-        _quotedEvents.update { it + (event.id to event) }
-        refreshUnresolvedQuotes()
-        viewModelScope.launch { eventRepository.save(event, "") }
-        fetchMetadataForAuthors(listOf(event.pubkey))
-        // A reposted/quoted note may itself quote another note.
-        if (event.kind != EventKind.REPOST) fetchQuotesForEvents(listOf(event))
-    }
-
     private fun isReplyEvent(event: Event): Boolean {
         val eTags = event.parsedTags.filter { it.name == "e" }
         return eTags.size > 1 || eTags.any { tag ->
@@ -2015,7 +1984,7 @@ class FeedViewModel @Inject constructor(
                 if (isReplyEvent(event)) return
                 addToFeed(event)
             }
-            EventKind.REPOST      -> addToFeed(event)
+            EventKind.REPOST, EventKind.GENERIC_REPOST -> addToFeed(event)
             EventKind.POLL        -> addToFeed(event)
         }
     }
@@ -2093,7 +2062,7 @@ class FeedViewModel @Inject constructor(
         feedSubId = sub(listOf(
             Filter(
                 authors = allPubkeys,
-                kinds = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL),
+                kinds = FEED_KINDS,
                 limit = 200,
             )
         ))
@@ -2243,69 +2212,7 @@ class FeedViewModel @Inject constructor(
     }
 
     private fun fetchQuotesForEvents(events: List<Event>) {
-        val toResolve = mutableListOf<String>()
-
-        for (event in events) {
-            when (event.kind) {
-                EventKind.REPOST -> {
-                    // Kind-6: guard against malicious oversized content before parsing.
-                    val embedded = if (event.content.length > MAX_REPOST_CONTENT_BYTES) null
-                    else runCatching { Event.fromJson(event.content) }.getOrNull()
-                    if (embedded != null && embedded.verify()) {
-                        _quotedEvents.update { it + (embedded.id to embedded) }
-                        refreshUnresolvedQuotes()
-                        viewModelScope.launch { eventRepository.save(embedded, "") }
-                        fetchMetadataForAuthors(listOf(embedded.pubkey))
-                        if (embedded.kind != EventKind.REPOST) fetchQuotesForEvents(listOf(embedded))
-                    } else {
-                        // Fall back to fetching by e tag
-                        val refId = event.parsedTags.firstOrNull { it.name == "e" }?.value()
-                        if (refId != null && refId !in requestedQuoteIds) toResolve.add(refId)
-                    }
-                }
-                EventKind.TEXT_NOTE, EventKind.COMMENT, EventKind.POLL -> {
-                    val ids = event.parsedTags.filter { it.name == "q" || (it.name == "e" && (it.value(3) == "mention" || it.value(2) == "mention")) }.mapNotNull { it.value() }.take(32) + extractInlineQuoteIds(event.content)
-                    toResolve.addAll(ids.filter { it !in requestedQuoteIds })
-                }
-            }
-        }
-
-        val missing = toResolve.distinct().filter { it !in _quotedEvents.value }
-        if (missing.isEmpty()) return
-        missing.forEach { requestedQuoteIds.add(it) }
-
-        viewModelScope.launch {
-            val cached = eventRepository.getByIds(missing)
-                .filterNot { EventKind.isPrivateMessaging(it.kind) }
-                .associateBy { it.id }
-            if (cached.isNotEmpty()) {
-                _quotedEvents.update { it + cached }
-                refreshUnresolvedQuotes()
-                fetchMetadataForAuthors(cached.values.map { it.pubkey })
-                fetchQuotesForEvents(cached.values.toList())
-            }
-            val stillMissing = missing.filter { it !in cached }
-            if (stillMissing.isEmpty()) return@launch
-
-            // Kind-agnostic on purpose: a quoted poll or repost was never
-            // resolved before, so the reference stayed as a dead link.
-            // Register before sending the REQ so even a fast relay response
-            // cannot race the subscription bookkeeping. Query both already-
-            // connected pools; do not connect to untrusted relay hints.
-            val subId = "qt-" + java.util.UUID.randomUUID().toString().take(8)
-            quoteSubIds.add(subId)
-            val filters = listOf(Filter(ids = stillMissing))
-            pool.subscribe(filters, id = subId, label = "quote")
-            globalPool.subscribe(filters, id = subId, label = "quote")
-            viewModelScope.launch {
-                kotlinx.coroutines.delay(30_000)
-                if (quoteSubIds.remove(subId)) {
-                    pool.unsubscribe(subId)
-                    globalPool.unsubscribe(subId)
-                    refreshUnresolvedQuotes()
-                }
-            }
-        }
+        quoteLookup.requestForEvents(events)
     }
 
     private fun fetchMetadataForAuthors(pubkeys: List<String>) {
@@ -2353,8 +2260,7 @@ class FeedViewModel @Inject constructor(
         unsub(followsRelayListSubId); followsRelayListSubId = null
         followsForRelaySelection = emptyList()
         followRelayMap.clear()
-        quoteSubIds.forEach { pool.unsubscribe(it); globalPool.unsubscribe(it) }
-        quoteSubIds.clear()
+        quoteLookup.reset(clearResolved = true)
         metadataFetchSubIds.forEach { pool.unsubscribe(it) }
         metadataFetchSubIds.clear()
         synchronized(feedEvents) { feedEvents.clear() }
@@ -2418,8 +2324,13 @@ class FeedViewModel @Inject constructor(
     }
 
     companion object {
-        /** Kinds every timeline feed shows: notes, reposts and polls. */
-        private val FEED_KINDS = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL)
+        /** Kinds every timeline feed shows: notes, reposts (kind 6 & 16) and polls. */
+        private val FEED_KINDS = listOf(
+            EventKind.TEXT_NOTE,
+            EventKind.REPOST,
+            EventKind.GENERIC_REPOST,
+            EventKind.POLL,
+        )
         /** Page size for the clock feed's single page (there is no older-paging). */
         private const val CLOCK_PAGE_SIZE = 100
         /** How long HOME/CLOCK wait for EOSE before showing what arrived. */
@@ -2445,6 +2356,3 @@ class FeedViewModel @Inject constructor(
         val DEFAULT_RELAYS get() = Tunables.DEFAULT_RELAYS
     }
 }
-
-/** How long a quote lookup stays open after the first relay EOSE. */
-private const val QUOTE_GRACE_MS = 20_000L

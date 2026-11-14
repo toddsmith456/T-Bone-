@@ -24,6 +24,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,8 +38,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import social.tbone.nostr.EventKind
+import social.tbone.nostr.quotedEventId
 import social.tbone.ui.feed.FeedTabIcons
+import social.tbone.ui.feed.LocalQuoteState
 import social.tbone.ui.feed.NoteCard
+import social.tbone.ui.feed.QuoteState
+import social.tbone.ui.feed.extractInlineQuoteId
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.ui.theme.appBorder
@@ -65,6 +71,8 @@ fun FeedViewerScreen(
     val activeTabId by viewModel.activeTabId.collectAsStateWithLifecycle()
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
+    val quotedEvents by viewModel.quotedEvents.collectAsStateWithLifecycle()
+    val unresolvedQuoteIds by viewModel.unresolvedQuoteIds.collectAsStateWithLifecycle()
 
     val active = tabs.firstOrNull { it.tabId == activeTabId }
     val listState = rememberLazyListState()
@@ -192,50 +200,65 @@ fun FeedViewerScreen(
                         "pull to refresh, or open a different feed"
                     },
                 )
-                else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                    items(state.events, key = { it.id }) { event ->
-                        NoteCard(
-                            event = event,
-                            profile = profiles[event.pubkey],
-                            profiles = profiles,
-                            onThreadClick = onThreadClick,
-                            onProfileClick = onProfileClick,
-                            onHashtagClick = onHashtagClick,
-                        )
-                    }
-                    item(key = "viewer_paging") {
-                        if (state.canPageOlder) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable(
-                                        enabled = !state.loadingOlder,
-                                        onClick = viewModel::loadOlder,
-                                    )
-                                    .padding(vertical = 18.dp),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                if (state.loadingOlder) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(14.dp),
-                                        color = BonyColors.Accent,
-                                        strokeWidth = 1.5.dp,
-                                    )
-                                    Spacer(Modifier.width(8.dp))
+                else -> CompositionLocalProvider(
+                    LocalQuoteState provides QuoteState(unresolvedQuoteIds),
+                ) {
+                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                        items(state.events, key = { it.id }) { event ->
+                            val refId = remember(event.id) {
+                                when (event.kind) {
+                                    EventKind.REPOST, EventKind.GENERIC_REPOST ->
+                                        event.parsedTags.firstOrNull { it.name == "e" }?.value()
+                                    else -> event.parsedTags.quotedEventId
+                                        ?: extractInlineQuoteId(event.content)
                                 }
+                            }
+                            NoteCard(
+                                event = event,
+                                profile = profiles[event.pubkey],
+                                profiles = profiles,
+                                quotedEvent = refId?.let { quotedEvents[it] },
+                                quotedEvents = quotedEvents,
+                                quotedEventId = refId,
+                                onThreadClick = onThreadClick,
+                                onProfileClick = onProfileClick,
+                                onHashtagClick = onHashtagClick,
+                            )
+                        }
+                        item(key = "viewer_paging") {
+                            if (state.canPageOlder) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable(
+                                            enabled = !state.loadingOlder,
+                                            onClick = viewModel::loadOlder,
+                                        )
+                                        .padding(vertical = 18.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    if (state.loadingOlder) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(14.dp),
+                                            color = BonyColors.Accent,
+                                            strokeWidth = 1.5.dp,
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                    }
+                                    Text(
+                                        text = if (state.loadingOlder) "loading older…" else "load older notes",
+                                        style = BonyType.caption.copy(color = BonyColors.Accent),
+                                    )
+                                }
+                            } else {
                                 Text(
-                                    text = if (state.loadingOlder) "loading older…" else "load older notes",
-                                    style = BonyType.caption.copy(color = BonyColors.Accent),
+                                    text = "─── end of this feed ───",
+                                    style = BonyType.caption.copy(color = BonyColors.TextMute),
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp),
                                 )
                             }
-                        } else {
-                            Text(
-                                text = "─── end of this feed ───",
-                                style = BonyType.caption.copy(color = BonyColors.TextMute),
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 18.dp),
-                            )
                         }
                     }
                 }

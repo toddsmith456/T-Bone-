@@ -273,7 +273,7 @@ fun BonyTheme(
     accent: Color? = null,
     content: @Composable () -> Unit,
 ) {
-    remember(mode, accent) {
+    androidx.compose.runtime.SideEffect {
         BonyColors.applyMode(mode)
         BonyColors.setAccent(accent)
     }

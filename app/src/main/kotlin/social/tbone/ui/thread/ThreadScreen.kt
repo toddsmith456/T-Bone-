@@ -256,11 +256,10 @@ private fun ThreadRow(
 ) {
     val event = item.event
     val depth = item.depth.coerceAtMost(ThreadIndent.MAX_RAIL_DEPTH)
+    val isRepost = event.kind == EventKind.REPOST || event.kind == EventKind.GENERIC_REPOST
     val refId = remember(event.id) {
-        when (event.kind) {
-            EventKind.REPOST -> event.parsedTags.firstOrNull { it.name == "e" }?.value()
-            else -> event.parsedTags.quotedEventId ?: extractInlineQuoteId(event.content)
-        }
+        if (isRepost) event.parsedTags.firstOrNull { it.name == "e" }?.value()
+        else event.parsedTags.quotedEventId ?: extractInlineQuoteId(event.content)
     }
     val quotedEvent = remember(refId, quotedEvents) { refId?.let { quotedEvents[it] } }
     // The note you opened and the thread root are shown in full; replies stay
@@ -295,7 +294,7 @@ private fun ThreadRow(
             onBoost = onBoost,
             onQuote = onQuoteClick,
             onLike = onLike,
-            reactors = if (event.kind == EventKind.REPOST) quotedEvent?.let { reactions[it.id] }
+            reactors = if (isRepost) quotedEvent?.let { reactions[it.id] }
             else reactions[event.id],
             replies = replies,
             repliedByMe = repliedByMe,

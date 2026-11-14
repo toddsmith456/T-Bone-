@@ -85,7 +85,7 @@ fun HashtagFeedScreen(
                         contentPadding = PaddingValues(bottom = 28.dp)) {
                         items(uiState.events, key = { it.id }) { event ->
                             val refId = remember(event.id) {
-                                if (event.kind == EventKind.REPOST) {
+                                if (event.kind == EventKind.REPOST || event.kind == EventKind.GENERIC_REPOST) {
                                     event.parsedTags.firstOrNull { it.name == "e" }?.value()
                                 } else {
                                     event.parsedTags.quotedEventId

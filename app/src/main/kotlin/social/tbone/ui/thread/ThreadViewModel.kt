@@ -37,10 +37,11 @@ import social.tbone.nostr.ProfileContent
 import social.tbone.nostr.UnsignedEvent
 import social.tbone.nostr.quotedEventId
 import social.tbone.nostr.relay.PoolMessage
+import social.tbone.nostr.relay.RelayHintCache
+import social.tbone.nostr.relay.RelayHintPolicy
 import social.tbone.nostr.relay.RelayMessage
 import social.tbone.nostr.relay.RelayStatus
-import social.tbone.ui.feed.extractInlineQuoteId
-import social.tbone.ui.feed.extractInlineQuoteIds
+import social.tbone.ui.feed.QuoteLookupSession
 import social.tbone.nostr.relay.RelayPool
 import social.tbone.nostr.replyEventId
 import social.tbone.nostr.rootEventId
@@ -105,22 +106,25 @@ class ThreadViewModel @Inject constructor(
     val profiles: StateFlow<Map<String, ProfileContent>> = profileRepository.profiles
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
-    private val _quotedEvents = MutableStateFlow<Map<String, Event>>(emptyMap())
-    val quotedEvents: StateFlow<Map<String, Event>> = _quotedEvents.asStateFlow()
+    private val activeSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val metadataLeases = MetadataLeases()
+
+    private val quoteLookup = QuoteLookupSession(
+        scope = viewModelScope,
+        pool = pool,
+        eventRepository = eventRepository,
+        appSettings = appSettings,
+        labelPrefix = "thread",
+        onResolved = { event -> fetchMetadataForAuthors(listOf(event.pubkey)) },
+    )
+
+    val quotedEvents: StateFlow<Map<String, Event>> = quoteLookup.quotedEvents
 
     /**
-     * Referenced notes that were asked for and never arrived, so cards show a
-     * terminal "not available" row instead of "loading…" forever.
+     * Referenced notes whose lookup genuinely finished without returning an
+     * event, so cards show a terminal "not available" row.
      */
-    private val _unresolvedQuoteIds = MutableStateFlow<Set<String>>(emptySet())
-    val unresolvedQuoteIds: StateFlow<Set<String>> = _unresolvedQuoteIds.asStateFlow()
-
-    private val requestedQuoteIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
-
-    private fun refreshUnresolvedQuotes() {
-        val resolved = _quotedEvents.value.keys
-        _unresolvedQuoteIds.value = requestedQuoteIds.filterTo(mutableSetOf()) { it !in resolved }
-    }
+    val unresolvedQuoteIds: StateFlow<Set<String>> = quoteLookup.unresolvedQuoteIds
 
     val reactions: StateFlow<Map<String, Set<String>>> = reactionsRepository.reactions
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
@@ -148,9 +152,6 @@ class ThreadViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private var collectJob: Job? = null
-    private val activeSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
-    private val quoteSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
-    private val metadataLeases = MetadataLeases()
 
     /** Every event known to be part of this thread, keyed by id. */
     private val threadEvents = ConcurrentHashMap<String, Event>()
@@ -298,7 +299,7 @@ class ThreadViewModel @Inject constructor(
      * (embedded JSON first, then the `e` tag fetched from relays).
      */
     private suspend fun unwrapRepost(event: Event): Event? {
-        if (event.kind != EventKind.REPOST && event.kind != GENERIC_REPOST) return null
+        if (event.kind != EventKind.REPOST && event.kind != EventKind.GENERIC_REPOST) return null
         val embedded = if (event.content.isBlank() || event.content.length > MAX_REPOST_CONTENT_BYTES) {
             null
         } else {
@@ -377,16 +378,47 @@ class ThreadViewModel @Inject constructor(
      */
     private suspend fun fetchById(id: String, hints: List<String> = emptyList()): Event? {
         fetchOnce(id, relays = null)?.let { return it }
-        val extra = (hints + Tunables.DEFAULT_RELAYS)
-            .map { RelayPool.normalize(it) }
-            .distinct()
-            .filter { it !in pool.relayUrls() || it in acquiredRelays }
+        val torEnabled = appSettings.torEnabled.value
+        val existingLower = pool.relayUrls().map { RelayPool.normalize(it).lowercase() }.toSet()
+        val acquiredLower = acquiredRelays.map { RelayPool.normalize(it).lowercase() }.toSet()
+        val candidates = LinkedHashSet<String>()
+
+        // 1. Optional sanitized relay hints (from caller tags + in-memory RelayHintCache)
+        if (appSettings.followRelayHintsForMissingNotes.value) {
+            (hints + RelayHintCache.get(id)).forEach { raw ->
+                val clean = RelayHintPolicy.sanitizeHintUrl(raw, torEnabled) ?: return@forEach
+                val lower = clean.lowercase()
+                if (lower !in existingLower || lower in acquiredLower) {
+                    candidates += clean
+                }
+            }
+        }
+        // 2. Optional built-in Fediverse bridge relays (read-only fallback)
+        if (appSettings.fediverseBridgeRelaysEnabled.value) {
+            Tunables.FEDIVERSE_BRIDGE_RELAYS.forEach { bridge ->
+                val clean = RelayHintPolicy.sanitizeHintUrl(bridge, torEnabled) ?: return@forEach
+                val lower = clean.lowercase()
+                if (lower !in existingLower || lower in acquiredLower) {
+                    candidates += clean
+                }
+            }
+        }
+        // 3. Built-in default relays (already part of T-Bone's fallback behavior, skipping metadata-only relays)
+        Tunables.DEFAULT_RELAYS.forEach { relay ->
+            val clean = RelayHintPolicy.sanitizeHintUrl(relay, torEnabled) ?: return@forEach
+            val lower = clean.lowercase()
+            if (lower !in existingLower || lower in acquiredLower) {
+                candidates += clean
+            }
+        }
+
+        val extra = candidates.take(MAX_FALLBACK_RELAYS)
         if (extra.isEmpty()) return null
         extra.forEach { url ->
             if (acquiredRelays.add(url)) pool.acquireRelay(url)
         }
-        // Give freshly opened sockets a moment to connect.
-        return fetchOnce(id, relays = extra.toSet(), timeoutMs = EOSE_TIMEOUT_MS + 2_000L)
+        val extraTimeout = if (torEnabled) EOSE_TIMEOUT_MS + 6_000L else EOSE_TIMEOUT_MS + 2_500L
+        return fetchOnce(id, relays = extra.toSet(), timeoutMs = extraTimeout)
     }
 
     private suspend fun fetchOnce(id: String, relays: Set<String>?, timeoutMs: Long = EOSE_TIMEOUT_MS): Event? {
@@ -399,7 +431,7 @@ class ThreadViewModel @Inject constructor(
             withTimeoutOrNull(timeoutMs) {
                 merge(flowOf(Unit), eoseSignals).first {
                     fetchedById.containsKey(id) ||
-                        (relays == null && eoseCount(subId) >= expectedEose()) ||
+                        (relays == null && eoseCount(subId) >= expectedNoteEose()) ||
                         (relays != null && eoseCount(subId) >= relays.size)
                 }
             }
@@ -457,6 +489,12 @@ class ThreadViewModel @Inject constructor(
     /** Number of relays we expect an EndOfStoredEvents from. */
     private fun expectedEose(): Int =
         pool.relayStatuses.value.count { it.value == RelayStatus.CONNECTED }.coerceAtLeast(1)
+
+    /** Number of note-capable relays (excluding metadata-only relays like purplepag.es). */
+    private fun expectedNoteEose(): Int =
+        pool.relayStatuses.value.count { (url, status) ->
+            status == RelayStatus.CONNECTED && RelayHintPolicy.isNoteCapableRelay(url)
+        }.coerceAtLeast(1)
 
     private fun eoseCount(subId: String): Int = eoseRelays[subId]?.size ?: 0
 
@@ -517,8 +555,6 @@ class ThreadViewModel @Inject constructor(
                 when {
                     event.kind == EventKind.METADATA -> profileRepository.processEvent(event)
 
-                    msg.subscriptionId in quoteSubIds -> handleQuoteEvent(event)
-
                     msg.subscriptionId in fetchSubIds -> {
                         // Direct by-id lookups (focused note, ancestors,
                         // repost targets): always accepted and cached.
@@ -566,33 +602,34 @@ class ThreadViewModel @Inject constructor(
             is RelayMessage.EndOfStoredEvents -> {
                 // One EOSE per relay: record who answered, then release whichever
                 // awaitEose() is waiting on this subscription.
-                if (msg.subscriptionId !in activeSubIds && msg.subscriptionId !in quoteSubIds) return
+                if (msg.subscriptionId !in activeSubIds) return
+                val normalized = RelayPool.normalize(poolMsg.relayUrl)
+                // Do not let a metadata-only relay (e.g. purplepag.es) satisfy a note lookup EOSE.
+                if (msg.subscriptionId in fetchSubIds && RelayHintPolicy.isMetadataOnlyRelay(normalized)) {
+                    return
+                }
                 eoseRelays
                     .getOrPut(msg.subscriptionId) { ConcurrentHashMap.newKeySet() }
-                    .add(poolMsg.relayUrl)
+                    .add(normalized)
                 eoseSignals.tryEmit(msg.subscriptionId)
 
                 if (metadataLeases.contains(msg.subscriptionId) && eoseCount(msg.subscriptionId) >= expectedEose()) {
                     closeMetadata(msg.subscriptionId)
                 }
-                // Close the one-shot quote lookups once every relay has answered.
-                if (msg.subscriptionId in quoteSubIds &&
-                    eoseCount(msg.subscriptionId) >= expectedEose()
-                ) {
-                    closeQuote(msg.subscriptionId)
-                }
+            }
+
+            is RelayMessage.Closed -> {
+                if (msg.subscriptionId !in fetchSubIds) return
+                val normalized = RelayPool.normalize(poolMsg.relayUrl)
+                if (RelayHintPolicy.isMetadataOnlyRelay(normalized)) return
+                eoseRelays
+                    .getOrPut(msg.subscriptionId) { ConcurrentHashMap.newKeySet() }
+                    .add(normalized)
+                eoseSignals.tryEmit(msg.subscriptionId)
             }
 
             else -> Unit
         }
-    }
-
-    private fun handleQuoteEvent(event: Event) {
-        _quotedEvents.update { it + (event.id to event) }
-        refreshUnresolvedQuotes()
-        viewModelScope.launch { eventRepository.save(event, "") }
-        fetchMetadataForAuthors(listOf(event.pubkey))
-        if (event.kind != EventKind.REPOST) fetchQuotesForEvents(listOf(event))
     }
 
     private fun fetchProfiles(events: List<Event>) {
@@ -607,80 +644,10 @@ class ThreadViewModel @Inject constructor(
 
     /**
      * Resolves the notes referenced by the thread's notes (quote-notes, reposts
-     * and inline `nostr:note1…/nevent1…` references).
-     *
-     * Deliberately **kind-agnostic**: the previous build asked only for
-     * kind-1 events, so a quoted poll or repost never resolved and the
-     * reference stayed as a dead link instead of an embedded note.
+     * and inline `nostr:note1…/nevent1…` references) via [QuoteLookupSession].
      */
     fun fetchQuotesForEvents(events: List<Event>) {
-        val toResolve = mutableListOf<String>()
-        for (event in events) {
-            when (event.kind) {
-                EventKind.REPOST -> {
-                    val embedded = if (event.content.length > MAX_REPOST_CONTENT_BYTES) {
-                        null
-                    } else {
-                        runCatching { Event.fromJson(event.content) }.getOrNull()
-                    }
-                    if (embedded != null && embedded.verify()) {
-                        _quotedEvents.update { it + (embedded.id to embedded) }
-                        refreshUnresolvedQuotes()
-                        viewModelScope.launch { eventRepository.save(embedded, "") }
-                    } else {
-                        event.parsedTags.firstOrNull { it.name == "e" }?.value()
-                            ?.takeIf { it !in _quotedEvents.value }
-                            ?.let { toResolve += it }
-                    }
-                }
-                EventKind.TEXT_NOTE, EventKind.COMMENT, EventKind.POLL -> {
-                    val ids = event.parsedTags.filter { it.name == "q" || (it.name == "e" && (it.value(3) == "mention" || it.value(2) == "mention")) }.mapNotNull { it.value() }.take(32) + extractInlineQuoteIds(event.content)
-                    toResolve.addAll(ids.filter { it !in requestedQuoteIds && it !in _quotedEvents.value })
-                }
-                else -> Unit
-            }
-        }
-
-        val missing = toResolve.distinct().filter { it !in _quotedEvents.value }
-        if (missing.isEmpty()) return
-        requestedQuoteIds += missing
-
-        viewModelScope.launch {
-            val cached = eventRepository.getByIds(missing).associateBy { it.id }
-            if (cached.isNotEmpty()) {
-                _quotedEvents.update { it + cached }
-                refreshUnresolvedQuotes()
-                fetchMetadataForAuthors(cached.values.map { it.pubkey })
-                fetchQuotesForEvents(cached.values.toList())
-            }
-            val stillMissing = missing.filter { it !in cached }
-            if (stillMissing.isEmpty()) return@launch
-            val providers = stillMissing.chunked(MAX_FILTER_BATCH)
-            providers.forEach { batch ->
-                val subId = "thread-quote-" + java.util.UUID.randomUUID().toString()
-                quoteSubIds += subId
-                activeSubIds += subId
-                try {
-                    pool.subscribe(listOf(Filter(ids = batch)), id = subId, label = "thread-quote")
-                } catch (error: Exception) {
-                    closeQuote(subId)
-                    throw error
-                }
-                viewModelScope.launch {
-                    kotlinx.coroutines.delay(15_000)
-                    closeQuote(subId)
-                }
-            }
-        }
-    }
-
-    private fun closeQuote(id: String) {
-        if (!quoteSubIds.remove(id)) return
-        activeSubIds.remove(id)
-        eoseRelays.remove(id)
-        pool.unsubscribe(id)
-        // A timeout or all-relay EOSE ends loading for unresolved quotes.
-        refreshUnresolvedQuotes()
+        quoteLookup.requestForEvents(events)
     }
 
     private fun fetchMetadataForAuthors(pubkeys: List<String>) {
@@ -739,10 +706,10 @@ class ThreadViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        quoteLookup.close()
         acquiredRelays.forEach { pool.releaseRelay(it) }
         collectJob?.cancel()
         activeSubIds.forEach { pool.unsubscribe(it) }
-        quoteSubIds.forEach { pool.unsubscribe(it) }
     }
 
     companion object {
@@ -764,8 +731,8 @@ class ThreadViewModel @Inject constructor(
         /** Ids per `ids` filter — keeps requests inside relay limits. */
         private const val MAX_FILTER_BATCH = 50
 
-        /** NIP-18 generic repost. */
-        private const val GENERIC_REPOST = 16
+        /** Cap on temporary hint/bridge/default relays dialed per missing note. */
+        private const val MAX_FALLBACK_RELAYS = 6
 
         private const val REPLY_LOOKUP_DEBOUNCE_MS = 400L
     }

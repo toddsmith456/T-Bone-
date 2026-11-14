@@ -465,7 +465,8 @@ fun FeedScreen(
                             val event = row.event
                             val refId = remember(event.id) {
                                 when (event.kind) {
-                                    social.tbone.nostr.EventKind.REPOST ->
+                                    social.tbone.nostr.EventKind.REPOST,
+                                    social.tbone.nostr.EventKind.GENERIC_REPOST ->
                                         event.parsedTags.firstOrNull { it.name == "e" }?.value()
                                     else -> event.parsedTags.quotedEventId
                                         ?: extractInlineQuoteId(event.content)
@@ -484,7 +485,9 @@ fun FeedScreen(
                                 onBoost = viewModel::boost,
                                 onQuote = onQuoteClick,
                                 onLike = viewModel::react,
-                                reactors = if (event.kind == social.tbone.nostr.EventKind.REPOST)
+                                reactors = if (event.kind == social.tbone.nostr.EventKind.REPOST ||
+                                    event.kind == social.tbone.nostr.EventKind.GENERIC_REPOST
+                                )
                                     quotedEvent?.let { reactions[it.id] }
                                 else
                                     reactions[event.id],

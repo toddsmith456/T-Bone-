@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import social.tbone.Tunables
 import social.tbone.account.AccountRepository
 import social.tbone.lists.PublishedRelayLists
 import social.tbone.lists.RelayFileFormat
@@ -27,6 +28,7 @@ import social.tbone.lists.RelayListFetcher
 import social.tbone.nostr.EventKind
 import social.tbone.nostr.relay.RelayPool
 import social.tbone.nostr.relay.RelayStatus
+import social.tbone.settings.AppSettings
 import timber.log.Timber
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -53,8 +55,44 @@ class RelayManagementViewModel @Inject constructor(
     private val pool: RelayPool,
     private val accountRepository: AccountRepository,
     private val relayListFetcher: RelayListFetcher,
+    private val appSettings: AppSettings,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
+
+    val fediverseBridgeRelaysEnabled: StateFlow<Boolean> = appSettings.fediverseBridgeRelaysEnabled
+    val followRelayHintsForMissingNotes: StateFlow<Boolean> = appSettings.followRelayHintsForMissingNotes
+
+    fun setFediverseBridgeRelaysEnabled(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setFediverseBridgeRelaysEnabled(enabled) }
+    }
+
+    fun setFollowRelayHintsForMissingNotes(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setFollowRelayHintsForMissingNotes(enabled) }
+    }
+
+    fun addFediverseBridgeRelays() {
+        viewModelScope.launch {
+            val account = accountRepository.activeAccount.first() ?: run {
+                say("Add an account before adding relays.")
+                return@launch
+            }
+            val bridgeUrls = Tunables.FEDIVERSE_BRIDGE_RELAYS.map(RelayPool::normalize)
+            var addedCount = 0
+            accountRepository.updateAccount(account.pubkey) { current ->
+                val existing = current.effectiveRelays().map(RelayPool::normalize)
+                val existingLower = existing.map { it.lowercase() }.toSet()
+                val toAdd = bridgeUrls.filter { it.lowercase() !in existingLower }
+                addedCount = toAdd.size
+                if (toAdd.isEmpty()) current
+                else current.copy(relays = (existing + toAdd).distinct(), relayListConfigured = true)
+            }
+            if (addedCount > 0) {
+                say("Added $addedCount Fediverse bridge relay${if (addedCount == 1) "" else "s"} to your relays.")
+            } else {
+                say("All Fediverse bridge relays are already in your relay list.")
+            }
+        }
+    }
 
     // Show the saved personal list, never the shared pool's temporary connections.
     val relayStatuses: StateFlow<Map<String, RelayStatus>> = combine(accountRepository.activeAccount, pool.relayStatuses) { account, statuses ->

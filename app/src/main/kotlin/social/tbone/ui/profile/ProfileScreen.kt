@@ -522,27 +522,23 @@ fun ProfileScreen(
                 items(visibleNotes, key = { it.id }) { event ->
                     // Reposts show the note they boosted, so their reactions and
                     // the embedded card both come from the resolved quote.
-                    val quotedEvent = remember(event.id, quotedEvents) {
-                        val refId = if (event.kind == EventKind.REPOST) {
+                    val isRepost = event.kind == EventKind.REPOST || event.kind == EventKind.GENERIC_REPOST
+                    val refId = remember(event.id) {
+                        if (isRepost) {
                             event.parsedTags.firstOrNull { it.name == "e" }?.value()
                         } else {
                             event.parsedTags.quotedEventId
                                 ?: social.tbone.ui.feed.extractInlineQuoteId(event.content)
                         }
-                        refId?.let { quotedEvents[it] }
                     }
+                    val quotedEvent = remember(refId, quotedEvents) { refId?.let { quotedEvents[it] } }
                     NoteCard(
                         event = event,
                         profile = profiles[event.pubkey] ?: profile.takeIf { event.pubkey == pubkey },
                         profiles = profiles,
                         quotedEvent = quotedEvent,
                         quotedEvents = quotedEvents,
-                        quotedEventId = if (event.kind == EventKind.REPOST) {
-                            event.parsedTags.firstOrNull { it.name == "e" }?.value()
-                        } else {
-                            event.parsedTags.quotedEventId
-                                ?: social.tbone.ui.feed.extractInlineQuoteId(event.content)
-                        },
+                        quotedEventId = refId,
                         onThreadClick = onThreadClick,
                         onProfileClick = onProfileClick,
                         onHashtagClick = onHashtagClick,
@@ -550,7 +546,7 @@ fun ProfileScreen(
                         onBoost = viewModel::boost,
                         onQuote = onQuoteClick,
                         onLike = viewModel::react,
-                        reactors = if (event.kind == EventKind.REPOST) {
+                        reactors = if (isRepost) {
                             quotedEvent?.let { reactions[it.id] }
                         } else {
                             reactions[event.id]

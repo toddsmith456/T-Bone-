@@ -318,6 +318,11 @@ class MainActivity : FragmentActivity() {
         toolboxLockManager.onAppBackgrounded()
     }
 
+    override fun onDestroy() {
+        FrameMonitor.stop(this)
+        super.onDestroy()
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString(STATE_LINK_PROCESS, deepLinkHandler.processToken)
         super.onSaveInstanceState(outState)

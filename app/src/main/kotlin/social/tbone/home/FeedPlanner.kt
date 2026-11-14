@@ -245,7 +245,12 @@ class FeedPlanner @Inject constructor(
 
     companion object {
         /** Kinds every timeline shows — identical to the current `FEED_KINDS`. */
-        val FEED_KINDS = listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.POLL)
+        val FEED_KINDS = listOf(
+            EventKind.TEXT_NOTE,
+            EventKind.REPOST,
+            EventKind.GENERIC_REPOST,
+            EventKind.POLL,
+        )
 
         /** Matches `MAX_FEED_EVENTS` on the existing feed. */
         const val FEED_PAGE_SIZE = 100

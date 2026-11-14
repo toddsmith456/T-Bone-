@@ -194,8 +194,8 @@ fun NoteCard(
         Modifier.background(cardBg)
     }
 
-    // ── Kind-6 repost ────────────────────────────────────────────────────────
-    if (event.kind == EventKind.REPOST) {
+    // ── Kind-6 / Kind-16 repost ──────────────────────────────────────────────
+    if (event.kind == EventKind.REPOST || event.kind == EventKind.GENERIC_REPOST) {
         val target = quotedEvent
         Column(
             modifier = modifier

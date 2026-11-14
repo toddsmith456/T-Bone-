@@ -6,9 +6,13 @@ import coil.ImageLoader
 import coil.disk.DiskCache
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.Call
 import social.tbone.BuildConfig
 import social.tbone.di.ImageClientProvider
 import social.tbone.calendar.CalendarAlarmScheduler
@@ -94,16 +98,20 @@ class BonyApp : Application() {
         }
 
         // Apply the persisted theme mode + accent as soon as DataStore emits,
-        // so the very first frame renders with the user's palette.
+        // strictly on the Main dispatcher so Compose Snapshot mutableStateOf
+        // values are never mutated from a background IO thread.
         // When the user has chosen Youniversal we leave BonyColors alone — the
         // Youniversal composition will mirror its scheme into BonyColors via
         // ThemeHost's LaunchedEffect so legacy BonyColors usages stay in sync.
         applicationScope.launch {
             combine(appSettings.uiTheme, appSettings.themeMode, appSettings.accentColor) { uiTheme, mode, accent -> Triple(uiTheme, mode, accent) }
+                .distinctUntilChanged()
                 .collect { (uiTheme, mode, accent) ->
                     if (uiTheme == UiTheme.BONY) {
-                        BonyColors.applyMode(mode)
-                        BonyColors.setAccent(parseHexColor(accent))
+                        withContext(Dispatchers.Main.immediate) {
+                            BonyColors.applyMode(mode)
+                            BonyColors.setAccent(parseHexColor(accent))
+                        }
                     }
                 }
         }
@@ -122,32 +130,40 @@ class BonyApp : Application() {
         }
 
         // Keep Coil's image loader in sync with Tor + lightweight cache toggle.
-        // Lightweight = 64 MB cap; otherwise Coil default (~250 MB).
+        // Using a dynamic Call.Factory avoids tearing down and replacing Coil's
+        // global ImageLoader singleton mid-session on Tor switches while still
+        // routing every new request through the latest Tor-guarded OkHttpClient.
+        val dynamicCallFactory = Call.Factory { request -> ImageClientProvider.client.newCall(request) }
+        var installedLightweightCache: Boolean? = null
         applicationScope.launch {
             appSettings.initialized.first { it }
             combine(appSettings.torEnabled, appSettings.imageCacheLightweight) { tor, lightweight -> tor to lightweight }
+                .distinctUntilChanged()
                 .collect { (useTor, lightweight) ->
-                val status = if (useTor) OrbotHelper.getStatus(this@BonyApp) else null
-                val connected = status as? OrbotStatus.InstalledAndConnected
-                val client = RelayConnection.buildClient(
-                    useTor = useTor,
-                    proxyType = connected?.proxyType ?: java.net.Proxy.Type.HTTP,
-                    torPort = connected?.port ?: 8118,
-                )
-                ImageClientProvider.update(client, useTor)
-                Coil.setImageLoader(
-                    ImageLoader.Builder(this@BonyApp)
-                        .okHttpClient(ImageClientProvider.client)
-                        .components { add(nsfwCoilInterceptor) }
-                        .diskCache {
-                            DiskCache.Builder()
-                                .directory(this@BonyApp.cacheDir.resolve("image_cache"))
-                                .maxSizeBytes(if (lightweight) 64L * 1024 * 1024 else 250L * 1024 * 1024)
+                    val status = if (useTor) OrbotHelper.getStatus(this@BonyApp) else null
+                    val connected = status as? OrbotStatus.InstalledAndConnected
+                    val client = RelayConnection.buildClient(
+                        useTor = useTor,
+                        proxyType = connected?.proxyType ?: java.net.Proxy.Type.HTTP,
+                        torPort = connected?.port ?: 8118,
+                    )
+                    ImageClientProvider.update(client, useTor)
+                    if (installedLightweightCache != lightweight) {
+                        installedLightweightCache = lightweight
+                        Coil.setImageLoader(
+                            ImageLoader.Builder(this@BonyApp)
+                                .callFactory(dynamicCallFactory)
+                                .components { add(nsfwCoilInterceptor) }
+                                .diskCache {
+                                    DiskCache.Builder()
+                                        .directory(this@BonyApp.cacheDir.resolve("image_cache"))
+                                        .maxSizeBytes(if (lightweight) 64L * 1024 * 1024 else 250L * 1024 * 1024)
+                                        .build()
+                                }
                                 .build()
-                        }
-                        .build()
-                )
-            }
+                        )
+                    }
+                }
         }
     }
 

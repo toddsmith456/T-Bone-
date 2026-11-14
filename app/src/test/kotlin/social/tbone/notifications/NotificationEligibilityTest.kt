@@ -246,4 +246,17 @@ class NotificationEligibilityTest {
         )
         assertNull(classify(receipt))
     }
+
+    @Test fun genericRepostOfMyEventIsARepostNotification() {
+        val genericRepost = Event(
+            id = "8".repeat(64),
+            pubkey = other,
+            createdAt = 101,
+            kind = EventKind.GENERIC_REPOST,
+            tags = listOf(tag("e", myNote)),
+            content = "",
+            sig = "0".repeat(128),
+        )
+        assertEquals(NotificationClass.REPOST, classify(genericRepost))
+    }
 }

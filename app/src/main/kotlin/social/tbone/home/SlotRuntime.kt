@@ -107,8 +107,8 @@ class SlotRuntime(
     fun belongsTo(pubkey: String?): Boolean = loadedPubkey == pubkey
 
     internal fun assertExclusive(all: Collection<SlotRuntime>) {
-        val shared = all.filter { it !== this }.flatMap { it.subIds }.toSet()
-        val overlap = subIds.intersect(shared)
+        val shared = all.filter { it !== this }.flatMap { it.subIds.toList() }.toSet()
+        val overlap = subIds.toSet().intersect(shared)
         check(overlap.isEmpty()) {
             "home slot $slotId shares subscription ids with another slot: $overlap"
         }

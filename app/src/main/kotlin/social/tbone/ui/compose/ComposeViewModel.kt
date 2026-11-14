@@ -335,8 +335,7 @@ class ComposeViewModel @Inject constructor(
                 val blurhash = if (request.kind == "image") {
                     withContext(Dispatchers.IO) {
                         runCatching {
-                            val bmp = android.graphics.BitmapFactory.decodeFile(prepared.file.absolutePath)
-                            bmp?.let { social.tbone.util.BlurHash.encodeBitmap(it) }
+                            encodeBlurHashScaled(prepared.file.absolutePath)
                         }.getOrNull()
                     }
                 } else null
@@ -695,3 +694,33 @@ internal fun buildImetaTag(hint: UploadedMediaHint): kotlinx.serialization.json.
         add(kotlinx.serialization.json.JsonPrimitive("imeta"))
         imetaTagEntries(hint).forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) }
     }
+
+/**
+ * Computes a power-of-two [android.graphics.BitmapFactory.Options.inSampleSize]
+ * so the decoded preview stays small (~128px) instead of allocating a 50-200 MB
+ * full-resolution camera bitmap just to compute a 32x32 BlurHash.
+ */
+internal fun computeBlurHashSampleSize(width: Int, height: Int, targetMaxDim: Int = 128): Int {
+    if (width <= 0 || height <= 0 || targetMaxDim <= 0) return 1
+    var sample = 1
+    while ((width / (sample * 2)) >= targetMaxDim || (height / (sample * 2)) >= targetMaxDim) {
+        sample *= 2
+    }
+    return sample
+}
+
+private fun encodeBlurHashScaled(filePath: String): String? {
+    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    android.graphics.BitmapFactory.decodeFile(filePath, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    val decodeOpts = android.graphics.BitmapFactory.Options().apply {
+        inSampleSize = computeBlurHashSampleSize(bounds.outWidth, bounds.outHeight, targetMaxDim = 128)
+        inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
+    }
+    val bmp = android.graphics.BitmapFactory.decodeFile(filePath, decodeOpts) ?: return null
+    return try {
+        social.tbone.util.BlurHash.encodeBitmap(bmp)
+    } finally {
+        if (!bmp.isRecycled) bmp.recycle()
+    }
+}

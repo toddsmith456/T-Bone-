@@ -49,6 +49,7 @@ import androidx.compose.material3.Scaffold
 import dev.youniversal.theme.YouniversalSnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -68,6 +69,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import social.tbone.Tunables
 import social.tbone.nostr.relay.RelayPool
 import social.tbone.nostr.relay.RelayStatus
 import social.tbone.settings.AppSettings
@@ -85,6 +87,8 @@ fun RelayManagementScreen(
     val relayStatuses by viewModel.relayStatuses.collectAsStateWithLifecycle()
     val syncState by viewModel.syncState.collectAsStateWithLifecycle()
     val ui by viewModel.ui.collectAsStateWithLifecycle()
+    val fediverseBridgesEnabled by viewModel.fediverseBridgeRelaysEnabled.collectAsStateWithLifecycle()
+    val followRelayHintsEnabled by viewModel.followRelayHintsForMissingNotes.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val snackbar = remember { SnackbarHostState() }
 
@@ -195,6 +199,89 @@ fun RelayManagementScreen(
                             Spacer(Modifier.width(6.dp))
                             Text("Import")
                         }
+                    }
+                }
+            }
+
+            // ── Missing notes & Fediverse bridges ─────────────────────────
+            item(key = "relay_missing_notes_bridges") {
+                val personalLower = remember(relayStatuses) {
+                    relayStatuses.keys.map { RelayPool.normalize(it).lowercase() }.toSet()
+                }
+                val allBridgesAdded = remember(personalLower) {
+                    Tunables.FEDIVERSE_BRIDGE_RELAYS.all {
+                        RelayPool.normalize(it).lowercase() in personalLower
+                    }
+                }
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                        .appBorder(1.dp, BonyColors.Rule)
+                        .background(BonyColors.Surface)
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(
+                        "Missing notes & Fediverse bridges",
+                        style = MaterialTheme.typography.titleSmall.copy(color = BonyColors.Text),
+                    )
+                    Text(
+                        "When a quoted or linked note isn't on your personal relays, T-Bone can check extra relays read-only for that lookup only.",
+                        style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                            Text(
+                                "Fediverse bridge relays (read-only)",
+                                style = MaterialTheme.typography.bodyMedium.copy(color = BonyColors.Text),
+                            )
+                            Text(
+                                "Check Mostr, Ditto, and Momostr relays when notes from Mastodon/ActivityPub bridges aren't on your relays.",
+                                style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
+                            )
+                        }
+                        Switch(
+                            checked = fediverseBridgesEnabled,
+                            onCheckedChange = viewModel::setFediverseBridgeRelaysEnabled,
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                            Text(
+                                "Follow relay hints for missing notes",
+                                style = MaterialTheme.typography.bodyMedium.copy(color = BonyColors.Text),
+                            )
+                            Text(
+                                "Temporarily query verified wss:// relay hints inside nevent, naddr, and quote tags (Tor-safe, read-only, never saved).",
+                                style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
+                            )
+                        }
+                        Switch(
+                            checked = followRelayHintsEnabled,
+                            onCheckedChange = viewModel::setFollowRelayHintsForMissingNotes,
+                        )
+                    }
+
+                    TextButton(
+                        onClick = viewModel::addFediverseBridgeRelays,
+                        enabled = !allBridgesAdded && !ui.busy,
+                        modifier = Modifier.fillMaxWidth().border(
+                            1.dp,
+                            BonyColors.Rule,
+                            appCornerShape(MaterialTheme.shapes.extraSmall, RoundedCornerShape(4.dp)),
+                        ),
+                    ) {
+                        Text(
+                            if (allBridgesAdded) "Fediverse bridge relays already in your list"
+                            else "Add Fediverse bridge relays to my relays",
+                        )
                     }
                 }
             }

@@ -24,20 +24,23 @@ import javax.inject.Singleton
 @Singleton
 class FeedSlotEngine @Inject constructor() {
 
+    private val lock = Any()
     private val runtimes = LinkedHashMap<String, SlotRuntime>()
 
     /** The slot currently on screen, or null before the first activation. */
+    @Volatile
     var activeSlotId: String? = null
         private set
 
-    fun runtime(slotId: String): SlotRuntime? = runtimes[slotId]
+    fun runtime(slotId: String): SlotRuntime? = synchronized(lock) { runtimes[slotId] }
 
-    fun runtimeFor(source: FeedSource): SlotRuntime? =
+    fun runtimeFor(source: FeedSource): SlotRuntime? = synchronized(lock) {
         runtimes.values.firstOrNull { it.source === source }
+    }
 
-    fun active(): SlotRuntime? = activeSlotId?.let { runtimes[it] }
+    fun active(): SlotRuntime? = synchronized(lock) { activeSlotId?.let { runtimes[it] } }
 
-    fun all(): List<SlotRuntime> = runtimes.values.toList()
+    fun all(): List<SlotRuntime> = synchronized(lock) { runtimes.values.toList() }
 
     /**
      * Creates (or refreshes) the runtime for every slot in [layout].
@@ -46,7 +49,7 @@ class FeedSlotEngine @Inject constructor() {
      * edits; only its source is refreshed, so renaming a tab or toggling another
      * slot's visibility does not throw away what is already loaded.
      */
-    fun sync(layout: HomeLayout): List<SlotRuntime> {
+    fun sync(layout: HomeLayout): List<SlotRuntime> = synchronized(lock) {
         val wanted = layout.slots.map { it.id }.toSet()
         runtimes.keys.toList().filterNot { it in wanted }.forEach { stale ->
             // A slot that left the layout must not keep a subscription alive.
@@ -66,7 +69,7 @@ class FeedSlotEngine @Inject constructor() {
                 runtimes[slot.id] = SlotRuntime(slotId = slot.id, source = slot.source)
             }
         }
-        return all()
+        runtimes.values.toList()
     }
 
     /**
@@ -74,7 +77,7 @@ class FeedSlotEngine @Inject constructor() {
      *
      * @param plan the exchange the planner produced for this slot right now.
      */
-    fun activate(slotId: String, plan: FeedPlan): SlotChange {
+    fun activate(slotId: String, plan: FeedPlan): SlotChange = synchronized(lock) {
         val target = runtimes[slotId]
             ?: return SlotChange.None
 
@@ -85,7 +88,7 @@ class FeedSlotEngine @Inject constructor() {
         if (plan is FeedPlan.Blocked) {
             // Even a blocked slot becomes the active slot: it is what the user
             // tapped, and its message is what the feed area should show.
-            closeEverythingExcept(slotId)
+            closeEverythingExceptLocked(slotId)
             activeSlotId = slotId
             previous?.let { if (it !== target) detach(it) }
             return SlotChange.Blocked(target, plan.reason)
@@ -100,12 +103,12 @@ class FeedSlotEngine @Inject constructor() {
         previous?.takeIf { it !== target }?.let { detach(it) }
         activeSlotId = slotId
 
-        val closed = all().filter { it !== target && it.subIds.isNotEmpty() }
+        val closed = runtimes.values.filter { it !== target && it.subIds.isNotEmpty() }
         closed.forEach { if (it !== previous) detach(it) }
 
-        target.assertExclusive(runtimes.values)
+        target.assertExclusive(runtimes.values.toList())
 
-        return if (previousId == slotId) {
+        if (previousId == slotId) {
             SlotChange.Reload(target, plan)
         } else {
             SlotChange.Switch(teardown = teardown, load = target, plan = plan, closeSlots = closed)
@@ -113,30 +116,31 @@ class FeedSlotEngine @Inject constructor() {
     }
 
     /** Marks a slot as loaded for [pubkey] and starts accepting live events. */
-    fun markLoaded(slotId: String, pubkey: String, anchor: Long = 0L) {
+    fun markLoaded(slotId: String, pubkey: String, anchor: Long = 0L) = synchronized(lock) {
         val runtime = runtimes[slotId] ?: return
         runtime.loadedPubkey = pubkey
         runtime.anchor = anchor
         runtime.canPageOlder = (runtime.plan as? FeedPlan.Query)?.canPageOlder == true
     }
 
-    fun markSettled(slotId: String) {
+    fun markSettled(slotId: String) = synchronized(lock) {
         val runtime = runtimes[slotId] ?: return
         runtime.settled = true
         runtime.flush()
     }
 
-    fun registerSub(slotId: String, subId: String) {
+    fun registerSub(slotId: String, subId: String) = synchronized(lock) {
         runtimes[slotId]?.subIds?.add(subId)
     }
 
-    fun forgetSub(subId: String) {
+    fun forgetSub(subId: String) = synchronized(lock) {
         runtimes.values.forEach { it.subIds.remove(subId) }
     }
 
     /** The slot that owns [subId], if any. */
-    fun slotForSub(subId: String): SlotRuntime? =
+    fun slotForSub(subId: String): SlotRuntime? = synchronized(lock) {
         runtimes.values.firstOrNull { subId in it.subIds }
+    }
 
     /**
      * True when an account switch invalidates what is on screen.
@@ -145,14 +149,15 @@ class FeedSlotEngine @Inject constructor() {
      * contents came from the previous account would otherwise reappear with that
      * account's people as soon as it was tapped.
      */
-    fun resetForAccountSwitch(): List<SlotRuntime> {
-        all().forEach { runtime ->
+    fun resetForAccountSwitch(): List<SlotRuntime> = synchronized(lock) {
+        val snapshot = runtimes.values.toList()
+        snapshot.forEach { runtime ->
             detach(runtime)
             runtime.clear()
             runtime.settled = false
             runtime.loadedPubkey = null
         }
-        return all()
+        snapshot
     }
 
     private fun detach(runtime: SlotRuntime) {
@@ -161,7 +166,7 @@ class FeedSlotEngine @Inject constructor() {
         runtime.eoseChunks.clear()
     }
 
-    private fun closeEverythingExcept(slotId: String) {
-        all().filter { it.slotId != slotId }.forEach { detach(it) }
+    private fun closeEverythingExceptLocked(slotId: String) {
+        runtimes.values.filter { it.slotId != slotId }.forEach { detach(it) }
     }
 }
