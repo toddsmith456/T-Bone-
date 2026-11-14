@@ -212,10 +212,7 @@ fun FeedScreen(
             profiles = profiles,
         )
 
-        /** How long a spinner waits before offering a retry, in ms. */
-private const val LOADING_RETRY_HINT_MS = 6_000L
-
-// ── Feed tab strip ───────────────────────────────────────────────────
+        // ── Feed tab strip ───────────────────────────────────────────────────
         // Rendered from the stored layout rather than from the FeedTab enum, so a
         // swapped, reordered or hidden feed shows up here with no other change.
         FeedTabStrip(
@@ -901,12 +898,14 @@ private fun FeedTabStrip(
                 transitionSpec = {
                     // A page left or right, clipped to the strip. `sizeTransform`
                     // is disabled so the strip cannot change height mid-slide.
+                    val slide = tween<androidx.compose.ui.unit.IntOffset>(SLIDE_FADE_MS)
+                    val fade = tween<Float>(SLIDE_FADE_MS)
                     if (targetState > initialState) {
-                        (slideInHorizontally { width -> width } + fadeIn(SLIDE_FADE_MS))
-                            .togetherWith(slideOutHorizontally { width -> -width } + fadeOut(SLIDE_FADE_MS))
+                        (slideInHorizontally(slide) { width -> width } + fadeIn(fade))
+                            .togetherWith(slideOutHorizontally(slide) { width -> -width } + fadeOut(fade))
                     } else {
-                        (slideInHorizontally { width -> -width } + fadeIn(SLIDE_FADE_MS))
-                            .togetherWith(slideOutHorizontally { width -> width } + fadeOut(SLIDE_FADE_MS))
+                        (slideInHorizontally(slide) { width -> -width } + fadeIn(fade))
+                            .togetherWith(slideOutHorizontally(slide) { width -> width } + fadeOut(fade))
                     }.using(SizeTransform(clip = true))
                 },
                 label = "feedTabWindow",
@@ -1035,6 +1034,9 @@ private fun FeedTabItem(
         }
     }
 }
+
+/** How long a spinner waits before offering a retry, in ms. */
+private const val LOADING_RETRY_HINT_MS = 6_000L
 
 /** How many feeds the strip shows at once — always, whatever the layout holds. */
 private const val VISIBLE_TABS = 4
