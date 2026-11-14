@@ -1,0 +1,45 @@
+
+> Configure project :app
+[fork] No release keystore configured (KEYSTORE_PATH/KEYSTORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD). Release builds will fall back to the debug key. For Play-store-quality releases set up a keystore — see docs/RELEASE.md.
+
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preBetaBuild UP-TO-DATE
+> Task :app:buildKotlinToolingMetadata UP-TO-DATE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:generateBetaBuildConfig UP-TO-DATE
+> Task :app:checkBetaAarMetadata UP-TO-DATE
+> Task :app:generateBetaResValues UP-TO-DATE
+> Task :app:mapBetaSourceSetPaths UP-TO-DATE
+> Task :app:generateBetaResources UP-TO-DATE
+> Task :app:mergeBetaResources UP-TO-DATE
+> Task :app:packageBetaResources UP-TO-DATE
+> Task :app:parseBetaLocalResources UP-TO-DATE
+> Task :app:createBetaCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksBeta UP-TO-DATE
+> Task :app:processBetaMainManifest UP-TO-DATE
+> Task :app:processBetaManifest UP-TO-DATE
+> Task :app:processBetaManifestForPackage UP-TO-DATE
+> Task :app:processBetaResources UP-TO-DATE
+> Task :app:kspBetaKotlin UP-TO-DATE
+> Task :app:compileBetaKotlin UP-TO-DATE
+> Task :app:javaPreCompileBeta UP-TO-DATE
+> Task :app:compileBetaJavaWithJavac UP-TO-DATE
+> Task :app:hiltAggregateDepsBeta UP-TO-DATE
+> Task :app:hiltJavaCompileBeta UP-TO-DATE
+> Task :app:transformBetaClassesWithAsm UP-TO-DATE
+> Task :app:bundleBetaClassesToRuntimeJar
+> Task :app:preBetaUnitTestBuild UP-TO-DATE
+> Task :app:processBetaJavaRes UP-TO-DATE
+> Task :app:bundleBetaClassesToCompileJar
+> Task :app:kspBetaUnitTestKotlin
+> Task :app:compileBetaUnitTestKotlin
+> Task :app:javaPreCompileBetaUnitTest
+> Task :app:compileBetaUnitTestJavaWithJavac NO-SOURCE
+> Task :app:hiltAggregateDepsBetaUnitTest
+> Task :app:hiltJavaCompileBetaUnitTest NO-SOURCE
+> Task :app:processBetaUnitTestJavaRes
+> Task :app:transformBetaUnitTestClassesWithAsm
+> Task :app:testBetaUnitTest
+
+BUILD SUCCESSFUL in 53s
+32 actionable tasks: 9 executed, 23 up-to-date

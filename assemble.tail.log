@@ -1,0 +1,146 @@
+Downloading https://services.gradle.org/distributions/gradle-8.7-bin.zip
+............10%.............20%.............30%.............40%............50%.............60%.............70%.............80%.............90%............100%
+
+Welcome to Gradle 8.7!
+
+Here are the highlights of this release:
+ - Compiling and testing with Java 22
+ - Cacheable Groovy script compilation
+ - New methods in lazy collection properties
+
+For more details see https://docs.gradle.org/8.7/release-notes.html
+
+Starting a Gradle Daemon (subsequent builds will be faster)
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preBetaBuild UP-TO-DATE
+> Task :app:generateBetaBuildConfig
+> Task :app:checkBetaAarMetadata
+> Task :app:generateBetaResValues
+> Task :app:mapBetaSourceSetPaths
+> Task :app:generateBetaResources
+> Task :app:mergeBetaResources
+> Task :app:packageBetaResources
+> Task :app:parseBetaLocalResources
+> Task :app:createBetaCompatibleScreenManifests
+> Task :app:extractDeepLinksBeta
+
+> Task :app:processBetaMainManifest
+/home/runner/work/T-Bone-/T-Bone-/app/src/main/AndroidManifest.xml:5:5-93 Warning:
+	uses-permission#android.permission.BLUETOOTH_SCAN was tagged at AndroidManifest.xml:5 to remove other declarations but no other declaration present
+/home/runner/work/T-Bone-/T-Bone-/app/src/main/AndroidManifest.xml:6:5-96 Warning:
+	uses-permission#android.permission.BLUETOOTH_CONNECT was tagged at AndroidManifest.xml:6 to remove other declarations but no other declaration present
+/home/runner/work/T-Bone-/T-Bone-/app/src/main/AndroidManifest.xml:7:5-98 Warning:
+	uses-permission#android.permission.BLUETOOTH_ADVERTISE was tagged at AndroidManifest.xml:7 to remove other declarations but no other declaration present
+/home/runner/work/T-Bone-/T-Bone-/app/src/main/AndroidManifest.xml:8:5-98 Warning:
+	uses-permission#android.permission.NEARBY_WIFI_DEVICES was tagged at AndroidManifest.xml:8 to remove other declarations but no other declaration present
+/home/runner/work/T-Bone-/T-Bone-/app/src/main/AndroidManifest.xml:9:5-90 Warning:
+	uses-permission#android.permission.UWB_RANGING was tagged at AndroidManifest.xml:9 to remove other declarations but no other declaration present
+
+> Task :app:processBetaManifest
+> Task :app:processBetaManifestForPackage
+> Task :app:processBetaResources
+> Task :app:kspBetaKotlin
+w: [ksp] /home/runner/work/T-Bone-/T-Bone-/app/src/main/kotlin/social/tbone/db/AppDatabase.kt:28: Schema export directory was not provided to the annotation processor so Room cannot export the schema. You can either provide `room.schemaLocation` annotation processor argument by applying the Room Gradle plugin (id 'androidx.room') OR set exportSchema to false.
+
+> Task :app:compileBetaKotlin
+w: file:///home/runner/work/T-Bone-/T-Bone-/app/src/main/kotlin/social/tbone/calendar/CalendarCrypto.kt:83:14 'val isInsideSecureHardware: Boolean' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/T-Bone-/T-Bone-/app/src/main/kotlin/social/tbone/media/MediaProcessor.kt:449:5 Annotation 'androidx.media3.common.util.UnstableApi' is not an opt-in requirement marker; therefore, its usage in @OptIn is ignored.
+w: file:///home/runner/work/T-Bone-/T-Bone-/app/src/main/kotlin/social/tbone/nostr/geohash/GeohashKeyDerivation.kt:76:42 Only safe (?.) or non-null asserted (!!.) calls are allowed on a nullable receiver of type 'java.security.SecureRandom?'.
+w: file:///home/runner/work/T-Bone-/T-Bone-/app/src/main/kotlin/social/tbone/notes/NotesCrypto.kt:101:14 'val isInsideSecureHardware: Boolean' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/T-Bone-/T-Bone-/app/src/main/kotlin/social/tbone/ui/feed/NoteActionsMenu.kt:94:5 This declaration needs opt-in. Its usage should be marked with '@kotlinx.serialization.ExperimentalSerializationApi' or '@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)'
+w: file:///home/runner/work/T-Bone-/T-Bone-/app/src/main/kotlin/social/tbone/ui/feed/NoteActionsMenu.kt:291:51 '@property:Deprecated(...) val Icons.Outlined.OpenInNew: ImageVector' is deprecated. Use the AutoMirrored version at Icons.AutoMirrored.Outlined.OpenInNew.
+w: file:///home/runner/work/T-Bone-/T-Bone-/app/src/main/kotlin/social/tbone/ui/feed/NoteCard.kt:615:24 Condition is always 'true'.
+w: file:///home/runner/work/T-Bone-/T-Bone-/app/src/main/kotlin/social/tbone/ui/toolbox/UpdateCenterScreen.kt:205:21 '@Deprecated(...) @Composable() @ComposableTarget(...) fun LinearProgressIndicator(progress: Float, modifier: Modifier = ..., color: Color = ..., trackColor: Color = ..., strokeCap: StrokeCap = ...): Unit' is deprecated. Use the overload that takes `progress` as a lambda.
+w: file:///home/runner/work/T-Bone-/T-Bone-/app/src/main/kotlin/social/tbone/ui/toolbox/WalletToolScreen.kt:92:9 '@Deprecated(...) @Composable() @ComposableTarget(...) fun Divider(modifier: Modifier = ..., thickness: Dp = ..., color: Color = ...): Unit' is deprecated. Renamed to HorizontalDivider.
+w: file:///home/runner/work/T-Bone-/T-Bone-/app/src/main/kotlin/social/tbone/updates/UpdateManager.kt:102:114 '@Deprecated(...) static field GET_SIGNATURES: Int' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/T-Bone-/T-Bone-/app/src/main/kotlin/social/tbone/updates/UpdateManager.kt:384:21 '@Deprecated(...) field versionCode: Int' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/T-Bone-/T-Bone-/app/src/main/kotlin/social/tbone/updates/UpdateManager.kt:385:62 '@Deprecated(...) field versionCode: Int' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/T-Bone-/T-Bone-/app/src/main/kotlin/social/tbone/updates/UpdateManager.kt:466:40 '@Deprecated(...) static field ACTION_INSTALL_PACKAGE: String' is deprecated. Deprecated in Java.
+w: file:///home/runner/work/T-Bone-/T-Bone-/app/src/main/kotlin/social/tbone/updates/UpdateManager.kt:514:61 '@Deprecated(...) static field ACTION_MEDIA_SCANNER_SCAN_FILE: String' is deprecated. Deprecated in Java.
+
+> Task :app:buildKotlinToolingMetadata
+> Task :app:javaPreCompileBeta
+> Task :app:compileBetaJavaWithJavac
+> Task :app:extractProguardFiles
+> Task :app:hiltAggregateDepsBeta
+> Task :app:hiltJavaCompileBeta
+> Task :app:generateBetaLintVitalReportModel
+> Task :app:lintVitalAnalyzeBeta
+> Task :app:lintVitalReportBeta
+> Task :app:lintVitalBeta
+> Task :app:mergeBetaJniLibFolders
+> Task :app:mergeBetaNativeLibs
+
+> Task :app:stripBetaDebugSymbols
+Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so, libdatastore_shared_counter.so, libtensorflowlite_jni.so.
+
+> Task :app:extractBetaNativeSymbolTables
+> Task :app:mergeBetaNativeDebugMetadata NO-SOURCE
+> Task :app:mergeBetaArtProfile
+> Task :app:expandBetaL8ArtProfileWildcards
+> Task :app:checkBetaDuplicateClasses
+> Task :app:transformBetaClassesWithAsm
+> Task :app:expandBetaArtProfileWildcards
+> Task :app:mergeBetaGeneratedProguardFiles
+> Task :app:processBetaJavaRes
+> Task :app:mergeBetaJavaResource
+> Task :app:mergeBetaStartupProfile
+> Task :app:minifyBetaWithR8
+
+> Task :app:l8DexDesugarLibBeta
+Info: Proguard configuration rule does not match anything: `-keepclassmembers class j$.util.concurrent.ConcurrentHashMap$TreeBin {
+  int lockState;
+}`
+Info: Proguard configuration rule does not match anything: `-keepclassmembers class j$.util.concurrent.ConcurrentHashMap {
+  int sizeCtl;
+  int transferIndex;
+  long baseCount;
+  int cellsBusy;
+}`
+Info: Proguard configuration rule does not match anything: `-keepclassmembers class j$.util.concurrent.ConcurrentHashMap$CounterCell {
+  long value;
+}`
+Info: Proguard configuration rule does not match anything: `-keepclassmembers enum * {
+  public static **[] values();
+  public static ** valueOf(java.lang.String);
+  public static final synthetic <fields>;
+}`
+Info: Proguard configuration rule does not match anything: `-keepclassmembers class j$.util.IntSummaryStatistics {
+  long count;
+  long sum;
+  int min;
+  int max;
+}`
+Info: Proguard configuration rule does not match anything: `-keepclassmembers class j$.util.LongSummaryStatistics {
+  long count;
+  long sum;
+  long min;
+  long max;
+}`
+Info: Proguard configuration rule does not match anything: `-keepclassmembers class j$.util.DoubleSummaryStatistics {
+  long count;
+  double sum;
+  double min;
+  double max;
+}`
+
+> Task :app:compileBetaArtProfile
+> Task :app:mergeBetaShaders
+> Task :app:compileBetaShaders NO-SOURCE
+> Task :app:generateBetaAssets UP-TO-DATE
+> Task :app:mergeBetaAssets
+> Task :app:compressBetaAssets
+> Task :app:extractBetaVersionControlInfo
+> Task :app:optimizeBetaResources
+> Task :app:collectBetaDependencies
+> Task :app:sdkBetaDependencyData
+> Task :app:validateSigningBeta
+> Task :app:writeBetaAppMetadata
+> Task :app:writeBetaSigningConfigVersions
+> Task :app:packageBeta
+> Task :app:createBetaApkListingFileRedirect
+> Task :app:assembleBeta
+
+BUILD SUCCESSFUL in 8m 54s
+54 actionable tasks: 54 executed
