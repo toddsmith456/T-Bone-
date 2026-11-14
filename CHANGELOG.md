@@ -23,9 +23,6 @@ All notable changes to this fork are documented here. Format follows
 - A feed waiting on relays now offers a retry after six seconds instead of leaving a bare spinner, and an empty feed shows the reason it is empty rather than a generic "no notes yet".
 - The active tab's border no longer shrinks its column, which could leave four bordered tabs a fraction of a pixel short of the strip and read as misalignment.
 
-### Fixed
-- (describe fixes here)
-
 
 ## [0.5.6] — 2026-11-11
 

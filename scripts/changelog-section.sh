@@ -38,6 +38,12 @@ if not match:
     sys.exit(f"CHANGELOG.md has no '## [{version}]' section")
 
 body = match.group(1).strip()
+
+# A stub from make-release.sh must never reach a published release body. This
+# shipped once (0.5.7) as an empty "### Fixed / (describe fixes here)" section,
+# so the check is now here rather than in a reviewer's head.
+if "(describe" in body:
+    sys.exit(f"CHANGELOG.md section for {version} still contains a placeholder")
 if not body:
     sys.exit(f"CHANGELOG.md section for {version} is empty")
 
