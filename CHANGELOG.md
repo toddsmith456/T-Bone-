@@ -5,6 +5,28 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.7] — 2026-11-14
+
+### Added
+- **Feed viewer tool**, first entry in the toolbox. Any feed can be read as a tab without being saved to the home screen: your follows, the clock feed at any window from one hour to a day, the suggested accounts, your global relays, a hashtag, another relay's own timeline, a hand-picked group of people, or polls. Each type keeps its own controls next to it — hour chips for the clock, a validating address field for a relay, a paste box for npubs or hex keys for a group — instead of sending you to settings. Tabs close individually, closing a tab drops its relay subscriptions and its notes, and nothing the viewer opens is written to your home layout or your note cache.
+- The feeds tool's own tab strip and the home screen's share the same relay planning, mute list, hidden words and NSFW rules, so a note hidden in one is hidden in the other.
+- Home feed layouts can be carried between devices by the encrypted backup: export and restore now include the home tab layout, and a backup from an older build restores without disturbing the tabs already on the device.
+
+### Changed
+- **The home tab strip shows four feeds at a time, always.** A fifth feed no longer squeezes five tabs into the width of four; instead a single narrow arrow appears on the side that still has a feed behind it, and the strip slides one page when tapped. The arrow is 16 dp wide and the tabs animate, so a layout with more than four feeds looks and behaves exactly like one with four until you page across.
+- The strip never scrolls back past the first feed: the left arrow only exists once you have moved right.
+- Adding a feed from the feeds tool no longer lists the feeds already on your home screen; that section repeated rows you can already reach from the home screen and cost vertical space on every visit.
+
+### Fixed
+- **The feed could spin forever with every relay showing connected.** Three of the four feed loaders had a safety-net timeout that stopped the loader waiting but never cleared the loading state, so any load that ended without producing notes left the spinner turning indefinitely; a second load starting before the first finished could also cancel the first one's timer and start a fresh 15-second wait. All four loaders, and the new feed viewer, now share one watchdog: a load that finishes always clears the spinner, a load that times out always ends with a stated reason instead of a spinner, and a superseded load can no longer publish over a newer one.
+- The Global feed no longer reloads when its relay set is re-emitted unchanged, which was one of the ways the spinner above could be retriggered.
+- A feed waiting on relays now offers a retry after six seconds instead of leaving a bare spinner, and an empty feed shows the reason it is empty rather than a generic "no notes yet".
+- The active tab's border no longer shrinks its column, which could leave four bordered tabs a fraction of a pixel short of the strip and read as misalignment.
+
+### Fixed
+- (describe fixes here)
+
+
 ## [0.5.6] — 2026-11-11
 
 ### Added

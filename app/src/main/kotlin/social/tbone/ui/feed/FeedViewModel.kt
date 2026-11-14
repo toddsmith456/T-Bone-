@@ -396,6 +396,15 @@ class FeedViewModel @Inject constructor(
     // place rather than trickling in one-by-one. After settling, live events stream in.
     @Volatile private var feedSettled = false
     @Volatile private var followsReceived = false
+
+    /**
+     * One per feed load. Every loader arms it and every settle path disarms it.
+     *
+     * Before this existed each loader had its own ad-hoc timeout, three of which
+     * settled the feed without clearing `isLoading` — the infinite spinner. See
+     * [LoadWatchdog] for the full failure and the two ways it showed up.
+     */
+    private val loadWatchdog = LoadWatchdog(viewModelScope, "No notes came back in time.")
     private val pendingBuffer = ConcurrentLinkedQueue<Event>()
 
     init {
@@ -459,11 +468,20 @@ class FeedViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            appSettings.globalActiveRelays.collect {
-                if (feedVisible && _currentFeed.value == FeedTab.GLOBAL && appSettings.initialized.value) {
-                    activeAccount.value?.let { account -> loadGlobalFeed(account) }
+            appSettings.globalActiveRelays
+                // Reload only when the SET actually changes. Without this, any
+                // re-emission restarts the global load; a reload that lands
+                // before the previous one settles cancels its safety net, and
+                // the feed spins with every relay connected. That is the
+                // reported hang, reproduced by opening the Global tab while a
+                // relay-set edit is still settling.
+                .map { relays -> relays.map(RelayPool::normalize).toSet() }
+                .distinctUntilChanged()
+                .collect {
+                    if (feedVisible && _currentFeed.value == FeedTab.GLOBAL && appSettings.initialized.value) {
+                        activeAccount.value?.let { account -> loadGlobalFeed(account) }
+                    }
                 }
-            }
         }
 
         // Re-filter the retained raw feed whenever any content rule changes.
@@ -629,20 +647,36 @@ class FeedViewModel @Inject constructor(
                 slotEngine.registerSub(runtime.slotId, id)
             }
             slotEngine.markLoaded(runtime.slotId, currentPubkeyForSlots(), query.anchor ?: 0L)
-            viewModelScope.launch {
-                delay(SETTLE_TIMEOUT_MS)
-                if (!runtime.settled) settleSlot(runtime)
-            }
+            loadWatchdog.start(
+                timeoutMs = SETTLE_TIMEOUT_MS,
+                isEmpty = { runtime.events.isEmpty() },
+                onTimeout = { nothingArrived ->
+                    if (!runtime.settled) settleSlot(runtime, sayNothingArrived = nothingArrived)
+                },
+            )
         }
     }
 
     private fun currentPubkeyForSlots(): String = activeAccount.value?.pubkey.orEmpty()
 
-    /** Settles a slot: reveals what it buffered and stops the spinner. */
-    private fun settleSlot(runtime: SlotRuntime) {
+    /**
+     * Settles a slot: reveals what it buffered and stops the spinner.
+     *
+     * `sayNothingArrived` is what stops this being a silent empty screen: a
+     * people or relay feed whose relays answered nothing used to settle to an
+     * empty list with no explanation, which reads as "the feed is broken".
+     */
+    private fun settleSlot(runtime: SlotRuntime, sayNothingArrived: Boolean = false) {
         slotEngine.markSettled(runtime.slotId)
         publishSlot(runtime)
-        _uiState.update { it.copy(isLoading = false, error = null) }
+        endLoad(
+            if (sayNothingArrived && runtime.events.isEmpty() && runtime.slotId == slotEngine.activeSlotId) {
+                "No notes came back for this feed. Its relays may be rate-limiting this client, " +
+                    "or nobody in it has posted recently."
+            } else {
+                null
+            },
+        )
     }
 
     /**
@@ -660,6 +694,9 @@ class FeedViewModel @Inject constructor(
 
     /** Shows a slot's message instead of a spinner that never resolves. */
     private fun clearFeedForBlocked(reason: String) {
+        // A blocked feed is a finished load, not a failed one: the watchdog must
+        // not later replace the reason with a timeout message.
+        loadWatchdog.finish()
         loadJob?.cancel()
         collectJob?.cancel()
         refreshBlockedSlots()
@@ -1298,15 +1335,28 @@ class FeedViewModel @Inject constructor(
 
             collectJob = viewModelScope.launch(Dispatchers.Default) { collectMessages() }
 
-            // Safety net: flush buffer and clear spinner after 15s regardless
-            launch {
-                delay(15_000)
-                if (!feedSettled) {
-                    feedSettled = true
-                    flushBuffer()
-                }
-                _uiState.update { if (it.isLoading) it.copy(isLoading = false) else it }
-            }
+            // Safety net. The old version cleared the spinner as a separate,
+            // later statement and could be skipped entirely when a newer load
+            // took over; the watchdog is generation-guarded, so a superseded
+            // timer cannot publish over a newer load and a live one always ends.
+            loadWatchdog.start(
+                timeoutMs = HOME_LOAD_TIMEOUT_MS,
+                isEmpty = { _uiState.value.events.isEmpty() },
+                onTimeout = { nothingArrived ->
+                    if (!feedSettled) {
+                        feedSettled = true
+                        flushBuffer()
+                    }
+                    endLoad(
+                        if (nothingArrived) {
+                            "No notes arrived. Your follows may be on relays that are not answering, " +
+                                "or the follow list has not been downloaded yet — pull to refresh."
+                        } else {
+                            null
+                        },
+                    )
+                },
+            )
         }
     }
 
@@ -1398,10 +1448,22 @@ class FeedViewModel @Inject constructor(
             }
         }
 
-        viewModelScope.launch {
-            delay(GLOBAL_PAGE_TIMEOUT_MS)
-            if (feedVisible && _currentFeed.value == FeedTab.GLOBAL && feedSubId == initialSubId) settleGlobalInitial()
-        }
+        loadWatchdog.start(
+            timeoutMs = GLOBAL_PAGE_TIMEOUT_MS,
+            isEmpty = { _uiState.value.events.isEmpty() },
+            onTimeout = { nothingArrived ->
+                if (feedVisible && _currentFeed.value == FeedTab.GLOBAL && feedSubId == initialSubId) {
+                    settleGlobalInitial(
+                        if (nothingArrived) {
+                            "Your Global relays are connected but sent nothing back. They may be " +
+                                "rate-limiting this client — try again in a minute."
+                        } else {
+                            null
+                        },
+                    )
+                }
+            },
+        )
     }
 
     /**
@@ -1505,10 +1567,19 @@ class FeedViewModel @Inject constructor(
                 label = "clock",
             )
 
-            viewModelScope.launch {
-                delay(SETTLE_TIMEOUT_MS)
-                settleWindowFeed()
-            }
+            loadWatchdog.start(
+                timeoutMs = SETTLE_TIMEOUT_MS,
+                isEmpty = { _uiState.value.events.isEmpty() },
+                onTimeout = { nothingArrived ->
+                    settleWindowFeed(
+                        if (nothingArrived) {
+                            "Nothing in this window. Try a longer window, or pull to refresh."
+                        } else {
+                            null
+                        },
+                    )
+                },
+            )
         }
     }
 
@@ -1611,36 +1682,55 @@ class FeedViewModel @Inject constructor(
             suggestedSubIds.add(id)
         }
 
-        viewModelScope.launch {
-            delay(SUGGESTED_TIMEOUT_MS)
-            settleSuggested()
-        }
+        loadWatchdog.start(
+            timeoutMs = SUGGESTED_TIMEOUT_MS,
+            isEmpty = { _uiState.value.events.isEmpty() },
+            onTimeout = { nothingArrived ->
+                settleSuggested(
+                    if (nothingArrived) {
+                        "None of the suggested accounts answered. Their relays may be blocking " +
+                            "this client — pull to refresh, or read your follow feed instead."
+                    } else {
+                        null
+                    },
+                )
+            },
+        )
     }
 
     /** Flushes once every chunk has been answered (or the timeout wins). */
-    private fun settleSuggested() {
-        if (feedSettled) return
-        feedSettled = true
-        // One-shot feed: nine merged slices are enough, no need to keep nine
-        // live subscriptions open (and re-flushing) for the rest of the session.
-        suggestedSubIds.forEach { pool.unsubscribe(it) }
-        suggestedSubIds.clear()
-        flushBuffer()
+    private fun settleSuggested(emptyMessage: String? = null) {
+        if (!feedSettled) {
+            feedSettled = true
+            // One-shot feed: nine merged slices are enough, no need to keep nine
+            // live subscriptions open (and re-flushing) for the rest of the session.
+            suggestedSubIds.forEach { pool.unsubscribe(it) }
+            suggestedSubIds.clear()
+            flushBuffer()
+        }
+        endLoad(emptyMessage)
         _uiState.update {
             it.copy(
-                isLoading = false,
                 suggestedLoading = false,
                 suggestedAuthors = synchronized(feedEvents) { feedEvents.map { e -> e.pubkey }.toSet().size },
             )
         }
     }
 
-    /** Shared settle for the clock feed (single subscription + EOSE/timeout). */
-    private fun settleWindowFeed() {
-        if (feedSettled) return
-        feedSettled = true
-        flushBuffer()
-        _uiState.update { it.copy(isLoading = false) }
+    /**
+     * Shared settle for the clock feed (single subscription + EOSE/timeout).
+     *
+     * The old version returned early when the feed was already settled, which
+     * meant a second call could leave `isLoading` set; and it never cleared the
+     * spinner on the timeout path. Both are now handled by [endLoad], which is
+     * idempotent and is the only thing that clears loading for this feed.
+     */
+    private fun settleWindowFeed(emptyMessage: String? = null) {
+        if (!feedSettled) {
+            feedSettled = true
+            flushBuffer()
+        }
+        endLoad(emptyMessage)
     }
 
     /** Bounded kind-3 fetch when the account has no locally cached follows. */
@@ -1657,7 +1747,7 @@ class FeedViewModel @Inject constructor(
         return best?.parsedTags?.pubkeys ?: emptyList()
     }
 
-    private fun settleGlobalInitial() {
+    private fun settleGlobalInitial(emptyMessage: String? = null) {
         if (!feedSettled) {
             feedSettled = true
             flushBuffer()
@@ -1665,9 +1755,8 @@ class FeedViewModel @Inject constructor(
         val oldest = synchronized(feedEvents) { feedEvents.lastOrNull()?.createdAt }
         globalOlderCursor = oldest
         val canLoadOlder = synchronized(feedEvents) { feedEvents.size >= GLOBAL_PAGE_SIZE }
-        _uiState.update {
-            it.copy(isLoading = false, globalCanLoadOlder = canLoadOlder)
-        }
+        endLoad(emptyMessage)
+        _uiState.update { it.copy(globalCanLoadOlder = canLoadOlder) }
     }
 
     private fun nowSeconds(): Long = System.currentTimeMillis() / 1000L
@@ -2000,6 +2089,26 @@ class FeedViewModel @Inject constructor(
     }
 
     /** Flush buffered events into the UI all at once, sorted by recency, then scroll to top. */
+    /**
+     * Ends a load: stops the watchdog, clears the spinner and, when nothing
+     * arrived, explains why instead of leaving an empty screen that looks broken.
+     *
+     * Every settle path funnels through here. That is the whole point — the
+     * previous code cleared `isLoading` in some branches and not others, and the
+     * branches that forgot are exactly the ones that could hang.
+     */
+    private fun endLoad(emptyMessage: String? = null) {
+        loadWatchdog.finish()
+        val empty = _uiState.value.events.isEmpty()
+        _uiState.update { state ->
+            when {
+                empty && emptyMessage != null -> state.copy(isLoading = false, error = emptyMessage)
+                empty -> state.copy(isLoading = false)
+                else -> state.copy(isLoading = false, error = null)
+            }
+        }
+    }
+
     private fun flushBuffer() {
         val events = pendingBuffer.toList().also { pendingBuffer.clear() }
         if (events.isEmpty()) return
@@ -2193,6 +2302,14 @@ class FeedViewModel @Inject constructor(
         private const val CLOCK_PAGE_SIZE = 100
         /** How long HOME/CLOCK wait for EOSE before showing what arrived. */
         private const val SETTLE_TIMEOUT_MS = 12_000L
+
+        /**
+         * How long the follow feed waits before it says something instead of
+         * spinning. Shorter than the old 15s: two seconds of that was never
+         * useful, and a spinner that resolves into an explanation is better than
+         * one that resolves into nothing.
+         */
+        private const val HOME_LOAD_TIMEOUT_MS = 14_000L
         /** The suggested feed fans out over ~9 chunks; give the slowest one time. */
         private const val SUGGESTED_TIMEOUT_MS = 14_000L
 

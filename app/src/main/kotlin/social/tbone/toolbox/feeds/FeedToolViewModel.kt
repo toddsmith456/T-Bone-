@@ -13,7 +13,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -25,10 +24,9 @@ import social.tbone.di.GlobalFeedPool
 import social.tbone.feed.TimelineSupport
 import social.tbone.home.FeedPlan
 import social.tbone.home.FeedPlanner
-import social.tbone.home.HomeLayoutRepository
 import social.tbone.home.PoolChoice
+import social.tbone.ui.feed.LoadWatchdog
 import social.tbone.nostr.Event
-import social.tbone.nostr.Filter
 import social.tbone.nostr.ProfileContent
 import social.tbone.nostr.relay.RelayMessage
 import social.tbone.nostr.relay.RelayPool
@@ -36,7 +34,6 @@ import social.tbone.profile.ProfileRepository
 import social.tbone.settings.AppSettings
 import social.tbone.lists.MuteListRepository
 import social.tbone.settings.ContentFilter
-import timber.log.Timber
 import java.util.UUID
 import javax.inject.Inject
 
@@ -71,7 +68,6 @@ class FeedToolViewModel @Inject constructor(
     private val appSettings: AppSettings,
     private val planner: FeedPlanner,
     private val muteRepository: MuteListRepository,
-    homeLayouts: HomeLayoutRepository,
     private val pool: RelayPool,
     @GlobalFeedPool private val globalPool: RelayPool,
 ) : ViewModel() {
@@ -97,16 +93,17 @@ class FeedToolViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(FeedToolUiState())
     val uiState: StateFlow<FeedToolUiState> = _uiState.asStateFlow()
 
-    /** The user's saved feeds, offered as one-tap tabs. */
-    val savedFeeds: StateFlow<List<social.tbone.home.FeedSource>> = homeLayouts.layout
-        .map { layout -> layout.slots.map { it.source } }
-        .distinctUntilChanged()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
     val profiles: StateFlow<Map<String, ProfileContent>> = profileRepository.profiles
 
     private val _scrollToTop = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val scrollToTop: SharedFlow<Unit> = _scrollToTop.asSharedFlow()
+
+    /**
+     * Guards the active tab's load, so a relay that accepts the REQ and then
+     * says nothing cannot leave the viewer spinning. Same failure, same fix as
+     * the home feed's: the timeout is the only thing allowed to end a load.
+     */
+    private val loadWatchdog = LoadWatchdog(viewModelScope, "No notes came back in time.")
 
     /** The collector for the active tab. Only one runs at a time. */
     private var collectJob: Job? = null
@@ -191,6 +188,7 @@ class FeedToolViewModel @Inject constructor(
     }
 
     fun closeAll() {
+        loadWatchdog.finish()
         _tabs.value.forEach { closeTabSubscriptions(it) }
         _tabs.value = emptyList()
         _activeTabId.value = null
@@ -238,6 +236,27 @@ class FeedToolViewModel @Inject constructor(
             it.copy(isLoading = tab.events.isEmpty(), error = null, blockedReason = null)
         }
 
+        loadWatchdog.start(
+            timeoutMs = SETTLE_TIMEOUT_MS + 1_500L,
+            isEmpty = { tab.events.isEmpty() },
+            onTimeout = { nothingArrived ->
+                tab.settled = true
+                tab.flush()
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        events = applyContentFilter(tab.snapshot(MAX_EVENTS)),
+                        error = if (nothingArrived) {
+                            "This relay accepted the request but sent nothing back. " +
+                                "It may be rate-limiting this client — try again, or pick a different relay."
+                        } else {
+                            null
+                        },
+                    )
+                }
+            },
+        )
+
         viewModelScope.launch(Dispatchers.Default) {
             val plan = planner.plan(
                 source = tab.source,
@@ -246,6 +265,7 @@ class FeedToolViewModel @Inject constructor(
             )
             when (plan) {
                 is FeedPlan.Blocked -> {
+                    loadWatchdog.finish()
                     tab.blockedReason = plan.reason
                     tab.settled = true
                     _uiState.update {
@@ -324,7 +344,10 @@ class FeedToolViewModel @Inject constructor(
     private fun settle(tab: FeedTabState) {
         tab.settled = true
         tab.flush()
-        if (_activeTabId.value == tab.tabId) publish(tab)
+        if (_activeTabId.value == tab.tabId) {
+            loadWatchdog.finish()
+            publish(tab)
+        }
     }
 
     /**
@@ -421,6 +444,7 @@ class FeedToolViewModel @Inject constructor(
     // ── Publishing ───────────────────────────────────────────────────────────
 
     private fun publish(tab: FeedTabState) {
+        loadWatchdog.finish()
         val raw = tab.snapshot(MAX_EVENTS)
         viewModelScope.launch {
             _uiState.update {

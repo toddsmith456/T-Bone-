@@ -37,7 +37,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import social.tbone.home.FeedSource
 import social.tbone.ui.feed.FeedTabIcons
 import social.tbone.ui.feed.NoteCard
 import social.tbone.ui.theme.BonyColors
@@ -182,8 +181,16 @@ fun FeedViewerScreen(
                     CircularProgressIndicator(color = BonyColors.Accent, strokeWidth = 1.dp)
                 }
                 state.events.isEmpty() -> CenteredMessage(
-                    title = "nothing in this feed",
-                    hint = "pull to refresh, or open a different feed",
+                    // The view model's explanation wins over the generic one: a
+                    // relay that accepted the request and said nothing is a
+                    // different problem from a feed that is genuinely quiet, and
+                    // telling them apart is the whole point of the watchdog.
+                    title = state.error ?: "nothing in this feed",
+                    hint = if (state.error != null) {
+                        "this is not a loading problem — the relays answered and had nothing to give"
+                    } else {
+                        "pull to refresh, or open a different feed"
+                    },
                 )
                 else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                     items(state.events, key = { it.id }) { event ->

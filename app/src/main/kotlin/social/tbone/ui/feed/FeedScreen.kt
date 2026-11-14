@@ -28,14 +28,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.outlined.Construction
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -59,7 +52,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -86,17 +78,16 @@ import social.tbone.ui.theme.BonyType
 import dev.youniversal.theme.YouniversalEmptyState
 import social.tbone.ui.theme.appCornerShape
 import social.tbone.ui.theme.feedPageBackground
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalHapticFeedback
-import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -221,7 +212,10 @@ fun FeedScreen(
             profiles = profiles,
         )
 
-        // ── Feed tab strip ───────────────────────────────────────────────────
+        /** How long a spinner waits before offering a retry, in ms. */
+private const val LOADING_RETRY_HINT_MS = 6_000L
+
+// ── Feed tab strip ───────────────────────────────────────────────────
         // Rendered from the stored layout rather than from the FeedTab enum, so a
         // swapped, reordered or hidden feed shows up here with no other change.
         FeedTabStrip(
@@ -367,8 +361,37 @@ fun FeedScreen(
         ) {
             when {
                 uiState.isLoading && uiState.events.isEmpty() -> {
+                    // The spinner is always accompanied by a way out. A feed that
+                    // is waiting on relays looks identical to a feed that has
+                    // silently died, and the user reported exactly that: relays
+                    // all connected, spinner forever. After a few seconds the
+                    // retry affordance appears so the wait is never a dead end.
+                    var showRetry by remember(uiState.isLoading) { mutableStateOf(false) }
+                    LaunchedEffect(uiState.isLoading) {
+                        if (uiState.isLoading) {
+                            delay(LOADING_RETRY_HINT_MS)
+                            showRetry = true
+                        }
+                    }
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = BonyColors.Accent, strokeWidth = 1.dp)
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator(color = BonyColors.Accent, strokeWidth = 1.dp)
+                            if (showRetry) {
+                                Spacer(Modifier.height(14.dp))
+                                Text(
+                                    text = "still waiting on relays…",
+                                    style = BonyType.caption.copy(color = BonyColors.TextMute),
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    text = "try again",
+                                    style = BonyType.tag.copy(color = BonyColors.Accent),
+                                    modifier = Modifier
+                                        .clickable { isRefreshing = true; viewModel.refresh() }
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                )
+                            }
+                        }
                     }
                 }
                 uiState.events.isEmpty() && !isRefreshing -> {
@@ -376,7 +399,7 @@ fun FeedScreen(
                         if (YouniversalTheme.enabled) {
                             // Kit empty state: designed, centered, on-palette.
                             YouniversalEmptyState(
-                                title = when (currentFeed) {
+                                title = uiState.error ?: when (currentFeed) {
                                     FeedTab.CLOCK -> "nothing in this window"
                                     FeedTab.SUGGESTED -> "no notes from these accounts"
                                     else -> "no notes yet"
@@ -391,12 +414,14 @@ fun FeedScreen(
                         }
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
-                                text = when (currentFeed) {
+                                text = uiState.error ?: when (currentFeed) {
                                     FeedTab.CLOCK -> "nothing in this window"
                                     FeedTab.SUGGESTED -> "no notes from these accounts"
                                     else -> "no notes yet"
                                 },
-                                style = BonyType.meta.copy(color = BonyColors.TextMute),
+                                style = BonyType.meta.copy(color = if (uiState.error != null) BonyColors.Warn else BonyColors.TextMute),
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 22.dp),
                             )
                             if (currentFeed == FeedTab.SUGGESTED) {
                                 Text(
@@ -778,6 +803,28 @@ private fun TorPill(torEnabled: Boolean, connected: Boolean, onClick: () -> Unit
  * position as soon as the finger lifts. A flick is converted into exactly one
  * tab of movement, whatever its speed, so the row can never overshoot.
  */
+/**
+ * The home tab strip: a fixed four-column window with a single compact arrow on
+ * whichever side still has feeds to reach.
+ *
+ * ### The rules this obeys
+ *  - **Four at a time, always.** Never five squashed into four, never a partial
+ *    tab peeking in at the edge. Five feeds means four on screen and one behind
+ *    the arrow, not five columns.
+ *  - **It never scrolls backwards past the first feed.** The window starts at
+ *    index 0 and the left arrow only exists once you have moved right, so there
+ *    is nothing to slide back into.
+ *  - **The arrow costs nothing.** It is a margin-less column the width of a
+ *    glyph, not a button with padding, so the four tabs keep the full width they
+ *    had when there were only four. Appearing and disappearing shifts the track
+ *    by exactly that width, which is why the tabs animate rather than jump.
+ *
+ * ### Why a sliding track instead of swapping which four are laid out
+ * Re-laying out four different tabs makes them look like different items each
+ * time the window moves. A single track translated by whole tab widths keeps the
+ * identity of each tab continuous, so moving right reads as the row moving rather
+ * than as four tabs being replaced.
+ */
 @Composable
 private fun FeedTabStrip(
     slots: List<social.tbone.home.FeedSlot>,
@@ -797,84 +844,38 @@ private fun FeedTabStrip(
     val windowSize = VISIBLE_TABS
     val maxStart = (slots.size - windowSize).coerceAtLeast(0)
 
-    // Which tab starts the window. Driven by the selection, and settable by the
-    // swipe, so the two never disagree.
-    var firstVisible by remember(slots.size) {
-        mutableIntStateOf(slots.indexOfFirst { it.id == activeSlotId }.coerceIn(0, maxStart))
-    }
-    // Whole-tab offset animated state: -1..1 of a tab width, always snapped back
-    // to 0 once the gesture ends and `firstVisible` has moved.
-    val dragOffset = remember { Animatable(0f) }
-    var screenWidthPx by remember { mutableIntStateOf(0) }
+    // First tab of the window. Clamped on every read so a layout edit that
+    // removes feeds cannot leave the window pointing past the end.
+    var firstVisible by remember { mutableIntStateOf(0) }
+    val start = firstVisible.coerceIn(0, maxStart)
 
-    val scope = rememberCoroutineScope()
-    val tabWidthPx = if (screenWidthPx > 0) screenWidthPx.toFloat() / windowSize else 0f
-    val haptics = LocalHapticFeedback.current
-
-    // Selecting a tab that is off-window slides the window to cover it.
-    LaunchedEffect(activeSlotId) {
+    // Selecting a tab that is outside the window brings it into view. This is the
+    // only thing that moves the window besides the arrows, and it is what makes a
+    // layout edit (or the app restoring a remembered tab) land somewhere sane.
+    LaunchedEffect(activeSlotId, slots.size) {
         val index = slots.indexOfFirst { it.id == activeSlotId }
         if (index < 0) return@LaunchedEffect
         val desired = when {
-            index < firstVisible -> index
-            index > firstVisible + windowSize - 1 -> index - windowSize + 1
-            else -> firstVisible
-        }.coerceIn(0, maxStart)
-        if (desired != firstVisible) {
-            firstVisible = desired
-            dragOffset.snapTo(0f)
+            index < start -> index
+            index > start + windowSize - 1 -> index - windowSize + 1
+            else -> start
         }
+        if (desired != firstVisible) firstVisible = desired
     }
+
+    val canGoLeft = start > 0
+    val canGoRight = start < maxStart
+
+    /** The feeds currently in the window — never more than four. */
+    val window = slots.drop(start).take(windowSize)
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = 8.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)
-                .background(BonyColors.Surface)
-                .onSizeChanged { screenWidthPx = it.width }
-                .pointerInput(slots, maxStart, tabWidthPx) {
-                    if (maxStart == 0 || tabWidthPx <= 0f) return@pointerInput
-                    detectHorizontalDragGestures(
-                        onDragEnd = {
-                            val travel = dragOffset.value
-                            val steps = when {
-                                // Past the resistance point, one tab; a short nudge
-                                // that never crossed it falls back.
-                                kotlin.math.abs(travel) >= SNAP_THRESHOLD -> -kotlin.math.sign(travel).toInt()
-                                else -> 0
-                            }
-                            val next = (firstVisible + steps).coerceIn(0, maxStart)
-                            scope.launch {
-                                if (next != firstVisible) {
-                                    firstVisible = next
-                                    haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                }
-                                dragOffset.animateTo(0f, tween(SETTLE_MS, easing = FastOutSlowInEasing))
-                            }
-                        },
-                        onDragCancel = {
-                            scope.launch { dragOffset.animateTo(0f, tween(SETTLE_MS)) }
-                        },
-                    ) { change, dragAmount ->
-                        change.consume()
-                        // Only allow movement in a direction that has a tab to
-                        // reach; at either end the row stops dead instead of
-                        // stretching into empty space.
-                        val movingLeft = dragAmount < 0
-                        val atEnd = (movingLeft && firstVisible >= maxStart) ||
-                            (!movingLeft && firstVisible <= 0)
-                        if (atEnd) return@detectHorizontalDragGestures
-                        scope.launch {
-                            val raw = (dragOffset.value + dragAmount / tabWidthPx)
-                            // Friction: the first tenth of a tab moves at 30% so a
-                            // stray horizontal swipe while scrolling vertically
-                            // barely disturbs the row.
-                            val resisted = if (kotlin.math.abs(raw) <= FRICTION_ZONE) raw * 0.3f else raw
-                            dragOffset.snapTo(resisted.coerceIn(-1f, 1f))
-                        }
-                    }
-                },
+                .background(BonyColors.Surface),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             if (slots.isEmpty()) {
                 // Only possible if a stored layout failed to parse and was
@@ -886,26 +887,47 @@ private fun FeedTabStrip(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                 )
             }
-            // One seamless track of every tab, shifted so the window starts at
-            // `firstVisible`. Rendering the whole track (rather than a window of
-            // four) is what lets the fifth tab physically slide in from the edge
-            // instead of appearing where the first one was.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .graphicsLayer {
-                        translationX = -(firstVisible + dragOffset.value) * (size.width / windowSize)
-                    },
-            ) {
-                slots.forEach { slot ->
-                    FeedTabItem(
-                        slot = slot,
-                        active = slot.id == activeSlotId,
-                        compact = compact,
-                        labelSize = tabLabelSize,
-                        letterSpacing = tabLetterSpacing,
-                        modifier = Modifier.weight(1f),
-                    ) { onSelect(slot) }
+            if (canGoLeft) {
+                PageArrow("‹", "previous feeds") {
+                    firstVisible = (start - 1).coerceAtLeast(0)
+                }
+            }
+            // Only the four tabs in the window are composed. A wider, translated
+            // track would draw four and lay out eight, and Compose's hit testing
+            // over a clipped child is the kind of thing that produces a tab you
+            // can see but cannot tap.
+            AnimatedContent(
+                targetState = start,
+                transitionSpec = {
+                    // A page left or right, clipped to the strip. `sizeTransform`
+                    // is disabled so the strip cannot change height mid-slide.
+                    if (targetState > initialState) {
+                        (slideInHorizontally { width -> width } + fadeIn(SLIDE_FADE_MS))
+                            .togetherWith(slideOutHorizontally { width -> -width } + fadeOut(SLIDE_FADE_MS))
+                    } else {
+                        (slideInHorizontally { width -> -width } + fadeIn(SLIDE_FADE_MS))
+                            .togetherWith(slideOutHorizontally { width -> width } + fadeOut(SLIDE_FADE_MS))
+                    }.using(SizeTransform(clip = true))
+                },
+                label = "feedTabWindow",
+                modifier = Modifier.weight(1f).clipToBounds(),
+            ) { _ ->
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    window.forEach { slot ->
+                        FeedTabItem(
+                            slot = slot,
+                            active = slot.id == activeSlotId,
+                            compact = compact,
+                            labelSize = tabLabelSize,
+                            letterSpacing = tabLetterSpacing,
+                            modifier = Modifier.weight(1f),
+                        ) { onSelect(slot) }
+                    }
+                }
+            }
+            if (canGoRight) {
+                PageArrow("›", "more feeds") {
+                    firstVisible = (start + 1).coerceAtMost(maxStart)
                 }
             }
         }
@@ -916,6 +938,33 @@ private fun FeedTabStrip(
                 .fillMaxWidth()
                 .height(1.dp)
                 .background(BonyColors.Rule),
+        )
+    }
+}
+
+/**
+ * The strip's page arrow.
+ *
+ * Deliberately tiny: no minimum touch target padding, no background, no border.
+ * A 24 dp square would push the four tabs narrower than they are in a layout with
+ * exactly four feeds, and the whole point is that adding a fifth feed costs
+ * nothing visually. The glyph itself is 16 dp and the touch area is grown
+ * vertically (not horizontally) to stay tappable without stealing width.
+ */
+@Composable
+private fun PageArrow(glyph: String, contentDescription: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .width(16.dp)
+            .height(52.dp)
+            .semantics { this.contentDescription = contentDescription }
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = glyph,
+            style = BonyType.body.copy(color = BonyColors.Accent),
+            maxLines = 1,
         )
     }
 }
@@ -939,57 +988,59 @@ private fun FeedTabItem(
         animationSpec = tween(160),
         label = "feedTabTint",
     )
-    Column(
-        modifier = modifier
-            .clip(tabShape)
-            .clickable(onClick = onClick)
-            .background(BonyColors.Surface, tabShape)
-            .then(
-                if (active) Modifier.border(width = 1.dp, color = BonyColors.Accent, shape = tabShape)
-                else Modifier,
+    // The active border is drawn OVER the tab, not around it. As a border inside
+    // the column it consumed layout: four bordered tabs summed to a fraction of a
+    // pixel less than the row and the strip read as misaligned whenever a fifth
+    // feed existed. As a full-size overlay the column is always exactly its share.
+    Box(modifier = modifier.background(BonyColors.Surface, tabShape).clip(tabShape)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .heightIn(min = if (compact) 36.dp else 50.dp)
+                .padding(horizontal = if (compact) 8.dp else 2.dp, vertical = if (compact) 4.dp else 7.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Icon(
+                imageVector = FeedTabIcons.forSource(slot.source),
+                // The label is the accessible name; announcing both reads it twice.
+                contentDescription = if (compact) slot.source.label else null,
+                tint = tint,
+                modifier = Modifier.size(17.dp),
             )
-            .heightIn(min = if (compact) 36.dp else 50.dp)
-            .padding(horizontal = if (compact) 8.dp else 2.dp, vertical = if (compact) 4.dp else 7.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Icon(
-            imageVector = FeedTabIcons.forSource(slot.source),
-            // The label is the accessible name; announcing both reads it twice.
-            contentDescription = if (compact) slot.source.label else null,
-            tint = tint,
-            modifier = Modifier.size(17.dp),
-        )
-        if (!compact) {
-            Spacer(Modifier.height(3.dp))
-            Text(
-                text = slot.source.label,
-                style = BonyType.tag.copy(
-                    fontSize = labelSize,
-                    letterSpacing = letterSpacing,
-                    color = tint,
-                ),
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Clip,
+            if (!compact) {
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = slot.source.label,
+                    style = BonyType.tag.copy(
+                        fontSize = labelSize,
+                        letterSpacing = letterSpacing,
+                        color = tint,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Clip,
+                )
+            }
+        }
+        if (active) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .border(width = 1.dp, color = BonyColors.Accent, shape = tabShape),
             )
         }
     }
 }
 
-/** How many feeds the strip shows at once. Four is the app's original tab count. */
+/** How many feeds the strip shows at once — always, whatever the layout holds. */
 private const val VISIBLE_TABS = 4
 
-/** Fraction of a tab that has to be dragged before it counts as a swipe. */
-private const val SNAP_THRESHOLD = 0.28f
-
-/** How much of a tab's travel is spent in the "nothing happens yet" zone. */
-private const val FRICTION_ZONE = 0.12f
-
-/** Snap-back duration. Short enough to feel like a release, not an animation. */
-private const val SETTLE_MS = 220
+/** One page of the strip sliding over. Matches the app's other nav transitions. */
+private const val SLIDE_FADE_MS = 180
 
 // ── Clock feed: hour selector ────────────────────────────────────────────────
 

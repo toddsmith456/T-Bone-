@@ -1,32 +1,18 @@
 package social.tbone.toolbox.feeds
 
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
-import social.tbone.home.FeedSource
-import social.tbone.home.HomeLayoutRepository
 import social.tbone.nostr.Nip19
 import javax.inject.Inject
 
 /**
- * Backs the viewer's launcher with the one thing it needs from storage: the
- * user's saved feeds, so a feed already on the home screen can be opened in the
- * viewer with one tap instead of being retyped.
+ * Backs the viewer's launcher. All it does is turn pasted text into public keys;
+ * the launcher deliberately does not read the home layout any more — a "saved
+ * feeds" section duplicated rows already reachable from the home screen and cost
+ * vertical space on every visit to the tool.
  */
 @HiltViewModel
-class FeedViewerLauncherViewModel @Inject constructor(
-    homeLayouts: HomeLayoutRepository,
-) : ViewModel() {
-
-    val savedFeeds: StateFlow<List<FeedSource>> = homeLayouts.layout
-        .map { layout -> layout.slots.map { it.source } }
-        .distinctUntilChanged()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+class FeedViewerLauncherViewModel @Inject constructor() : ViewModel() {
 
     /**
      * Turns pasted text into public keys.

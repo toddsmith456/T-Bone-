@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,7 +28,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import social.tbone.home.FeedSource
 import social.tbone.ui.feed.FeedTabIcons
 import social.tbone.ui.theme.BonyColors
@@ -55,7 +53,6 @@ fun FeedViewerLauncher(
     onOpen: (FeedSource) -> Unit,
     viewModel: FeedViewerLauncherViewModel = hiltViewModel(),
 ) {
-    val saved by viewModel.savedFeeds.collectAsStateWithLifecycle()
     var expanded by remember { mutableStateOf<String?>(null) }
     var hours by remember { mutableIntStateOf(6) }
     var text by remember { mutableStateOf("") }
@@ -85,12 +82,6 @@ fun FeedViewerLauncher(
                     style = BonyType.caption.copy(color = BonyColors.TextMute),
                 )
             }
-            if (saved.isNotEmpty()) {
-                Text(
-                    text = "${saved.size} saved",
-                    style = BonyType.tag.copy(color = BonyColors.Accent),
-                )
-            }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
@@ -106,18 +97,6 @@ fun FeedViewerLauncher(
         }
 
         LazyColumn(modifier = Modifier.fillMaxSize()) {
-            // ── Saved feeds, if any ──────────────────────────────────────────
-            if (saved.isNotEmpty()) {
-                item { SectionHeader("saved feeds", "from your home screen") }
-                items(saved, key = { "saved-${it.hashCode()}-${it.label}" }) { source ->
-                    FeedSourceRow(
-                        source = source,
-                        subtitle = savedSubtitle(source),
-                        onClick = { onOpen(source) },
-                    )
-                }
-            }
-
             // ── No setup needed ─────────────────────────────────────────────
             item { SectionHeader("now", "no setup") }
             item {
@@ -484,16 +463,4 @@ private fun PeopleRow(
         }
     }
     Box(Modifier.fillMaxWidth().padding(start = 66.dp).height(1.dp).background(BonyColors.Rule))
-}
-
-private fun savedSubtitle(source: FeedSource): String = when (source) {
-    is FeedSource.Follows -> "everyone you follow"
-    is FeedSource.Clock -> "your follows, ${source.hours}h window"
-    is FeedSource.Suggested -> "the curated accounts"
-    is FeedSource.Global -> "your global relays"
-    is FeedSource.People -> "${source.pubkeys.size} hand-picked people"
-    is FeedSource.Relay -> source.urls.joinToString(", ") { it.substringAfter("://", it).substringBefore('/') }
-    is FeedSource.Hashtag -> source.tags.joinToString(" ") { "#$it" }
-    is FeedSource.Polls -> "polls from your follows"
-    is FeedSource.Unsupported -> "not supported by this version"
 }
