@@ -99,7 +99,9 @@ class TabWindowTest {
             }.coerceIn(0, maxStart)
         }
         assertEquals("a tab to the left pulls the window left", 0, desiredStart(0, 2, 8))
-        assertEquals("a tab to the right pushes it right", 5, desiredStart(7, 2, 8))
+        // 8 feeds -> maxStart 4, so index 7 puts the window at 4, not 5: the last
+        // page is always full rather than showing three feeds and a gap.
+        assertEquals("a tab to the right pushes it right", 4, desiredStart(7, 2, 8))
         assertEquals("a visible tab does not move the window", 2, desiredStart(3, 2, 8))
         assertEquals("the last page is not overshot", 4, desiredStart(7, 4, 9))
     }
@@ -119,14 +121,19 @@ class TabWindowTest {
     }
 
     @Test fun theArrowIsNarrowerThanATabSoItCostsAlmostNothing() {
-        // 16 dp arrow, eight dp total outer padding: four tabs at 360 dp still
-        // get 84 dp each rather than the 64 dp a 28 dp button would leave.
-        val screen = 360
-        val arrow = 16
-        val outerPadding = 16
-        val withArrows = (screen - outerPadding - arrow * 2) / VISIBLE
-        val withoutArrows = (screen - outerPadding) / VISIBLE
-        assertTrue("an arrow must not push a tab below ~80dp", withArrows >= 80)
-        assertTrue("with both arrows the tab loses at most 8dp", withoutArrows - withArrows <= 8)
+        // The arrow is a bare 16 dp glyph column, 8 dp of outer padding either
+        // side. Even with an arrow on BOTH sides (only possible mid-strip) a tab
+        // on a 360 dp screen keeps 78 dp rather than the ~64 dp a 28 dp button
+        // would leave, and on a 411 dp phone it keeps 90 dp.
+        listOf(360, 411).forEach { screen ->
+            val outerPadding = 16
+            val arrow = 16
+            val noArrows = (screen - outerPadding) / VISIBLE
+            val oneArrow = (screen - outerPadding - arrow) / VISIBLE
+            val bothArrows = (screen - outerPadding - arrow * 2) / VISIBLE
+            assertTrue("$screen dp: one arrow costs <= 4 dp a tab", noArrows - oneArrow <= 4)
+            assertTrue("$screen dp: both arrows cost <= 8 dp a tab", noArrows - bothArrows <= 8)
+            assertTrue("$screen dp: a tab keeps at least 78 dp", bothArrows >= 78)
+        }
     }
 }
