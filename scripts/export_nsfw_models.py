@@ -37,7 +37,7 @@ GANTMAN_ZIP_URL = (
 )
 MARQO_HF_ID = "hf_hub:Marqo/nsfw-image-detection-384"
 
-STAGE1_FILENAME = "nsfw_stage1_mnv2_int8.tflite"
+STAGE1_FILENAME = "nsfw_stage1_mnv2_fp16.tflite"
 STAGE2_FILENAME = "nsfw_stage2_marqo384_fp16.tflite"
 
 
@@ -142,9 +142,10 @@ def export_stage1_gantman(work_dir: Path, out_dir: Path) -> tuple[dict, np.ndarr
     print(f"[stage1] upstream class_labels.txt = {labels}")
     assert labels == ["drawings", "hentai", "neutral", "porn", "sexy"], f"Unexpected labels: {labels}"
 
-    print("=== [Stage 1] Converting SavedModel -> dynamic-range INT8 TFLite (TFLITE_BUILTINS) ===")
+    print("=== [Stage 1] Converting SavedModel -> FP16 TFLite (TFLITE_BUILTINS, zero accuracy loss) ===")
     converter = tf.lite.TFLiteConverter.from_saved_model(str(model_root))
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
+    converter.target_spec.supported_types = [tf.float16]
     converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS]
     tflite_bytes = converter.convert()
 
@@ -189,8 +190,8 @@ def export_stage1_gantman(work_dir: Path, out_dir: Path) -> tuple[dict, np.ndarr
         f"[stage1] parity vs upstream FP32: mean |Δp|={mean_diff:.5f}, "
         f"max |Δp|={max_diff:.5f}, structured_max={structured_max:.5f}"
     )
-    assert mean_diff < 0.04 and max_diff < 0.16, (
-        f"Stage 1 parity drift too high: mean={mean_diff}, max={max_diff}"
+    assert mean_diff < 0.005 and max_diff < 0.015, (
+        f"Stage 1 FP16 parity drift too high: mean={mean_diff}, max={max_diff}"
     )
 
     meta = {

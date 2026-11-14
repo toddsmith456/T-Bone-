@@ -115,11 +115,11 @@ jobs:
             Optional, 100% offline on-device `.tflite` model add-ons for T-Bone's AI media scanner.
             These models are **not** bundled in the T-Bone APK; users opt in from **Settings → Content Filters → Offline AI Media Scanner**.
 
-            - `nsfw_stage1_mnv2_int8.tflite` — Fast Scanner (MobileNetV2-140 INT8, MIT, upstream `GantMan/nsfw_model` v1.2.0)
+            - `nsfw_stage1_mnv2_fp16.tflite` — Fast Scanner (MobileNetV2-140 FP16, MIT, upstream `GantMan/nsfw_model` v1.2.0)
             - `nsfw_stage2_marqo384_fp16.tflite` — High-Accuracy Scanner (Marqo ViT-Tiny 384 FP16, Apache-2.0, upstream `Marqo/nsfw-image-detection-384`)
             - `SHA256SUMS.txt` & `ai-models-manifest.json` — pinned integrity metadata verified on-device before loading.
           files: |
-            dist/ai-models/nsfw_stage1_mnv2_int8.tflite
+            dist/ai-models/nsfw_stage1_mnv2_fp16.tflite
             dist/ai-models/nsfw_stage2_marqo384_fp16.tflite
             dist/ai-models/ai-models-manifest.json
             dist/ai-models/SHA256SUMS.txt

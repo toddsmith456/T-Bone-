@@ -14,7 +14,7 @@ import numpy as np
 from ai_edge_litert.interpreter import Interpreter
 
 
-STAGE1_FILENAME = "nsfw_stage1_mnv2_int8.tflite"
+STAGE1_FILENAME = "nsfw_stage1_mnv2_fp16.tflite"
 STAGE2_FILENAME = "nsfw_stage2_marqo384_fp16.tflite"
 
 
