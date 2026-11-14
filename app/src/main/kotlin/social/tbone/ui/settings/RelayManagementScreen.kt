@@ -239,7 +239,7 @@ fun RelayManagementScreen(
                                 style = MaterialTheme.typography.bodyMedium.copy(color = BonyColors.Text),
                             )
                             Text(
-                                "Check Mostr, Ditto, and Momostr relays when notes from Mastodon/ActivityPub bridges aren't on your relays.",
+                                "Check Ditto / Mostr (wss://relay.ditto.pub) when notes from Mastodon/ActivityPub bridges aren't on your relays.",
                                 style = MaterialTheme.typography.bodySmall.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
                             )
                         }

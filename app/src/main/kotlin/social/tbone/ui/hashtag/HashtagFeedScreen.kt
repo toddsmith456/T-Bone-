@@ -79,7 +79,7 @@ fun HashtagFeedScreen(
                 else -> {
                     CompositionLocalProvider(
                         social.tbone.ui.feed.LocalQuoteState provides
-                            social.tbone.ui.feed.QuoteState(unresolvedQuoteIds),
+                            social.tbone.ui.feed.QuoteState(unresolvedQuoteIds, viewModel::retryQuote),
                     ) {
                     LazyColumn(modifier = Modifier.fillMaxSize().navigationBarsPadding(),
                         contentPadding = PaddingValues(bottom = 28.dp)) {

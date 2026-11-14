@@ -79,6 +79,7 @@ class QuoteLookupSession(
     private val pendingLock = Any()
     private val pendingIds = LinkedHashSet<String>()
     private val pendingHints = HashMap<String, MutableList<String>>()
+    private val retryOnConnectIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private var debounceJob: Job? = null
     private val activeBatchJobs: MutableSet<Job> = ConcurrentHashMap.newKeySet()
     private val leasedRelaysLock = Any()
@@ -143,8 +144,42 @@ class QuoteLookupSession(
         val newlyQueued = tracker.enqueue(ids)
         if (newlyQueued.isEmpty()) return
 
+        enqueuePending(newlyQueued, hintsById, immediate = false)
+    }
+
+    /**
+     * Retries a single referenced note that previously ended as unavailable.
+     * Clears its terminal state immediately (so the card switches back to
+     * "loading…") and launches a fresh lookup using all cached relay hints and
+     * enabled fallback relays.
+     */
+    fun retryId(id: String) {
+        val clean = id.trim()
+        if (clean.isEmpty()) return
+        retryOnConnectIds.remove(clean)
+        val (queued, updatedUnresolved) = tracker.retry(clean)
+        _unresolvedQuoteIds.value = updatedUnresolved
+        if (!queued) return
+        val cachedHints = RelayHintCache.get(clean)
+        val hintsMap = if (cachedHints.isNotEmpty()) mapOf(clean to cachedHints) else emptyMap()
+        enqueuePending(listOf(clean), hintsMap, immediate = true)
+    }
+
+    private fun enqueuePending(
+        ids: List<String>,
+        hintsById: Map<String, List<String>>,
+        immediate: Boolean,
+    ) {
+        if (immediate) {
+            val epoch = sessionEpoch
+            val batchHints = ids.associateWith { id ->
+                hintsById[id]?.distinct().orEmpty()
+            }
+            launchBatch(epoch, ids, batchHints)
+            return
+        }
         synchronized(pendingLock) {
-            pendingIds.addAll(newlyQueued)
+            pendingIds.addAll(ids)
             hintsById.forEach { (id, hints) ->
                 if (hints.isNotEmpty()) {
                     pendingHints.getOrPut(id) { mutableListOf() }.addAll(hints)
@@ -164,6 +199,7 @@ class QuoteLookupSession(
     /** Clears pending lookups, active subscriptions, and unresolved state (e.g. on refresh/switch). */
     fun reset(clearResolved: Boolean = false) {
         sessionEpoch++
+        retryOnConnectIds.clear()
         synchronized(pendingLock) {
             debounceJob?.cancel()
             debounceJob = null
@@ -220,6 +256,28 @@ class QuoteLookupSession(
                         personalReady.await()
                         extraReady.await()
                         combinedReady.complete(Unit)
+                    }
+                    // Auto-retry any quotes that previously got zero relay answers
+                    // (offline / cold-start / Tor bootstrapping) once a note-capable relay connects.
+                    launch {
+                        val statusFlow = if (extraPool != null) {
+                            merge(pool.relayStatuses, extraPool.relayStatuses)
+                        } else {
+                            pool.relayStatuses
+                        }
+                        statusFlow.collect { statuses ->
+                            if (retryOnConnectIds.isEmpty()) return@collect
+                            val hasConnectedNoteRelay = statuses.any { (url, st) ->
+                                st == RelayStatus.CONNECTED && RelayHintPolicy.isNoteCapableRelay(url)
+                            }
+                            if (hasConnectedNoteRelay) {
+                                val toRetry = retryOnConnectIds.toList()
+                                retryOnConnectIds.removeAll(toRetry.toSet())
+                                if (toRetry.isNotEmpty()) {
+                                    requestIds(toRetry)
+                                }
+                            }
+                        }
                     }
                     flow.collect { pm ->
                         runCatching { handlePoolMessage(pm) }
@@ -280,6 +338,7 @@ class QuoteLookupSession(
     }
 
     private fun deliverResolved(event: Event, saveToDb: Boolean, recurse: Boolean) {
+        retryOnConnectIds.remove(event.id)
         _quotedEvents.update { it + (event.id to event) }
         _unresolvedQuoteIds.value = tracker.markResolved(listOf(event.id))
         if (saveToDb) {
@@ -306,7 +365,14 @@ class QuoteLookupSession(
                 pendingHints.remove(id)?.distinct().orEmpty()
             }
         }
+        launchBatch(epoch, batchIds, batchHints)
+    }
 
+    private fun launchBatch(
+        epoch: Long,
+        batchIds: List<String>,
+        batchHints: Map<String, List<String>>,
+    ) {
         val job = scope.launch(Dispatchers.Default) {
             try {
                 resolveBatch(epoch, batchIds, batchHints)
@@ -340,6 +406,7 @@ class QuoteLookupSession(
         if (epoch != sessionEpoch) return
 
         if (cached.isNotEmpty()) {
+            retryOnConnectIds.removeAll(cached.keys)
             _quotedEvents.update { it + cached }
             _unresolvedQuoteIds.value = tracker.markResolved(cached.keys)
             cached.values.forEach { ev ->
@@ -356,11 +423,26 @@ class QuoteLookupSession(
         ensureCollectorStarted()
         if (epoch != sessionEpoch) return
 
+        // Wait for AppSettings to finish loading before issuing network lookups so
+        // cold-start requests never race ahead of NetworkModule's Tor-guard transition
+        // and initial setPersonalRelays().
+        if (!appSettings.initialized.value) {
+            withTimeoutOrNull(SETTINGS_INIT_WAIT_MS) {
+                appSettings.initialized.first { it }
+            }
+        }
+        if (epoch != sessionEpoch) return
+
         // If relays are still warming up (cold launch / background resume / Tor circuit),
         // wait briefly for at least one note-capable relay to reach CONNECTED.
         if (connectedNoteRelays(pool).isEmpty() && connectedNoteRelays(extraPool).isEmpty()) {
             withTimeoutOrNull(CONNECT_WAIT_MS) {
-                pool.relayStatuses.first { statuses ->
+                val statusFlow = if (extraPool != null) {
+                    merge(pool.relayStatuses, extraPool.relayStatuses)
+                } else {
+                    pool.relayStatuses
+                }
+                statusFlow.first { statuses ->
                     statuses.any { (url, st) ->
                         st == RelayStatus.CONNECTED && RelayHintPolicy.isNoteCapableRelay(url)
                     }
@@ -384,8 +466,11 @@ class QuoteLookupSession(
         val pendingChunk = chunk.filter { !tracker.isResolved(it) }
         if (pendingChunk.isEmpty()) return
 
-        val stage1RelaysPersonal = connectedNoteRelays(pool)
-        val stage1RelaysExtra = connectedNoteRelays(extraPool)
+        // Include BOTH CONNECTED and CONNECTING note-capable relays in Stage-1
+        // expectations so a single fast relay's empty EOSE cannot prematurely close
+        // Stage 1 while the user's other personal relays are still handshaking.
+        val stage1RelaysPersonal = activeNoteRelays(pool)
+        val stage1RelaysExtra = activeNoteRelays(extraPool)
         val stage1Expected = stage1RelaysPersonal + stage1RelaysExtra
         val useExtra = extraPool != null && stage1RelaysExtra.isNotEmpty()
 
@@ -399,20 +484,21 @@ class QuoteLookupSession(
         tracker.startSubscription(stage1SubId, pendingChunk)
         activeSubs[stage1SubId] = stage1Sub
 
-        val queriedInStage1 = stage1Expected.map { RelayPool.normalize(it).lowercase() }.toMutableSet()
+        val hasAnyFallbackEnabled = appSettings.followRelayHintsForMissingNotes.value ||
+            appSettings.fediverseBridgeRelaysEnabled.value
 
         try {
             val filters = listOf(Filter(ids = pendingChunk))
-            // Query already-connected pools first (never opens new connections in Stage 1).
+            // Query personal / active pools first (never opens new connections in Stage 1).
             pool.subscribe(filters, id = stage1SubId, label = "$labelPrefix-quote")
             if (useExtra) {
                 extraPool?.subscribe(filters, id = stage1SubId, label = "$labelPrefix-quote")
             }
 
-            val fallbackPreview = computeFallbackRelays(pendingChunk, batchHints, queriedInStage1)
             val stage1Timeout = when {
-                stage1Expected.isEmpty() && fallbackPreview.isNotEmpty() -> EMPTY_STAGE1_WAIT_MS
-                fallbackPreview.isNotEmpty() -> STAGE1_TIMEOUT_WITH_FALLBACK_MS
+                stage1Expected.isEmpty() && hasAnyFallbackEnabled -> EMPTY_STAGE1_WITH_FALLBACK_WAIT_MS
+                stage1Expected.isEmpty() -> EMPTY_STAGE1_WAIT_MS
+                hasAnyFallbackEnabled -> STAGE1_TIMEOUT_WITH_FALLBACK_MS
                 else -> STAGE1_TIMEOUT_ONLY_MS
             }
             withTimeoutOrNull(stage1Timeout) { stage1Sub.done.await() }
@@ -430,89 +516,111 @@ class QuoteLookupSession(
             return
         }
 
-        // Also count any relay that actually answered in Stage 1 so Stage 2 never re-queries it.
-        stage1Sub.answeredRelays.forEach { queriedInStage1 += RelayPool.normalize(it).lowercase() }
+        // Only treat relays that ACTUALLY answered EOSE/CLOSED in Stage 1 as already
+        // checked — never skip a hint/bridge relay that was disconnected or timed out.
+        val answeredInStage1 = stage1Sub.answeredRelays
+            .map { RelayPool.normalize(it) }
+            .toSet()
 
         // Stage 2 (Option 2A): strictly read-only, Tor-safe, SSRF-filtered fallback
-        // using embedded relay hints and/or built-in Fediverse bridge relays if enabled.
-        val fallbackRelays = computeFallbackRelays(missingAfterStage1, batchHints, queriedInStage1)
-        if (fallbackRelays.isEmpty()) {
-            _unresolvedQuoteIds.value = tracker.finishSubscription(stage1SubId)
+        // planned into bounded waves so multi-note batches never starve hints or bridges.
+        val fallbackWaves = computeFallbackWaves(missingAfterStage1, batchHints, answeredInStage1)
+        if (fallbackWaves.isEmpty()) {
+            val hadAnyAnswer = answeredInStage1.isNotEmpty()
+            _unresolvedQuoteIds.value = tracker.finishSubscription(
+                subId = stage1SubId,
+                markTerminal = hadAnyAnswer,
+            )
+            if (!hadAnyAnswer) {
+                retryOnConnectIds.addAll(missingAfterStage1)
+            }
             return
         }
 
-        // Keep these IDs in "loading…" state while Stage 2 runs!
+        // Keep missing IDs in "loading…" state across Stage-2 waves.
         _unresolvedQuoteIds.value = tracker.finishSubscription(
             subId = stage1SubId,
             keepPending = missingAfterStage1.toSet(),
         )
 
-        val stage2SubId = "$labelPrefix-q2-${UUID.randomUUID().toString().take(8)}"
-        val stage2Sub = ActiveSub(
-            subId = stage2SubId,
-            ids = missingAfterStage1.toSet(),
-            expectedNoteRelays = fallbackRelays,
-            useExtraPool = false,
-        )
-        tracker.startSubscription(stage2SubId, missingAfterStage1)
-        activeSubs[stage2SubId] = stage2Sub
+        var totalAnswered = answeredInStage1.size
+        val stage2Timeout = if (appSettings.torEnabled.value) STAGE2_TIMEOUT_TOR_MS else STAGE2_TIMEOUT_MS
 
-        val acquired = acquireFallbackRelays(fallbackRelays)
-        try {
-            val filters = listOf(Filter(ids = missingAfterStage1))
-            // Scoped strictly to fallback relays — zero extra traffic on personal relays.
-            pool.subscribeTo(
-                filters = filters,
-                id = stage2SubId,
-                label = "$labelPrefix-quote-fb",
-                relays = fallbackRelays,
+        for ((waveIndex, waveRelays) in fallbackWaves.withIndex()) {
+            if (epoch != sessionEpoch) return
+            val waveMissing = missingAfterStage1.filter { !tracker.isResolved(it) }
+            if (waveMissing.isEmpty()) break
+
+            val waveSubId = "$labelPrefix-q2-${UUID.randomUUID().toString().take(8)}"
+            val waveSub = ActiveSub(
+                subId = waveSubId,
+                ids = waveMissing.toSet(),
+                expectedNoteRelays = waveRelays,
+                useExtraPool = false,
             )
-            val stage2Timeout = if (appSettings.torEnabled.value) STAGE2_TIMEOUT_TOR_MS else STAGE2_TIMEOUT_MS
-            withTimeoutOrNull(stage2Timeout) { stage2Sub.done.await() }
-        } finally {
-            activeSubs.remove(stage2SubId)
-            pool.unsubscribe(stage2SubId)
-            releaseFallbackRelays(acquired)
-            if (epoch == sessionEpoch) {
-                _unresolvedQuoteIds.value = tracker.finishSubscription(stage2SubId)
+            tracker.startSubscription(waveSubId, waveMissing)
+            activeSubs[waveSubId] = waveSub
+
+            var acquired = emptyList<String>()
+            try {
+                val filters = listOf(Filter(ids = waveMissing))
+                // Subscribe BEFORE acquiring relays so a fast WebSocket handshake can
+                // never emit Connected before activeSubscriptions holds waveSubId.
+                pool.subscribeTo(
+                    filters = filters,
+                    id = waveSubId,
+                    label = "$labelPrefix-quote-fb",
+                    relays = waveRelays,
+                )
+                acquired = acquireFallbackRelays(waveRelays)
+                withTimeoutOrNull(stage2Timeout) { waveSub.done.await() }
+            } finally {
+                activeSubs.remove(waveSubId)
+                pool.unsubscribe(waveSubId)
+                if (acquired.isNotEmpty()) releaseFallbackRelays(acquired)
+            }
+
+            if (epoch != sessionEpoch) return
+            totalAnswered += waveSub.answeredRelays.size
+
+            val stillMissingAfterWave = waveMissing.filter { !tracker.isResolved(it) }
+            val hasMoreWaves = waveIndex < fallbackWaves.lastIndex && stillMissingAfterWave.isNotEmpty()
+            if (hasMoreWaves) {
+                _unresolvedQuoteIds.value = tracker.finishSubscription(
+                    subId = waveSubId,
+                    keepPending = stillMissingAfterWave.toSet(),
+                )
+            } else {
+                val hadAnyAnswer = totalAnswered > 0
+                _unresolvedQuoteIds.value = tracker.finishSubscription(
+                    subId = waveSubId,
+                    markTerminal = hadAnyAnswer,
+                )
+                if (!hadAnyAnswer && stillMissingAfterWave.isNotEmpty()) {
+                    retryOnConnectIds.addAll(stillMissingAfterWave)
+                }
             }
         }
     }
 
-    private fun computeFallbackRelays(
+    private fun computeFallbackWaves(
         missingIds: List<String>,
         batchHints: Map<String, List<String>>,
-        alreadyQueriedLower: Set<String>,
-    ): Set<String> {
-        val torEnabled = appSettings.torEnabled.value
-        val allowHints = appSettings.followRelayHintsForMissingNotes.value
-        val allowBridges = appSettings.fediverseBridgeRelaysEnabled.value
-        if (!allowHints && !allowBridges) return emptySet()
-
-        val candidates = LinkedHashSet<String>()
-        if (allowHints) {
-            for (id in missingIds) {
-                val rawHints = (batchHints[id].orEmpty() + RelayHintCache.get(id)).distinct()
-                for (raw in rawHints) {
-                    val clean = RelayHintPolicy.sanitizeHintUrl(raw, torEnabled) ?: continue
-                    if (clean.lowercase() !in alreadyQueriedLower) {
-                        candidates += clean
-                        if (candidates.size >= MAX_FALLBACK_RELAYS) break
-                    }
-                }
-                if (candidates.size >= MAX_FALLBACK_RELAYS) break
-            }
+        answeredInStage1: Set<String>,
+    ): List<Set<String>> {
+        val mergedHints = missingIds.associateWith { id ->
+            (batchHints[id].orEmpty() + RelayHintCache.get(id)).distinct()
         }
-        if (allowBridges) {
-            for (bridge in Tunables.FEDIVERSE_BRIDGE_RELAYS) {
-                val clean = RelayHintPolicy.sanitizeHintUrl(bridge, torEnabled) ?: continue
-                if (clean.lowercase() !in alreadyQueriedLower) {
-                    candidates += clean
-                    if (candidates.size >= MAX_FALLBACK_RELAYS) break
-                }
-            }
-        }
-        return candidates
+        return RelayHintPolicy.planFallbackWaves(
+            missingIds = missingIds,
+            hintsById = mergedHints,
+            answeredStage1Relays = answeredInStage1,
+            allowHints = appSettings.followRelayHintsForMissingNotes.value,
+            allowBridges = appSettings.fediverseBridgeRelaysEnabled.value,
+            torEnabled = appSettings.torEnabled.value,
+            maxPerWave = MAX_FALLBACK_RELAYS_PER_WAVE,
+            maxHintWaves = MAX_HINT_WAVES,
+        )
     }
 
     private fun acquireFallbackRelays(relays: Set<String>): List<String> {
@@ -561,11 +669,26 @@ class QuoteLookupSession(
             .toSet()
     }
 
+    private fun activeNoteRelays(targetPool: RelayPool?): Set<String> {
+        if (targetPool == null) return emptySet()
+        return targetPool.relayStatuses.value.entries
+            .asSequence()
+            .filter { (url, status) ->
+                (status == RelayStatus.CONNECTED || status == RelayStatus.CONNECTING) &&
+                    RelayHintPolicy.isNoteCapableRelay(url)
+            }
+            .map { RelayPool.normalize(it.key) }
+            .toSet()
+    }
+
     companion object {
         private const val DEBOUNCE_MS = 150L
         private const val MAX_FILTER_BATCH = 50
-        private const val MAX_FALLBACK_RELAYS = 6
-        private const val CONNECT_WAIT_MS = 2_500L
+        private const val MAX_FALLBACK_RELAYS_PER_WAVE = RelayHintPolicy.DEFAULT_MAX_FALLBACK_PER_WAVE
+        private const val MAX_HINT_WAVES = RelayHintPolicy.DEFAULT_MAX_HINT_WAVES
+        private const val SETTINGS_INIT_WAIT_MS = 2_000L
+        private const val CONNECT_WAIT_MS = 3_000L
+        private const val EMPTY_STAGE1_WITH_FALLBACK_WAIT_MS = 800L
         private const val EMPTY_STAGE1_WAIT_MS = 1_500L
         private const val STAGE1_TIMEOUT_WITH_FALLBACK_MS = 5_500L
         private const val STAGE1_TIMEOUT_ONLY_MS = 10_000L

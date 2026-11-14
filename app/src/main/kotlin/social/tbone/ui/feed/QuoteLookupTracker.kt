@@ -74,6 +74,9 @@ internal class QuoteLookupTracker {
      *  - If present in [keepPending] (e.g. moving into Stage-2 hint/bridge fallback),
      *    stays queued/loading rather than becoming unavailable.
      *  - If still covered by another active subscription or queued batch, stays loading.
+     *  - When [markTerminal] is false (e.g. zero note-capable relays answered due
+     *    to being offline or still connecting), releases the ID WITHOUT stamping it
+     *    unavailable so a retry on reconnect can pick it up.
      *  - Otherwise transitions cleanly into [terminalUnresolvedIds].
      *
      * Returns the updated terminal-unresolved snapshot.
@@ -81,6 +84,7 @@ internal class QuoteLookupTracker {
     fun finishSubscription(
         subId: String,
         keepPending: Set<String> = emptySet(),
+        markTerminal: Boolean = true,
     ): Set<String> = synchronized(lock) {
         val owned = inFlightBySub.remove(subId) ?: return terminalUnresolvedIds.toSet()
         val stillCoveredElsewhere = inFlightBySub.values.flatten().toSet()
@@ -91,9 +95,29 @@ internal class QuoteLookupTracker {
                 continue
             }
             if (id in queuedIds || id in stillCoveredElsewhere) continue
-            terminalUnresolvedIds += id
+            if (markTerminal) {
+                terminalUnresolvedIds += id
+            }
         }
         terminalUnresolvedIds.toSet()
+    }
+
+    /**
+     * Clears [id] from [terminalUnresolvedIds] (if present) and queues it for a
+     * fresh lookup, returning the updated unresolved snapshot and whether [id]
+     * was actually queued (false if already resolved, queued, or in-flight).
+     */
+    fun retry(id: String): Pair<Boolean, Set<String>> = synchronized(lock) {
+        val clean = id.trim()
+        if (clean.isEmpty()) return false to terminalUnresolvedIds.toSet()
+        if (clean in resolvedIds) return false to terminalUnresolvedIds.toSet()
+        val activeInFlight = inFlightBySub.values.flatten().toSet()
+        if (clean in queuedIds || clean in activeInFlight) {
+            return false to terminalUnresolvedIds.toSet()
+        }
+        terminalUnresolvedIds -= clean
+        queuedIds += clean
+        true to terminalUnresolvedIds.toSet()
     }
 
     /**

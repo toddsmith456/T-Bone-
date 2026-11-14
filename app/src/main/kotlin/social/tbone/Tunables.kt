@@ -52,19 +52,24 @@ object Tunables {
     /** Legacy fallback relays used when an existing account has no relay list. */
     val DEFAULT_RELAYS = listOf(
         "wss://relay.damus.io",
-        "wss://relay.nostr.band",
+        "wss://relay.primal.net",
         "wss://nos.lol",
+        "wss://relay.nostr.band",
     )
 
     /**
-     * Built-in Fediverse bridge relays (Mostr, Ditto, Momostr).
+     * Built-in Fediverse bridge relays (Ditto / Mostr).
+     *
+     * Note: `wss://relay.mostr.pub` now HTTP-301 redirects to `https://relay.ditto.pub/`
+     * (which OkHttp WebSocket does not follow) and `wss://ditto.pub/relay` serves HTML,
+     * so `wss://relay.ditto.pub` is the canonical live WebSocket endpoint for both
+     * Ditto and Mostr bridged notes.
+     *
      * Used for read-only fallback lookups when enabled in Relay Settings,
      * and offered as a one-tap preset to add to the user's personal relay list.
      */
     val FEDIVERSE_BRIDGE_RELAYS = listOf(
-        "wss://relay.mostr.pub",
-        "wss://ditto.pub/relay",
-        "wss://relay.momostr.pink",
+        "wss://relay.ditto.pub",
     )
 
     /**

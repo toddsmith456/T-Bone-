@@ -153,6 +153,8 @@ class NotificationsViewModel @Inject constructor(
     /** Referenced notes that never arrived, so cards can stop saying "loading…". */
     val unresolvedReferencedIds: StateFlow<Set<String>> = repository.unresolvedReferencedIds
 
+    fun retryReferencedNote(id: String) = repository.retryReferencedNote(id)
+
     val pollVoteCounts: StateFlow<Map<String, Map<String, Int>>> = pollsRepository.counts
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 

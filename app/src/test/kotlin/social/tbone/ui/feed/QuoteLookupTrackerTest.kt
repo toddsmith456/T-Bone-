@@ -86,4 +86,36 @@ class QuoteLookupTrackerTest {
         assertFalse(tracker.isResolved("b"))
         assertEquals(listOf("b"), tracker.enqueue(listOf("a", "b")))
     }
+
+    @Test
+    fun `finishSubscription with markTerminal false keeps offline lookups retryable`() {
+        val tracker = QuoteLookupTracker()
+        assertEquals(listOf("offline-note"), tracker.enqueue(listOf("offline-note")))
+        tracker.startSubscription("s-offline", listOf("offline-note"))
+
+        // Zero relays answered (offline / cold-start): must NOT stamp unavailable.
+        val unresolved = tracker.finishSubscription("s-offline", markTerminal = false)
+        assertTrue("offline lookup must not mark note permanently unavailable", unresolved.isEmpty())
+        assertEquals(listOf("offline-note"), tracker.enqueue(listOf("offline-note")))
+    }
+
+    @Test
+    fun `retry clears terminal unavailable state and re-queues only eligible ids`() {
+        val tracker = QuoteLookupTracker()
+        tracker.enqueue(listOf("resolved-id", "missing-id", "inflight-id"))
+        tracker.markResolved(listOf("resolved-id"))
+        tracker.startSubscription("s1", listOf("missing-id"))
+        tracker.startSubscription("s2", listOf("inflight-id"))
+        assertEquals(setOf("missing-id"), tracker.finishSubscription("s1"))
+
+        val (retriedMissing, afterRetry) = tracker.retry("missing-id")
+        assertTrue(retriedMissing)
+        assertTrue(afterRetry.isEmpty())
+
+        // Already resolved or currently in-flight IDs are not re-queued.
+        assertFalse(tracker.retry("resolved-id").first)
+        assertFalse(tracker.retry("inflight-id").first)
+        // Already queued (from the retry above) is not double-queued.
+        assertFalse(tracker.retry("missing-id").first)
+    }
 }

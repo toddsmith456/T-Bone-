@@ -610,8 +610,10 @@ private fun ReferencePlaceholder(
     onOpen: ((String) -> Unit)?,
 ) {
     val quoteState = LocalQuoteState.current
-    val unavailable = referenceId != null && referenceId in quoteState.unresolved
-    if (unavailable) {
+    val refId = referenceId
+    val unavailable = refId != null && refId in quoteState.unresolved
+    if (unavailable && refId != null) {
+        val onRetry = quoteState.onRetry
         val placeholderShape = appCornerShape(MaterialTheme.shapes.small, RectangleShape)
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -620,7 +622,7 @@ private fun ReferencePlaceholder(
                 .clip(placeholderShape)
                 .background(BonyColors.SurfaceAlt, placeholderShape)
                 .then(
-                    if (onOpen != null) Modifier.clickable { onOpen(referenceId) } else Modifier,
+                    if (onOpen != null) Modifier.clickable { onOpen(refId) } else Modifier,
                 )
                 .padding(horizontal = 10.dp, vertical = 8.dp),
         ) {
@@ -629,10 +631,21 @@ private fun ReferencePlaceholder(
                 style = BonyType.meta.copy(color = BonyColors.TextMute),
                 modifier = Modifier.weight(1f),
             )
+            if (onRetry != null) {
+                Text(
+                    text = "retry",
+                    style = BonyType.tag.copy(color = BonyColors.Accent),
+                    modifier = Modifier
+                        .clickable { onRetry(refId) }
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
             if (onOpen != null) {
+                if (onRetry != null) Spacer(Modifier.width(4.dp))
                 Text(
                     text = "open ↗",
                     style = BonyType.tag.copy(color = BonyColors.Accent),
+                    modifier = Modifier.padding(vertical = 2.dp),
                 )
             }
         }

@@ -156,7 +156,7 @@ fun ProfileScreen(
     ) {
         CompositionLocalProvider(
             social.tbone.ui.feed.LocalQuoteState provides
-                social.tbone.ui.feed.QuoteState(unresolvedQuoteIds),
+                social.tbone.ui.feed.QuoteState(unresolvedQuoteIds, viewModel::retryQuote),
         ) {
         LazyColumn(
             modifier = Modifier

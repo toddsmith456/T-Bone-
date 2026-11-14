@@ -106,7 +106,7 @@ fun ThreadScreen(
 
     CompositionLocalProvider(
         social.tbone.ui.feed.LocalQuoteState provides
-            social.tbone.ui.feed.QuoteState(unresolvedQuoteIds),
+            social.tbone.ui.feed.QuoteState(unresolvedQuoteIds, viewModel::retryQuote),
     ) {
     Column(
         modifier = Modifier

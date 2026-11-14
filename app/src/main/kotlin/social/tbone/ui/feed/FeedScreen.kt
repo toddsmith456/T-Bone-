@@ -185,7 +185,7 @@ fun FeedScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-    CompositionLocalProvider(LocalQuoteState provides QuoteState(unresolvedQuoteIds)) {
+    CompositionLocalProvider(LocalQuoteState provides QuoteState(unresolvedQuoteIds, viewModel::retryQuote)) {
     Column(
         modifier = Modifier
             .fillMaxSize()

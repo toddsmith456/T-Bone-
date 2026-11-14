@@ -80,6 +80,7 @@ internal fun AddressQuote(
             relays: Set<String>?,
             expectedRelays: Set<String>,
             timeoutMs: Long,
+            onSubscribed: (() -> Unit)? = null,
         ): Set<String> {
             val subId = "naddr-" + UUID.randomUUID().toString().take(8)
             val answered = ConcurrentHashMap.newKeySet<String>()
@@ -128,6 +129,7 @@ internal fun AddressQuote(
                 } else {
                     pool.subscribeTo(filter, id = subId, label = "address-quote-fb", relays = relays)
                 }
+                onSubscribed?.invoke()
                 withTimeoutOrNull(timeoutMs) { done.await() }
             } finally {
                 collector.cancel()
@@ -137,18 +139,19 @@ internal fun AddressQuote(
         }
 
         try {
-            // Stage 1: already-connected note-capable personal relays.
+            // Stage 1: connected and connecting note-capable personal relays.
             val stage1Expected = pool.relayStatuses.value.entries
                 .asSequence()
                 .filter { (url, status) ->
-                    status == RelayStatus.CONNECTED && RelayHintPolicy.isNoteCapableRelay(url)
+                    (status == RelayStatus.CONNECTED || status == RelayStatus.CONNECTING) &&
+                        RelayHintPolicy.isNoteCapableRelay(url)
                 }
                 .map { RelayPool.normalize(it.key) }
                 .toSet()
 
             val torEnabled = appSettings?.torEnabled?.value ?: false
-            val allowHints = appSettings?.followRelayHintsForMissingNotes?.value ?: false
-            val allowBridges = appSettings?.fediverseBridgeRelaysEnabled?.value ?: false
+            val allowHints = appSettings?.followRelayHintsForMissingNotes?.value ?: true
+            val allowBridges = appSettings?.fediverseBridgeRelaysEnabled?.value ?: true
 
             val hasFallbackOption = (allowHints && address.relayHints.isNotEmpty()) || allowBridges
             val stage1Answered = queryOnce(
@@ -159,7 +162,8 @@ internal fun AddressQuote(
 
             // Stage 2: scoped read-only fallback on sanitized hints + Fediverse bridges if still missing.
             if (event == null && (allowHints || allowBridges)) {
-                val queriedLower = (stage1Expected + stage1Answered)
+                // Only exclude relays that actually answered in Stage 1.
+                val queriedLower = stage1Answered
                     .map { RelayPool.normalize(it).lowercase() }
                     .toSet()
                 val fallbackRelays = LinkedHashSet<String>()
@@ -177,18 +181,23 @@ internal fun AddressQuote(
                         val clean = RelayHintPolicy.sanitizeHintUrl(bridge, torEnabled) ?: continue
                         if (clean.lowercase() !in queriedLower) {
                             fallbackRelays += clean
-                            if (fallbackRelays.size >= 5) break
+                            if (fallbackRelays.size >= 6) break
                         }
                     }
                 }
                 if (fallbackRelays.isNotEmpty()) {
-                    val leased = fallbackRelays.toList()
-                    leased.forEach { pool.acquireRelay(it) }
+                    val leased = mutableListOf<String>()
                     try {
                         queryOnce(
                             relays = fallbackRelays,
                             expectedRelays = fallbackRelays,
                             timeoutMs = if (torEnabled) 12_000L else 7_500L,
+                            onSubscribed = {
+                                fallbackRelays.forEach { url ->
+                                    pool.acquireRelay(url)
+                                    leased += url
+                                }
+                            },
                         )
                     } finally {
                         leased.forEach { pool.releaseRelay(it) }

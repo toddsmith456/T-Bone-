@@ -117,6 +117,8 @@ class FeedToolViewModel @Inject constructor(
     val quotedEvents: StateFlow<Map<String, Event>> = quoteLookup.quotedEvents
     val unresolvedQuoteIds: StateFlow<Set<String>> = quoteLookup.unresolvedQuoteIds
 
+    fun retryQuote(id: String) = quoteLookup.retryId(id)
+
     /**
      * Guards the active tab's load, so a relay that accepts the REQ and then
      * says nothing cannot leave the viewer spinning. Same failure, same fix as

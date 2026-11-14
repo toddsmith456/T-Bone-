@@ -126,6 +126,8 @@ class ThreadViewModel @Inject constructor(
      */
     val unresolvedQuoteIds: StateFlow<Set<String>> = quoteLookup.unresolvedQuoteIds
 
+    fun retryQuote(id: String) = quoteLookup.retryId(id)
+
     val reactions: StateFlow<Map<String, Set<String>>> = reactionsRepository.reactions
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
@@ -377,18 +379,18 @@ class ThreadViewModel @Inject constructor(
      * it has been fetched), so parents only ever loaded from the local cache.
      */
     private suspend fun fetchById(id: String, hints: List<String> = emptyList()): Event? {
-        fetchOnce(id, relays = null)?.let { return it }
+        val (stage1Event, answeredStage1) = fetchOnce(id, relays = null)
+        if (stage1Event != null) return stage1Event
+
         val torEnabled = appSettings.torEnabled.value
-        val existingLower = pool.relayUrls().map { RelayPool.normalize(it).lowercase() }.toSet()
-        val acquiredLower = acquiredRelays.map { RelayPool.normalize(it).lowercase() }.toSet()
+        val answeredLower = answeredStage1.map { RelayPool.normalize(it).lowercase() }.toSet()
         val candidates = LinkedHashSet<String>()
 
         // 1. Optional sanitized relay hints (from caller tags + in-memory RelayHintCache)
         if (appSettings.followRelayHintsForMissingNotes.value) {
             (hints + RelayHintCache.get(id)).forEach { raw ->
                 val clean = RelayHintPolicy.sanitizeHintUrl(raw, torEnabled) ?: return@forEach
-                val lower = clean.lowercase()
-                if (lower !in existingLower || lower in acquiredLower) {
+                if (clean.lowercase() !in answeredLower) {
                     candidates += clean
                 }
             }
@@ -397,8 +399,7 @@ class ThreadViewModel @Inject constructor(
         if (appSettings.fediverseBridgeRelaysEnabled.value) {
             Tunables.FEDIVERSE_BRIDGE_RELAYS.forEach { bridge ->
                 val clean = RelayHintPolicy.sanitizeHintUrl(bridge, torEnabled) ?: return@forEach
-                val lower = clean.lowercase()
-                if (lower !in existingLower || lower in acquiredLower) {
+                if (clean.lowercase() !in answeredLower) {
                     candidates += clean
                 }
             }
@@ -406,28 +407,45 @@ class ThreadViewModel @Inject constructor(
         // 3. Built-in default relays (already part of T-Bone's fallback behavior, skipping metadata-only relays)
         Tunables.DEFAULT_RELAYS.forEach { relay ->
             val clean = RelayHintPolicy.sanitizeHintUrl(relay, torEnabled) ?: return@forEach
-            val lower = clean.lowercase()
-            if (lower !in existingLower || lower in acquiredLower) {
+            if (clean.lowercase() !in answeredLower) {
                 candidates += clean
             }
         }
 
         val extra = candidates.take(MAX_FALLBACK_RELAYS)
         if (extra.isEmpty()) return null
-        extra.forEach { url ->
-            if (acquiredRelays.add(url)) pool.acquireRelay(url)
-        }
         val extraTimeout = if (torEnabled) EOSE_TIMEOUT_MS + 6_000L else EOSE_TIMEOUT_MS + 2_500L
-        return fetchOnce(id, relays = extra.toSet(), timeoutMs = extraTimeout)
+        return fetchOnce(
+            id = id,
+            relays = extra.toSet(),
+            timeoutMs = extraTimeout,
+            onSubscribed = {
+                extra.forEach { url ->
+                    if (acquiredRelays.add(url)) {
+                        pool.acquireRelay(url)
+                    } else if (pool.relayStatuses.value[RelayPool.normalize(url)] == RelayStatus.DISCONNECTED) {
+                        // Wake a previously acquired relay that fell into reconnect backoff.
+                        pool.acquireRelay(url)
+                        pool.releaseRelay(url)
+                    }
+                }
+            },
+        ).first
     }
 
-    private suspend fun fetchOnce(id: String, relays: Set<String>?, timeoutMs: Long = EOSE_TIMEOUT_MS): Event? {
-        fetchedById[id]?.let { return it }
+    private suspend fun fetchOnce(
+        id: String,
+        relays: Set<String>?,
+        timeoutMs: Long = EOSE_TIMEOUT_MS,
+        onSubscribed: (() -> Unit)? = null,
+    ): Pair<Event?, Set<String>> {
+        fetchedById[id]?.let { return it to emptySet() }
         val subId = "thread-fetch-" + java.util.UUID.randomUUID().toString()
         fetchSubIds += subId
         activeSubIds += subId
         try {
             pool.subscribeTo(listOf(Filter(ids = listOf(id))), id = subId, label = "thread-fetch", relays = relays)
+            onSubscribed?.invoke()
             withTimeoutOrNull(timeoutMs) {
                 merge(flowOf(Unit), eoseSignals).first {
                     fetchedById.containsKey(id) ||
@@ -435,7 +453,8 @@ class ThreadViewModel @Inject constructor(
                         (relays != null && eoseCount(subId) >= relays.size)
                 }
             }
-            return fetchedById[id] ?: eventRepository.getById(id)
+            val answered = eoseRelays[subId]?.toSet().orEmpty()
+            return (fetchedById[id] ?: eventRepository.getById(id)) to answered
         } finally {
             fetchSubIds -= subId
             activeSubIds -= subId
@@ -493,7 +512,8 @@ class ThreadViewModel @Inject constructor(
     /** Number of note-capable relays (excluding metadata-only relays like purplepag.es). */
     private fun expectedNoteEose(): Int =
         pool.relayStatuses.value.count { (url, status) ->
-            status == RelayStatus.CONNECTED && RelayHintPolicy.isNoteCapableRelay(url)
+            (status == RelayStatus.CONNECTED || status == RelayStatus.CONNECTING) &&
+                RelayHintPolicy.isNoteCapableRelay(url)
         }.coerceAtLeast(1)
 
     private fun eoseCount(subId: String): Int = eoseRelays[subId]?.size ?: 0

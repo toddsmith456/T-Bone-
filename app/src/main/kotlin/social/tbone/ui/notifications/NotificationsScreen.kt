@@ -214,7 +214,7 @@ fun NotificationsScreen(
                     }
                     else -> CompositionLocalProvider(
                         social.tbone.ui.feed.LocalQuoteState provides
-                            social.tbone.ui.feed.QuoteState(unresolvedReferencedIds),
+                            social.tbone.ui.feed.QuoteState(unresolvedReferencedIds, viewModel::retryReferencedNote),
                     ) {
                     LazyColumn(
                         state = listState,

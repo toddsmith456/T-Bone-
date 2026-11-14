@@ -201,7 +201,7 @@ fun FeedViewerScreen(
                     },
                 )
                 else -> CompositionLocalProvider(
-                    LocalQuoteState provides QuoteState(unresolvedQuoteIds),
+                    LocalQuoteState provides QuoteState(unresolvedQuoteIds, viewModel::retryQuote),
                 ) {
                     LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                         items(state.events, key = { it.id }) { event ->

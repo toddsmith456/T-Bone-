@@ -14,15 +14,33 @@ import social.tbone.nostr.Nip19
 class RelayHintPolicyTest {
 
     @Test
-    fun `sanitizeHintUrl permits valid public wss relays and strips trailing slash`() {
+    fun `sanitizeHintUrl permits valid public wss relays, normalizes case, and redirects legacy bridges`() {
         assertEquals(
-            "wss://relay.mostr.pub",
+            "wss://relay.ditto.pub",
+            RelayHintPolicy.sanitizeHintUrl("  WSS://Relay.Ditto.Pub/  ", torEnabled = false),
+        )
+        assertEquals(
+            "wss://relay.primal.net",
+            RelayHintPolicy.sanitizeHintUrl("wss://relay.primal.net/", torEnabled = false),
+        )
+        // Legacy Mostr / Ditto bridge URLs (301 redirect / HTML 200) rewrite cleanly to live wss://relay.ditto.pub.
+        assertEquals(
+            "wss://relay.ditto.pub",
             RelayHintPolicy.sanitizeHintUrl("  wss://relay.mostr.pub/  ", torEnabled = false),
         )
         assertEquals(
-            "wss://ditto.pub/relay",
+            "wss://relay.ditto.pub",
             RelayHintPolicy.sanitizeHintUrl("wss://ditto.pub/relay/", torEnabled = false),
         )
+    }
+
+    @Test
+    fun `RelayPool normalize lowercases scheme and host while preserving validation`() {
+        assertEquals("wss://relay.ditto.pub", RelayPool.normalize("  WSS://Relay.Ditto.Pub/  "))
+        assertEquals("wss://example.com:8443/Relay/Path", RelayPool.normalize("WSS://Example.COM:8443/Relay/Path/"))
+        assertEquals("ws://[::1]:4869", RelayPool.normalize("WS://[::1]:4869/"))
+        // Embedded credentials must stay visible so isValidRelayUrl rejects them.
+        assertFalse(RelayPool.isValidRelayUrl(RelayPool.normalize("wss://user:pass@relay.example.com/")))
     }
 
     @Test
@@ -119,5 +137,94 @@ class RelayHintPolicyTest {
         RelayHintCache.put(id, listOf("wss://relay.mostr.pub", "wss://ditto.pub/relay"))
         assertEquals(listOf("wss://relay.mostr.pub", "wss://ditto.pub/relay"), RelayHintCache.get(id))
         RelayHintCache.clear()
+    }
+
+    @Test
+    fun `real-world Ditto kind-6 empty-content repost extracts relay hint and survives 25-note batch`() {
+        val targetId = "0000005398df899f2ceeaf5a4c706d40fd0bcc4c065d4dc7379b17eb3fdcdf0a"
+        val repost = Event(
+            id = "f3f80df65baee91b2667c42f965528a52b275345b37194546176aa690e38cd9d",
+            pubkey = "86184109eae937d8d6f980b4a0b46da4ef0d983eade403ee1b4c0b6bde238b47",
+            createdAt = 1_794_667_424L,
+            kind = EventKind.REPOST,
+            tags = listOf(
+                buildJsonArray { add("e"); add(targetId); add("wss://relay.ditto.pub/") },
+                buildJsonArray { add("p"); add("05972259ec683e9843ce12fae6cedda06e65062cfb014799e2abd52b2932bae6") },
+                buildJsonArray {
+                    add("client")
+                    add("Ditto")
+                    add("31990:781a1527055f74c1f70230f10384609b34548f8ab6a0a6caa74025827f9fdae5:ditto")
+                },
+            ),
+            content = "",
+            sig = "504c3c8f914ba2025d2492befa4404d3eb98b7b2a6246807c03c61a0ba6853c09e50b6b3db6a041a81de2095919cb21729b6f4a34b9a58bd2460d6fc5198445d",
+        )
+
+        val extracted = RelayHintPolicy.extractReferencedEventHints(repost)
+        assertEquals(listOf("wss://relay.ditto.pub/"), extracted[targetId])
+
+        // Bury the Ditto repost at position #25 behind 24 other missing notes with 12 distinct hints.
+        val missingIds = (1..24).map { i -> "%064x".format(i) } + targetId
+        val hintsById = LinkedHashMap<String, List<String>>()
+        for (i in 1..24) {
+            val relayIdx = ((i - 1) % 12) + 1
+            hintsById["%064x".format(i)] = listOf("wss://hint$relayIdx.example.com/")
+        }
+        hintsById[targetId] = extracted[targetId].orEmpty()
+
+        val waves = RelayHintPolicy.planFallbackWaves(
+            missingIds = missingIds,
+            hintsById = hintsById,
+            answeredStage1Relays = setOf("wss://nostr.wine"),
+            allowHints = true,
+            allowBridges = true,
+            torEnabled = false,
+            maxPerWave = 6,
+            maxHintWaves = 3,
+        )
+
+        assertTrue("Expected bounded waves of <= 6 relays", waves.all { it.size <= 6 })
+        val allPlanned = waves.flatten().toSet()
+        assertTrue(
+            "wss://relay.ditto.pub must NEVER be starved by earlier hints in the same batch",
+            "wss://relay.ditto.pub" in allPlanned,
+        )
+    }
+
+    @Test
+    fun `planFallbackWaves guarantees Fediverse bridge relay even when hint waves are full`() {
+        val missingIds = (1..20).map { i -> "%064x".format(i) }
+        val hintsById = missingIds.associateWith { id ->
+            val idx = id.takeLast(2).toInt(16)
+            listOf("wss://relay$idx.example.com/")
+        }
+
+        val waves = RelayHintPolicy.planFallbackWaves(
+            missingIds = missingIds,
+            hintsById = hintsById,
+            answeredStage1Relays = emptySet(),
+            allowHints = true,
+            allowBridges = true,
+            torEnabled = false,
+            maxPerWave = 6,
+            maxHintWaves = 3,
+        )
+
+        // 18 hint relays fill 3 full waves of 6, plus a dedicated bridge wave for wss://relay.ditto.pub.
+        assertEquals(4, waves.size)
+        assertTrue(waves.last().contains("wss://relay.ditto.pub"))
+        // If Stage 1 already got an answer from wss://relay.ditto.pub, do not re-query it.
+        val wavesAfterAnswered = RelayHintPolicy.planFallbackWaves(
+            missingIds = missingIds,
+            hintsById = hintsById,
+            answeredStage1Relays = setOf("wss://relay.ditto.pub/"),
+            allowHints = true,
+            allowBridges = true,
+            torEnabled = false,
+            maxPerWave = 6,
+            maxHintWaves = 3,
+        )
+        assertEquals(3, wavesAfterAnswered.size)
+        assertFalse(wavesAfterAnswered.flatten().contains("wss://relay.ditto.pub"))
     }
 }

@@ -199,6 +199,8 @@ class ProfileViewModel @Inject constructor(
      */
     val unresolvedQuoteIds: StateFlow<Set<String>> = quoteLookup.unresolvedQuoteIds
 
+    fun retryQuote(id: String) = quoteLookup.retryId(id)
+
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 

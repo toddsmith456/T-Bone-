@@ -173,6 +173,8 @@ class NotificationsRepository @Inject constructor(
      */
     val unresolvedReferencedIds: StateFlow<Set<String>> = refLookup.unresolvedQuoteIds
 
+    fun retryReferencedNote(id: String) = refLookup.retryId(id)
+
     companion object {
         /** Nostr subscriptions and the summary remain scoped to 24 hours. */
         private const val RECENT_WINDOW_SECONDS = 86_400L

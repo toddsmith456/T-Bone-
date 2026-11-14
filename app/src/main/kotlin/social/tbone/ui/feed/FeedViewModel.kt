@@ -249,6 +249,8 @@ class FeedViewModel @Inject constructor(
      */
     val unresolvedQuoteIds: StateFlow<Set<String>> = quoteLookup.unresolvedQuoteIds
 
+    fun retryQuote(id: String) = quoteLookup.retryId(id)
+
     val reactions: StateFlow<Map<String, Set<String>>> = reactionsRepository.reactions
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
@@ -735,6 +737,10 @@ class FeedViewModel @Inject constructor(
         val snapshot = runtime.snapshot(feedEventLimit())
         _uiState.update { state ->
             state.withContentFilter(applyContentFilter(snapshot))
+        }
+        if (snapshot.isNotEmpty()) {
+            fetchQuotesForEvents(snapshot)
+            fetchProfilesForEvents(snapshot)
         }
     }
 

@@ -70,6 +70,8 @@ class HashtagFeedViewModel @Inject constructor(
     /** Referenced notes whose lookup genuinely finished without returning an event. */
     val unresolvedQuoteIds: StateFlow<Set<String>> = quoteLookup.unresolvedQuoteIds
 
+    fun retryQuote(id: String) = quoteLookup.retryId(id)
+
     private val pendingEvents = mutableListOf<Event>()
     @Volatile private var settled = false
 

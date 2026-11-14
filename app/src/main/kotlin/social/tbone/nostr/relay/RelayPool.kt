@@ -118,7 +118,16 @@ class RelayPool(
         val normalized = normalize(url)
         if (!isValidRelayUrl(normalized)) return
         relayRefCounts[normalized] = (relayRefCounts[normalized] ?: 0) + 1
-        addRelay(normalized)
+        if (connections.containsKey(normalized)) {
+            // If this relay is sitting in exponential reconnect backoff (up to 60s),
+            // wake it immediately so active quote/thread lookups don't time out waiting.
+            if (_relayStatuses.value[normalized] == RelayStatus.DISCONNECTED) {
+                disconnect(normalized)
+                addRelay(normalized)
+            }
+        } else {
+            addRelay(normalized)
+        }
     }
 
     @Synchronized
@@ -146,8 +155,24 @@ class RelayPool(
     fun relayUrls(): Set<String> = connections.keys.toSet()
 
     companion object {
-        /** Strip trailing slashes so wss://foo and wss://foo/ are treated as the same relay. */
-        fun normalize(url: String): String = url.trim().trimEnd('/')
+        /**
+         * Canonicalizes a relay URL: strips whitespace and trailing slashes, and
+         * lowercases scheme + host so `WSS://Relay.Ditto.Pub/` and
+         * `wss://relay.ditto.pub` share the same connection and subscription key.
+         * URLs containing userInfo are returned unchanged so [isValidRelayUrl]
+         * still sees and rejects embedded credentials.
+         */
+        fun normalize(url: String): String {
+            val trimmed = url.trim().trimEnd('/')
+            val uri = runCatching { java.net.URI(trimmed) }.getOrNull() ?: return trimmed
+            if (uri.rawUserInfo != null) return trimmed
+            val scheme = uri.scheme?.lowercase() ?: return trimmed
+            val host = uri.host?.lowercase() ?: return trimmed
+            val port = if (uri.port != -1) ":${uri.port}" else ""
+            val path = uri.rawPath?.trimEnd('/').orEmpty()
+            val query = uri.rawQuery?.let { "?$it" }.orEmpty()
+            return "$scheme://$host$port$path$query"
+        }
 
         /** Accept only actual Nostr WebSocket relay URLs, including local ws:// relays. */
         fun isValidRelayUrl(url: String): Boolean {
