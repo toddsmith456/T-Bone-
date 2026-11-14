@@ -211,54 +211,111 @@ def export_stage1_gantman(work_dir: Path, out_dir: Path) -> tuple[dict, np.ndarr
     return meta, np.stack(sample_outputs, axis=0)
 
 
+def _build_tf_vit_tiny_384(pt_model) -> "tf.Module":
+    """
+    Build an exact native-NHWC TensorFlow Module for timm's vit_tiny_patch16_384
+    directly from the loaded PyTorch state_dict.
+
+    Uses only <=4D tensors and pure TFLITE_BUILTINS ops (no Flex ops, no onnx2tf
+    shape-transposition issues). Verified directly against timm PyTorch below.
+    """
+    sd = {k: v.detach().cpu().numpy().astype(np.float32) for k, v in pt_model.state_dict().items()}
+    num_heads = int(pt_model.blocks[0].attn.num_heads)
+    embed_dim = int(pt_model.embed_dim)
+    head_dim = embed_dim // num_heads
+    scale = float(head_dim ** -0.5)
+    norm_eps = float(getattr(pt_model.norm, "eps", 1e-6))
+    depth = len(pt_model.blocks)
+
+    assert embed_dim == 192 and num_heads == 3 and depth == 12, (
+        f"Unexpected ViT geometry: embed_dim={embed_dim}, num_heads={num_heads}, depth={depth}"
+    )
+
+    # PatchEmbed Conv2D: PyTorch [O, I, H, W] -> TF [H, W, I, O]
+    patch_w = tf.constant(np.transpose(sd["patch_embed.proj.weight"], (2, 3, 1, 0)))
+    patch_b = tf.constant(sd["patch_embed.proj.bias"])
+    cls_token = tf.constant(sd["cls_token"])  # [1, 1, 192]
+    pos_embed = tf.constant(sd["pos_embed"])  # [1, 577, 192]
+
+    blocks = []
+    for i in range(depth):
+        p = f"blocks.{i}"
+        qkv_w = sd[f"{p}.attn.qkv.weight"]  # [576, 192]
+        qkv_b = sd[f"{p}.attn.qkv.bias"]    # [576]
+        # Split Q/K/V at export time so every tensor stays <=4D for fast XNNPACK execution.
+        qw, kw, vw = np.split(qkv_w, 3, axis=0)
+        qb, kb, vb = np.split(qkv_b, 3, axis=0)
+        blocks.append(
+            {
+                "n1_g": tf.constant(sd[f"{p}.norm1.weight"]),
+                "n1_b": tf.constant(sd[f"{p}.norm1.bias"]),
+                "qw": tf.constant(qw.T),
+                "qb": tf.constant(qb),
+                "kw": tf.constant(kw.T),
+                "kb": tf.constant(kb),
+                "vw": tf.constant(vw.T),
+                "vb": tf.constant(vb),
+                "pw": tf.constant(sd[f"{p}.attn.proj.weight"].T),
+                "pb": tf.constant(sd[f"{p}.attn.proj.bias"]),
+                "n2_g": tf.constant(sd[f"{p}.norm2.weight"]),
+                "n2_b": tf.constant(sd[f"{p}.norm2.bias"]),
+                "fc1_w": tf.constant(sd[f"{p}.mlp.fc1.weight"].T),
+                "fc1_b": tf.constant(sd[f"{p}.mlp.fc1.bias"]),
+                "fc2_w": tf.constant(sd[f"{p}.mlp.fc2.weight"].T),
+                "fc2_b": tf.constant(sd[f"{p}.mlp.fc2.bias"]),
+            }
+        )
+
+    final_n_g = tf.constant(sd["norm.weight"])
+    final_n_b = tf.constant(sd["norm.bias"])
+    head_w = tf.constant(sd["head.weight"].T)  # [192, 2]
+    head_b = tf.constant(sd["head.bias"])      # [2]
+
+    def layer_norm(x, gamma, beta):
+        mean = tf.reduce_mean(x, axis=-1, keepdims=True)
+        diff = x - mean
+        var = tf.reduce_mean(tf.square(diff), axis=-1, keepdims=True)
+        return diff * tf.math.rsqrt(var + norm_eps) * gamma + beta
+
+    class MarqoVitTiny384(tf.Module):
+        @tf.function(input_signature=[tf.TensorSpec([1, 384, 384, 3], tf.float32, name="image")])
+        def __call__(self, image):
+            # [1, 384, 384, 3] -> [1, 24, 24, 192] -> [1, 576, 192]
+            x = tf.nn.conv2d(image, patch_w, strides=[1, 16, 16, 1], padding="VALID") + patch_b
+            x = tf.reshape(x, [1, 576, embed_dim])
+            x = tf.concat([cls_token, x], axis=1) + pos_embed  # [1, 577, 192]
+
+            for b in blocks:
+                h = layer_norm(x, b["n1_g"], b["n1_b"])
+                q = tf.transpose(tf.reshape(tf.matmul(h, b["qw"]) + b["qb"], [1, 577, num_heads, head_dim]), [0, 2, 1, 3])
+                k = tf.transpose(tf.reshape(tf.matmul(h, b["kw"]) + b["kb"], [1, 577, num_heads, head_dim]), [0, 2, 1, 3])
+                v = tf.transpose(tf.reshape(tf.matmul(h, b["vw"]) + b["vb"], [1, 577, num_heads, head_dim]), [0, 2, 1, 3])
+                attn = tf.nn.softmax(tf.matmul(q, k, transpose_b=True) * scale, axis=-1)
+                ctx = tf.reshape(tf.transpose(tf.matmul(attn, v), [0, 2, 1, 3]), [1, 577, embed_dim])
+                x = x + (tf.matmul(ctx, b["pw"]) + b["pb"])
+
+                h2 = layer_norm(x, b["n2_g"], b["n2_b"])
+                mlp = tf.nn.gelu(tf.matmul(h2, b["fc1_w"]) + b["fc1_b"], approximate=False)
+                x = x + (tf.matmul(mlp, b["fc2_w"]) + b["fc2_b"])
+
+            x = layer_norm(x, final_n_g, final_n_b)
+            cls_feat = x[:, 0, :]  # [1, 192]
+            logits = tf.matmul(cls_feat, head_w) + head_b  # [1, 2]
+            return {"logits": logits}
+
+    return MarqoVitTiny384()
+
+
 def export_stage2_marqo(work_dir: Path, out_dir: Path) -> tuple[dict, np.ndarray]:
     print("=== [Stage 2] Loading Marqo/nsfw-image-detection-384 via timm ===")
     model = timm.create_model(MARQO_HF_ID, pretrained=True).eval()
 
-    dummy = torch.randn(1, 3, 384, 384, dtype=torch.float32)
-    onnx_path = work_dir / "marqo_nsfw_384.onnx"
-    export_kwargs = dict(
-        opset_version=17,
-        input_names=["image"],
-        output_names=["logits"],
-        do_constant_folding=True,
-    )
-    # Classic TorchScript exporter avoids Dynamo ONNX graphs that onnx2tf cannot transpose cleanly
-    if "dynamo" in inspect.signature(torch.onnx.export).parameters:
-        export_kwargs["dynamo"] = False
+    print("=== [Stage 2] Building native-NHWC TF ViT-Tiny-384 module from PyTorch weights ===")
+    tf_module = _build_tf_vit_tiny_384(model)
+    concrete_fn = tf_module.__call__.get_concrete_function()
 
-    print(f"=== [Stage 2] Exporting ONNX -> {onnx_path} ===")
-    torch.onnx.export(model, dummy, str(onnx_path), **export_kwargs)
-
-    tf_out_dir = work_dir / "marqo_tf"
-    if tf_out_dir.exists():
-        shutil.rmtree(tf_out_dir)
-
-    print("=== [Stage 2] Running onnx2tf (NCHW -> NHWC SavedModel, onnxsim disabled) ===")
-    import onnx2tf
-    import onnx2tf.onnx2tf as onnx2tf_mod
-    import onnx2tf.utils.common_functions as onnx2tf_cf
-
-    # onnx2tf's built-in calibration sample downloader can fail or fetch a corrupted file
-    # when upstream hosts throttle CI; supply a deterministic in-memory NHWC dummy array instead.
-    dummy_calib = np.random.default_rng(42).uniform(0.0, 255.0, size=(20, 128, 128, 3)).astype(np.float32)
-    onnx2tf_cf.download_test_image_data = lambda: dummy_calib
-    onnx2tf_mod.download_test_image_data = lambda: dummy_calib
-
-    onnx2tf.convert(
-        input_onnx_file_path=str(onnx_path),
-        output_folder_path=str(tf_out_dir),
-        not_use_onnxsim=True,
-        output_signaturedefs=True,
-        non_verbose=True,
-    )
-
-    saved_model_pb = tf_out_dir / "saved_model.pb"
-    if not saved_model_pb.exists():
-        raise FileNotFoundError(f"Expected SavedModel at {saved_model_pb}, found: {list(tf_out_dir.iterdir())}")
-
-    print("=== [Stage 2] Converting Marqo SavedModel -> FP16 TFLite (TFLITE_BUILTINS, zero accuracy loss) ===")
-    converter = tf.lite.TFLiteConverter.from_saved_model(str(tf_out_dir))
+    print("=== [Stage 2] Converting Marqo TF ViT-384 -> FP16 TFLite (TFLITE_BUILTINS, zero accuracy loss) ===")
+    converter = tf.lite.TFLiteConverter.from_concrete_functions([concrete_fn], tf_module)
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     converter.target_spec.supported_types = [tf.float16]
     converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS]

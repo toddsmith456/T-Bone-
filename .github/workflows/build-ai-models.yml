@@ -36,7 +36,7 @@ jobs:
             "torch==2.6.0+cpu" \
             "timm>=1.0.14" \
             "pillow>=10.0.0" \
-            "onnx2tf==1.29.24"
+            "tensorflow==2.19.0"
 
       - name: Export and verify Stage 1 & Stage 2 TFLite models
         id: export
