@@ -6,7 +6,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import social.tbone.settings.AppSettings
 import timber.log.Timber
@@ -45,17 +44,15 @@ class ScreenTimeManager @Inject constructor(
         // while the app is already open, so disabled installs perform zero
         // periodic DataStore writes.
         scope.launch {
-            appSettings.screenTimeEnabled
-                .distinctUntilChanged()
-                .collect { enabled ->
-                    if (enabled) {
-                        if (inForeground) startTickerLocked()
-                        refreshLockState()
-                    } else {
-                        stopTickerLocked()
-                        _locked.value = false
-                    }
+            appSettings.screenTimeEnabled.collect { enabled ->
+                if (enabled) {
+                    if (inForeground) startTickerLocked()
+                    refreshLockState()
+                } else {
+                    stopTickerLocked()
+                    _locked.value = false
                 }
+            }
         }
     }
 

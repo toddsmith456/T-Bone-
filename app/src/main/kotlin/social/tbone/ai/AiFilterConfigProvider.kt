@@ -41,11 +41,9 @@ class AppAiRuntimeStateProvider @Inject constructor(
 
     init {
         scope.launch {
-            appSettings.aiFilterConfig
-                .distinctUntilChanged()
-                .collect { cfg ->
-                    latestConfig = cfg
-                }
+            appSettings.aiFilterConfig.collect { cfg ->
+                latestConfig = cfg
+            }
         }
         scope.launch {
             accountRepository.activeAccount
