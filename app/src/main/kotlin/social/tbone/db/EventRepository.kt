@@ -48,6 +48,10 @@ class EventRepository @Inject constructor(private val dao: EventDao) {
     suspend fun getRecentAuthoredEvents(pubkey: String, limit: Int = 600): List<Event> =
         dao.getRecentByAuthor(pubkey, limit).mapNotNull { runCatching { it.toEvent() }.getOrNull() }
 
+    /** Trims ancient cached events on startup so long-lived databases stay lean. */
+    suspend fun pruneOld(maxKeep: Int = social.tbone.Tunables.MAX_CACHED_EVENTS): Int =
+        dao.keepLatest(maxKeep)
+
     companion object {
         private const val SQLITE_IN_BATCH = 500
     }

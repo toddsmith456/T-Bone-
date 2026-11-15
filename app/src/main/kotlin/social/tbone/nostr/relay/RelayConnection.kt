@@ -102,7 +102,14 @@ class RelayConnection(
             webSocket.compareAndSet(ws, null)
         }
     }.catch { t ->
-        Timber.e(t, "Flow error on $url")
+        // Normal mobile network drops (sleep, WiFi/cell switch, relay ping timeouts,
+        // DNS offline) are expected and automatically retried by RelayPool — log as a
+        // concise warning instead of flooding error logs with stack traces.
+        if (t is java.io.IOException) {
+            Timber.w("Relay disconnected ($url): ${t.javaClass.simpleName}: ${t.message}")
+        } else {
+            Timber.e(t, "Unexpected relay flow error on $url")
+        }
     }
 
     /**

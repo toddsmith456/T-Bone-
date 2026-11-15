@@ -1040,12 +1040,12 @@ class AppSettings @Inject constructor(
     }
 
     suspend fun addScreenTimeSeconds(seconds: Long) {
+        if (seconds <= 0L) return
         val today = java.time.LocalDate.now().toString()
-        val prevDate = dataStore.data.first()[SCREEN_TIME_DATE]
-        val prev = if (prevDate == today) dataStore.data.first()[SCREEN_TIME_USED_SECONDS] ?: 0L else 0L
-        dataStore.edit {
-            it[SCREEN_TIME_DATE] = today
-            it[SCREEN_TIME_USED_SECONDS] = prev + seconds
+        dataStore.edit { prefs ->
+            val prev = if (prefs[SCREEN_TIME_DATE] == today) prefs[SCREEN_TIME_USED_SECONDS] ?: 0L else 0L
+            prefs[SCREEN_TIME_DATE] = today
+            prefs[SCREEN_TIME_USED_SECONDS] = prev + seconds
         }
     }
 

@@ -35,9 +35,10 @@ class FileLoggingTree(private val logFile: File) : Timber.Tree() {
         if (!BuildConfig.DEBUG && priority < Log.INFO) return
         try {
             val level = priorityLabel(priority)
+            val safeTag = tag?.takeIf { it.isNotBlank() } ?: "TBone"
             val timestamp = TIMESTAMP_FMT.format(LocalDateTime.now())
             val line = buildString {
-                append("$timestamp $level/$tag: $message")
+                append("$timestamp $level/$safeTag: $message")
                 if (t != null) append("\n${Log.getStackTraceString(t)}")
                 append("\n")
             }

@@ -28,4 +28,12 @@ abstract class ProfileDao {
 
     @Query("SELECT * FROM profiles ORDER BY createdAt DESC LIMIT 500")
     abstract suspend fun getAll(): List<ProfileEntity>
+
+    /** Keep only the newest [maxKeep] cached profiles so upgraded installs never grow unbounded. */
+    @Query(
+        "DELETE FROM profiles WHERE pubkey NOT IN (" +
+            "SELECT pubkey FROM profiles ORDER BY createdAt DESC LIMIT :maxKeep" +
+            ")",
+    )
+    abstract suspend fun keepLatest(maxKeep: Int): Int
 }

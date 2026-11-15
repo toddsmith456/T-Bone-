@@ -2,6 +2,8 @@ package social.tbone.reactions
 
 import android.util.LruCache
 import social.tbone.Tunables
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -40,7 +42,10 @@ class ReactionsRepository @Inject constructor(
     private val pool: RelayPool,
     private val signerFactory: NostrSignerFactory,
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Timber.e(throwable, "Uncaught exception in ReactionsRepository")
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + exceptionHandler)
 
     // Caps reaction data; oldest entries evicted automatically.
     private val reactionCache = LruCache<String, Set<String>>(Tunables.REACTION_CACHE_SIZE)
@@ -84,32 +89,47 @@ class ReactionsRepository @Inject constructor(
         }
     }
 
+    private fun updateReactionsBounded(eventId: String, value: Set<String>) {
+        _reactions.update { current ->
+            val trimmed = if (current.size >= Tunables.REACTION_CACHE_SIZE && eventId !in current) {
+                current.entries.drop(current.size / 4).associate { it.key to it.value }
+            } else {
+                current
+            }
+            trimmed + (eventId to value)
+        }
+    }
+
     init {
         scope.launch {
             pool.messages.collect { (_, msg) ->
-                // Any positive reaction counts: "+" (or empty) is a like, and
-                // an emoji is a like shown as that emoji. "-" is a dislike.
-                if (msg is RelayMessage.EventMessage
-                    && msg.event.kind == EventKind.REACTION
-                    && msg.event.content != "-"
-                    && msg.event.verify()
-                ) {
-                    val targetId = msg.event.parsedTags
-                        .lastOrNull { it.name == "e" }?.value() ?: return@collect
-                    val updated = synchronized(reactionCache) {
-                        val next = (reactionCache.get(targetId) ?: emptySet()) + msg.event.pubkey
-                        reactionCache.put(targetId, next)
-                        next
+                runCatching {
+                    // Any positive reaction counts: "+" (or empty) is a like, and
+                    // an emoji is a like shown as that emoji. "-" is a dislike.
+                    if (msg is RelayMessage.EventMessage
+                        && msg.event.kind == EventKind.REACTION
+                        && msg.event.content != "-"
+                        && msg.event.verify()
+                    ) {
+                        val targetId = msg.event.parsedTags
+                            .lastOrNull { it.name == "e" }?.value() ?: return@runCatching
+                        val updated = synchronized(reactionCache) {
+                            val next = (reactionCache.get(targetId) ?: emptySet()) + msg.event.pubkey
+                            reactionCache.put(targetId, next)
+                            next
+                        }
+                        // Targeted, bounded update: replace only the changed entry and trim when over cap.
+                        updateReactionsBounded(targetId, updated)
+                        recordContent(
+                            targetId,
+                            msg.event.pubkey,
+                            msg.event.content.ifEmpty { "+" },
+                            msg.event.createdAt,
+                        )
                     }
-                    // Targeted update: replace only the changed entry instead of
-                    // snapshotting the entire 5000-entry cache on every reaction event.
-                    _reactions.update { it + (targetId to updated) }
-                    recordContent(
-                        targetId,
-                        msg.event.pubkey,
-                        msg.event.content.ifEmpty { "+" },
-                        msg.event.createdAt,
-                    )
+                }.onFailure { t ->
+                    if (t is CancellationException) throw t
+                    Timber.w(t, "ReactionsRepository message handling failed")
                 }
             }
         }
@@ -117,30 +137,41 @@ class ReactionsRepository @Inject constructor(
 
     /** Subscribe to reactions for any event IDs not yet tracked. */
     fun subscribeTo(eventIds: List<String>) {
-        val newIds = eventIds.filter { subscribedCache.get(it) == null }
+        val newIds = synchronized(subscribedCache) {
+            eventIds.distinct().filter { id ->
+                if (subscribedCache.get(id) != null) {
+                    false
+                } else {
+                    subscribedCache.put(id, Unit)
+                    true
+                }
+            }
+        }
         if (newIds.isEmpty()) return
-        newIds.forEach { subscribedCache.put(it, Unit) }
         val subId = pool.subscribe(
             listOf(Filter(eTags = newIds, kinds = listOf(EventKind.REACTION))),
             label = "reactions",
         )
         // Unsubscribe after EOSE — historical data loaded; live reactions handled by the init collector
         scope.launch {
-            val answeredRelays = mutableSetOf<String>()
-            val expectedRelays = pool.relayStatuses.value
-                .count { it.value == RelayStatus.CONNECTED }
-                .coerceAtLeast(1)
-            withTimeoutOrNull(30_000) {
-                pool.messages.first { (relayUrl, msg) ->
-                    if (msg !is RelayMessage.EndOfStoredEvents || msg.subscriptionId != subId) {
-                        false
-                    } else {
-                        answeredRelays += relayUrl
-                        answeredRelays.size >= expectedRelays
+            try {
+                val answeredRelays = mutableSetOf<String>()
+                val expectedRelays = pool.relayStatuses.value
+                    .count { it.value == RelayStatus.CONNECTED }
+                    .coerceAtLeast(1)
+                withTimeoutOrNull(30_000) {
+                    pool.messages.first { (relayUrl, msg) ->
+                        if (msg !is RelayMessage.EndOfStoredEvents || msg.subscriptionId != subId) {
+                            false
+                        } else {
+                            answeredRelays += relayUrl
+                            answeredRelays.size >= expectedRelays
+                        }
                     }
                 }
+            } finally {
+                pool.unsubscribe(subId)
             }
-            pool.unsubscribe(subId)
         }
     }
 
@@ -156,7 +187,7 @@ class ReactionsRepository @Inject constructor(
                 reactionCache.put(event.id, next)
                 next
             }
-            _reactions.update { it + (event.id to optimistic) }
+            updateReactionsBounded(event.id, optimistic)
             recordContent(event.id, activePubkey, reaction, System.currentTimeMillis() / 1000)
 
             val unsigned = UnsignedEvent(

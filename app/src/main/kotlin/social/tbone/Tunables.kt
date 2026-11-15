@@ -118,4 +118,10 @@ object Tunables {
 
     /** Maximum reaction entries (by event ID) kept in ReactionsRepository. */
     const val REACTION_CACHE_SIZE = 5_000
+
+    /** Maximum cached Nostr events retained in Room on startup hygiene. */
+    const val MAX_CACHED_EVENTS = 2_000
+
+    /** Maximum cached Nostr profiles retained in Room on startup hygiene. */
+    const val MAX_CACHED_PROFILES = 2_000
 }

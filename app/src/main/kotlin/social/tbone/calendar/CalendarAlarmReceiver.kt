@@ -17,9 +17,12 @@ import social.tbone.R
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import timber.log.Timber
 import javax.inject.Inject
 
 /**
@@ -33,6 +36,10 @@ class CalendarAlarmReceiver : BroadcastReceiver() {
     @Inject lateinit var repository: CalendarRepository
     @Inject lateinit var scheduler: CalendarAlarmScheduler
 
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Timber.e(throwable, "Uncaught exception in CalendarAlarmReceiver")
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
             CalendarAlarmScheduler.ACTION_ALARM -> {
@@ -42,12 +49,16 @@ class CalendarAlarmReceiver : BroadcastReceiver() {
                 // PendingIntents can outlive a wipe. Fail closed: never display
                 // sensitive extras until the event is still present in the vault.
                 val pending = goAsync()
-                CoroutineScope(Dispatchers.IO).launch {
+                CoroutineScope(SupervisorJob() + Dispatchers.IO + exceptionHandler).launch {
                     try {
                         val event = runCatching { repository.getById(id) }.getOrNull()
-                        if (event != null) scheduler.deliverIfAllowed {
-                            postNotification(context, id, event.title, start)
-                            scheduler.scheduleNextOccurrence(event, start)
+                        if (event != null) {
+                            runCatching {
+                                scheduler.deliverIfAllowed {
+                                    postNotification(context, id, event.title, start)
+                                    scheduler.scheduleNextOccurrence(event, start)
+                                }
+                            }.onFailure { Timber.w(it, "Failed delivering calendar alarm") }
                         }
                     } finally {
                         pending.finish()
@@ -63,11 +74,12 @@ class CalendarAlarmReceiver : BroadcastReceiver() {
                 // Re-schedule future alarms after reboot / update. The DB read
                 // is suspend, so run it on an IO coroutine and finish when done.
                 val pending = goAsync()
-                CoroutineScope(Dispatchers.IO).launch {
+                CoroutineScope(SupervisorJob() + Dispatchers.IO + exceptionHandler).launch {
                     try {
                         val events = runCatching { repository.getEventsForScheduling() }
                             .getOrDefault(emptyList())
-                        scheduler.rescheduleAll(events)
+                        runCatching { scheduler.rescheduleAll(events) }
+                            .onFailure { Timber.w(it, "Failed rescheduling calendar alarms") }
                     } finally {
                         pending.finish()
                     }

@@ -12,6 +12,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import social.tbone.ai.AiFilterConfig
 import social.tbone.ai.AiModelManager
@@ -55,13 +57,17 @@ class ContentFilterViewModel @Inject constructor(
     accountRepository: social.tbone.account.AccountRepository,
     aiModelManager: AiModelManager,
 ) : ViewModel() {
+    private val followedPubkeys = accountRepository.activeAccount
+        .map { it?.follows?.toSet().orEmpty() }
+        .distinctUntilChanged()
+
     private val baseData = combine(
         muteRepository.effectiveMuted,
         appSettings.nsfwMode,
         appSettings.bleepWords,
         appSettings.hideWords,
-        accountRepository.activeAccount,
-    ) { blocked, nsfwMode, bleep, hide, account ->
+        followedPubkeys,
+    ) { blocked, nsfwMode, bleep, hide, followed ->
         ContentFilterData(
             blockedPubkeys = blocked,
             nsfwMode = nsfwMode,
@@ -69,7 +75,7 @@ class ContentFilterViewModel @Inject constructor(
             hideWords = hide,
             // The account's cached follow set is the same source the feed view
             // model uses, so both passes agree on who is followed.
-            followedPubkeys = account?.follows?.toSet().orEmpty(),
+            followedPubkeys = followed,
         )
     }
 

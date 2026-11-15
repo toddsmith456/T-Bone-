@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
@@ -28,11 +29,13 @@ private val AccountStorageJson = kotlinx.serialization.json.Json { ignoreUnknown
 /** Distinguishes a new install from unreadable or inconsistent account data. */
 internal enum class AccountStartupStatus { EMPTY, READY, UNREADABLE }
 
-internal fun accountStartupStatus(prefs: Preferences): AccountStartupStatus {
-    val raw = prefs[KEY_ACCOUNTS]
-    val active = prefs[KEY_ACTIVE_PUBKEY]?.takeIf { it.isNotBlank() }
-    if (raw == null) return if (active == null) AccountStartupStatus.EMPTY else AccountStartupStatus.UNREADABLE
-    val accounts = try { AccountStorageJson.decodeFromString<List<Account>>(raw) }
+internal fun accountStartupStatus(prefs: Preferences): AccountStartupStatus =
+    accountStartupStatus(prefs[KEY_ACTIVE_PUBKEY], prefs[KEY_ACCOUNTS])
+
+internal fun accountStartupStatus(rawActive: String?, rawAccounts: String?): AccountStartupStatus {
+    val active = rawActive?.takeIf { it.isNotBlank() }
+    if (rawAccounts == null) return if (active == null) AccountStartupStatus.EMPTY else AccountStartupStatus.UNREADABLE
+    val accounts = try { AccountStorageJson.decodeFromString<List<Account>>(rawAccounts) }
         catch (_: kotlinx.serialization.SerializationException) { return AccountStartupStatus.UNREADABLE }
         catch (_: IllegalArgumentException) { return AccountStartupStatus.UNREADABLE }
     if (accounts.isEmpty() && active == null) return AccountStartupStatus.EMPTY
@@ -56,34 +59,47 @@ class AccountRepository @Inject constructor(
 ) {
     private val hiddenVerification = Mutex()
 
-    internal val startupStatus: Flow<AccountStartupStatus> = dataStore.data.map(::accountStartupStatus)
+    // Extract only the two account keys before decoding so unrelated preference
+    // writes in the shared DataStore (theme, notifications, screen time, etc.)
+    // never re-parse the accounts + follow-list JSON or re-emit downstream flows.
+    private val rawAccountSnapshot: Flow<Pair<String?, String?>> = dataStore.data
+        .map { prefs -> prefs[KEY_ACTIVE_PUBKEY] to prefs[KEY_ACCOUNTS] }
+        .distinctUntilChanged()
+
+    internal val startupStatus: Flow<AccountStartupStatus> = rawAccountSnapshot
+        .map { (active, raw) -> accountStartupStatus(active, raw) }
+        .distinctUntilChanged()
 
     // Raw, unfiltered — used internally for hidden PIN lookup and migration.
-    private val allAccounts: Flow<List<Account>> = dataStore.data.map { prefs ->
-        prefs[KEY_ACCOUNTS]
-            ?.let { runCatching { AccountStorageJson.decodeFromString<List<Account>>(it) }.getOrDefault(emptyList()) }
-            ?: emptyList()
-    }
+    private val allAccounts: Flow<List<Account>> = dataStore.data
+        .map { it[KEY_ACCOUNTS] }
+        .distinctUntilChanged()
+        .map { raw ->
+            raw?.let { runCatching { AccountStorageJson.decodeFromString<List<Account>>(it) }.getOrDefault(emptyList()) }
+                ?: emptyList()
+        }
 
     // Visible accounts: hidden accounts are filtered unless the session has
     // unlocked them via PIN or they are the current active account.
     val accounts: Flow<List<Account>> = combine(
         allAccounts,
         appSettings.hiddenUnlockedPubkeys,
-        dataStore.data.map { it[KEY_ACTIVE_PUBKEY] },
+        dataStore.data.map { it[KEY_ACTIVE_PUBKEY] }.distinctUntilChanged(),
     ) { all, unlocked, activePubkey ->
         all.filter { account ->
             if (!account.isHidden) true
             else account.pubkey == activePubkey || account.pubkey in unlocked
         }
-    }
+    }.distinctUntilChanged()
 
-    val activeAccount: Flow<Account?> = dataStore.data.map { prefs ->
-        val pubkey = prefs[KEY_ACTIVE_PUBKEY] ?: return@map null
-        prefs[KEY_ACCOUNTS]
-            ?.let { runCatching { AccountStorageJson.decodeFromString<List<Account>>(it) }.getOrDefault(emptyList()) }
-            ?.find { it.pubkey == pubkey }
-    }
+    val activeAccount: Flow<Account?> = rawAccountSnapshot
+        .map { (pubkey, raw) ->
+            if (pubkey == null || raw == null) return@map null
+            runCatching { AccountStorageJson.decodeFromString<List<Account>>(raw) }
+                .getOrDefault(emptyList())
+                .find { it.pubkey == pubkey }
+        }
+        .distinctUntilChanged()
 
     // ── Hidden helpers ──────────────────────────────────────────────────────
 

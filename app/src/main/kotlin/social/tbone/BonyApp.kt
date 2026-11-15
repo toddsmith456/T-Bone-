@@ -50,6 +50,8 @@ class BonyApp : Application() {
     @Inject lateinit var nsfwCoilInterceptor: social.tbone.ai.NsfwCoilInterceptor
     @Inject lateinit var mediaScanCache: social.tbone.ai.MediaScanCache
     @Inject lateinit var aiEngine: social.tbone.ai.NsfwEngine
+    @Inject lateinit var eventRepository: social.tbone.db.EventRepository
+    @Inject lateinit var profileRepository: social.tbone.profile.ProfileRepository
 
     override fun onCreate() {
         super.onCreate()
@@ -131,6 +133,10 @@ class BonyApp : Application() {
             try {
                 mediaScanCache.prune()
             } catch (_: Exception) { }
+            runCatching { eventRepository.pruneOld() }
+                .onFailure { Timber.w(it, "Startup event cache prune failed") }
+            runCatching { profileRepository.pruneOld() }
+                .onFailure { Timber.w(it, "Startup profile cache prune failed") }
         }
 
         // Keep Coil's image loader in sync with Tor + lightweight cache toggle.
@@ -175,6 +181,9 @@ class BonyApp : Application() {
         super.onTrimMemory(level)
         if (level >= TRIM_MEMORY_UI_HIDDEN || level >= TRIM_MEMORY_RUNNING_LOW) {
             aiEngine.unloadAll()
+        }
+        if (level >= TRIM_MEMORY_RUNNING_LOW) {
+            runCatching { Coil.imageLoader(this).memoryCache?.clear() }
         }
     }
 }

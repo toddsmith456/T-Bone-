@@ -1,15 +1,17 @@
 package social.tbone.reactions
 
 import android.util.LruCache
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -22,6 +24,7 @@ import social.tbone.nostr.replyEventId
 import social.tbone.nostr.relay.RelayMessage
 import social.tbone.nostr.relay.RelayPool
 import social.tbone.nostr.relay.RelayStatus
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -37,7 +40,10 @@ class RepliesRepository @Inject constructor(
     private val pool: RelayPool,
     private val accountRepository: AccountRepository,
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Timber.e(throwable, "Uncaught exception in RepliesRepository")
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + exceptionHandler)
 
     private val replyCountCache = LruCache<String, Int>(Tunables.REACTION_CACHE_SIZE)
     private val repliedCache = LruCache<String, Boolean>(Tunables.REACTION_CACHE_SIZE)
@@ -72,13 +78,18 @@ class RepliesRepository @Inject constructor(
         // Live collector: count replies as they stream from any subscription.
         scope.launch {
             pool.messages.collect { (_, msg) ->
-                if (msg is RelayMessage.EventMessage
-                    && (msg.event.kind == EventKind.TEXT_NOTE ||
-                        msg.event.kind == EventKind.COMMENT)
-                    && msg.event.verify()
-                ) {
-                    val parentId = msg.event.parsedTags.replyEventId ?: return@collect
-                    bump(parentId, msg.event)
+                runCatching {
+                    if (msg is RelayMessage.EventMessage
+                        && (msg.event.kind == EventKind.TEXT_NOTE ||
+                            msg.event.kind == EventKind.COMMENT)
+                        && msg.event.verify()
+                    ) {
+                        val parentId = msg.event.parsedTags.replyEventId ?: return@runCatching
+                        bump(parentId, msg.event)
+                    }
+                }.onFailure { t ->
+                    if (t is CancellationException) throw t
+                    Timber.w(t, "RepliesRepository message handling failed")
                 }
             }
         }
@@ -86,9 +97,17 @@ class RepliesRepository @Inject constructor(
 
     /** Subscribe to replies for any note IDs not yet tracked. */
     fun subscribeTo(eventIds: List<String>) {
-        val newIds = eventIds.filter { subscribedCache.get(it) == null }
+        val newIds = synchronized(subscribedCache) {
+            eventIds.distinct().filter { id ->
+                if (subscribedCache.get(id) != null) {
+                    false
+                } else {
+                    subscribedCache.put(id, Unit)
+                    true
+                }
+            }
+        }
         if (newIds.isEmpty()) return
-        newIds.forEach { subscribedCache.put(it, Unit) }
         val subId = pool.subscribe(
             listOf(
                 Filter(
@@ -100,21 +119,24 @@ class RepliesRepository @Inject constructor(
         )
         // Unsubscribe after EOSE — historical replies loaded; live handled above.
         scope.launch {
-            val answeredRelays = mutableSetOf<String>()
-            val expectedRelays = pool.relayStatuses.value
-                .count { it.value == RelayStatus.CONNECTED }
-                .coerceAtLeast(1)
-            withTimeoutOrNull(30_000) {
-                pool.messages.first { (relayUrl, m) ->
-                    if (m !is RelayMessage.EndOfStoredEvents || m.subscriptionId != subId) {
-                        false
-                    } else {
-                        answeredRelays += relayUrl
-                        answeredRelays.size >= expectedRelays
+            try {
+                val answeredRelays = mutableSetOf<String>()
+                val expectedRelays = pool.relayStatuses.value
+                    .count { it.value == RelayStatus.CONNECTED }
+                    .coerceAtLeast(1)
+                withTimeoutOrNull(30_000) {
+                    pool.messages.first { (relayUrl, m) ->
+                        if (m !is RelayMessage.EndOfStoredEvents || m.subscriptionId != subId) {
+                            false
+                        } else {
+                            answeredRelays += relayUrl
+                            answeredRelays.size >= expectedRelays
+                        }
                     }
                 }
+            } finally {
+                pool.unsubscribe(subId)
             }
-            pool.unsubscribe(subId)
         }
     }
 
@@ -136,12 +158,26 @@ class RepliesRepository @Inject constructor(
             replyCountCache.put(parentId, next)
             next
         }
-        _replies.update { it + (parentId to count) }
+        _replies.update { current ->
+            val trimmed = if (current.size >= Tunables.REACTION_CACHE_SIZE && parentId !in current) {
+                current.entries.drop(current.size / 4).associate { it.key to it.value }
+            } else {
+                current
+            }
+            trimmed + (parentId to count)
+        }
 
         val me = activePubkey
         if (me != null && reply.pubkey == me) {
             synchronized(repliedCache) { repliedCache.put(parentId, true) }
-            _repliedByMe.update { it + parentId }
+            _repliedByMe.update { current ->
+                val trimmed = if (current.size >= Tunables.REACTION_CACHE_SIZE && parentId !in current) {
+                    current.drop(current.size / 4).toSet()
+                } else {
+                    current
+                }
+                trimmed + parentId
+            }
         }
     }
 }

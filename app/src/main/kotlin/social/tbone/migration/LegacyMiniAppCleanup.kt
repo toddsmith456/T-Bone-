@@ -91,7 +91,7 @@ internal class LegacyCleanupRunner(
                 prefs[TOOL_ORDER] = order.split(',').filter { it != "webxdc" && !it.startsWith("xdc_") && it.isNotBlank() }.joinToString(",")
             }
         }
-        if (needsBrowser) deleteBrowser()
+        if (needsBrowser && browserHasData(context)) deleteBrowser()
         check(marker.edit().putString(PHASE, "done").remove(BROWSER).commit())
     }
 }

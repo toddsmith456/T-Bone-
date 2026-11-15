@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -69,7 +70,10 @@ class AiModelManager @Inject constructor(
         private const val MAX_IMPORT_BYTES = 28_000_000L
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Timber.e(throwable, "Uncaught exception in AiModelManager")
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + exceptionHandler)
     private val modelsDir: File = File(context.filesDir, MODELS_DIR_NAME)
 
     private val activeJobs = HashMap<AiModelId, Job>()
@@ -164,11 +168,7 @@ class AiModelManager @Inject constructor(
                 notifyModelsChanged()
 
                 val finalFile = File(modelsDir, matched.filename)
-                if (finalFile.exists()) finalFile.delete()
-                if (!tempFile.renameTo(finalFile)) {
-                    tempFile.copyTo(finalFile, overwrite = true)
-                    tempFile.delete()
-                }
+                replaceModelFile(tempFile, finalFile)
                 updateState(
                     matched.id,
                     ModelInstallState.Installed(finalFile, finalFile.length(), sha256),
@@ -268,11 +268,7 @@ class AiModelManager @Inject constructor(
 
                 // Unload existing interpreter for this slot (if reinstalling) before replacing file.
                 notifyModelsChanged()
-                if (finalFile.exists()) finalFile.delete()
-                if (!partFile.renameTo(finalFile)) {
-                    partFile.copyTo(finalFile, overwrite = true)
-                    partFile.delete()
-                }
+                replaceModelFile(partFile, finalFile)
                 updateState(
                     spec.id,
                     ModelInstallState.Installed(finalFile, finalFile.length(), actualSha),
@@ -318,6 +314,31 @@ class AiModelManager @Inject constructor(
             out.fd.sync()
         }
         return digest.digest().joinToString(separator = "") { b -> "%02x".format(b) }
+    }
+
+    /**
+     * Atomically replaces [target] with [source] without ever truncating/overwriting
+     * an existing inode in place (which would trigger SIGBUS on any active `mmap()`
+     * read-only mapping still winding down in LiteRT).
+     */
+    private fun replaceModelFile(source: File, target: File) {
+        if (source.renameTo(target)) return
+        if (target.exists()) {
+            // Unlink (or rename aside then unlink) so any existing mmap stays backed
+            // by the old unlinked inode until closed, while the new write creates a fresh inode.
+            if (!target.delete()) {
+                val displaced = File(target.parentFile, "${target.name}.old.${System.nanoTime()}")
+                if (target.renameTo(displaced)) {
+                    runCatching { displaced.delete() }
+                } else {
+                    throw IOException("could not replace existing model file")
+                }
+            }
+        }
+        if (!source.renameTo(target)) {
+            source.copyTo(target, overwrite = false)
+            runCatching { source.delete() }
+        }
     }
 
     private fun scanDiskStates(): Map<AiModelId, ModelInstallState> =

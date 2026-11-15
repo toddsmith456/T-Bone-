@@ -1,12 +1,15 @@
 package social.tbone.ai
 
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import social.tbone.account.AccountRepository
 import social.tbone.settings.AppSettings
+import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -25,7 +28,10 @@ class AppAiRuntimeStateProvider @Inject constructor(
     accountRepository: AccountRepository,
 ) : AiRuntimeStateProvider {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Timber.e(throwable, "Uncaught exception in AppAiRuntimeStateProvider")
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + exceptionHandler)
 
     @Volatile
     private var latestConfig: AiFilterConfig = AiFilterConfig()
@@ -35,14 +41,19 @@ class AppAiRuntimeStateProvider @Inject constructor(
 
     init {
         scope.launch {
-            appSettings.aiFilterConfig.collect { cfg ->
-                latestConfig = cfg
-            }
+            appSettings.aiFilterConfig
+                .distinctUntilChanged()
+                .collect { cfg ->
+                    latestConfig = cfg
+                }
         }
         scope.launch {
-            accountRepository.activeAccount.collect { account ->
-                latestFollows = account?.follows?.toSet().orEmpty()
-            }
+            accountRepository.activeAccount
+                .map { it?.follows?.toSet().orEmpty() }
+                .distinctUntilChanged()
+                .collect { follows ->
+                    latestFollows = follows
+                }
         }
     }
 

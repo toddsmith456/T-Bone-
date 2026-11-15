@@ -40,7 +40,9 @@ class LiteRtNsfwEngine @Inject constructor(
 ) : NsfwEngine {
 
     companion object {
-        private const val POOL_SIZE = 2
+        // Keep 1 worker slot per model to halve native XNNPACK RAM and stay well
+        // within Android's memory budget alongside media caches and ExoPlayer.
+        private const val POOL_SIZE = 1
         private const val STAGE1_DIM = 224
         private const val STAGE2_DIM = 384
         private const val STAGE1_CLASSES = 5
@@ -51,12 +53,15 @@ class LiteRtNsfwEngine @Inject constructor(
     private val inferenceDispatcher = Dispatchers.Default.limitedParallelism(POOL_SIZE)
 
     private val poolMutex = Mutex()
+    private val stateLock = Any()
 
     @Volatile
     private var pool: WorkerPool? = null
 
     @Volatile
     private var poolDirty: Boolean = true
+
+    private var poolGeneration: Long = 0L
 
     override val modelVersion: Int = AiModelCatalog.CACHE_MODEL_VERSION
 
@@ -71,40 +76,34 @@ class LiteRtNsfwEngine @Inject constructor(
     override fun hasStage2Model(): Boolean = modelManager.isInstalled(AiModelId.ACCURATE_MARQO)
 
     override fun onModelsChanged() {
-        poolDirty = true
-        // Close existing interpreters asynchronously on the next safe boundary;
-        // also clear reference immediately if idle.
-        val old = pool
-        if (old != null && poolMutex.tryLock()) {
-            try {
-                pool = null
-                old.closeQuietly()
-            } finally {
-                poolMutex.unlock()
-            }
-        }
+        invalidatePool()
     }
 
     override fun unloadAll() {
-        poolDirty = true
-        val old = pool
-        pool = null
-        old?.closeQuietly()
+        invalidatePool()
+    }
+
+    private fun invalidatePool() {
+        val old = synchronized(stateLock) {
+            poolGeneration++
+            poolDirty = true
+            val existing = pool
+            pool = null
+            existing
+        }
+        // Drains only idle slots immediately; any active inference slot finishes
+        // safely and closes itself via WorkerPool.releaseOrClose(slot).
+        old?.closeIdleAndMarkClosed()
     }
 
     override suspend fun classify(bitmap: Bitmap, mode: AiScanMode): RawNsfwScores? =
         withContext(inferenceDispatcher) {
             val activePool = ensurePool() ?: return@withContext null
-            val slot = activePool.channel.receive()
+            val slot = activePool.acquireOrNull() ?: return@withContext null
             try {
                 runOnSlot(slot, bitmap, mode)
             } finally {
-                // If pool was invalidated mid-inference, close this slot instead of returning it.
-                if (pool !== activePool) {
-                    slot.closeQuietly()
-                } else {
-                    activePool.channel.trySend(slot)
-                }
+                activePool.releaseOrClose(slot)
             }
         }
 
@@ -200,20 +199,29 @@ class LiteRtNsfwEngine @Inject constructor(
     }
 
     private suspend fun ensurePool(): WorkerPool? {
-        val current = pool
-        if (current != null && !poolDirty) return current
+        synchronized(stateLock) {
+            val current = pool
+            if (current != null && !poolDirty) return current
+        }
 
         return poolMutex.withLock {
-            val again = pool
-            if (again != null && !poolDirty) return@withLock again
-
-            pool?.closeQuietly()
-            pool = null
+            val buildGen: Long
+            val stalePool: WorkerPool?
+            synchronized(stateLock) {
+                val again = pool
+                if (again != null && !poolDirty) return@withLock again
+                stalePool = pool
+                pool = null
+                buildGen = poolGeneration
+            }
+            stalePool?.closeIdleAndMarkClosed()
 
             val stage1File = modelManager.installedFile(AiModelId.FAST_MNV2)
             val stage2File = modelManager.installedFile(AiModelId.ACCURATE_MARQO)
             if (stage1File == null && stage2File == null) {
-                poolDirty = false
+                synchronized(stateLock) {
+                    if (poolGeneration == buildGen) poolDirty = false
+                }
                 return@withLock null
             }
 
@@ -241,10 +249,23 @@ class LiteRtNsfwEngine @Inject constructor(
 
                 val channel = Channel<WorkerSlot>(POOL_SIZE)
                 slots.forEach { channel.trySend(it) }
-                val created = WorkerPool(channel, slots)
-                pool = created
-                poolDirty = false
-                created
+                val created = WorkerPool(channel)
+                val published = synchronized(stateLock) {
+                    if (poolGeneration == buildGen) {
+                        pool = created
+                        poolDirty = false
+                        true
+                    } else {
+                        // unloadAll() or onModelsChanged() fired while loading; discard safely.
+                        false
+                    }
+                }
+                if (published) {
+                    created
+                } else {
+                    created.closeIdleAndMarkClosed()
+                    null
+                }
             } catch (t: Throwable) {
                 slots.forEach { it.closeQuietly() }
                 Timber.e(t, "Failed to initialize LiteRT NSFW interpreter pool")
@@ -340,16 +361,38 @@ class LiteRtNsfwEngine @Inject constructor(
     }
 
     private class WorkerPool(
-        val channel: Channel<WorkerSlot>,
-        val slots: List<WorkerSlot>,
+        private val channel: Channel<WorkerSlot>,
     ) {
-        fun closeQuietly() {
-            // Drain only idle slots immediately; any in-flight slot closes itself in its finally block.
-            while (true) {
-                val idle = channel.tryReceive().getOrNull() ?: break
-                idle.closeQuietly()
+        private val closeLock = Any()
+        private var closed = false
+
+        suspend fun acquireOrNull(): WorkerSlot? = channel.receiveCatching().getOrNull()
+
+        fun releaseOrClose(slot: WorkerSlot) {
+            val shouldClose = synchronized(closeLock) {
+                if (closed) {
+                    true
+                } else {
+                    !channel.trySend(slot).isSuccess
+                }
             }
-            channel.close()
+            if (shouldClose) slot.closeQuietly()
+        }
+
+        fun closeIdleAndMarkClosed() {
+            val idle = synchronized(closeLock) {
+                if (closed) return
+                closed = true
+                val drained = ArrayList<WorkerSlot>()
+                while (true) {
+                    val slot = channel.tryReceive().getOrNull() ?: break
+                    drained += slot
+                }
+                channel.close()
+                drained
+            }
+            // Close native interpreters outside the lock; any in-flight slot closes itself in releaseOrClose().
+            idle.forEach { it.closeQuietly() }
         }
     }
 }

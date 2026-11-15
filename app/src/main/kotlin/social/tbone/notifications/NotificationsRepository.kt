@@ -144,7 +144,7 @@ class NotificationsRepository @Inject constructor(
             }
         },
     ) { nostr, cal ->
-        (nostr + cal).sortedByDescending { it.timestamp }
+        (nostr + cal).sortedByDescending { it.timestamp }.distinctBy { it.id }
     }
 
     private val _summary = MutableStateFlow(NotifSummary())
@@ -312,8 +312,11 @@ class NotificationsRepository @Inject constructor(
                 continue
             }
             synchronized(lock) {
-                flatItems.add(item)
-                flatItemIds.add(item.id)
+                if (flatItemIds.add(item.id)) {
+                    flatItems.add(item)
+                } else if (entity.id != item.id) {
+                    invalidIds.add(entity.id)
+                }
             }
         }
         synchronized(lock) {
@@ -335,7 +338,10 @@ class NotificationsRepository @Inject constructor(
 
         // Enforce the per-account cache bound even if this database was upgraded
         // from a build that retained an unbounded/24-hour time window.
-        scope.launch { notificationDao.keepLatest(pubkey, CACHE_LIMIT) }
+        scope.launch {
+            runCatching { notificationDao.keepLatest(pubkey, CACHE_LIMIT) }
+                .onFailure { Timber.w(it, "Failed pruning notification cache") }
+        }
 
         subscribeNotifications(pubkey)
 
@@ -856,10 +862,12 @@ class NotificationsRepository @Inject constructor(
 
             _flat.value = flatItems
                 .sortedByDescending { it.timestamp }
+                .distinctBy { it.id }
                 .take(500)
             _recentItems.value = flatItems
                 .filter { it.timestamp in cutoff..currentTime }
                 .sortedByDescending { it.timestamp }
+                .distinctBy { it.id }
 
             var replies = 0
             var reactions = 0

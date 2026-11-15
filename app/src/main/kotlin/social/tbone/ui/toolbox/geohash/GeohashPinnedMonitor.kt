@@ -2,11 +2,13 @@ package social.tbone.ui.toolbox.geohash
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import timber.log.Timber
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,7 +34,10 @@ class GeohashPinnedMonitor @Inject constructor(
     private val appSettings: AppSettings,
     private val cache: GeohashMessageCache,
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Timber.e(throwable, "Uncaught exception in GeohashPinnedMonitor")
+    }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + exceptionHandler)
     private val _unread = MutableStateFlow<Map<String, Int>>(emptyMap())
     val unread: StateFlow<Map<String, Int>> = _unread.asStateFlow()
     private val subIds = ConcurrentHashMap<String, String>()

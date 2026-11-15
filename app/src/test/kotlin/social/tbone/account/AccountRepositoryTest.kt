@@ -18,7 +18,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -376,6 +378,31 @@ class AccountRepositoryTest {
         try { repository.removeAccount("legacy") } catch (_: Exception) { failed = true }
         assertTrue(failed)
         assertEquals(raw, dataStore.data.first()[key])
+    }
+
+    @Test
+    fun `unrelated datastore writes do not re-emit activeAccount`() = runBlocking {
+        repository.addAccount(account("a"))
+        val emissions = mutableListOf<Account?>()
+        val firstReceived = CompletableDeferred<Unit>()
+        val collectJob = launch(Dispatchers.Default) {
+            repository.activeAccount.collect { acct ->
+                emissions += acct
+                if (!firstReceived.isCompleted) firstReceived.complete(Unit)
+            }
+        }
+        try {
+            withTimeout(5_000) { firstReceived.await() }
+            // Mutate an unrelated preference key in the same DataStore.
+            val unrelatedKey = stringPreferencesKey("unrelated_setting")
+            dataStore.edit { it[unrelatedKey] = "one" }
+            dataStore.edit { it[unrelatedKey] = "two" }
+            delay(150)
+            assertEquals(1, emissions.size)
+            assertEquals("a", emissions.single()?.pubkey)
+        } finally {
+            collectJob.cancel()
+        }
     }
 
     private fun account(pubkey: String, relays: List<String> = emptyList()) = Account(

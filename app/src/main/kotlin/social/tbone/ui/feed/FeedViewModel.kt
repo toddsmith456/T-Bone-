@@ -1975,9 +1975,11 @@ class FeedViewModel @Inject constructor(
                 if (event.pubkey == selfPubkey) {
                     val content = ProfileContent.parse(event.content) ?: return
                     viewModelScope.launch {
-                        accountRepository.updateAccount(selfPubkey) {
-                            it.copy(displayName = content.bestName, pictureUrl = content.picture)
-                        }
+                        runCatching {
+                            accountRepository.updateAccount(selfPubkey) {
+                                it.copy(displayName = content.bestName, pictureUrl = content.picture)
+                            }
+                        }.onFailure { Timber.w(it, "Failed updating self account metadata") }
                     }
                 }
             }
@@ -2134,7 +2136,10 @@ class FeedViewModel @Inject constructor(
         // not pollute the cache that getRecentFeedEvents returns on next home load.
         if (_currentFeed.value == FeedTab.HOME) {
             val accountPubkey = currentAccount()?.pubkey ?: return
-            viewModelScope.launch { eventRepository.save(event, accountPubkey) }
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching { eventRepository.save(event, accountPubkey) }
+                    .onFailure { Timber.w(it, "Failed caching feed event %s", event.id.take(8)) }
+            }
         }
         // The clock feed is anchored in the past: a note published after the anchor
         // belongs to "now", so it must never slide into the window while reading.

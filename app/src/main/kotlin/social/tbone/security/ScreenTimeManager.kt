@@ -6,8 +6,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import social.tbone.settings.AppSettings
+import timber.log.Timber
 import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -16,9 +18,10 @@ import javax.inject.Singleton
  * Parental screen-time enforcement.
  *
  * Tracks how long the app is in the foreground each day (banked into
- * DataStore, rolling over at midnight). When the daily allowance is used up
- * the app locks and only the parental PIN unlocks it — each successful PIN
- * entry grants a 30-minute grace period, after which it locks again.
+ * DataStore, rolling over at midnight) **only when Screen Time is enabled**.
+ * When the daily allowance is used up the app locks and only the parental PIN
+ * unlocks it — each successful PIN entry grants a 30-minute grace period,
+ * after which it locks again.
  */
 @Singleton
 class ScreenTimeManager @Inject constructor(
@@ -32,36 +35,98 @@ class ScreenTimeManager @Inject constructor(
     /** Grace granted per parental unlock, ms. */
     private val GRACE_MS = 30L * 60L * 1000L
 
+    private val stateLock = Any()
+    @Volatile private var inForeground = false
     private var sessionStartMs = System.currentTimeMillis()
     private var tickerJob: Job? = null
 
-    /** App entered foreground: start banking time and watching the limit. */
-    fun onAppForeground() {
-        sessionStartMs = System.currentTimeMillis()
-        tickerJob?.cancel()
-        tickerJob = scope.launch {
-            while (true) {
-                delay(30_000) // bank every 30s while the app is open
-                bankElapsed()
-                _locked.value = isOverLimitNow()
-            }
+    init {
+        // Reactively start/stop the ticker when the parent toggles Screen Time
+        // while the app is already open, so disabled installs perform zero
+        // periodic DataStore writes.
+        scope.launch {
+            appSettings.screenTimeEnabled
+                .distinctUntilChanged()
+                .collect { enabled ->
+                    if (enabled) {
+                        if (inForeground) startTickerLocked()
+                        refreshLockState()
+                    } else {
+                        stopTickerLocked()
+                        _locked.value = false
+                    }
+                }
         }
-        // Immediate check (e.g. returning to an already-over-limit day).
-        scope.launch { _locked.value = isOverLimitNow() }
     }
 
-    /** App left foreground: stop the ticker and bank the last slice. */
+    /** App entered foreground: start banking time only if Screen Time is enabled. */
+    fun onAppForeground() {
+        inForeground = true
+        if (!appSettings.screenTimeEnabled.value) {
+            stopTickerLocked()
+            _locked.value = false
+            return
+        }
+        startTickerLocked()
+        // Immediate check (e.g. returning to an already-over-limit day).
+        scope.launch { refreshLockState() }
+    }
+
+    /** App left foreground: stop the ticker and bank the last slice if enabled. */
     fun onAppBackground() {
+        inForeground = false
+        val wasTracking = stopTickerLocked()
+        if (wasTracking && appSettings.screenTimeEnabled.value) {
+            scope.launch {
+                runCatching { bankElapsed() }
+                    .onFailure { Timber.w(it, "Failed to bank screen time on background") }
+            }
+        }
+    }
+
+    private fun startTickerLocked() {
+        synchronized(stateLock) {
+            sessionStartMs = System.currentTimeMillis()
+            tickerJob?.cancel()
+            tickerJob = scope.launch {
+                while (true) {
+                    delay(30_000) // bank every 30s while the app is open & enabled
+                    if (!appSettings.screenTimeEnabled.value) {
+                        _locked.value = false
+                        break
+                    }
+                    runCatching {
+                        bankElapsed()
+                        _locked.value = isOverLimitNow()
+                    }.onFailure {
+                        Timber.w(it, "Screen time tick failed")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun stopTickerLocked(): Boolean = synchronized(stateLock) {
+        val hadJob = tickerJob != null
         tickerJob?.cancel()
         tickerJob = null
-        scope.launch { bankElapsed() }
+        hadJob
+    }
+
+    private suspend fun refreshLockState() {
+        runCatching { _locked.value = isOverLimitNow() }
+            .onFailure { Timber.w(it, "Screen time limit check failed") }
     }
 
     private suspend fun bankElapsed() {
-        val now = System.currentTimeMillis()
-        val elapsed = (now - sessionStartMs).coerceAtLeast(0L)
-        sessionStartMs = now
-        if (elapsed > 0) appSettings.addScreenTimeSeconds(elapsed / 1000)
+        if (!appSettings.screenTimeEnabled.value) return
+        val elapsedSeconds = synchronized(stateLock) {
+            val now = System.currentTimeMillis()
+            val elapsed = (now - sessionStartMs).coerceAtLeast(0L)
+            sessionStartMs = now
+            elapsed / 1000
+        }
+        if (elapsedSeconds > 0) appSettings.addScreenTimeSeconds(elapsedSeconds)
     }
 
     private suspend fun isOverLimitNow(): Boolean {

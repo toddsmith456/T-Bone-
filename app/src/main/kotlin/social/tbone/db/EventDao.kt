@@ -30,4 +30,12 @@ interface EventDao {
     /** Authored events are needed by notifications after a process restart. */
     @Query("SELECT * FROM events WHERE pubkey = :pubkey ORDER BY createdAt DESC LIMIT :limit")
     suspend fun getRecentByAuthor(pubkey: String, limit: Int): List<EventEntity>
+
+    /** Keep only the newest [maxKeep] cached events so upgraded installs never grow unbounded. */
+    @Query(
+        "DELETE FROM events WHERE id NOT IN (" +
+            "SELECT id FROM events ORDER BY createdAt DESC LIMIT :maxKeep" +
+            ")",
+    )
+    suspend fun keepLatest(maxKeep: Int): Int
 }

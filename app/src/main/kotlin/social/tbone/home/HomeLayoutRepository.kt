@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -46,7 +47,10 @@ class HomeLayoutRepository @Inject constructor(
     // store is the only collaborator that matters for testability.
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 
-    private val scope = CoroutineScope(SupervisorJob() + ioDispatcher)
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        Timber.e(throwable, "Uncaught exception in HomeLayoutRepository")
+    }
+    private val scope = CoroutineScope(SupervisorJob() + ioDispatcher + exceptionHandler)
     private val writeMutex = Mutex()
 
     /** Mirrors the store so callers can read synchronously after the first load. */
