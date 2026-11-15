@@ -11,21 +11,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import social.tbone.Tunables
 import social.tbone.account.signer.NostrSignerFactory
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
-import social.tbone.nostr.Filter
 import social.tbone.nostr.UnsignedEvent
 import social.tbone.nostr.relay.RelayMessage
 import social.tbone.nostr.relay.RelayPool
-import social.tbone.nostr.relay.RelayStatus
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -43,6 +39,7 @@ import javax.inject.Singleton
 class ReactionsRepository @Inject constructor(
     private val pool: RelayPool,
     private val signerFactory: NostrSignerFactory,
+    private val engagementCoordinator: EngagementSubscriptionCoordinator,
 ) {
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Timber.e(throwable, "Uncaught exception in ReactionsRepository")
@@ -51,7 +48,6 @@ class ReactionsRepository @Inject constructor(
 
     // Caps reaction data; oldest entries evicted automatically.
     private val reactionCache = LruCache<String, Set<String>>(Tunables.REACTION_CACHE_SIZE)
-    private val subscribedCache = LruCache<String, Unit>(Tunables.REACTION_CACHE_SIZE)
 
     private val _reactions = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
     val reactions: StateFlow<Map<String, Set<String>>> = _reactions.asStateFlow()
@@ -196,44 +192,9 @@ class ReactionsRepository @Inject constructor(
         }
     }
 
-    /** Subscribe to reactions for any event IDs not yet tracked. */
+    /** Subscribe to reactions for any event IDs not yet tracked (batched + combined). */
     fun subscribeTo(eventIds: List<String>) {
-        val newIds = synchronized(subscribedCache) {
-            eventIds.distinct().filter { id ->
-                if (subscribedCache.get(id) != null) {
-                    false
-                } else {
-                    subscribedCache.put(id, Unit)
-                    true
-                }
-            }
-        }
-        if (newIds.isEmpty()) return
-        val subId = pool.subscribe(
-            listOf(Filter(eTags = newIds, kinds = listOf(EventKind.REACTION))),
-            label = "reactions",
-        )
-        // Unsubscribe after EOSE — historical data loaded; live reactions handled by the init collector
-        scope.launch {
-            try {
-                val answeredRelays = mutableSetOf<String>()
-                val expectedRelays = pool.relayStatuses.value
-                    .count { it.value == RelayStatus.CONNECTED }
-                    .coerceAtLeast(1)
-                withTimeoutOrNull(Tunables.REACTION_EOSE_TIMEOUT_MS) {
-                    pool.messages.first { (relayUrl, msg) ->
-                        if (msg !is RelayMessage.EndOfStoredEvents || msg.subscriptionId != subId) {
-                            false
-                        } else {
-                            answeredRelays += relayUrl
-                            answeredRelays.size >= expectedRelays
-                        }
-                    }
-                }
-            } finally {
-                pool.unsubscribe(subId)
-            }
-        }
+        engagementCoordinator.subscribeForNotes(eventIds)
     }
 
     /** Publish a "+" reaction. Updates state optimistically; rolls back on failure. */

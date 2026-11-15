@@ -16,9 +16,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
@@ -32,19 +35,26 @@ import androidx.compose.ui.window.DialogProperties
 import social.tbone.nostr.Event
 import social.tbone.ui.theme.BonyColors
 
+private val EmptyReactionContents: StateFlow<Map<String, String>> = MutableStateFlow(emptyMap())
+
 /**
  * App-wide multi-emoji reaction state, provided once at the root so every
  * note card's like button can use it without threading parameters through
  * every screen.
  *
+ * Option 4: [contentsFlow] is passed as a [StateFlow] rather than collected
+ * at the activity root, so incoming reactions only recompose the single
+ * [LikeButton] whose `(eventId, activePubkey)` entry actually changed.
+ *
  * @param emojis the user's saved reaction emojis — empty when the feature is
  *   off (the like button then behaves as the classic heart).
- * @param contents reaction content per `eventId|pubkey` (see reactionKey).
+ * @param contentsFlow live map of reaction content per `eventId|pubkey`.
  * @param reactWith publishes a reaction with the chosen emoji.
  */
+@Immutable
 data class ReactionConfig(
     val emojis: List<String> = emptyList(),
-    val contents: Map<String, String> = emptyMap(),
+    val contentsFlow: StateFlow<Map<String, String>> = EmptyReactionContents,
     val reactWith: ((Event, String) -> Unit)? = null,
 )
 

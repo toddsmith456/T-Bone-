@@ -89,7 +89,6 @@ class NotificationsRepository @Inject constructor(
     private var ownRefSubId: String? = null
     private var ownRefResubJob: Job? = null
     private var eoseTimeoutJob: Job? = null
-    private val profileSubIds = ConcurrentHashMap.newKeySet<String>()
 
     // "Load more" pagination state. Each query asks for the next page before
     // the oldest loaded event, so sparse activity across long gaps is not lost.
@@ -243,10 +242,6 @@ class NotificationsRepository @Inject constructor(
                                         finishPaged(msg.subscriptionId)
                                     }
                                 }
-                                msg.subscriptionId in profileSubIds -> {
-                                    profileSubIds.remove(msg.subscriptionId)
-                                    pool.unsubscribe(msg.subscriptionId)
-                                }
                             }
                         }
                         else -> Unit
@@ -378,8 +373,6 @@ class NotificationsRepository @Inject constructor(
         eoseTimeoutJob?.cancel()
         eoseTimeoutJob = null
         refLookup.reset(clearResolved = true)
-        profileSubIds.forEach { pool.unsubscribe(it) }
-        profileSubIds.clear()
     }
 
     private fun subscribeNotifications(pubkey: String) {
@@ -1063,14 +1056,7 @@ class NotificationsRepository @Inject constructor(
     }
 
     private fun fetchProfiles(pubkeys: List<String>) {
-        val unknown = pubkeys.distinct()
-            .filter { profileRepository.profiles.value[it] == null }
-        if (unknown.isEmpty()) return
-        val subId = pool.subscribe(
-            listOf(Filter(authors = unknown, kinds = listOf(EventKind.METADATA), limit = unknown.size)),
-            label = "notif-profiles",
-        )
-        profileSubIds.add(subId)
+        profileRepository.requestProfiles(pubkeys)
     }
 
     private fun now(): Long = System.currentTimeMillis() / 1000

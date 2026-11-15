@@ -50,9 +50,40 @@ import social.tbone.ui.theme.BonyType
 
 private val NPUB_REGEX = Regex("""nostr:(npub1|nprofile1)[a-z0-9]+""")
 private val NOTE_REGEX = Regex("""nostr:(note1|nevent1|naddr1)[a-z0-9]+""")
+private val NADDR_REGEX = Regex("""nostr:naddr1[a-z0-9]+""")
 // A #tag: must not be preceded by a word character so URLs (…/#frag) and
 // "c#" don't match, but "#tag" at the start of text or after whitespace does.
 private val HASHTAG_REGEX = Regex("""(?<![\p{L}\p{N}_])#[\p{L}\p{N}_]+""")
+
+/**
+ * Extracts pubkey hexes referenced inline via `nostr:npub1…`, `nostr:nprofile1…`,
+ * or `nostr:naddr1…` so per-card narrow profile observation includes inline
+ * mentions even when the note omits a matching `p` tag.
+ */
+internal fun extractInlineMentionPubkeys(text: String): List<String> {
+    if (!text.contains("nostr:")) return emptyList()
+    val hasProfile = text.contains("nostr:npub1") || text.contains("nostr:nprofile1")
+    val hasAddr = text.contains("nostr:naddr1")
+    if (!hasProfile && !hasAddr) return emptyList()
+    return buildList {
+        if (hasProfile) {
+            NPUB_REGEX.findAll(text).forEach { match ->
+                val entity = match.value.removePrefix("nostr:")
+                val hex = if (entity.startsWith("npub1")) {
+                    Nip19.npubToHex(entity)
+                } else {
+                    Nip19.nprofileToHex(entity)
+                }
+                if (hex != null) add(hex)
+            }
+        }
+        if (hasAddr) {
+            NADDR_REGEX.findAll(text).forEach { match ->
+                Nip19.naddrToAddress(match.value)?.pubkey?.let(::add)
+            }
+        }
+    }
+}
 
 private sealed interface BodySeg {
     data class Plain(val text: String) : BodySeg

@@ -12,16 +12,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChangedBy
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import social.tbone.Tunables
 import social.tbone.account.AccountRepository
 import social.tbone.account.signer.NostrSignerFactory
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
-import social.tbone.nostr.Filter
 import social.tbone.nostr.Nip88
 import social.tbone.nostr.UnsignedEvent
 import social.tbone.nostr.relay.ClientMessage
@@ -43,6 +40,7 @@ class PollsRepository @Inject constructor(
     private val signerFactory: NostrSignerFactory,
     private val accountRepository: AccountRepository,
     private val pollVoteStore: PollVoteStore,
+    private val engagementCoordinator: EngagementSubscriptionCoordinator,
 ) {
     private val scope = CoroutineScope(
         SupervisorJob() +
@@ -56,7 +54,6 @@ class PollsRepository @Inject constructor(
     private val countsCache = LruCache<String, MutableMap<String, Int>>(Tunables.REACTION_CACHE_SIZE)
     private val votersCache = LruCache<String, MutableMap<String, Pair<Long, List<String>>>>(Tunables.REACTION_CACHE_SIZE)
     private val myVotesCache = LruCache<String, List<String>>(Tunables.REACTION_CACHE_SIZE)
-    private val subscribedCache = LruCache<String, Unit>(Tunables.REACTION_CACHE_SIZE)
     private val seenVotes = LruCache<String, Boolean>(Tunables.REACTION_CACHE_SIZE * 4)
 
     private val _counts = MutableStateFlow<Map<String, Map<String, Int>>>(emptyMap())
@@ -131,24 +128,9 @@ class PollsRepository @Inject constructor(
         }
     }
 
-    /** Subscribe to poll responses for any poll ids not yet tracked. */
+    /** Subscribe to poll responses for any poll ids not yet tracked (batched + combined). */
     fun subscribeTo(pollIds: List<String>) {
-        val newIds = pollIds.filter { subscribedCache.get(it) == null }
-        if (newIds.isEmpty()) return
-        newIds.forEach { subscribedCache.put(it, Unit) }
-        val subId = pool.subscribe(
-            listOf(Filter(eTags = newIds, kinds = listOf(EventKind.POLL_RESPONSE))),
-            label = "polls",
-        )
-        // Historical responses loaded; live handled by the init collector.
-        scope.launch {
-            withTimeoutOrNull(30_000) {
-                pool.messages.first { (_, m) ->
-                    m is RelayMessage.EndOfStoredEvents && m.subscriptionId == subId
-                }
-            }
-            pool.unsubscribe(subId)
-        }
+        engagementCoordinator.subscribeForPolls(pollIds)
     }
 
     fun getCounts(pollId: String): Map<String, Int> = synchronized(pollLock) {

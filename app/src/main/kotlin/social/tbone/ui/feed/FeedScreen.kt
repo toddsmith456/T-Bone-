@@ -65,10 +65,12 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import dev.youniversal.theme.YouniversalTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import social.tbone.nostr.Event
-import social.tbone.nostr.quotedEventId
+import social.tbone.nostr.ProfileContent
 import social.tbone.settings.HideReason
 import social.tbone.nostr.relay.RelayStatus
 import social.tbone.ui.components.AccountSwitcherSheet
@@ -116,21 +118,11 @@ fun FeedScreen(
     val activeSlot by viewModel.activeSlot.collectAsStateWithLifecycle()
     val activeAccount by viewModel.activeAccount.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
-    val profiles by viewModel.profiles.collectAsStateWithLifecycle()
-    val quotedEvents by viewModel.quotedEvents.collectAsStateWithLifecycle()
-    val unresolvedQuoteIds by viewModel.unresolvedQuoteIds.collectAsStateWithLifecycle()
-    val reactions by viewModel.reactions.collectAsStateWithLifecycle()
-    val replies by viewModel.replies.collectAsStateWithLifecycle()
-    val repliedByMe by viewModel.repliedByMe.collectAsStateWithLifecycle()
     val notifUnread by viewModel.notifUnread.collectAsStateWithLifecycle()
     val updateAvailable by viewModel.updateAvailable.collectAsStateWithLifecycle()
     val globalAutoLoadEnabled by viewModel.globalAutoLoadEnabled.collectAsStateWithLifecycle()
     val globalAutoLoadInterval by viewModel.globalAutoLoadIntervalMinutes.collectAsStateWithLifecycle()
     val clockHours by viewModel.clockFeedHours.collectAsStateWithLifecycle()
-    val pollVoteCounts by viewModel.pollVoteCounts.collectAsStateWithLifecycle()
-    val pollTotalVotes by viewModel.pollTotalVotes.collectAsStateWithLifecycle()
-    val pollMyVotes by viewModel.pollMyVotes.collectAsStateWithLifecycle()
-    val pollVoteVersion by viewModel.pollVoteVersion.collectAsStateWithLifecycle()
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, viewModel) {
@@ -210,8 +202,15 @@ fun FeedScreen(
             }
     }
 
+    val quoteState = remember(viewModel) {
+        QuoteState(
+            onRetry = viewModel::retryQuote,
+            unresolvedFlow = viewModel.unresolvedQuoteIds,
+        )
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
-    CompositionLocalProvider(LocalQuoteState provides QuoteState(unresolvedQuoteIds, viewModel::retryQuote)) {
+    CompositionLocalProvider(LocalQuoteState provides quoteState) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -230,12 +229,12 @@ fun FeedScreen(
         )
 
         // ── Account row: avatar + name open the profile; ↕ switches accounts ──
-        AccountSwitcherSheet(
+        FeedAccountSwitcherRow(
             activeAccount = activeAccount,
             accounts = accounts,
+            profilesFlow = viewModel.profiles,
             onSwitch = viewModel::switchAccount,
             onProfileClick = activeAccount?.let { { onProfileClick(it.pubkey) } },
-            profiles = profiles,
         )
 
         // ── Feed tab strip ───────────────────────────────────────────────────
@@ -499,25 +498,20 @@ fun FeedScreen(
                           when (row) {
                             is FeedListItem.HiddenGroup -> HiddenGroupRow(
                                 group = row,
-                                profiles = profiles,
+                                profilesFlow = viewModel.profiles,
                             )
                             is FeedListItem.Note -> {
-                            val event = row.event
-                            val refId = remember(event.id) {
-                                when (event.kind) {
-                                    social.tbone.nostr.EventKind.REPOST,
-                                    social.tbone.nostr.EventKind.GENERIC_REPOST ->
-                                        event.parsedTags.firstOrNull { it.name == "e" }?.value()
-                                    else -> event.parsedTags.quotedEventId
-                                        ?: extractInlineQuoteId(event.content)
-                                }
-                            }
-                            val quotedEvent = refId?.let { quotedEvents[it] }
-                            NoteCard(
-                                event = event,
-                                profile = profiles[event.pubkey],
-                                profiles = profiles,
-                                quotedEvent = quotedEvent,
+                            ObservedNoteCard(
+                                event = row.event,
+                                profilesFlow = viewModel.profiles,
+                                quotedEventsFlow = viewModel.quotedEvents,
+                                reactionsFlow = viewModel.reactions,
+                                repliesFlow = viewModel.replies,
+                                repliedByMeFlow = viewModel.repliedByMe,
+                                pollVoteCountsFlow = viewModel.pollVoteCounts,
+                                pollTotalVotesFlow = viewModel.pollTotalVotes,
+                                pollMyVotesFlow = viewModel.pollMyVotes,
+                                activePubkey = activeAccount?.pubkey,
                                 onThreadClick = onThreadClick,
                                 onProfileClick = onProfileClick,
                                 onHashtagClick = onHashtagClick,
@@ -525,22 +519,7 @@ fun FeedScreen(
                                 onBoost = viewModel::boost,
                                 onQuote = onQuoteClick,
                                 onLike = viewModel::react,
-                                reactors = if (event.kind == social.tbone.nostr.EventKind.REPOST ||
-                                    event.kind == social.tbone.nostr.EventKind.GENERIC_REPOST
-                                )
-                                    quotedEvent?.let { reactions[it.id] }
-                                else
-                                    reactions[event.id],
-                                replies = replies,
-                                repliedByMe = repliedByMe,
-                                pollVoteCounts = pollVoteCounts,
-                                pollTotalVotes = pollTotalVotes,
-                                pollMyVotes = pollMyVotes,
-                                pollVoteVersion = pollVoteVersion,
                                 onPollVote = viewModel::voteOnPoll,
-                                activePubkey = activeAccount?.pubkey,
-                                quotedEvents = quotedEvents,
-                                quotedEventId = refId,
                             )
                             }
                           }
@@ -1177,11 +1156,44 @@ private fun clockTimeLabel(anchorSeconds: Long): String {
     return "%02d:%02d".format(h, m)
 }
 
+/**
+ * Option 4: Isolates account-switcher profile observation so unrelated profile
+ * arrivals across the feed never recompose [FeedScreen] or its card list.
+ */
+@Composable
+private fun FeedAccountSwitcherRow(
+    activeAccount: social.tbone.account.Account?,
+    accounts: List<social.tbone.account.Account>,
+    profilesFlow: StateFlow<Map<String, ProfileContent>>,
+    onSwitch: (String) -> Unit,
+    onProfileClick: (() -> Unit)?,
+) {
+    val accountPubkeys = remember(activeAccount?.pubkey, accounts) {
+        buildSet {
+            activeAccount?.pubkey?.let(::add)
+            accounts.forEach { add(it.pubkey) }
+        }
+    }
+    val accountProfiles by remember(accountPubkeys, profilesFlow) {
+        profilesFlow
+            .map { all -> sliceProfiles(all, accountPubkeys) }
+            .distinctUntilChanged()
+    }.collectAsStateWithLifecycle(initialValue = sliceProfiles(profilesFlow.value, accountPubkeys))
+
+    AccountSwitcherSheet(
+        activeAccount = activeAccount,
+        accounts = accounts,
+        onSwitch = onSwitch,
+        onProfileClick = onProfileClick,
+        profiles = accountProfiles,
+    )
+}
+
 /** Collapsed marker for a run of notes removed by the content filters. */
 @Composable
 private fun HiddenGroupRow(
     group: FeedListItem.HiddenGroup,
-    profiles: Map<String, social.tbone.nostr.ProfileContent?>,
+    profilesFlow: StateFlow<Map<String, ProfileContent>>,
 ) {
     var expanded by remember(group.key) { mutableStateOf(false) }
     Column(
@@ -1199,6 +1211,13 @@ private fun HiddenGroupRow(
         // because you blocked its author reads identically to one hidden because
         // it quotes someone you blocked. Expand to see which, per note.
         if (expanded) {
+            val pubkeys = remember(group.key) { group.entries.mapTo(LinkedHashSet()) { it.pubkey } }
+            val profiles by remember(pubkeys, profilesFlow) {
+                profilesFlow
+                    .map { all -> sliceProfiles(all, pubkeys) }
+                    .distinctUntilChanged()
+            }.collectAsStateWithLifecycle(initialValue = sliceProfiles(profilesFlow.value, pubkeys))
+
             group.entries.forEach { entry ->
                 val author = profiles[entry.pubkey]?.bestName ?: "unknown author"
                 // "blocked author" alone was misleading: it also covered notes by

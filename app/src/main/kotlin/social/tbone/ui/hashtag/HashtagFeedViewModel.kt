@@ -26,7 +26,6 @@ import social.tbone.nostr.relay.RelayPool
 import social.tbone.profile.ProfileRepository
 import social.tbone.settings.AppSettings
 import social.tbone.ui.feed.QuoteLookupSession
-import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
 data class HashtagFeedUiState(
@@ -53,7 +52,6 @@ class HashtagFeedViewModel @Inject constructor(
     val profiles: StateFlow<Map<String, ProfileContent>> = profileRepository.profiles
 
     private var subId: String? = null
-    private val profileSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     private val quoteLookup = QuoteLookupSession(
         scope = viewModelScope,
@@ -93,7 +91,7 @@ class HashtagFeedViewModel @Inject constructor(
                         if (!event.verify()) return@collect
                         // Muted / blocked authors never show up (offline or relay mute list).
                         if (event.pubkey in muteRepository.effectiveMuted.value) return@collect
-                        viewModelScope.launch { eventRepository.save(event, "") }
+                        eventRepository.saveQueued(event, "")
                         if (!settled) {
                             synchronized(pendingEvents) { pendingEvents.add(event) }
                         } else {
@@ -140,9 +138,7 @@ class HashtagFeedViewModel @Inject constructor(
     }
 
     private fun fetchProfileForAuthor(pubkey: String) {
-        if (profileRepository.profiles.value[pubkey] != null) return
-        val id = pool.subscribe(listOf(Filter(authors = listOf(pubkey), kinds = listOf(EventKind.METADATA), limit = 1)))
-        profileSubIds.add(id)
+        profileRepository.requestProfiles(listOf(pubkey))
     }
 
     fun boost(event: Event) {
@@ -164,6 +160,5 @@ class HashtagFeedViewModel @Inject constructor(
     override fun onCleared() {
         quoteLookup.close()
         subId?.let { pool.unsubscribe(it) }
-        profileSubIds.forEach { pool.unsubscribe(it) }
     }
 }

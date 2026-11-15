@@ -36,13 +36,10 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import social.tbone.nostr.Event
-import social.tbone.nostr.EventKind
-import social.tbone.nostr.quotedEventId
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.graphics.Color
 import dev.youniversal.theme.YouniversalTheme
-import social.tbone.ui.feed.NoteCard
-import social.tbone.ui.feed.extractInlineQuoteId
+import social.tbone.ui.feed.ObservedNoteCard
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import kotlinx.coroutines.flow.first
@@ -68,16 +65,6 @@ fun ThreadScreen(
     viewModel: ThreadViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val profiles by viewModel.profiles.collectAsStateWithLifecycle()
-    val quotedEvents by viewModel.quotedEvents.collectAsStateWithLifecycle()
-    val unresolvedQuoteIds by viewModel.unresolvedQuoteIds.collectAsStateWithLifecycle()
-    val reactions by viewModel.reactions.collectAsStateWithLifecycle()
-    val replies by viewModel.replies.collectAsStateWithLifecycle()
-    val repliedByMe by viewModel.repliedByMe.collectAsStateWithLifecycle()
-    val pollVoteCounts by viewModel.pollVoteCounts.collectAsStateWithLifecycle()
-    val pollTotalVotes by viewModel.pollTotalVotes.collectAsStateWithLifecycle()
-    val pollMyVotes by viewModel.pollMyVotes.collectAsStateWithLifecycle()
-    val pollVoteVersion by viewModel.pollVoteVersion.collectAsStateWithLifecycle()
     val activePubkey by viewModel.activePubkey.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
 
@@ -104,9 +91,15 @@ fun ThreadScreen(
         if (targetIndex >= 0) listState.animateScrollToItem(targetIndex)
     }
 
+    val quoteState = remember(viewModel) {
+        social.tbone.ui.feed.QuoteState(
+            onRetry = viewModel::retryQuote,
+            unresolvedFlow = viewModel.unresolvedQuoteIds,
+        )
+    }
+
     CompositionLocalProvider(
-        social.tbone.ui.feed.LocalQuoteState provides
-            social.tbone.ui.feed.QuoteState(unresolvedQuoteIds, viewModel::retryQuote),
+        social.tbone.ui.feed.LocalQuoteState provides quoteState,
     ) {
     Column(
         modifier = Modifier
@@ -190,25 +183,14 @@ fun ThreadScreen(
                         if (item is ThreadItem.Note) {
                             ThreadRow(
                                 item = item,
-                                uiState = uiState,
-                                profiles = profiles,
-                                quotedEvents = quotedEvents,
-                                reactions = reactions,
-                                replies = replies,
-                                repliedByMe = repliedByMe,
-                                pollVoteCounts = pollVoteCounts,
-                                pollTotalVotes = pollTotalVotes,
-                                pollMyVotes = pollMyVotes,
-                                pollVoteVersion = pollVoteVersion,
+                                rootId = uiState.root?.id,
+                                viewModel = viewModel,
                                 activePubkey = activePubkey,
                                 onThreadClick = onThreadClick,
                                 onProfileClick = onProfileClick,
                                 onHashtagClick = onHashtagClick,
                                 onReplyClick = onReplyClick,
                                 onQuoteClick = onQuoteClick,
-                                onBoost = viewModel::boost,
-                                onLike = viewModel::react,
-                                onPollVote = viewModel::voteOnPoll,
                             )
                         }
                     }
@@ -234,37 +216,20 @@ fun ThreadScreen(
 @Composable
 private fun ThreadRow(
     item: ThreadItem.Note,
-    uiState: ThreadUiState,
-    profiles: Map<String, social.tbone.nostr.ProfileContent>,
-    quotedEvents: Map<String, Event>,
-    reactions: Map<String, Set<String>>,
-    replies: Map<String, Int>,
-    repliedByMe: Set<String>,
-    pollVoteCounts: Map<String, Map<String, Int>>,
-    pollTotalVotes: Map<String, Int>,
-    pollMyVotes: Map<String, List<String>>,
-    pollVoteVersion: Int,
+    rootId: String?,
+    viewModel: ThreadViewModel,
     activePubkey: String?,
     onThreadClick: (String) -> Unit,
     onProfileClick: (String) -> Unit,
     onHashtagClick: (String) -> Unit,
     onReplyClick: (Event) -> Unit,
     onQuoteClick: (Event) -> Unit,
-    onBoost: (Event) -> Unit,
-    onLike: (Event) -> Unit,
-    onPollVote: (Event, List<String>) -> Unit,
 ) {
     val event = item.event
     val depth = item.depth.coerceAtMost(ThreadIndent.MAX_RAIL_DEPTH)
-    val isRepost = event.kind == EventKind.REPOST || event.kind == EventKind.GENERIC_REPOST
-    val refId = remember(event.id) {
-        if (isRepost) event.parsedTags.firstOrNull { it.name == "e" }?.value()
-        else event.parsedTags.quotedEventId ?: extractInlineQuoteId(event.content)
-    }
-    val quotedEvent = remember(refId, quotedEvents) { refId?.let { quotedEvents[it] } }
     // The note you opened and the thread root are shown in full; replies stay
     // compact so the thread remains scannable.
-    val isThreadRoot = event.id == uiState.root?.id
+    val isThreadRoot = event.id == rootId
 
     Column(
         modifier = Modifier
@@ -279,35 +244,28 @@ private fun ThreadRow(
                 },
             ),
     ) {
-        NoteCard(
+        ObservedNoteCard(
             event = event,
-            profile = profiles[event.pubkey],
-            profiles = profiles,
+            profilesFlow = viewModel.profiles,
+            quotedEventsFlow = viewModel.quotedEvents,
+            reactionsFlow = viewModel.reactions,
+            repliesFlow = viewModel.replies,
+            repliedByMeFlow = viewModel.repliedByMe,
+            pollVoteCountsFlow = viewModel.pollVoteCounts,
+            pollTotalVotesFlow = viewModel.pollTotalVotes,
+            pollMyVotesFlow = viewModel.pollMyVotes,
+            activePubkey = activePubkey,
             highlighted = item.highlighted,
             fullContent = isThreadRoot || item.highlighted,
             showReplyContext = false,
-            quotedEvent = quotedEvent,
             onThreadClick = onThreadClick,
             onProfileClick = onProfileClick,
             onHashtagClick = onHashtagClick,
             onReply = onReplyClick,
-            onBoost = onBoost,
+            onBoost = viewModel::boost,
             onQuote = onQuoteClick,
-            onLike = onLike,
-            reactors = if (isRepost) quotedEvent?.let { reactions[it.id] }
-            else reactions[event.id],
-            replies = replies,
-            repliedByMe = repliedByMe,
-            pollVoteCounts = pollVoteCounts,
-            pollTotalVotes = pollTotalVotes,
-            pollMyVotes = pollMyVotes,
-            pollVoteVersion = pollVoteVersion,
-            onPollVote = onPollVote,
-            activePubkey = activePubkey,
-            // Resolved quotes/references so inline note links in a thread note
-            // render as embedded notes too.
-            quotedEvents = quotedEvents,
-            quotedEventId = refId,
+            onLike = viewModel::react,
+            onPollVote = viewModel::voteOnPoll,
         )
 
         // The whole thread is always shown expanded — no fold toggles.

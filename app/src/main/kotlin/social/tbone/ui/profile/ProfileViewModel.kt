@@ -53,6 +53,7 @@ import social.tbone.ui.feed.parseNoteContent
 import social.tbone.nostr.relay.RelayMessage
 import social.tbone.nostr.relay.RelayPool
 import social.tbone.profile.ProfileRepository
+import social.tbone.reactions.EngagementSubscriptionCoordinator
 import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -86,6 +87,7 @@ class ProfileViewModel @Inject constructor(
     private val reactionsRepository: ReactionsRepository,
     private val repliesRepository: RepliesRepository,
     private val pollsRepository: PollsRepository,
+    private val engagementCoordinator: EngagementSubscriptionCoordinator,
     private val eventRepository: EventRepository,
     private val appSettings: social.tbone.settings.AppSettings,
     private val offlineLists: OfflineListRepository,
@@ -103,7 +105,6 @@ class ProfileViewModel @Inject constructor(
 
     /** All known profiles — used to render quoted notes and mention names. */
     val profiles: StateFlow<Map<String, ProfileContent>> = profileRepository.profiles
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     private val _tab = MutableStateFlow(ProfileTab.NOTES)
     /** Which feed the profile is showing. */
@@ -270,25 +271,18 @@ class ProfileViewModel @Inject constructor(
     val isFollowLoading: StateFlow<Boolean> = _isFollowLoading.asStateFlow()
 
     val reactions: StateFlow<Map<String, Set<String>>> = reactionsRepository.reactions
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val replies: StateFlow<Map<String, Int>> = repliesRepository.replies
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val repliedByMe: StateFlow<Set<String>> = repliesRepository.repliedByMe
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
 
     val pollVoteCounts: StateFlow<Map<String, Map<String, Int>>> = pollsRepository.counts
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val pollTotalVotes: StateFlow<Map<String, Int>> = pollsRepository.totalVotes
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val pollMyVotes: StateFlow<Map<String, List<String>>> = pollsRepository.myVotes
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val pollVoteVersion: StateFlow<Int> = pollsRepository.voteVersion
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     val activePubkey: StateFlow<String?> = accountRepository.activeAccount
         .map { it?.pubkey }
@@ -336,12 +330,11 @@ class ProfileViewModel @Inject constructor(
                                     // this screen without reloading the profile.
                                     ingest(event)
                                     // Persist so a tapped note opens a thread instantly.
-                                    viewModelScope.launch { eventRepository.save(event, "") }
-                                    reactionsRepository.subscribeTo(listOf(event.id))
-                                    repliesRepository.subscribeTo(listOf(event.id))
-                                    if (event.kind == EventKind.POLL) {
-                                        pollsRepository.subscribeTo(listOf(event.id))
-                                    }
+                                    eventRepository.saveQueued(event, "")
+                                    engagementCoordinator.subscribeForNotes(
+                                        noteIds = listOf(event.id),
+                                        pollIds = if (event.kind == EventKind.POLL) listOf(event.id) else emptyList(),
+                                    )
                                     fetchQuotesFor(listOf(event))
                                     fetchMetadataFor(listOf(event.pubkey))
                                 }
@@ -440,13 +433,7 @@ class ProfileViewModel @Inject constructor(
     }
 
     private fun fetchMetadataFor(pubkeys: List<String>) {
-        val unknown = pubkeys.distinct().filter { profileRepository.profiles.value[it] == null }
-        if (unknown.isEmpty()) return
-        val subId = pool.subscribe(
-            listOf(Filter(authors = unknown, kinds = listOf(EventKind.METADATA))),
-            label = "profile-metadata",
-        )
-        allSubIds += subId
+        profileRepository.requestProfiles(pubkeys)
     }
 
     fun react(event: Event) = reactionsRepository.react(event)

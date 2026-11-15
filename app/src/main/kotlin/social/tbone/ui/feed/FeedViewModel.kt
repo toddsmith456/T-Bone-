@@ -65,6 +65,7 @@ import social.tbone.nostr.relay.GlobalRelaySession
 import social.tbone.nostr.relay.RelayStatus
 import timber.log.Timber
 import social.tbone.profile.ProfileRepository
+import social.tbone.reactions.EngagementSubscriptionCoordinator
 import social.tbone.updates.UpdateManager
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -164,6 +165,7 @@ class FeedViewModel @Inject constructor(
     private val reactionsRepository: ReactionsRepository,
     private val repliesRepository: RepliesRepository,
     private val pollsRepository: PollsRepository,
+    private val engagementCoordinator: EngagementSubscriptionCoordinator,
     private val appSettings: AppSettings,
     private val notificationsRepository: NotificationsRepository,
     private val offlineLists: OfflineListRepository,
@@ -234,10 +236,6 @@ class FeedViewModel @Inject constructor(
         _currentFeed.value = slot?.let { legacyTabFor(it.source) } ?: FeedTab.HOME
     }
 
-    // One-shot subscriptions for fetching author metadata — closed on EOSE.
-    // Declared before [quoteLookup] because its onResolved callback calls fetchMetadataForAuthors.
-    private val metadataFetchSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
-
     private val quoteLookup = QuoteLookupSession(
         scope = viewModelScope,
         pool = pool,
@@ -260,25 +258,18 @@ class FeedViewModel @Inject constructor(
     fun retryQuote(id: String) = quoteLookup.retryId(id)
 
     val reactions: StateFlow<Map<String, Set<String>>> = reactionsRepository.reactions
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val replies: StateFlow<Map<String, Int>> = repliesRepository.replies
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val repliedByMe: StateFlow<Set<String>> = repliesRepository.repliedByMe
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
 
     val pollVoteCounts: StateFlow<Map<String, Map<String, Int>>> = pollsRepository.counts
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val pollTotalVotes: StateFlow<Map<String, Int>> = pollsRepository.totalVotes
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val pollMyVotes: StateFlow<Map<String, List<String>>> = pollsRepository.myVotes
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val pollVoteVersion: StateFlow<Int> = pollsRepository.voteVersion
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     /** Unread notification flag — drives the dot on the bell tab. */
     val notifUnread: StateFlow<Boolean> = notificationsRepository.hasUnread
@@ -1157,9 +1148,10 @@ class FeedViewModel @Inject constructor(
         _uiState.update { it.withContentFilter(applyContentFilter(visible)) }
         fetchQuotesForEvents(listOf(event))
         fetchProfilesForEvents(listOf(event))
-        reactionsRepository.subscribeTo(listOf(event.id))
-        repliesRepository.subscribeTo(listOf(event.id))
-        if (event.kind == EventKind.POLL) pollsRepository.subscribeTo(listOf(event.id))
+        engagementCoordinator.subscribeForNotes(
+            noteIds = listOf(event.id),
+            pollIds = if (event.kind == EventKind.POLL) listOf(event.id) else emptyList(),
+        )
         _pendingEventScroll.value = event.id
     }
 
@@ -1352,8 +1344,6 @@ class FeedViewModel @Inject constructor(
         focusedEventId = null
         _pendingEventScroll.value = null
         quoteLookup.reset()
-        metadataFetchSubIds.forEach { pool.unsubscribe(it) }
-        metadataFetchSubIds.clear()
         if (clearEvents) synchronized(feedEvents) { feedEvents.clear() }
         pendingGlobalEvents.clear()
 
@@ -1539,8 +1529,6 @@ class FeedViewModel @Inject constructor(
         pendingLiveSlotEvents.clear()
         visibleRange = 0 until VIEWPORT_INITIAL_COUNT
         quoteLookup.reset()
-        metadataFetchSubIds.forEach { pool.unsubscribe(it) }
-        metadataFetchSubIds.clear()
         synchronized(feedEvents) { feedEvents.clear() }
         pendingGlobalEvents.clear()
         focusedEventId = null
@@ -1660,8 +1648,6 @@ class FeedViewModel @Inject constructor(
         focusedEventId = null
         _pendingEventScroll.value = null
         quoteLookup.reset()
-        metadataFetchSubIds.forEach { pool.unsubscribe(it) }
-        metadataFetchSubIds.clear()
         if (clearEvents) synchronized(feedEvents) { feedEvents.clear() }
         pendingGlobalEvents.clear()
     }
@@ -1984,10 +1970,6 @@ class FeedViewModel @Inject constructor(
             }
             is RelayMessage.EndOfStoredEvents -> {
                 when {
-                    msg.subscriptionId in metadataFetchSubIds -> {
-                        metadataFetchSubIds.remove(msg.subscriptionId)
-                        unsub(msg.subscriptionId)
-                    }
                     msg.subscriptionId == metadataSubId -> {
                         // Own profile kind-0 EOSE must never clear the feed's
                         // loading spinner before the timeline itself settles.
@@ -2351,12 +2333,8 @@ class FeedViewModel @Inject constructor(
                 if (event.kind == EventKind.POLL) pollIds += event.id
             }
         }
-        if (targetIds.isNotEmpty()) {
-            reactionsRepository.subscribeTo(targetIds)
-            repliesRepository.subscribeTo(targetIds)
-        }
-        if (pollIds.isNotEmpty()) {
-            pollsRepository.subscribeTo(pollIds)
+        if (targetIds.isNotEmpty() || pollIds.isNotEmpty()) {
+            engagementCoordinator.subscribeForNotes(targetIds, pollIds)
         }
     }
 
@@ -2403,10 +2381,7 @@ class FeedViewModel @Inject constructor(
     }
 
     private fun fetchMetadataForAuthors(pubkeys: List<String>) {
-        val unknown = pubkeys.distinct().filter { profileRepository.profiles.value[it] == null }
-        if (unknown.isEmpty()) return
-        val id = sub(listOf(Filter(authors = unknown, kinds = listOf(EventKind.METADATA))), label = "metadata")
-        metadataFetchSubIds.add(id)
+        profileRepository.requestProfiles(pubkeys)
     }
 
     /** Fetch kind-0 for note authors and any pubkeys mentioned via p-tags. */
@@ -2448,8 +2423,6 @@ class FeedViewModel @Inject constructor(
         followsForRelaySelection = emptyList()
         followRelayMap.clear()
         quoteLookup.reset(clearResolved = true)
-        metadataFetchSubIds.forEach { pool.unsubscribe(it) }
-        metadataFetchSubIds.clear()
         synchronized(feedEvents) { feedEvents.clear() }
         pendingBuffer.clear()
         pendingLiveEvents.clear()

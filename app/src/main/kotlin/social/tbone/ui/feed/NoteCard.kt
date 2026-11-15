@@ -88,6 +88,9 @@ import social.tbone.ui.theme.showPostDividers
 import dev.youniversal.theme.YouniversalTheme
 import android.widget.Toast
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import social.tbone.wallet.ExternalWalletHandoff
 import social.tbone.wallet.WalletViewModel
@@ -637,7 +640,7 @@ private fun ReferencePlaceholder(
 ) {
     val quoteState = LocalQuoteState.current
     val refId = referenceId
-    val unavailable = refId != null && refId in quoteState.unresolved
+    val unavailable = quoteState.isUnresolved(refId)
     if (unavailable && refId != null) {
         val onRetry = quoteState.onRetry
         val placeholderShape = appCornerShape(MaterialTheme.shapes.small, RectangleShape)
@@ -881,10 +884,12 @@ fun QuotedNoteCard(
 
         // Quote of a quote still renders (one level, so a cycle cannot recurse).
         val nested = nestedId?.let { quotedEvents[it] }
-        if (nestedId != null &&
-            nested == null &&
-            nestedId in LocalQuoteState.current.unresolved
-        ) {
+        val nestedUnavailable = if (nestedId != null && nested == null) {
+            LocalQuoteState.current.isUnresolved(nestedId)
+        } else {
+            false
+        }
+        if (nestedUnavailable) {
             // The note this one quotes is gone; say so instead of showing nothing.
             Spacer(Modifier.height(6.dp))
             Text(
@@ -1218,9 +1223,18 @@ private fun LikeButton(
     onLike: (Event) -> Unit,
 ) {
     val config = social.tbone.ui.reactions.LocalReactionConfig.current
-    val myContent = activePubkey?.let {
-        config.contents[social.tbone.reactions.reactionKey(event.id, it)]
+    val reactionContentKey = remember(event.id, activePubkey) {
+        activePubkey?.let { social.tbone.reactions.reactionKey(event.id, it) }
     }
+    val myContent by remember(config.contentsFlow, reactionContentKey) {
+        if (reactionContentKey == null) {
+            flowOf(null)
+        } else {
+            config.contentsFlow.map { it[reactionContentKey] }.distinctUntilChanged()
+        }
+    }.collectAsStateWithLifecycle(
+        initialValue = reactionContentKey?.let { config.contentsFlow.value[it] },
+    )
     val myEmoji = myContent?.takeIf { hasReacted && social.tbone.ui.reactions.isEmojiReaction(it) }
     var pickerOpen by remember { mutableStateOf(false) }
     val onClick: () -> Unit = {

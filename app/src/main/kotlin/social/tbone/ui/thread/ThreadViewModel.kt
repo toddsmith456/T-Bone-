@@ -47,6 +47,7 @@ import social.tbone.nostr.replyEventId
 import social.tbone.nostr.rootEventId
 import social.tbone.nostr.threadRootEventId
 import social.tbone.profile.ProfileRepository
+import social.tbone.reactions.EngagementSubscriptionCoordinator
 import social.tbone.reactions.PollsRepository
 import social.tbone.reactions.RepliesRepository
 import timber.log.Timber
@@ -95,6 +96,7 @@ class ThreadViewModel @Inject constructor(
     private val appSettings: social.tbone.settings.AppSettings,
     private val muteRepository: social.tbone.lists.MuteListRepository,
     private val pollsRepository: PollsRepository,
+    private val engagementCoordinator: EngagementSubscriptionCoordinator,
     private val accountRepository: AccountRepository,
 ) : ViewModel() {
 
@@ -104,10 +106,8 @@ class ThreadViewModel @Inject constructor(
     val uiState: StateFlow<ThreadUiState> = _uiState.asStateFlow()
 
     val profiles: StateFlow<Map<String, ProfileContent>> = profileRepository.profiles
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     private val activeSubIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
-    private val metadataLeases = MetadataLeases()
 
     private val quoteLookup = QuoteLookupSession(
         scope = viewModelScope,
@@ -129,25 +129,18 @@ class ThreadViewModel @Inject constructor(
     fun retryQuote(id: String) = quoteLookup.retryId(id)
 
     val reactions: StateFlow<Map<String, Set<String>>> = reactionsRepository.reactions
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val replies: StateFlow<Map<String, Int>> = repliesRepository.replies
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val repliedByMe: StateFlow<Set<String>> = repliesRepository.repliedByMe
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
 
     val pollVoteCounts: StateFlow<Map<String, Map<String, Int>>> = pollsRepository.counts
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val pollTotalVotes: StateFlow<Map<String, Int>> = pollsRepository.totalVotes
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val pollMyVotes: StateFlow<Map<String, List<String>>> = pollsRepository.myVotes
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     val pollVoteVersion: StateFlow<Int> = pollsRepository.voteVersion
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
     val activePubkey: StateFlow<String?> = accountRepository.activeAccount
         .map { it?.pubkey }
@@ -289,11 +282,13 @@ class ThreadViewModel @Inject constructor(
         startThreadSubscriptions(rootId ?: root.id, chain)
         rebuild()
 
-        fetchProfiles(threadEvents.values.toList())
-        fetchQuotesForEvents(threadEvents.values.toList())
-        reactionsRepository.subscribeTo(threadEvents.keys.toList())
-        repliesRepository.subscribeTo(threadEvents.keys.toList())
-        fetchPollsFor(threadEvents.values.toList())
+        val allEvents = threadEvents.values.toList()
+        fetchProfiles(allEvents)
+        fetchQuotesForEvents(allEvents)
+        engagementCoordinator.subscribeForNotes(
+            noteIds = allEvents.map { it.id },
+            pollIds = allEvents.filter { it.kind == EventKind.POLL }.map { it.id },
+        )
     }
 
     /**
@@ -610,9 +605,10 @@ class ThreadViewModel @Inject constructor(
                             rebuild()
                             fetchProfiles(listOf(event))
                             fetchQuotesForEvents(listOf(event))
-                            reactionsRepository.subscribeTo(listOf(event.id))
-                            repliesRepository.subscribeTo(listOf(event.id))
-                            fetchPollsFor(listOf(event))
+                            engagementCoordinator.subscribeForNotes(
+                                noteIds = listOf(event.id),
+                                pollIds = if (event.kind == EventKind.POLL) listOf(event.id) else emptyList(),
+                            )
                             queueReplyLookup(event.id)
                         }
                     }
@@ -632,10 +628,6 @@ class ThreadViewModel @Inject constructor(
                     .getOrPut(msg.subscriptionId) { ConcurrentHashMap.newKeySet() }
                     .add(normalized)
                 eoseSignals.tryEmit(msg.subscriptionId)
-
-                if (metadataLeases.contains(msg.subscriptionId) && eoseCount(msg.subscriptionId) >= expectedEose()) {
-                    closeMetadata(msg.subscriptionId)
-                }
             }
 
             is RelayMessage.Closed -> {
@@ -653,13 +645,7 @@ class ThreadViewModel @Inject constructor(
     }
 
     private fun fetchProfiles(events: List<Event>) {
-        val pubkeys = events.map { it.pubkey }.distinct().filter { it.isNotBlank() }
-        if (pubkeys.isEmpty()) return
-        subscribeMetadata(pubkeys)
-    }
-
-    private fun fetchPollsFor(events: List<Event>) {
-        pollsRepository.subscribeTo(events.filter { it.kind == EventKind.POLL }.map { it.id })
+        profileRepository.requestProfiles(events.map { it.pubkey })
     }
 
     /**
@@ -671,36 +657,7 @@ class ThreadViewModel @Inject constructor(
     }
 
     private fun fetchMetadataForAuthors(pubkeys: List<String>) {
-        val unknown = pubkeys.distinct().filter { profileRepository.profiles.value[it] == null }
-        if (unknown.isEmpty()) return
-        subscribeMetadata(unknown)
-    }
-
-    private fun subscribeMetadata(pubkeys: List<String>) {
-        pubkeys.distinct().chunked(MAX_FILTER_BATCH).forEach { batch ->
-            val id = "thread-metadata-" + java.util.UUID.randomUUID().toString()
-            val authors = metadataLeases.claim(id, batch)
-            if (authors.isEmpty()) return@forEach
-            activeSubIds += id // register before REQ so fast EOSE is not missed
-            try {
-                pool.subscribe(listOf(Filter(authors = authors, kinds = listOf(EventKind.METADATA))), id = id, label = "thread-metadata")
-            } catch (error: Exception) {
-                closeMetadata(id)
-                throw error
-            }
-            val timeout = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
-                kotlinx.coroutines.delay(15_000)
-                closeMetadata(id)
-            }
-            if (metadataLeases.attachTimeout(id, timeout)) timeout.start()
-        }
-    }
-
-    private fun closeMetadata(id: String) {
-        if (!metadataLeases.release(id)) return
-        activeSubIds.remove(id)
-        eoseRelays.remove(id)
-        pool.unsubscribe(id)
+        profileRepository.requestProfiles(pubkeys)
     }
 
     /**

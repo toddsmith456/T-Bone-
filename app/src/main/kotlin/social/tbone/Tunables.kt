@@ -132,6 +132,26 @@ object Tunables {
     /** Maximum (subscriptionId:eventId) pairs tracked for unscoped cross-relay dedup. */
     const val RELAY_DEDUP_CACHE_SIZE = 16_384
 
+    // ── Batched metadata & combined engagement subscriptions (Option 5) ───────
+
+    /** Debounce window to coalesce scattered kind-0 profile requests into one REQ (ms). */
+    const val METADATA_BATCH_WINDOW_MS = 100L
+
+    /** Maximum author pubkeys per batched kind-0 metadata REQ filter. */
+    const val METADATA_BATCH_MAX = 100
+
+    /** Cooldown before re-requesting a pubkey whose kind-0 has not arrived yet (ms). */
+    const val METADATA_RETRY_COOLDOWN_MS = 60_000L
+
+    /** Max wait for relays to EOSE a batched kind-0 metadata subscription (ms). */
+    const val METADATA_EOSE_TIMEOUT_MS = 8_000L
+
+    /** Debounce window to coalesce engagement (reactions + replies + poll votes) into one REQ (ms). */
+    const val ENGAGEMENT_BATCH_WINDOW_MS = 100L
+
+    /** Maximum event IDs per filter chunk in a combined engagement REQ. */
+    const val ENGAGEMENT_BATCH_MAX = 40
+
     // ── Subscription timeouts ─────────────────────────────────────────────────
 
     /** EOSE timeout for the NIP-50 search subscription. */

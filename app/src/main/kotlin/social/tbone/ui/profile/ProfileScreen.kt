@@ -51,15 +51,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import coil.compose.AsyncImage
 import kotlinx.coroutines.launch
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
 import social.tbone.nostr.Nip19
-import social.tbone.nostr.quotedEventId
 import social.tbone.nostr.identity.Phrase
 import social.tbone.ui.components.UserAvatar
-import social.tbone.ui.feed.NoteCard
+import social.tbone.ui.feed.ObservedNoteCard
 import social.tbone.ui.media.LocalVideoQuality
 import social.tbone.ui.media.VideoViewerDialog
 import social.tbone.ui.onboarding.BonyButton
@@ -97,10 +95,7 @@ fun ProfileScreen(
     val pinnedNotes by viewModel.pinnedNotes.collectAsStateWithLifecycle()
     val allNotes by viewModel.allNotes.collectAsStateWithLifecycle()
     val mediaItems by viewModel.mediaItems.collectAsStateWithLifecycle()
-    val quotedEvents by viewModel.quotedEvents.collectAsStateWithLifecycle()
-    val unresolvedQuoteIds by viewModel.unresolvedQuoteIds.collectAsStateWithLifecycle()
     val selectedTab by viewModel.tab.collectAsStateWithLifecycle()
-    val profiles by viewModel.profiles.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val isActiveUserProfile by viewModel.isActiveUserProfile.collectAsStateWithLifecycle()
     val isFollowing by viewModel.isFollowing.collectAsStateWithLifecycle()
@@ -109,13 +104,6 @@ fun ProfileScreen(
     val isBlockLoading by viewModel.isBlockLoading.collectAsStateWithLifecycle()
     val followIsLocal by viewModel.followIsLocal.collectAsStateWithLifecycle()
     val blockIsLocal by viewModel.blockIsLocal.collectAsStateWithLifecycle()
-    val reactions by viewModel.reactions.collectAsStateWithLifecycle()
-    val replies by viewModel.replies.collectAsStateWithLifecycle()
-    val repliedByMe by viewModel.repliedByMe.collectAsStateWithLifecycle()
-    val pollVoteCounts by viewModel.pollVoteCounts.collectAsStateWithLifecycle()
-    val pollTotalVotes by viewModel.pollTotalVotes.collectAsStateWithLifecycle()
-    val pollMyVotes by viewModel.pollMyVotes.collectAsStateWithLifecycle()
-    val pollVoteVersion by viewModel.pollVoteVersion.collectAsStateWithLifecycle()
     val activePubkey by viewModel.activePubkey.collectAsStateWithLifecycle()
     val pubkey = viewModel.pubkey
 
@@ -149,14 +137,20 @@ fun ProfileScreen(
     val phrase6 = remember(pubkey) { Phrase.wordsFor(pubkey, 6) }
     val npub = remember(pubkey) { Nip19.hexToNpub(pubkey) }
 
+    val quoteState = remember(viewModel) {
+        social.tbone.ui.feed.QuoteState(
+            onRetry = viewModel::retryQuote,
+            unresolvedFlow = viewModel.unresolvedQuoteIds,
+        )
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(feedPageBackground()),
     ) {
         CompositionLocalProvider(
-            social.tbone.ui.feed.LocalQuoteState provides
-                social.tbone.ui.feed.QuoteState(unresolvedQuoteIds, viewModel::retryQuote),
+            social.tbone.ui.feed.LocalQuoteState provides quoteState,
         ) {
         LazyColumn(
             modifier = Modifier
@@ -519,26 +513,30 @@ fun ProfileScreen(
                     }
                 }
 
-                items(visibleNotes, key = { it.id }) { event ->
-                    // Reposts show the note they boosted, so their reactions and
-                    // the embedded card both come from the resolved quote.
-                    val isRepost = event.kind == EventKind.REPOST || event.kind == EventKind.GENERIC_REPOST
-                    val refId = remember(event.id) {
-                        if (isRepost) {
-                            event.parsedTags.firstOrNull { it.name == "e" }?.value()
-                        } else {
-                            event.parsedTags.quotedEventId
-                                ?: social.tbone.ui.feed.extractInlineQuoteId(event.content)
+                items(
+                    items = visibleNotes,
+                    key = { it.id },
+                    contentType = { event ->
+                        when (event.kind) {
+                            EventKind.REPOST, EventKind.GENERIC_REPOST -> "repost"
+                            EventKind.POLL -> "poll"
+                            else -> "note"
                         }
-                    }
-                    val quotedEvent = remember(refId, quotedEvents) { refId?.let { quotedEvents[it] } }
-                    NoteCard(
+                    },
+                ) { event ->
+                    ObservedNoteCard(
                         event = event,
-                        profile = profiles[event.pubkey] ?: profile.takeIf { event.pubkey == pubkey },
-                        profiles = profiles,
-                        quotedEvent = quotedEvent,
-                        quotedEvents = quotedEvents,
-                        quotedEventId = refId,
+                        profilesFlow = viewModel.profiles,
+                        quotedEventsFlow = viewModel.quotedEvents,
+                        reactionsFlow = viewModel.reactions,
+                        repliesFlow = viewModel.replies,
+                        repliedByMeFlow = viewModel.repliedByMe,
+                        pollVoteCountsFlow = viewModel.pollVoteCounts,
+                        pollTotalVotesFlow = viewModel.pollTotalVotes,
+                        pollMyVotesFlow = viewModel.pollMyVotes,
+                        activePubkey = activePubkey,
+                        fallbackAuthorProfile = profile.takeIf { event.pubkey == pubkey },
+                        isPinned = event.id in pinnedIds,
                         onThreadClick = onThreadClick,
                         onProfileClick = onProfileClick,
                         onHashtagClick = onHashtagClick,
@@ -546,20 +544,7 @@ fun ProfileScreen(
                         onBoost = viewModel::boost,
                         onQuote = onQuoteClick,
                         onLike = viewModel::react,
-                        reactors = if (isRepost) {
-                            quotedEvent?.let { reactions[it.id] }
-                        } else {
-                            reactions[event.id]
-                        },
-                        replies = replies,
-                        repliedByMe = repliedByMe,
-                        pollVoteCounts = pollVoteCounts,
-                        pollTotalVotes = pollTotalVotes,
-                        pollMyVotes = pollMyVotes,
-                        pollVoteVersion = pollVoteVersion,
                         onPollVote = viewModel::voteOnPoll,
-                        activePubkey = activePubkey,
-                        isPinned = event.id in pinnedIds,
                     )
                 }
             }

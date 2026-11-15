@@ -203,15 +203,15 @@ class MainActivity : FragmentActivity() {
                 }
                 Box(modifier = Modifier.fillMaxSize()) {
                     // Multi emoji reactions: one app-wide config read by every
-                    // note's like button.
+                    // note's like button. Option 4 passes the StateFlow itself
+                    // instead of collecting it at the Activity root.
                     val multiOn by appSettings.multiReactionsEnabled.collectAsStateWithLifecycle()
                     val savedEmojis by appSettings.reactionEmojis.collectAsStateWithLifecycle()
-                    val reactionContents by reactionsRepository.reactionContents.collectAsStateWithLifecycle()
                     val updateState by updateManager.state.collectAsStateWithLifecycle()
-                    val reactionConfig = androidx.compose.runtime.remember(multiOn, savedEmojis, reactionContents) {
+                    val reactionConfig = androidx.compose.runtime.remember(multiOn, savedEmojis) {
                         social.tbone.ui.reactions.ReactionConfig(
                             emojis = if (multiOn) savedEmojis else emptyList(),
-                            contents = reactionContents,
+                            contentsFlow = reactionsRepository.reactionContents,
                             reactWith = { event, emoji -> reactionsRepository.react(event, emoji) },
                         )
                     }
