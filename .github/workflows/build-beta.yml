@@ -174,11 +174,14 @@ jobs:
           name: T-Bone beta ${{ steps.release.outputs.tag }}
           prerelease: true
           body: |
-            Public beta for testing. Package: `social.tbone.fork.beta` (installed alongside the public release).
+            Public beta for testing. Package: `social.tbone.fork.beta` (installs alongside the public release).
 
-            - Removes Webxdc mini apps and migrates app-owned files and settings. Browser data cleanup may require an updated Android System WebView; the app reports and retries incomplete cleanup. Previously exported or shared copies remain outside the app.
-            - Improves account recovery, note saves, list handling, links, accessibility and media lifecycle; clarifies metadata and Tor upload limitations.
-            - Duress wiping is not forensic erasure, and Tor settings do not establish a universal network kill switch. Physical-device upgrade, TalkBack, process-death and live-network checks remain outstanding.
+            - **Performance & scroll smoothness:** Native secp256k1 verification, batched UI & Room writes, per-card narrow recomposition, batched metadata & engagement subscriptions, AsyncImage migration, Baseline Profile, and relay hardening.
+            - **Video playback control:** New **Video playback** setting (`On tap` default / `Preload` / `Autoplay`) wired into inline feed videos.
+            - **Stability & logs:** Background stability/memory headroom improvements, LiteRT lifecycle cleanup, and an overhauled Share Logs dialog with time-range & crashes-only filters.
+            - **Cleanup:** Removed unused UI/theme code, retired temporary Webxdc legacy cleanup and `androidx.webkit`, and trimmed historical repo clutter.
+
+            Verify the APK with `sha256sum -c SHA256SUMS.txt`.
           files: |
             beta-artifact/*.apk
             beta-artifact/SHA256SUMS.txt
