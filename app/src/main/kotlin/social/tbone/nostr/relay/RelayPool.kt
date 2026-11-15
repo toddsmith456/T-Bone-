@@ -35,8 +35,19 @@ class RelayPool(
 ) {
     private val connections = ConcurrentHashMap<String, RelayEntry>()
     private val activeSubscriptions = ConcurrentHashMap<String, Subscription>()
+    // Cross-relay dedup for unscoped subscriptions: if 8 relays return the same
+    // (subscriptionId, event.id), emit it once instead of fanning out 8 duplicates
+    // to every repository and ViewModel collector. Scoped subscriptions (search,
+    // bunker, geohash) keep per-relay delivery intact.
+    private val dedupLock = Any()
+    private val seenUnscopedEvents = object : LinkedHashMap<String, Unit>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Unit>): Boolean =
+            size > Tunables.RELAY_DEDUP_CACHE_SIZE
+    }
 
-    private val _messages = MutableSharedFlow<PoolMessage>(extraBufferCapacity = 256)
+    private val _messages = MutableSharedFlow<PoolMessage>(
+        extraBufferCapacity = Tunables.RELAY_POOL_BUFFER_CAPACITY,
+    )
     val messages: SharedFlow<PoolMessage> = _messages.asSharedFlow()
 
     private val _relayStatuses = MutableStateFlow<Map<String, RelayStatus>>(emptyMap())
@@ -249,15 +260,27 @@ class RelayPool(
 
     // ── Internal ──────────────────────────────────────────────────────────────
 
+    private fun isDuplicateUnscopedEvent(msg: RelayMessage.EventMessage): Boolean {
+        val sub = activeSubscriptions[msg.subscriptionId] ?: return false
+        if (sub.relays != null) return false
+        val key = "${msg.subscriptionId}:${msg.event.id}"
+        synchronized(dedupLock) {
+            if (seenUnscopedEvents.containsKey(key)) return true
+            seenUnscopedEvents[key] = Unit
+            return false
+        }
+    }
+
     private suspend fun connectWithRetry(url: String, connection: RelayConnection) {
-        var delayMs = Tunables.RECONNECT_DELAY_MS
+        val reconnectPolicy = RelayReconnectPolicy()
         while (true) {
             Timber.d("Connecting: $url")
+            var connectedAtMs = 0L
             try {
                 connection.messages.collect { message ->
                     when (message) {
                         is RelayMessage.Connected -> {
-                            delayMs = Tunables.RECONNECT_DELAY_MS
+                            connectedAtMs = System.currentTimeMillis()
                             _relayStatuses.update { it + (url to RelayStatus.CONNECTED) }
                             activeSubscriptions.values.forEach { sub ->
                                 // A scoped subscription is only sent to its own relays.
@@ -269,11 +292,18 @@ class RelayPool(
                         }
                         else -> {
                             when (message) {
-                                is RelayMessage.EventMessage -> eventCounter.incrementAndGet()
+                                is RelayMessage.EventMessage -> {
+                                    eventCounter.incrementAndGet()
+                                    if (isDuplicateUnscopedEvent(message)) return@collect
+                                }
                                 is RelayMessage.EndOfStoredEvents -> eoseCounter.incrementAndGet()
                                 else -> Unit
                             }
-                            delayMs = Tunables.RECONNECT_DELAY_MS
+                            if (connectedAtMs > 0L &&
+                                System.currentTimeMillis() - connectedAtMs >= Tunables.RELAY_HEALTHY_SESSION_MS
+                            ) {
+                                reconnectPolicy.recordHealthySession()
+                            }
                             _messages.emit(PoolMessage(url, message))
                         }
                     }
@@ -286,10 +316,17 @@ class RelayPool(
 
             if (!connections.containsKey(url)) break
 
+            val now = System.currentTimeMillis()
+            val sessionMs = if (connectedAtMs > 0L) (now - connectedAtMs).coerceAtLeast(0L) else 0L
+            val decision = reconnectPolicy.onDisconnect(nowMs = now, sessionDurationMs = sessionMs)
+
             _relayStatuses.update { it + (url to RelayStatus.DISCONNECTED) }
-            Timber.d("Reconnecting $url in ${delayMs}ms")
-            delay(delayMs)
-            delayMs = (delayMs * 2).coerceAtMost(Tunables.MAX_RECONNECT_DELAY_MS)
+            if (decision.inCooldown) {
+                Timber.w("Relay $url entered ${decision.delayMs / 1000}s cooldown after repeated rapid failures")
+            } else {
+                Timber.d("Reconnecting $url in ${decision.delayMs}ms")
+            }
+            delay(decision.delayMs)
         }
     }
 
@@ -305,6 +342,61 @@ class RelayPool(
         /** When set, this subscription only talks to these relays (null = all). */
         val relays: Set<String>? = null,
     )
+}
+
+internal data class ReconnectDecision(
+    val delayMs: Long,
+    val inCooldown: Boolean,
+)
+
+/**
+ * Exponential reconnect backoff with a rapid-failure cooldown circuit breaker.
+ *
+ * A relay that connects and drops immediately (or refuses connections repeatedly)
+ * without sustaining a healthy session is parked for [cooldownMs] after
+ * [failureThreshold] failures within [failureWindowMs], preventing broken relays
+ * from wasting CPU and battery hammering reconnect loops.
+ */
+internal class RelayReconnectPolicy(
+    private val initialDelayMs: Long = Tunables.RECONNECT_DELAY_MS,
+    private val maxDelayMs: Long = Tunables.MAX_RECONNECT_DELAY_MS,
+    private val healthySessionMs: Long = Tunables.RELAY_HEALTHY_SESSION_MS,
+    private val failureWindowMs: Long = Tunables.RELAY_FAILURE_WINDOW_MS,
+    private val failureThreshold: Int = Tunables.RELAY_FAILURE_THRESHOLD,
+    private val cooldownMs: Long = Tunables.RELAY_COOLDOWN_MS,
+) {
+    private var nextDelayMs: Long = initialDelayMs
+    private val recentFailureTimes = ArrayDeque<Long>()
+
+    fun recordHealthySession() {
+        nextDelayMs = initialDelayMs
+        recentFailureTimes.clear()
+    }
+
+    fun onDisconnect(nowMs: Long, sessionDurationMs: Long): ReconnectDecision {
+        if (sessionDurationMs >= healthySessionMs) {
+            recordHealthySession()
+            val delay = nextDelayMs
+            nextDelayMs = (nextDelayMs * 2).coerceAtMost(maxDelayMs)
+            return ReconnectDecision(delayMs = delay, inCooldown = false)
+        }
+
+        val windowStart = nowMs - failureWindowMs
+        while (recentFailureTimes.isNotEmpty() && recentFailureTimes.first() < windowStart) {
+            recentFailureTimes.removeFirst()
+        }
+        recentFailureTimes.addLast(nowMs)
+
+        if (recentFailureTimes.size >= failureThreshold) {
+            recentFailureTimes.clear()
+            nextDelayMs = initialDelayMs
+            return ReconnectDecision(delayMs = cooldownMs, inCooldown = true)
+        }
+
+        val delay = nextDelayMs
+        nextDelayMs = (nextDelayMs * 2).coerceAtMost(maxDelayMs)
+        return ReconnectDecision(delayMs = delay, inCooldown = false)
+    }
 }
 
 /**

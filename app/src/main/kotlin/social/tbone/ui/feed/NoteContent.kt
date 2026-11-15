@@ -49,8 +49,9 @@ import androidx.media3.ui.PlayerView
 import android.view.LayoutInflater
 import coil.decode.GifDecoder
 import coil.compose.AsyncImage
-import coil.compose.SubcomposeAsyncImage
+import coil.compose.AsyncImagePainter
 import androidx.compose.foundation.Image
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
@@ -120,9 +121,13 @@ private const val FULL_QUALITY_MAX_SIZE = 1600
 /** Cap for low-quality inline images — smaller decode, less memory, faster. */
 private const val LOW_QUALITY_MAX_SIZE = 512
 
+@Immutable
 sealed class MediaItem {
+    @Immutable
     data class Image(val url: String, val meta: MediaMeta? = null) : MediaItem()
+    @Immutable
     data class Video(val url: String, val meta: MediaMeta? = null) : MediaItem()
+    @Immutable
     data class Audio(val url: String) : MediaItem()
 }
 
@@ -132,6 +137,7 @@ sealed class MediaItem {
  * videos a poster frame URL. All optional — most clients include some,
  * older notes include none, and rendering must cope either way.
  */
+@Immutable
 data class MediaMeta(
     val mime: String? = null,
     val dimension: String? = null,
@@ -154,6 +160,7 @@ fun parseMediaAspectRatio(dimension: String?): Float? {
     return (w / h).takeIf { it.isFinite() }
 }
 
+@Immutable
 data class ParsedContent(
     val text: String,
     val mediaItems: List<MediaItem>,
@@ -619,49 +626,61 @@ private fun InlineImage(
         } else {
             Modifier
         }
-        SubcomposeAsyncImage(
-            model = request,
-            contentDescription = "image",
-            contentScale = ContentScale.Fit,
+        var loadState by remember(request) {
+            mutableStateOf<AsyncImagePainter.State>(AsyncImagePainter.State.Empty)
+        }
+        Box(
             modifier = frameModifier
                 .clip(shape)
                 .background(BonyColors.SurfaceAlt, shape)
                 .border(1.dp, BonyColors.Rule, shape)
                 .then(interactiveModifier),
-            onSuccess = { result ->
-                blockedVerdict = null
-                val size = result.painter.intrinsicSize
-                if (size.width > 0f && size.height > 0f) {
-                    val ratio = size.width / size.height
-                    if (ratio.isFinite() && ratio > 0f) aspectRatio = ratio
+            contentAlignment = Alignment.Center,
+        ) {
+            AsyncImage(
+                model = request,
+                contentDescription = "image",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize(),
+                onLoading = { state -> loadState = state },
+                onSuccess = { state ->
+                    loadState = state
+                    blockedVerdict = null
+                    val size = state.painter.intrinsicSize
+                    if (size.width > 0f && size.height > 0f) {
+                        val ratio = size.width / size.height
+                        if (ratio.isFinite() && ratio > 0f) aspectRatio = ratio
+                    }
+                },
+                onError = { state ->
+                    loadState = state
+                    val blocked = state.result.throwable as? NsfwBlockedException
+                    blockedVerdict = blocked?.verdict
+                },
+            )
+            when (val state = loadState) {
+                is AsyncImagePainter.State.Empty,
+                is AsyncImagePainter.State.Loading -> {
+                    if (blurPainter != null) {
+                        Image(
+                            painter = blurPainter,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.matchParentSize(),
+                        )
+                    } else {
+                        MediaStripes(Modifier.matchParentSize())
+                    }
                 }
-            },
-            onError = { state ->
-                val blocked = state.result.throwable as? NsfwBlockedException
-                blockedVerdict = blocked?.verdict
-            },
-            loading = {
-                if (blurPainter != null) {
-                    Image(
-                        painter = blurPainter,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    MediaStripes(Modifier.fillMaxSize())
-                }
-            },
-            error = { state ->
-                val blocked = state.result.throwable as? NsfwBlockedException
-                if (blocked != null) {
-                    AiNsfwMediaVeil(
-                        verdict = blocked.verdict,
-                        onReveal = onAiReveal,
-                    )
-                } else {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        MediaStripes(Modifier.fillMaxSize())
+                is AsyncImagePainter.State.Error -> {
+                    val blocked = state.result.throwable as? NsfwBlockedException
+                    if (blocked != null) {
+                        AiNsfwMediaVeil(
+                            verdict = blocked.verdict,
+                            onReveal = onAiReveal,
+                        )
+                    } else {
+                        MediaStripes(Modifier.matchParentSize())
                         Text(
                             text = "[ image · tap to expand ]",
                             style = BonyType.meta.copy(color = BonyColors.TextMute),
@@ -671,8 +690,9 @@ private fun InlineImage(
                         )
                     }
                 }
-            },
-        )
+                is AsyncImagePainter.State.Success -> Unit
+            }
+        }
     }
 }
 
@@ -744,39 +764,36 @@ private fun VideoPlaceholder(
         ) {
             MediaStripes(Modifier.matchParentSize())
             if (posterRequest != null) {
-                SubcomposeAsyncImage(
+                var posterState by remember(posterRequest) {
+                    mutableStateOf<AsyncImagePainter.State>(AsyncImagePainter.State.Empty)
+                }
+                if (posterState !is AsyncImagePainter.State.Success && blurPainter != null) {
+                    Image(
+                        painter = blurPainter,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.matchParentSize(),
+                    )
+                }
+                AsyncImage(
                     model = posterRequest,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.matchParentSize(),
-                    onSuccess = { posterBlocked = null },
+                    onLoading = { state -> posterState = state },
+                    onSuccess = { state ->
+                        posterState = state
+                        posterBlocked = null
+                    },
                     onError = { state ->
+                        posterState = state
                         posterBlocked = (state.result.throwable as? NsfwBlockedException)?.verdict
                     },
-                    loading = {
-                        if (blurPainter != null) {
-                            Image(
-                                painter = blurPainter,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
-                    },
-                    error = { state ->
-                        val blocked = state.result.throwable as? NsfwBlockedException
-                        if (blocked != null) {
-                            AiNsfwMediaVeil(verdict = blocked.verdict, onReveal = onAiReveal)
-                        } else if (blurPainter != null) {
-                            Image(
-                                painter = blurPainter,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
-                    },
                 )
+                val blocked = (posterState as? AsyncImagePainter.State.Error)?.result?.throwable as? NsfwBlockedException
+                if (blocked != null) {
+                    AiNsfwMediaVeil(verdict = blocked.verdict, onReveal = onAiReveal)
+                }
             } else if (blurPainter != null) {
                 Image(
                     painter = blurPainter,
@@ -856,15 +873,18 @@ private val blurPainterCache = android.util.LruCache<String, BitmapPainter>(128)
 @Composable
 internal fun rememberBlurPainter(meta: MediaMeta?): BitmapPainter? {
     val blurhash = meta?.blurhash?.takeIf { BlurHash.isValid(it) }
+    val cached = remember(blurhash) { blurhash?.let { blurPainterCache.get(it) } }
+    if (cached != null) return cached
     val painter by produceState<BitmapPainter?>(null, blurhash) {
         if (blurhash == null) return@produceState
         blurPainterCache.get(blurhash)?.let { value = it; return@produceState }
         value = withContext(Dispatchers.Default) {
             val ratio = meta?.aspectRatio
-            val width = 64
+            // 32px wide cuts BlurHash DCT math & bitmap RAM by 4x with identical blurred appearance.
+            val width = 32
             val height = if (ratio != null && ratio > 0f) {
-                (width / ratio).toInt().coerceIn(16, 96)
-            } else 64
+                (width / ratio).toInt().coerceIn(12, 48)
+            } else 32
             BlurHash.decodeToBitmap(blurhash, width, height)
                 ?.let { BitmapPainter(it.asImageBitmap()) }
         }

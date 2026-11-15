@@ -56,16 +56,28 @@ class BonyApp : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        // Install a proxy-only bootstrap loader synchronously. Until persisted
-        // settings load, the default Coil client must not make direct requests.
-        // Its disk cache is disabled so it cannot overlap the configured loader.
-        Coil.setImageLoader(
+        // Install Coil's ImageLoader synchronously using a dynamic Call.Factory
+        // that delegates to ImageClientProvider.client (which starts as a strict
+        // proxy-only Tor-guarded client until persisted settings load). Reading
+        // the lightweight-cache preference mirror synchronously lets the single
+        // persistent DiskCache come online on frame 0 so previously cached
+        // avatars/images render immediately without a mid-startup singleton swap.
+        val dynamicCallFactory = Call.Factory { request -> ImageClientProvider.client.newCall(request) }
+        val cachePrefs = getSharedPreferences("tbone_cache_prefs", MODE_PRIVATE)
+        val initialLightweight = cachePrefs.getBoolean("image_cache_lightweight", false)
+        var installedLightweightCache = initialLightweight
+        fun buildCoilLoader(lightweight: Boolean): ImageLoader =
             ImageLoader.Builder(this)
-                .okHttpClient(ImageClientProvider.client)
+                .callFactory(dynamicCallFactory)
                 .components { add(nsfwCoilInterceptor) }
-                .diskCache(null)
+                .diskCache {
+                    DiskCache.Builder()
+                        .directory(cacheDir.resolve("image_cache"))
+                        .maxSizeBytes(if (lightweight) 64L * 1024 * 1024 else 250L * 1024 * 1024)
+                        .build()
+                }
                 .build()
-        )
+        Coil.setImageLoader(buildCoilLoader(initialLightweight))
 
         val logFile = File(filesDir, "logs/$LOG_FILE_NAME")
 
@@ -139,12 +151,10 @@ class BonyApp : Application() {
                 .onFailure { Timber.w(it, "Startup profile cache prune failed") }
         }
 
-        // Keep Coil's image loader in sync with Tor + lightweight cache toggle.
-        // Using a dynamic Call.Factory avoids tearing down and replacing Coil's
-        // global ImageLoader singleton mid-session on Tor switches while still
-        // routing every new request through the latest Tor-guarded OkHttpClient.
-        val dynamicCallFactory = Call.Factory { request -> ImageClientProvider.client.newCall(request) }
-        var installedLightweightCache: Boolean? = null
+        // Keep Coil's HTTP transport in sync with Tor and persist any changes
+        // to the lightweight-cache setting. Because Coil was already configured
+        // with dynamicCallFactory + DiskCache synchronously above, normal
+        // cold starts never tear down or replace the global ImageLoader.
         applicationScope.launch {
             appSettings.initialized.first { it }
             combine(appSettings.torEnabled, appSettings.imageCacheLightweight) { tor, lightweight -> tor to lightweight }
@@ -160,18 +170,8 @@ class BonyApp : Application() {
                     ImageClientProvider.update(client, useTor)
                     if (installedLightweightCache != lightweight) {
                         installedLightweightCache = lightweight
-                        Coil.setImageLoader(
-                            ImageLoader.Builder(this@BonyApp)
-                                .callFactory(dynamicCallFactory)
-                                .components { add(nsfwCoilInterceptor) }
-                                .diskCache {
-                                    DiskCache.Builder()
-                                        .directory(this@BonyApp.cacheDir.resolve("image_cache"))
-                                        .maxSizeBytes(if (lightweight) 64L * 1024 * 1024 else 250L * 1024 * 1024)
-                                        .build()
-                                }
-                                .build()
-                        )
+                        cachePrefs.edit().putBoolean("image_cache_lightweight", lightweight).apply()
+                        Coil.setImageLoader(buildCoilLoader(lightweight))
                     }
                 }
         }

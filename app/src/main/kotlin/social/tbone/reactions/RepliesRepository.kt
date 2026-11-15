@@ -6,6 +6,8 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -59,9 +61,22 @@ class RepliesRepository @Inject constructor(
     private val _repliedByMe = MutableStateFlow<Set<String>>(emptySet())
     val repliedByMe: StateFlow<Set<String>> = _repliedByMe.asStateFlow()
 
+    // Option 2: 50ms conflated settle window coalesces bursty reply streams into
+    // a single StateFlow update instead of copying the full map per reply event.
+    private val pendingLock = Any()
+    private val pendingReplyCounts = LinkedHashMap<String, Int>()
+    private val pendingRepliedByMe = LinkedHashSet<String>()
+    private val uiDirty = Channel<Unit>(Channel.CONFLATED)
+
     @Volatile private var activePubkey: String? = null
 
     init {
+        scope.launch {
+            for (signal in uiDirty) {
+                delay(Tunables.UI_BATCH_WINDOW_MS)
+                flushUiUpdates()
+            }
+        }
         scope.launch {
             accountRepository.activeAccount
                 .map { it?.pubkey }
@@ -72,6 +87,7 @@ class RepliesRepository @Inject constructor(
                     // edits. Only an actual account switch should clear this
                     // UI marker; likes/reposts and account metadata updates must
                     // not erase the reply context already shown in the feed.
+                    synchronized(pendingLock) { pendingRepliedByMe.clear() }
                     _repliedByMe.value = emptySet()
                 }
         }
@@ -91,6 +107,31 @@ class RepliesRepository @Inject constructor(
                     if (t is CancellationException) throw t
                     Timber.w(t, "RepliesRepository message handling failed")
                 }
+            }
+        }
+    }
+
+    private fun flushUiUpdates() {
+        val (replyDelta, myDelta) = synchronized(pendingLock) {
+            val r = if (pendingReplyCounts.isEmpty()) emptyMap() else pendingReplyCounts.toMap().also { pendingReplyCounts.clear() }
+            val m = if (pendingRepliedByMe.isEmpty()) emptySet() else pendingRepliedByMe.toSet().also { pendingRepliedByMe.clear() }
+            r to m
+        }
+        if (replyDelta.isNotEmpty()) {
+            _replies.update { current ->
+                val merged = current + replyDelta
+                if (merged.size > Tunables.REACTION_CACHE_SIZE) {
+                    merged.entries.drop(merged.size - Tunables.REACTION_CACHE_SIZE + Tunables.REACTION_CACHE_SIZE / 4)
+                        .associate { it.key to it.value }
+                } else merged
+            }
+        }
+        if (myDelta.isNotEmpty()) {
+            _repliedByMe.update { current ->
+                val merged = current + myDelta
+                if (merged.size > Tunables.REACTION_CACHE_SIZE) {
+                    merged.drop(merged.size - Tunables.REACTION_CACHE_SIZE + Tunables.REACTION_CACHE_SIZE / 4).toSet()
+                } else merged
             }
         }
     }
@@ -124,7 +165,7 @@ class RepliesRepository @Inject constructor(
                 val expectedRelays = pool.relayStatuses.value
                     .count { it.value == RelayStatus.CONNECTED }
                     .coerceAtLeast(1)
-                withTimeoutOrNull(30_000) {
+                withTimeoutOrNull(Tunables.REACTION_EOSE_TIMEOUT_MS) {
                     pool.messages.first { (relayUrl, m) ->
                         if (m !is RelayMessage.EndOfStoredEvents || m.subscriptionId != subId) {
                             false
@@ -158,26 +199,14 @@ class RepliesRepository @Inject constructor(
             replyCountCache.put(parentId, next)
             next
         }
-        _replies.update { current ->
-            val trimmed = if (current.size >= Tunables.REACTION_CACHE_SIZE && parentId !in current) {
-                current.entries.drop(current.size / 4).associate { it.key to it.value }
-            } else {
-                current
-            }
-            trimmed + (parentId to count)
-        }
-
-        val me = activePubkey
-        if (me != null && reply.pubkey == me) {
+        val isOwnReply = activePubkey != null && reply.pubkey == activePubkey
+        if (isOwnReply) {
             synchronized(repliedCache) { repliedCache.put(parentId, true) }
-            _repliedByMe.update { current ->
-                val trimmed = if (current.size >= Tunables.REACTION_CACHE_SIZE && parentId !in current) {
-                    current.drop(current.size / 4).toSet()
-                } else {
-                    current
-                }
-                trimmed + parentId
-            }
         }
+        synchronized(pendingLock) {
+            pendingReplyCounts[parentId] = count
+            if (isOwnReply) pendingRepliedByMe.add(parentId)
+        }
+        uiDirty.trySend(Unit)
     }
 }

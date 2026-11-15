@@ -2,6 +2,7 @@ package social.tbone.nostr.relay
 
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
 import android.os.Build
@@ -101,7 +102,7 @@ class RelayConnection(
             policy?.guard?.unregisterSocket(ws)
             webSocket.compareAndSet(ws, null)
         }
-    }.catch { t ->
+    }.buffer(social.tbone.Tunables.RELAY_SOCKET_BUFFER_CAPACITY).catch { t ->
         // Normal mobile network drops (sleep, WiFi/cell switch, relay ping timeouts,
         // DNS offline) are expected and automatically retried by RelayPool — log as a
         // concise warning instead of flooding error logs with stack traces.

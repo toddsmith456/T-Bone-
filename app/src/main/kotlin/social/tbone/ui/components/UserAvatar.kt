@@ -7,14 +7,17 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import coil.compose.SubcomposeAsyncImage
+import coil.compose.AsyncImage
 import coil.decode.GifDecoder
 import coil.request.ImageRequest
 import coil.size.Precision
@@ -98,6 +101,7 @@ fun UserAvatar(
     }
 
     val shape = appCornerShape(MaterialTheme.shapes.small)
+    var imageLoaded by remember(request) { mutableStateOf(false) }
     Box(
         modifier = modifier
             .size(size)
@@ -105,17 +109,17 @@ fun UserAvatar(
             .border(1.dp, BonyColors.Rule, shape)
             .background(BonyColors.SurfaceAlt, shape),
     ) {
-        SubcomposeAsyncImage(
+        if (!imageLoaded) {
+            DotAvatar(pubkeyHex = pubkeyHex, displayName = profile?.bestName, size = size)
+        }
+        AsyncImage(
             model = request,
             contentDescription = profile?.bestName ?: "avatar",
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize(),
-            loading = {
-                DotAvatar(pubkeyHex = pubkeyHex, displayName = profile?.bestName, size = size)
-            },
-            error = {
-                DotAvatar(pubkeyHex = pubkeyHex, displayName = profile?.bestName, size = size)
-            },
+            onLoading = { imageLoaded = false },
+            onSuccess = { imageLoaded = true },
+            onError = { imageLoaded = false },
         )
     }
 }

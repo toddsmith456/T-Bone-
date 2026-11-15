@@ -1,4 +1,6 @@
 -keep class social.tbone.nostr.** { *; }
+-keep class fr.acinq.secp256k1.** { *; }
+-dontwarn fr.acinq.secp256k1.**
 -keep class org.bouncycastle.** { *; }
 -dontwarn org.bouncycastle.**
 

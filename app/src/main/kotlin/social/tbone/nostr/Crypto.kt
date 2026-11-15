@@ -1,38 +1,48 @@
 package social.tbone.nostr
 
+import fr.acinq.secp256k1.Secp256k1
 import org.bouncycastle.asn1.sec.SECNamedCurves
 import org.bouncycastle.crypto.params.ECDomainParameters
-import org.bouncycastle.crypto.params.ECPublicKeyParameters
 import org.bouncycastle.math.ec.ECPoint
 import java.math.BigInteger
+import java.security.MessageDigest
 
 /**
  * BIP-340 Schnorr signature verification over secp256k1.
  * Nostr uses x-only public keys and Schnorr signatures per NIP-01.
  *
+ * Uses native JNI `libsecp256k1` (`secp256k1-kmp`) on Android devices for
+ * 10x–30x faster verification, with an automatic pure-Java BouncyCastle
+ * fallback for JVM unit tests and any environment without the native library.
+ *
  * This does NOT handle key generation or signing — that is always
- * delegated to an external signer (Amber / nsecBunker).
+ * delegated to an external signer (Amber / nsecBunker) or LocalKeySigner.
  */
 object Crypto {
+
+    private val nativeSecp256k1: Secp256k1? by lazy {
+        runCatching { Secp256k1.get() }.getOrNull()
+    }
+
+    private val sha256Local = ThreadLocal.withInitial { MessageDigest.getInstance("SHA-256") }
 
     private val secp256k1 by lazy {
         // No JCA provider is registered or required here. Everything below
         // (SECNamedCurves / ECDomainParameters / ECPoint) is BouncyCastle's
         // lightweight API and resolves the curve itself, and taggedHash() uses
         // the platform's own SHA-256.
-        //
-        // This is the real Android 8 (API 26) fix for the "BouncyCastle provider
-        // collision": the old code called Security.addProvider(BouncyCastleProvider())
-        // and keyed off Security.getProvider("BC"), but Android ships its own
-        // legacy "BC" provider, so that call can no-op or throw. Verification
-        // never needed the provider, so not touching it removes the failure mode
-        // instead of papering over it. (Note BouncyCastleProvider is `final` in
-        // bcprov 1.78.1, so it cannot be subclassed to register under a
-        // different name either.)
         val params = requireNotNull(SECNamedCurves.getByName("secp256k1")) {
             "secp256k1 curve unavailable"
         }
         ECDomainParameters(params.curve, params.g, params.n, params.h)
+    }
+
+    private val challengeTagHash: ByteArray by lazy {
+        sha256Local.get()!!.apply { reset() }.digest("BIP0340/challenge".toByteArray(Charsets.UTF_8))
+    }
+
+    private val liftXExponent: BigInteger by lazy {
+        secp256k1.curve.field.characteristic.add(BigInteger.ONE).shiftRight(2)
     }
 
     /**
@@ -47,61 +57,67 @@ object Crypto {
         require(signature.size == 64) { "Signature must be 64 bytes" }
         require(pubkey.size == 32) { "x-only pubkey must be 32 bytes" }
 
+        val native = nativeSecp256k1
+        if (native != null) {
+            return runCatching {
+                // Note secp256k1-kmp parameter order: (signature, data, pub)
+                native.verifySchnorr(signature, message, pubkey)
+            }.getOrDefault(false)
+        }
+
+        return verifySchnorrBouncyCastle(message, signature, pubkey)
+    }
+
+    /** Pure-Java BouncyCastle BIP-340 verifier used as fallback when native JNI is unavailable. */
+    internal fun verifySchnorrBouncyCastle(
+        message: ByteArray,
+        signature: ByteArray,
+        pubkey: ByteArray,
+    ): Boolean {
         return runCatching {
             val curve = secp256k1.curve
             val n = secp256k1.n
             val G = secp256k1.g
 
-            val r = BigInteger(1, signature.sliceArray(0..31))
-            val s = BigInteger(1, signature.sliceArray(32..63))
+            val r = BigInteger(1, signature.copyOfRange(0, 32))
+            val s = BigInteger(1, signature.copyOfRange(32, 64))
 
             if (r >= curve.field.characteristic || s >= n) return false
 
             // Lift x-only pubkey to curve point (BIP-340: even y)
             val P = liftX(BigInteger(1, pubkey)) ?: return false
 
-            val e = taggedHash("BIP0340/challenge", r.toBytes32() + pubkey + message)
-            val eBig = BigInteger(1, e).mod(n)
+            val digest = sha256Local.get()!!.apply { reset() }
+            digest.update(challengeTagHash)
+            digest.update(challengeTagHash)
+            digest.update(signature, 0, 32)
+            digest.update(pubkey)
+            digest.update(message)
+            val eBig = BigInteger(1, digest.digest()).mod(n)
 
             val R = G.multiply(s).subtract(P.multiply(eBig)).normalize()
 
             if (R.isInfinity) return false
-            if (R.affineYCoord.toBigInteger().mod(BigInteger.valueOf(2L)) != BigInteger.ZERO) return false
+            if (R.affineYCoord.toBigInteger().testBit(0)) return false
             if (R.affineXCoord.toBigInteger() != r) return false
 
             true
         }.getOrDefault(false)
     }
 
+    private val TWO: BigInteger = BigInteger.valueOf(2L)
+    private val THREE: BigInteger = BigInteger.valueOf(3L)
+    private val SEVEN: BigInteger = BigInteger.valueOf(7L)
+
     /** Lifts an x coordinate to a secp256k1 curve point with even y (BIP-340). */
     private fun liftX(x: BigInteger): ECPoint? {
         val curve = secp256k1.curve
         val p = curve.field.characteristic
         if (x >= p) return null
-        val y2 = x.modPow(BigInteger.valueOf(3), p).add(BigInteger.valueOf(7)).mod(p)
-        val y = y2.modPow(p.add(BigInteger.ONE).divide(BigInteger.valueOf(4)), p)
-        if (y.modPow(BigInteger.valueOf(2L), p) != y2) return null
-        val yEven = if (y.mod(BigInteger.valueOf(2L)) == BigInteger.ZERO) y else p.subtract(y)
+        val y2 = x.modPow(THREE, p).add(SEVEN).mod(p)
+        val y = y2.modPow(liftXExponent, p)
+        if (y.modPow(TWO, p) != y2) return null
+        val yEven = if (!y.testBit(0)) y else p.subtract(y)
         return curve.createPoint(x, yEven)
-    }
-
-    /** BIP-340 tagged hash: SHA256(SHA256(tag) || SHA256(tag) || message) */
-    private fun taggedHash(tag: String, message: ByteArray): ByteArray {
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-        val tagHash = digest.digest(tag.toByteArray(Charsets.UTF_8))
-        digest.reset()
-        digest.update(tagHash)
-        digest.update(tagHash)
-        digest.update(message)
-        return digest.digest()
-    }
-
-    private fun BigInteger.toBytes32(): ByteArray {
-        val bytes = toByteArray()
-        return when {
-            bytes.size == 32 -> bytes
-            bytes.size > 32 -> bytes.takeLast(32).toByteArray()
-            else -> ByteArray(32 - bytes.size) + bytes
-        }
     }
 }

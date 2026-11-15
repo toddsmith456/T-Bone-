@@ -1,17 +1,15 @@
 package social.tbone.nostr
 
 import android.util.LruCache
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.encodeToJsonElement
-import org.bouncycastle.jce.provider.BouncyCastleProvider
-import timber.log.Timber
+import kotlinx.serialization.json.JsonPrimitive
 import social.tbone.Tunables
+import timber.log.Timber
 import java.security.MessageDigest
-import java.security.Security
 
 /** Caches verified event IDs so Schnorr verification is only done once per unique event. */
 object VerifiedEventCache {
@@ -27,6 +25,7 @@ object VerifiedEventCache {
  * All fields are immutable. Events signed by an external signer (Amber, nsecBunker)
  * arrive fully formed. Local draft events (pre-signing) use [UnsignedEvent].
  */
+@Immutable
 @Serializable
 data class Event(
     val id: String,
@@ -41,23 +40,31 @@ data class Event(
     val parsedTags: List<Tag> by lazy { tags.map { Tag.fromJsonArray(it) } }
 
     /**
+     * Per-instance verification result. Because every field of [Event] is
+     * immutable, once *this exact instance* has passed `verifyId() && sig`,
+     * repeat calls across repositories/ViewModels can skip re-hashing safely
+     * while a different (tampered) Event claiming the same id still hashes first.
+     */
+    @Transient
+    @Volatile
+    private var verifiedInstance: Boolean? = null
+
+    /**
      * Verifies the event id and signature.
      * Returns false if either check fails — never throws.
      */
     fun verify(): Boolean {
+        verifiedInstance?.let { return it }
         // A cached signature only authenticates the original payload, not a
-        // different event claiming the same id. Always recompute the id first.
-        //
-        // Android 8 (API 26): failures used to be swallowed by getOrDefault(false),
-        // which made bad signatures indistinguishable from provider crashes
-        // (BouncyCastle collisions are common on API 26). We still never throw —
-        // callers depend on that — but the reason is now logged.
+        // different event claiming the same id. Always recompute the id first
+        // for any unverified Event instance.
         val outcome = runCatching { verifyId() && (VerifiedEventCache.contains(id) || verifySignature()) }
         outcome.exceptionOrNull()?.let { error ->
             Timber.e(error, "Event verification threw for id=$id")
         }
         val result = outcome.getOrDefault(false)
         if (result) VerifiedEventCache.add(id)
+        verifiedInstance = result
         return result
     }
 
@@ -68,7 +75,6 @@ data class Event(
     }
 
     private fun verifySignature(): Boolean {
-        ensureBouncyCastle()
         return Crypto.verifySchnorr(
             message = id.hexToBytes(),
             signature = sig.hexToBytes(),
@@ -77,11 +83,17 @@ data class Event(
     }
 
     companion object {
+        private val sha256Local = ThreadLocal.withInitial { MessageDigest.getInstance("SHA-256") }
+
         fun fromJson(raw: String): Event = NostrJson.decodeFromString(raw)
 
         /**
          * Computes the canonical serialization used for the event id.
-         * [0, pubkey, created_at, kind, tags, content]
+         * `[0, pubkey, created_at, kind, tags, content]`
+         *
+         * Writes directly into a StringBuilder to avoid intermediate JsonArray /
+         * JsonElement allocations while matching `kotlinx.serialization` output
+         * byte-for-byte.
          */
         fun serializeForId(
             pubkey: String,
@@ -90,26 +102,54 @@ data class Event(
             tags: List<JsonArray>,
             content: String,
         ): ByteArray {
-            val array = buildJsonArray {
-                add(NostrJson.encodeToJsonElement(0))
-                add(NostrJson.encodeToJsonElement(pubkey))
-                add(NostrJson.encodeToJsonElement(createdAt))
-                add(NostrJson.encodeToJsonElement(kind))
-                add(JsonArray(tags.map { it as JsonElement }))
-                add(NostrJson.encodeToJsonElement(content))
+            val estimated = 128 + content.length + tags.size * 48
+            val sb = StringBuilder(estimated)
+            sb.append("[0,")
+            appendJsonString(sb, pubkey)
+            sb.append(',')
+            sb.append(createdAt)
+            sb.append(',')
+            sb.append(kind)
+            sb.append(",[")
+            for (i in tags.indices) {
+                if (i > 0) sb.append(',')
+                sb.append(tags[i].toString())
             }
-            return array.toString().toByteArray(Charsets.UTF_8)
+            sb.append("],")
+            appendJsonString(sb, content)
+            sb.append(']')
+            return sb.toString().toByteArray(Charsets.UTF_8)
         }
 
-        fun sha256(input: ByteArray): String =
-            MessageDigest.getInstance("SHA-256")
-                .digest(input)
-                .toHex()
-
-        private fun ensureBouncyCastle() {
-            if (Security.getProvider("BC") == null) {
-                Security.addProvider(BouncyCastleProvider())
+        private fun appendJsonString(sb: StringBuilder, value: String) {
+            // Fast path: scan and write directly unless an unusual control char (< 0x20
+            // outside standard JSON short escapes) needs exact kotlinx.serialization handling.
+            for (i in 0 until value.length) {
+                val c = value[i]
+                if (c < ' ' && c != '\n' && c != '\r' && c != '\t' && c != '\b' && c != '\u000C') {
+                    sb.append(JsonPrimitive(value).toString())
+                    return
+                }
             }
+            sb.append('"')
+            for (i in 0 until value.length) {
+                when (val c = value[i]) {
+                    '"' -> sb.append("\\\"")
+                    '\\' -> sb.append("\\\\")
+                    '\b' -> sb.append("\\b")
+                    '\u000C' -> sb.append("\\f")
+                    '\n' -> sb.append("\\n")
+                    '\r' -> sb.append("\\r")
+                    '\t' -> sb.append("\\t")
+                    else -> sb.append(c)
+                }
+            }
+            sb.append('"')
+        }
+
+        fun sha256(input: ByteArray): String {
+            val digest = sha256Local.get()!!.apply { reset() }
+            return digest.digest(input).toHex()
         }
     }
 }
@@ -118,6 +158,7 @@ data class Event(
  * A Nostr event that has not yet been signed.
  * Passed to a [social.tbone.signer.NostrSigner] to produce a signed [Event].
  */
+@Immutable
 @Serializable
 data class UnsignedEvent(
     val pubkey: String,
@@ -134,7 +175,18 @@ data class UnsignedEvent(
 
 // ── Hex utilities ─────────────────────────────────────────────────────────────
 
-fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
+private val HEX_CHARS = "0123456789abcdef".toCharArray()
+
+fun ByteArray.toHex(): String {
+    val out = CharArray(size * 2)
+    var j = 0
+    for (b in this) {
+        val v = b.toInt() and 0xFF
+        out[j++] = HEX_CHARS[v ushr 4]
+        out[j++] = HEX_CHARS[v and 0x0F]
+    }
+    return String(out)
+}
 
 fun String.hexToBytes(): ByteArray {
     require(length % 2 == 0) { "Hex string must have even length, got $length" }

@@ -48,6 +48,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,6 +65,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import dev.youniversal.theme.YouniversalTheme
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import social.tbone.nostr.Event
 import social.tbone.nostr.quotedEventId
 import social.tbone.settings.HideReason
@@ -182,6 +185,29 @@ fun FeedScreen(
 
     LaunchedEffect(uiState.isLoading) {
         if (!uiState.isLoading) isRefreshing = false
+    }
+
+    // Option 6: report visible feed range (debounced 120ms so fast flings don't
+    // spam mid-fling engagement queries) to fetch reactions/replies/poll votes
+    // for on-screen notes plus a small lookahead buffer.
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            val visible = listState.layoutInfo.visibleItemsInfo
+            if (visible.isEmpty()) {
+                -1 to -1
+            } else {
+                // Subtract 1 for the leading "geohash_home" header item.
+                val first = (visible.first().index - 1).coerceAtLeast(0)
+                val last = (visible.last().index - 1).coerceAtLeast(first)
+                first to last
+            }
+        }
+            .distinctUntilChanged()
+            .collectLatest { (first, last) ->
+                if (first < 0) return@collectLatest
+                delay(120)
+                viewModel.onVisibleFeedRangeChanged(first, last)
+            }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -445,7 +471,7 @@ fun FeedScreen(
                     LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                         // Compact horizontally-scrollable strip of home-pinned
                         // location channels with unread badges.
-                        item(key = "geohash_home") {
+                        item(key = "geohash_home", contentType = "geohash_home") {
                             GeohashHomeStrip(
                                 onOpenGeohash = onOpenGeohash,
                             )
@@ -455,7 +481,21 @@ fun FeedScreen(
                         // gone: the inline HiddenGroupRow markers still appear where the
                         // hidden notes actually were, so nothing is silently missing and
                         // there is no permanent notice to scroll past.
-                        items(uiState.feedItems, key = { it.key }) { row ->
+                        items(
+                            items = uiState.feedItems,
+                            key = { it.key },
+                            contentType = { row ->
+                                when (row) {
+                                    is FeedListItem.HiddenGroup -> "hidden_group"
+                                    is FeedListItem.Note -> when (row.event.kind) {
+                                        social.tbone.nostr.EventKind.REPOST,
+                                        social.tbone.nostr.EventKind.GENERIC_REPOST -> "repost"
+                                        social.tbone.nostr.EventKind.POLL -> "poll"
+                                        else -> "note"
+                                    }
+                                }
+                            },
+                        ) { row ->
                           when (row) {
                             is FeedListItem.HiddenGroup -> HiddenGroupRow(
                                 group = row,
@@ -505,7 +545,7 @@ fun FeedScreen(
                             }
                           }
                         }
-                        item(key = "feed_paging") {
+                        item(key = "feed_paging", contentType = "feed_paging") {
                             if (currentFeed == FeedTab.SUGGESTED) {
                                 Text(
                                     text = "─── the end · pull to refresh ───",

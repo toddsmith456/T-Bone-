@@ -145,11 +145,25 @@ fun NoteCard(
     modifier: Modifier = Modifier,
 ) {
     val contentFilter = LocalContentFilter.current
-    val referencedNotes = buildMap {
-        putAll(quotedEvents)
-        quotedEvent?.let { put(it.id, it) }
+    val referencedNotes = remember(quotedEvents, quotedEvent) {
+        if (quotedEvent == null || quotedEvents[quotedEvent.id] === quotedEvent) {
+            quotedEvents
+        } else {
+            buildMap(quotedEvents.size + 1) {
+                putAll(quotedEvents)
+                put(quotedEvent.id, quotedEvent)
+            }
+        }
     }
-    if (ContentFilter.shouldHide(
+    val hidden = remember(
+        event.id,
+        contentFilter.blockedPubkeys,
+        contentFilter.nsfwMode,
+        contentFilter.hideWords,
+        referencedNotes,
+        contentFilter.followedPubkeys,
+    ) {
+        ContentFilter.shouldHide(
             event,
             contentFilter.blockedPubkeys,
             contentFilter.nsfwMode,
@@ -160,7 +174,8 @@ fun NoteCard(
             // the note is visible, so omitting it left an empty gap.
             contentFilter.followedPubkeys,
         )
-    ) return
+    }
+    if (hidden) return
 
     // Content-warning veil: in COVER mode a labelled note stays in the
     // timeline behind a tap-to-reveal cover (text and media alike).
@@ -351,9 +366,12 @@ fun NoteCard(
                 )
                 Spacer(Modifier.height(8.dp))
             }
-            val inlinePollIds = extractInlineQuoteIds(event.content).toSet()
-            event.parsedTags.filter { it.name == "q" }.mapNotNull { it.value() }
-                .distinct().filterNot { it in inlinePollIds }.take(32).forEach { id ->
+            val pollExtraQuoteIds = remember(event.id) {
+                val inlinePollIds = extractInlineQuoteIds(event.content).toSet()
+                event.parsedTags.filter { it.name == "q" }.mapNotNull { it.value() }
+                    .distinct().filterNot { it in inlinePollIds }.take(32)
+            }
+            pollExtraQuoteIds.forEach { id ->
                     val quote = quotedEvents[id] ?: quotedEvent?.takeIf { it.id == id }
                     if (quote != null) {
                         QuotedNoteCard(event = quote, profile = profiles[quote.pubkey], profiles = profiles,
@@ -393,15 +411,16 @@ fun NoteCard(
     }
 
     // ── Kind-1 text note ─────────────────────────────────────────────────────
-    val hasQuote = event.parsedTags.quotedEventId != null
-        || extractInlineQuoteId(event.content) != null
+    val quotedRefId = remember(event.id) {
+        event.parsedTags.quotedEventId ?: extractInlineQuoteId(event.content)
+    }
+    val hasQuote = quotedRefId != null
     // Event-aware parse: carries NIP-92 imeta display hints (size, blurred
     // preview, video poster) into the media items, not just their URLs.
     val parsed = remember(event.id) { parseEventContent(event) }
     // When a quote is present, drop its raw nostr:nevent1…/note1… URI from the
     // body — the quoted note is rendered as a card below, so the URI must
     // never appear as a fake "nevent" link inside the text.
-    val quotedRefId = event.parsedTags.quotedEventId ?: extractInlineQuoteId(event.content)
     val bodyText = remember(event.id, quotedRefId) {
         if (quotedRefId != null) stripQuoteRefs(parsed.text, quotedRefId) else parsed.text
     }
@@ -499,6 +518,13 @@ fun NoteCard(
 
                 // Body text — rich (links, npubs, bleep) with a show-more.
                 if (bodyText.isNotEmpty()) {
+                    val inlineQuotedEvents = remember(quotedEvents, quotedRefId) {
+                        if (quotedRefId == null || quotedRefId !in quotedEvents) {
+                            quotedEvents
+                        } else {
+                            quotedEvents.filterKeys { it != quotedRefId }
+                        }
+                    }
                     NoteBodyText(
                         content = bodyText,
                         style = BonyType.body.copy(color = BonyColors.Text),
@@ -511,7 +537,7 @@ fun NoteCard(
                         profiles = profiles,
                         // The explicit quote card below owns this reference;
                         // never let NoteBodyText render the same event a second time.
-                        quotedEvents = quotedEvents.filterKeys { it != quotedRefId },
+                        quotedEvents = inlineQuotedEvents,
                     )
                 }
 

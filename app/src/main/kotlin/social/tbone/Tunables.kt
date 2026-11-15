@@ -92,13 +92,45 @@ object Tunables {
     /** Orbot SOCKS proxy ports to probe when the HTTP proxy is unavailable. */
     val TOR_SOCKS_PORTS = listOf(9050, 9150)
 
-    // ── Reconnect back-off ────────────────────────────────────────────────────
+    // ── Reconnect back-off & cooldown ─────────────────────────────────────────
 
     /** Initial reconnect delay after a relay disconnects. */
     const val RECONNECT_DELAY_MS = 5_000L
 
     /** Maximum reconnect delay (exponential back-off ceiling). */
     const val MAX_RECONNECT_DELAY_MS = 60_000L
+
+    /** Minimum time a relay must stay connected before its failure history resets. */
+    const val RELAY_HEALTHY_SESSION_MS = 10_000L
+
+    /** Sliding window used to detect rapid repeated relay failures. */
+    const val RELAY_FAILURE_WINDOW_MS = 60_000L
+
+    /** Rapid failures within [RELAY_FAILURE_WINDOW_MS] that trigger cooldown. */
+    const val RELAY_FAILURE_THRESHOLD = 5
+
+    /** Cooldown pause for persistently broken/flaky relays before retrying. */
+    const val RELAY_COOLDOWN_MS = 5 * 60_000L
+
+    // ── UI coalescing & batched persistence ───────────────────────────────────
+
+    /** Settle window for batching rapid repository StateFlow updates (ms). */
+    const val UI_BATCH_WINDOW_MS = 50L
+
+    /** Write-behind settle window for coalescing Room event/profile upserts (ms). */
+    const val DB_WRITE_BATCH_MS = 250L
+
+    /** Maximum queued Room writes before flushing immediately. */
+    const val DB_WRITE_BATCH_MAX = 100
+
+    /** Buffer size for RelayPool's multiplexed message SharedFlow. */
+    const val RELAY_POOL_BUFFER_CAPACITY = 2_048
+
+    /** Buffer size for each RelayConnection's inbound WebSocket channel. */
+    const val RELAY_SOCKET_BUFFER_CAPACITY = 512
+
+    /** Maximum (subscriptionId:eventId) pairs tracked for unscoped cross-relay dedup. */
+    const val RELAY_DEDUP_CACHE_SIZE = 16_384
 
     // ── Subscription timeouts ─────────────────────────────────────────────────
 

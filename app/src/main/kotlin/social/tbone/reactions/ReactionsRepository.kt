@@ -1,21 +1,23 @@
 package social.tbone.reactions
 
 import android.util.LruCache
-import social.tbone.Tunables
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
+import social.tbone.Tunables
 import social.tbone.account.signer.NostrSignerFactory
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
@@ -67,7 +69,20 @@ class ReactionsRepository @Inject constructor(
     private val _reactionContents = MutableStateFlow<Map<String, String>>(emptyMap())
     val reactionContents: StateFlow<Map<String, String>> = _reactionContents.asStateFlow()
 
-    private fun recordContent(eventId: String, pubkey: String, content: String, createdAt: Long) {
+    // Option 2: coalesce rapid relay reaction bursts into a single StateFlow update
+    // per 50ms settle window while keeping user-initiated react() updates immediate.
+    private val pendingLock = Any()
+    private val pendingReactions = LinkedHashMap<String, Set<String>>()
+    private val pendingContents = LinkedHashMap<String, String>()
+    private val uiDirty = Channel<Unit>(Channel.CONFLATED)
+
+    private fun recordContent(
+        eventId: String,
+        pubkey: String,
+        content: String,
+        createdAt: Long,
+        immediate: Boolean,
+    ) {
         val key = reactionKey(eventId, pubkey)
         val shouldRecord = synchronized(contentTimestampCache) {
             val previous = contentTimestampCache.get(key)
@@ -80,16 +95,22 @@ class ReactionsRepository @Inject constructor(
             }
         }
         if (!shouldRecord) return
-        _reactionContents.update { current ->
-            // Keep the exposed map bounded like the LRU behind it.
-            val trimmed = if (current.size >= Tunables.REACTION_CACHE_SIZE) {
-                current.entries.drop(current.size / 4).associate { it.key to it.value }
-            } else current
-            trimmed + (key to content)
+        if (immediate) {
+            synchronized(pendingLock) { pendingContents.remove(key) }
+            _reactionContents.update { current ->
+                val trimmed = if (current.size >= Tunables.REACTION_CACHE_SIZE && key !in current) {
+                    current.entries.drop(current.size / 4).associate { it.key to it.value }
+                } else current
+                trimmed + (key to content)
+            }
+        } else {
+            synchronized(pendingLock) { pendingContents[key] = content }
+            uiDirty.trySend(Unit)
         }
     }
 
-    private fun updateReactionsBounded(eventId: String, value: Set<String>) {
+    private fun updateReactionsBoundedImmediate(eventId: String, value: Set<String>) {
+        synchronized(pendingLock) { pendingReactions.remove(eventId) }
         _reactions.update { current ->
             val trimmed = if (current.size >= Tunables.REACTION_CACHE_SIZE && eventId !in current) {
                 current.entries.drop(current.size / 4).associate { it.key to it.value }
@@ -100,7 +121,39 @@ class ReactionsRepository @Inject constructor(
         }
     }
 
+    private fun flushUiUpdates() {
+        val (reactionDelta, contentDelta) = synchronized(pendingLock) {
+            val r = if (pendingReactions.isEmpty()) emptyMap() else pendingReactions.toMap().also { pendingReactions.clear() }
+            val c = if (pendingContents.isEmpty()) emptyMap() else pendingContents.toMap().also { pendingContents.clear() }
+            r to c
+        }
+        if (reactionDelta.isNotEmpty()) {
+            _reactions.update { current ->
+                val merged = current + reactionDelta
+                if (merged.size > Tunables.REACTION_CACHE_SIZE) {
+                    merged.entries.drop(merged.size - Tunables.REACTION_CACHE_SIZE + Tunables.REACTION_CACHE_SIZE / 4)
+                        .associate { it.key to it.value }
+                } else merged
+            }
+        }
+        if (contentDelta.isNotEmpty()) {
+            _reactionContents.update { current ->
+                val merged = current + contentDelta
+                if (merged.size > Tunables.REACTION_CACHE_SIZE) {
+                    merged.entries.drop(merged.size - Tunables.REACTION_CACHE_SIZE + Tunables.REACTION_CACHE_SIZE / 4)
+                        .associate { it.key to it.value }
+                } else merged
+            }
+        }
+    }
+
     init {
+        scope.launch {
+            for (signal in uiDirty) {
+                delay(Tunables.UI_BATCH_WINDOW_MS)
+                flushUiUpdates()
+            }
+        }
         scope.launch {
             pool.messages.collect { (_, msg) ->
                 runCatching {
@@ -114,17 +167,25 @@ class ReactionsRepository @Inject constructor(
                         val targetId = msg.event.parsedTags
                             .lastOrNull { it.name == "e" }?.value() ?: return@runCatching
                         val updated = synchronized(reactionCache) {
-                            val next = (reactionCache.get(targetId) ?: emptySet()) + msg.event.pubkey
-                            reactionCache.put(targetId, next)
-                            next
+                            val current = reactionCache.get(targetId)
+                            if (current != null && msg.event.pubkey in current) {
+                                null
+                            } else {
+                                val next = (current ?: emptySet()) + msg.event.pubkey
+                                reactionCache.put(targetId, next)
+                                next
+                            }
                         }
-                        // Targeted, bounded update: replace only the changed entry and trim when over cap.
-                        updateReactionsBounded(targetId, updated)
+                        if (updated != null) {
+                            synchronized(pendingLock) { pendingReactions[targetId] = updated }
+                            uiDirty.trySend(Unit)
+                        }
                         recordContent(
                             targetId,
                             msg.event.pubkey,
                             msg.event.content.ifEmpty { "+" },
                             msg.event.createdAt,
+                            immediate = false,
                         )
                     }
                 }.onFailure { t ->
@@ -159,7 +220,7 @@ class ReactionsRepository @Inject constructor(
                 val expectedRelays = pool.relayStatuses.value
                     .count { it.value == RelayStatus.CONNECTED }
                     .coerceAtLeast(1)
-                withTimeoutOrNull(30_000) {
+                withTimeoutOrNull(Tunables.REACTION_EOSE_TIMEOUT_MS) {
                     pool.messages.first { (relayUrl, msg) ->
                         if (msg !is RelayMessage.EndOfStoredEvents || msg.subscriptionId != subId) {
                             false
@@ -187,8 +248,8 @@ class ReactionsRepository @Inject constructor(
                 reactionCache.put(event.id, next)
                 next
             }
-            updateReactionsBounded(event.id, optimistic)
-            recordContent(event.id, activePubkey, reaction, System.currentTimeMillis() / 1000)
+            updateReactionsBoundedImmediate(event.id, optimistic)
+            recordContent(event.id, activePubkey, reaction, System.currentTimeMillis() / 1000, immediate = true)
 
             val unsigned = UnsignedEvent(
                 pubkey = activePubkey,
@@ -208,10 +269,11 @@ class ReactionsRepository @Inject constructor(
                         reactionCache.put(event.id, next)
                         next
                     }
-                    _reactions.update { it + (event.id to rollback) }
+                    updateReactionsBoundedImmediate(event.id, rollback)
                     val key = reactionKey(event.id, activePubkey)
                     synchronized(contentCache) { contentCache.remove(key) }
                     synchronized(contentTimestampCache) { contentTimestampCache.remove(key) }
+                    synchronized(pendingLock) { pendingContents.remove(key) }
                     _reactionContents.update { it - key }
                     Timber.w(e, "React failed")
                 }

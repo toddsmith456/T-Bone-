@@ -11,6 +11,9 @@ interface EventDao {
     @Upsert
     suspend fun upsert(event: EventEntity)
 
+    @Upsert
+    suspend fun upsertAll(events: List<EventEntity>)
+
     @Query("SELECT * FROM events WHERE kind IN (:kinds) AND accountPubkey = :accountPubkey ORDER BY createdAt DESC LIMIT :limit")
     fun observeByKinds(kinds: List<Int>, accountPubkey: String, limit: Int = 500): Flow<List<EventEntity>>
 

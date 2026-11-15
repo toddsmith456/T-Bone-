@@ -1,0 +1,14 @@
+HSPLsocial/tbone/BonyApp;->**(**)**
+HSPLsocial/tbone/MainActivity;->**(**)**
+HSPLsocial/tbone/MainActivityKt;->**(**)**
+
+HSPLsocial/tbone/nostr/**;->**(**)**
+HSPLsocial/tbone/db/**;->**(**)**
+HSPLsocial/tbone/profile/**;->**(**)**
+HSPLsocial/tbone/reactions/**;->**(**)**
+HSPLsocial/tbone/settings/**;->**(**)**
+HSPLsocial/tbone/account/**;->**(**)**
+
+HSPLsocial/tbone/ui/feed/**;->**(**)**
+HSPLsocial/tbone/ui/components/**;->**(**)**
+HSPLsocial/tbone/ui/theme/**;->**(**)**

@@ -6,6 +6,8 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -69,13 +71,28 @@ class PollsRepository @Inject constructor(
     /** Bumped whenever any poll's votes change — screens key recomputes on this. */
     val voteVersion: StateFlow<Int> = _voteVersion.asStateFlow()
 
+    // Option 2: coalesce incoming relay poll votes in a 50ms window while
+    // keeping user-initiated vote() and rollbackVote() updates immediate.
+    private val pendingLock = Any()
+    private val pendingCounts = LinkedHashMap<String, Map<String, Int>>()
+    private val pendingTotals = LinkedHashMap<String, Int>()
+    private val pendingMyVotes = LinkedHashMap<String, List<String>>()
+    private val uiDirty = Channel<Unit>(Channel.CONFLATED)
+
     @Volatile private var activePubkey: String? = null
 
     init {
         scope.launch {
+            for (signal in uiDirty) {
+                delay(Tunables.UI_BATCH_WINDOW_MS)
+                flushUiUpdates()
+            }
+        }
+        scope.launch {
             accountRepository.activeAccount.distinctUntilChangedBy { it?.pubkey }.collect { account ->
                 activePubkey = account?.pubkey
                 synchronized(pollLock) { myVotesCache.evictAll() }
+                synchronized(pendingLock) { pendingMyVotes.clear() }
                 _myVotes.value = emptyMap()
                 if (account != null) {
                     val stored = runCatching { pollVoteStore.getVotes(account.pubkey) }
@@ -146,6 +163,20 @@ class PollsRepository @Inject constructor(
         myVotesCache.get(pollId)?.toList() ?: emptyList()
     }
 
+    private fun flushUiUpdates() {
+        val (countsDelta, totalsDelta, myDelta) = synchronized(pendingLock) {
+            val c = if (pendingCounts.isEmpty()) emptyMap() else pendingCounts.toMap().also { pendingCounts.clear() }
+            val t = if (pendingTotals.isEmpty()) emptyMap() else pendingTotals.toMap().also { pendingTotals.clear() }
+            val m = if (pendingMyVotes.isEmpty()) emptyMap() else pendingMyVotes.toMap().also { pendingMyVotes.clear() }
+            Triple(c, t, m)
+        }
+        if (countsDelta.isEmpty() && totalsDelta.isEmpty() && myDelta.isEmpty()) return
+        if (countsDelta.isNotEmpty()) _counts.update { it + countsDelta }
+        if (totalsDelta.isNotEmpty()) _totalVotes.update { it + totalsDelta }
+        if (myDelta.isNotEmpty()) _myVotes.update { it + myDelta }
+        _voteVersion.update { it + 1 }
+    }
+
     private fun ingest(vote: Event, pollId: String) {
         val optionIds = runCatching { Nip88.getResponseOptionIds(vote).distinct() }
             .getOrDefault(emptyList())
@@ -155,7 +186,7 @@ class PollsRepository @Inject constructor(
             if (seenVotes.get(vote.id) != null) return
             seenVotes.put(vote.id, true)
         }
-        if (!applyVote(pollId, vote.pubkey, vote.createdAt, optionIds)) return
+        if (!applyVote(pollId, vote.pubkey, vote.createdAt, optionIds, immediate = false)) return
 
         val me = activePubkey
         if (me != null && vote.pubkey == me) {
@@ -173,6 +204,7 @@ class PollsRepository @Inject constructor(
         pubkey: String,
         createdAt: Long,
         optionIds: List<String>,
+        immediate: Boolean = true,
     ): Boolean {
         val cleanOptionIds = optionIds.distinct()
         if (cleanOptionIds.isEmpty()) return false
@@ -204,12 +236,26 @@ class PollsRepository @Inject constructor(
         }
         if (!changed) return false
 
-        _counts.update { it + (pollId to snapshot) }
-        _totalVotes.update { it + (pollId to total) }
-        if (pubkey == activePubkey) {
-            _myVotes.update { it + (pollId to cleanOptionIds) }
+        if (immediate) {
+            synchronized(pendingLock) {
+                pendingCounts.remove(pollId)
+                pendingTotals.remove(pollId)
+                if (pubkey == activePubkey) pendingMyVotes.remove(pollId)
+            }
+            _counts.update { it + (pollId to snapshot) }
+            _totalVotes.update { it + (pollId to total) }
+            if (pubkey == activePubkey) {
+                _myVotes.update { it + (pollId to cleanOptionIds) }
+            }
+            _voteVersion.update { it + 1 }
+        } else {
+            synchronized(pendingLock) {
+                pendingCounts[pollId] = snapshot
+                pendingTotals[pollId] = total
+                if (pubkey == activePubkey) pendingMyVotes[pollId] = cleanOptionIds
+            }
+            uiDirty.trySend(Unit)
         }
-        _voteVersion.update { it + 1 }
         return true
     }
 
@@ -255,6 +301,11 @@ class PollsRepository @Inject constructor(
         }
         if (!changed) return
 
+        synchronized(pendingLock) {
+            pendingCounts.remove(pollId)
+            pendingTotals.remove(pollId)
+            if (activePubkey == pubkey) pendingMyVotes.remove(pollId)
+        }
         _counts.update { it + (pollId to snapshot) }
         _totalVotes.update { it + (pollId to total) }
         if (activePubkey == pubkey) {

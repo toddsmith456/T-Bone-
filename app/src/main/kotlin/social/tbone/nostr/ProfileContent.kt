@@ -1,5 +1,6 @@
 package social.tbone.nostr
 
+import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -7,6 +8,7 @@ import kotlinx.serialization.Serializable
  * Parsed content of a kind-0 (metadata) event.
  * All fields are optional — relays and clients populate different subsets.
  */
+@Immutable
 @Serializable
 data class ProfileContent(
     val name: String? = null,

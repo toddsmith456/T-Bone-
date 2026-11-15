@@ -26,6 +26,15 @@ abstract class ProfileDao {
         insertIfAbsent(profile)
     }
 
+    /** Batched variant: writes an entire burst of profiles in one SQLite transaction. */
+    @Transaction
+    open suspend fun upsertAllIfNewer(profiles: List<ProfileEntity>) {
+        for (profile in profiles) {
+            updateIfNewer(profile.pubkey, profile.contentJson, profile.createdAt)
+            insertIfAbsent(profile)
+        }
+    }
+
     @Query("SELECT * FROM profiles ORDER BY createdAt DESC LIMIT 500")
     abstract suspend fun getAll(): List<ProfileEntity>
 

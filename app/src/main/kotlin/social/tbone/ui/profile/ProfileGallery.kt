@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
+import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import social.tbone.ai.AiCoilParams
@@ -79,36 +80,40 @@ fun ProfileGalleryRow(
                 } else {
                     val galleryFilter = LocalContentFilter.current
                     val galleryAiKey = galleryFilter.aiFilterConfig.takeIf { galleryFilter.aiHasInstalledModel }
-                    SubcomposeAsyncImage(
-                        // Bounded decode + crossfade: decoding full-size photos for a
-                        // 5-wide cell is what made flinging stutter.
-                        model = remember(item.url, galleryAiKey) {
-                            ImageRequest.Builder(context)
-                                .data(item.url)
-                                .setParameter(AiCoilParams.SURFACE, ScanSurface.FEED_MEDIA.name, memoryCacheKey = null)
-                                .size(THUMBNAIL_PX)
-                                .crossfade(true)
-                                .build()
-                        },
+                    val thumbRequest = remember(item.url, galleryAiKey) {
+                        ImageRequest.Builder(context)
+                            .data(item.url)
+                            .setParameter(AiCoilParams.SURFACE, ScanSurface.FEED_MEDIA.name, memoryCacheKey = null)
+                            .size(THUMBNAIL_PX)
+                            .crossfade(true)
+                            .build()
+                    }
+                    var aiBlocked by remember(thumbRequest) { mutableStateOf(false) }
+                    AsyncImage(
+                        // Bounded decode + lightweight AsyncImage (no subcomposition) so
+                        // 5-wide profile gallery scrolling stays smooth.
+                        model = thumbRequest,
                         contentDescription = "profile image",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
-                        error = { state ->
-                            if (state.result.throwable is NsfwBlockedException) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(BonyColors.SurfaceAlt),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Text(
-                                        text = "AI",
-                                        style = BonyType.meta.copy(color = BonyColors.TextMute),
-                                    )
-                                }
-                            }
+                        onSuccess = { aiBlocked = false },
+                        onError = { state ->
+                            aiBlocked = state.result.throwable is NsfwBlockedException
                         },
                     )
+                    if (aiBlocked) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(BonyColors.SurfaceAlt),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = "AI",
+                                style = BonyType.meta.copy(color = BonyColors.TextMute),
+                            )
+                        }
+                    }
                 }
             }
         }
