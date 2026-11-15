@@ -7,21 +7,19 @@ package social.tbone.media.blossom
 object BlossomServerPool {
 
     /**
-     * Orders the enabled [pool] into the list of servers an upload may be tried
-     * against, best candidate first:
+     * Orders the list of servers an upload may be tried against:
      *
-     *  1. [preferred] — the server picked on the compose screen,
-     *  2. [default]   — the user's default server from Settings → Blossom,
-     *  3. every remaining pool member (shuffled, so "random" stays random).
+     *  - When [preferred] is explicitly chosen on the Write tab, it is a hard
+     *    user override: **only** `[preferred]` is returned. Settings rules
+     *    (Beaver Mode, default server, enabled pool) are bypassed and the
+     *    upload will never silently fail over to a different server the user
+     *    did not choose.
+     *  - When [preferred] is null/blank (auto / Settings rules), [default]
+     *    (if present in [pool]) is tried first, followed by every remaining
+     *    member of [pool] (shuffled) for automatic failover.
      *
-     * Entries that are not in [pool] are ignored, and duplicates are collapsed:
-     * a server can never be tried twice in one upload.
-     *
-     * A [preferred] server is honoured **even when it is not in [pool]**. That
-     * case is the bug this guarded against: a server could be in the compose
-     * chooser (because the account published it) while being absent from the
-     * locally enabled set, and tapping it silently did nothing — the upload went
-     * to some other server. An explicit pick is a user instruction, so it wins.
+     * Entries that are not in [pool] are ignored for [default], and duplicates
+     * are collapsed so a server can never be tried twice in one upload.
      *
      * [shuffle] is injectable so tests get deterministic order.
      */
@@ -31,12 +29,15 @@ object BlossomServerPool {
         default: String?,
         shuffle: (List<String>) -> List<String> = { it.shuffled() },
     ): List<String> {
+        val explicit = preferred?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
+        if (explicit != null) {
+            return listOf(explicit)
+        }
         val ordered = LinkedHashSet<String>()
-        preferred?.takeIf { it.isNotBlank() }?.let { ordered += it }
         default?.let { if (it in pool) ordered += it }
         ordered += shuffle(pool)
         // Nothing enabled and nothing explicitly picked: fail closed rather than
-        // inventing a server. An explicit pick alone is still enough to upload.
+        // inventing a server.
         return ordered.toList()
     }
 }

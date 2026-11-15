@@ -75,6 +75,8 @@ data class Event(
     }
 
     private fun verifySignature(): Boolean {
+        if (id.length != 64 || pubkey.length != 64 || sig.length != 128) return false
+        if (!id.isValidHex() || !pubkey.isValidHex() || !sig.isValidHex()) return false
         return Crypto.verifySchnorr(
             message = id.hexToBytes(),
             signature = sig.hexToBytes(),
@@ -186,6 +188,14 @@ fun ByteArray.toHex(): String {
         out[j++] = HEX_CHARS[v and 0x0F]
     }
     return String(out)
+}
+
+private fun String.isValidHex(): Boolean {
+    if (length % 2 != 0) return false
+    for (i in 0 until length) {
+        if (Character.digit(this[i], 16) !in 0..15) return false
+    }
+    return true
 }
 
 fun String.hexToBytes(): ByteArray {

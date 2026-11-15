@@ -48,14 +48,29 @@ class RelayConnection(
         val request = Request.Builder().url(url).build()
         val policy = transportGuard
         val handshake = AtomicReference<Call?>(null)
-        val connectClient = if (policy == null) client else client.newBuilder()
-            .addInterceptor(Interceptor { chain ->
-                val call = chain.call()
-                handshake.set(call)
-                policy.guard.registerAtEpoch(call, policy.tor, policy.epoch)
-                try { chain.proceed(chain.request()) }
-                catch (error: Throwable) { policy.guard.unregister(call); throw error }
-            }).build()
+        val needsDeflateGuard = client.minWebSocketMessageToCompress != Long.MAX_VALUE ||
+            DISABLE_WEBSOCKET_DEFLATE_INTERCEPTOR !in client.interceptors
+        val connectClient = if (policy == null && !needsDeflateGuard) {
+            client
+        } else {
+            client.newBuilder()
+                .minWebSocketMessageToCompress(Long.MAX_VALUE)
+                .apply {
+                    if (DISABLE_WEBSOCKET_DEFLATE_INTERCEPTOR !in client.interceptors) {
+                        addInterceptor(DISABLE_WEBSOCKET_DEFLATE_INTERCEPTOR)
+                    }
+                    if (policy != null) {
+                        addInterceptor(Interceptor { chain ->
+                            val call = chain.call()
+                            handshake.set(call)
+                            policy.guard.registerAtEpoch(call, policy.tor, policy.epoch)
+                            try { chain.proceed(chain.request()) }
+                            catch (error: Throwable) { policy.guard.unregister(call); throw error }
+                        })
+                    }
+                }
+                .build()
+        }
         fun forgetHandshake() { handshake.getAndSet(null)?.let { policy?.guard?.unregister(it) } }
 
         val listener = object : WebSocketListener() {
@@ -158,6 +173,36 @@ class RelayConnection(
             .build()
 
         /**
+         * Strips `Sec-WebSocket-Extensions` (`permessage-deflate`) from WebSocket
+         * upgrade requests to work around OkHttp 4.12.0's `RealWebSocket`
+         * stream-cleanup concurrency bug (square/okhttp#6719, #6723; fixed only
+         * in OkHttp 5.x via #8121). When a socket drops or is canceled while
+         * another thread is deflating or inflating a frame, OkHttp closes
+         * `MessageDeflater`/`MessageInflater` from the opposing thread, corrupting
+         * `okio.Buffer` and throwing uncaught `NullPointerException`s on both
+         * `Dispatcher` and `TaskRunner`.
+         *
+         * Paired with `minWebSocketMessageToCompress(Long.MAX_VALUE)`, neither
+         * `MessageDeflater` nor `MessageInflater` is ever allocated. Non-WebSocket
+         * HTTP requests pass through untouched.
+         */
+        internal val DISABLE_WEBSOCKET_DEFLATE_INTERCEPTOR = Interceptor { chain ->
+            val request = chain.request()
+            if (
+                request.header("Upgrade").equals("websocket", ignoreCase = true) &&
+                request.header("Sec-WebSocket-Extensions") != null
+            ) {
+                chain.proceed(
+                    request.newBuilder()
+                        .removeHeader("Sec-WebSocket-Extensions")
+                        .build(),
+                )
+            } else {
+                chain.proceed(request)
+            }
+        }
+
+        /**
          * Shared base clients so relay churn never leaks unbounded OkHttp
          * thread/connection pools. Direct and Tor clients stay strictly
          * isolated with separate connection pools so Tor and clearnet sockets
@@ -168,6 +213,8 @@ class RelayConnection(
                 .pingInterval(30, TimeUnit.SECONDS)
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(0, TimeUnit.SECONDS)
+                .minWebSocketMessageToCompress(Long.MAX_VALUE)
+                .addInterceptor(DISABLE_WEBSOCKET_DEFLATE_INTERCEPTOR)
                 .build()
         }
 
@@ -176,6 +223,8 @@ class RelayConnection(
                 .pingInterval(30, TimeUnit.SECONDS)
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(0, TimeUnit.SECONDS)
+                .minWebSocketMessageToCompress(Long.MAX_VALUE)
+                .addInterceptor(DISABLE_WEBSOCKET_DEFLATE_INTERCEPTOR)
                 .build()
         }
 
@@ -195,6 +244,7 @@ class RelayConnection(
                 .pingInterval(30, TimeUnit.SECONDS)
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(0, TimeUnit.SECONDS) // WebSocket — no read timeout
+                .minWebSocketMessageToCompress(Long.MAX_VALUE)
                 .apply {
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
                         // API 26–28: keep platform trust anchors, widen protocol range.

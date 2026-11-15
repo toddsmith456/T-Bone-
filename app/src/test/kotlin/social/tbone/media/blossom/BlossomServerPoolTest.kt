@@ -4,9 +4,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * The selection rules users see: pick on compose → that server; otherwise the
- * default; otherwise random. The difference from before is that *every*
- * remaining server is now a failover candidate, not just one.
+ * Server-selection rules for Blossom uploads:
+ *  - explicit Write-tab pick → hard override (ONLY that server, no silent failover);
+ *  - no explicit pick → Settings default (if enabled), then remaining pool for failover.
  */
 class BlossomServerPoolTest {
 
@@ -20,17 +20,25 @@ class BlossomServerPoolTest {
     private val noShuffle: (List<String>) -> List<String> = { it }
 
     @Test
-    fun `explicit choice wins, then default, then every other server`() {
+    fun `explicit choice is a strict override with no silent failover to Settings pool`() {
         val ordered = BlossomServerPool.orderedCandidates(
             pool = pool,
             preferred = "https://blossom.ditto.pub",
             default = "https://blossom.data.haus",
             shuffle = noShuffle,
         )
-        assertEquals(
-            listOf("https://blossom.ditto.pub", "https://blossom.data.haus", "https://nostr.download"),
-            ordered,
+        assertEquals(listOf("https://blossom.ditto.pub"), ordered)
+    }
+
+    @Test
+    fun `explicit choice trims whitespace and trailing slashes`() {
+        val ordered = BlossomServerPool.orderedCandidates(
+            pool = pool,
+            preferred = "  https://blossom.ditto.pub/  ",
+            default = "https://nostr.download",
+            shuffle = noShuffle,
         )
+        assertEquals(listOf("https://blossom.ditto.pub"), ordered)
     }
 
     @Test
@@ -41,7 +49,22 @@ class BlossomServerPoolTest {
             default = "https://blossom.data.haus",
             shuffle = noShuffle,
         )
+        assertEquals(
+            listOf("https://blossom.data.haus", "https://nostr.download", "https://blossom.ditto.pub"),
+            ordered,
+        )
+    }
+
+    @Test
+    fun `blank preferred falls back to Settings rules`() {
+        val ordered = BlossomServerPool.orderedCandidates(
+            pool = pool,
+            preferred = "   ",
+            default = "https://blossom.data.haus",
+            shuffle = noShuffle,
+        )
         assertEquals("https://blossom.data.haus", ordered.first())
+        assertEquals(pool.size, ordered.size)
     }
 
     @Test
@@ -52,21 +75,14 @@ class BlossomServerPoolTest {
     }
 
     @Test
-    fun `an explicitly chosen server is honoured even when it is outside the pool`() {
-        // This used to assert the opposite, and that assertion was the bug: a
-        // server could be offered in the compose chooser (because the account
-        // published it) while missing from the local enabled set, so tapping it
-        // silently uploaded somewhere else. An explicit pick is a user
-        // instruction, so it is tried first regardless of the pool.
+    fun `an explicitly chosen server is honoured exclusively even when outside the pool`() {
         val ordered = BlossomServerPool.orderedCandidates(
             pool = pool,
             preferred = "https://added.example.com",
-            default = null,
+            default = "https://nostr.download",
             shuffle = noShuffle,
         )
-        assertEquals("https://added.example.com", ordered.first())
-        // The pick leads, then the whole pool remains available as failover.
-        assertEquals(listOf("https://added.example.com") + pool, ordered)
+        assertEquals(listOf("https://added.example.com"), ordered)
     }
 
     @Test
@@ -96,11 +112,10 @@ class BlossomServerPoolTest {
     }
 
     @Test
-    fun `a server is never tried twice`() {
-        // preferred == default == first pool member
+    fun `a server is never tried twice in Settings failover mode`() {
         val ordered = BlossomServerPool.orderedCandidates(
             pool = pool,
-            preferred = "https://nostr.download",
+            preferred = null,
             default = "https://nostr.download",
             shuffle = noShuffle,
         )

@@ -16,7 +16,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -31,6 +33,8 @@ import social.tbone.account.Account
 import social.tbone.account.AccountRepository
 import social.tbone.account.signer.NostrSignerFactory
 import social.tbone.db.EventRepository
+import social.tbone.lists.PublishedRelayLists
+import social.tbone.lists.RelayListFetcher
 import social.tbone.media.blossom.BlossomUploader
 import social.tbone.media.MediaProcessor
 import social.tbone.nostr.Event
@@ -69,9 +73,11 @@ data class ComposeUiState(
     // Blossom media uploads
     val isUploading: Boolean = false,
     val uploadingKind: String? = null,
-    /** Server chosen for the next upload (null = default/random from pool). */
+    /** Explicit server override chosen on the Write tab (null = follow Settings rules). */
     val blossomServer: String? = null,
-    /** Enabled Blossom servers (defaults + custom). */
+    /** Label for the null (Settings rules) chip: "beaver", "default", or "random". */
+    val blossomAutoLabel: String = "random",
+    /** Available Blossom servers (local enabled pool + published Beaver Mode servers). */
     val blossomServers: List<String> = emptyList(),
 )
 
@@ -95,9 +101,14 @@ class ComposeViewModel @Inject constructor(
     private val bookmarksRepository: BookmarksRepository,
     private val appSettings: AppSettings,
     private val blossomUploader: BlossomUploader,
+    private val relayListFetcher: RelayListFetcher,
     @ApplicationContext private val context: Context,
-    savedStateHandle: SavedStateHandle,
+    private val savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
+
+    private companion object {
+        const val KEY_BLOSSOM_SERVER = "blossomServer"
+    }
 
     private val replyToId: String? = savedStateHandle["replyToId"]
     private val quoteToId: String? = savedStateHandle["quoteToId"]
@@ -105,8 +116,18 @@ class ComposeViewModel @Inject constructor(
     private val draft: String? = savedStateHandle["draft"]
     private val audioPath: String? = savedStateHandle["audioPath"]
 
-    private val _uiState = MutableStateFlow(ComposeUiState())
+    private val _uiState = MutableStateFlow(
+        ComposeUiState(
+            blossomServer = savedStateHandle.get<String>(KEY_BLOSSOM_SERVER)
+                ?.trim()
+                ?.trimEnd('/')
+                ?.takeIf { it.isNotBlank() },
+        ),
+    )
     val uiState: StateFlow<ComposeUiState> = _uiState.asStateFlow()
+
+    /** Published kind-10063 Blossom servers when Beaver Mode is enabled. */
+    private val publishedBlossomServers = MutableStateFlow<List<String>>(emptyList())
 
     // ── Active account (avatar switch + publish) ─────────────────────────────
     val accounts: StateFlow<List<Account>> = accountRepository.accounts.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -154,7 +175,11 @@ class ComposeViewModel @Inject constructor(
         return if (missingRefs.isNotEmpty()) "$trimmed\n\n${missingRefs.joinToString("\n")}" else trimmed
     }
 
-    private data class MediaUploadRequest(val uri: Uri, val kind: String)
+    private data class MediaUploadRequest(
+        val uri: Uri,
+        val kind: String,
+        val preferredServer: String?,
+    )
 
     /** Display hints measured at upload time, keyed by the uploaded URL. */
     private val uploadedMediaHints = java.util.concurrent.ConcurrentHashMap<String, UploadedMediaHint>()
@@ -247,22 +272,69 @@ class ComposeViewModel @Inject constructor(
             }
         }
 
-        // Load the enabled blossom server pool for the chooser row.
-        //
-        // A manually added server used to be missing from this row: the chooser is
-        // driven by the *enabled pool*, so a server that had been added but not
-        // enabled (or that only existed in the published list) could not be picked
-        // and tapping it did nothing. The pool is authoritative for what uploads
-        // use, and BlossomServerPool gives an explicit pick priority even when it
-        // is not in the pool, so what is offered here is exactly what can be used.
+        // When Beaver Mode is enabled, also surface the account's published
+        // Blossom servers (kind 10063) in the Write-tab chooser so the user can
+        // explicitly click any single server (local or published) to override
+        // Settings rules for an upload.
         viewModelScope.launch {
-            appSettings.blossomServers.collect { servers ->
+            combine(appSettings.blossomBeaverMode, accountRepository.activeAccount) { beaverMode, account ->
+                beaverMode to account
+            }.collectLatest { (beaverMode, account) ->
+                if (!beaverMode || account == null) {
+                    publishedBlossomServers.value = emptyList()
+                    return@collectLatest
+                }
+                val fetched = withContext(Dispatchers.IO) {
+                    try {
+                        val result = relayListFetcher.fetchLatest(
+                            pubkey = account.pubkey,
+                            kind = EventKind.BLOSSOM_SERVER_LIST,
+                            seedRelays = account.effectiveRelays(),
+                        )
+                        result.event?.let { PublishedRelayLists.blossomServers(it) }.orEmpty()
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        emptyList()
+                    }
+                }
+                publishedBlossomServers.value = fetched
+            }
+        }
+
+        // Load Blossom servers for the Write-tab chooser row after persisted
+        // settings finish loading, so startup defaults never clobber a restored
+        // or user-selected server override.
+        viewModelScope.launch {
+            appSettings.initialized.first { it }
+            combine(
+                appSettings.blossomServers,
+                appSettings.blossomDefaultServer,
+                appSettings.blossomBeaverMode,
+                publishedBlossomServers,
+            ) { localServers, defaultServer, beaverMode, published ->
+                val merged = LinkedHashSet<String>()
+                merged += localServers
+                if (beaverMode) merged += published
+                val autoLabel = when {
+                    beaverMode -> "beaver"
+                    defaultServer != null && defaultServer in localServers -> "default"
+                    else -> "random"
+                }
+                merged.sorted() to autoLabel
+            }.collect { (servers, autoLabel) ->
                 _uiState.update { state ->
+                    // Never silently discard an explicit Write-tab selection
+                    // while DataStore or Beaver Mode servers are updating.
+                    val selected = state.blossomServer
+                    val offered = if (selected != null && selected !in servers) {
+                        (servers + selected).sorted()
+                    } else {
+                        servers
+                    }
                     state.copy(
-                        blossomServers = servers.sorted(),
-                        // Drop a selection that is no longer offered so the row never
-                        // shows a chip that is not in the list.
-                        blossomServer = state.blossomServer?.takeIf { it in servers },
+                        blossomServers = offered,
+                        blossomAutoLabel = autoLabel,
                     )
                 }
             }
@@ -271,15 +343,21 @@ class ComposeViewModel @Inject constructor(
 
     // ── Blossom media uploads ────────────────────────────────────────────────
 
-    fun setBlossomServer(url: String?) = _uiState.update { it.copy(blossomServer = url) }
+    fun setBlossomServer(url: String?) {
+        val normalized = url?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
+        savedStateHandle[KEY_BLOSSOM_SERVER] = normalized
+        _uiState.update { it.copy(blossomServer = normalized) }
+    }
 
     /** Queue one upload; multiple picker results are processed sequentially and all URLs kept. */
     fun attachMedia(uri: Uri, kind: String) {
         if (kind !in setOf("image", "video", "audio", "file")) return
+        val selectedServer = _uiState.value.blossomServer
+            ?: savedStateHandle.get<String>(KEY_BLOSSOM_SERVER)?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
         synchronized(uploadQueueLock) {
             pendingUploads += 1
             _uiState.update { it.copy(isUploading = true) }
-            val queued = mediaUploadQueue.trySend(MediaUploadRequest(uri, kind))
+            val queued = mediaUploadQueue.trySend(MediaUploadRequest(uri, kind, selectedServer))
             if (queued.isFailure) {
                 pendingUploads = (pendingUploads - 1).coerceAtLeast(0)
                 _uiState.update {
@@ -326,7 +404,7 @@ class ComposeViewModel @Inject constructor(
             val url = blossomUploader.upload(
                 file = prepared.file,
                 mime = prepared.mime,
-                preferredServer = _uiState.value.blossomServer,
+                preferredServer = request.preferredServer,
                 signer = signer,
                 alt = label,
                 extension = prepared.extension,

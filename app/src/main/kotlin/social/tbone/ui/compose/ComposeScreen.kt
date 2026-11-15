@@ -517,7 +517,7 @@ fun ComposeScreen(
                 ) {
                     item {
                         BlossomChip(
-                            label = "random",
+                            label = uiState.blossomAutoLabel,
                             selected = uiState.blossomServer == null,
                             onClick = { viewModel.setBlossomServer(null) },
                         )

@@ -99,4 +99,28 @@ class EventCryptoPerformanceTest {
         // Repeat check on the same failed instance remains false.
         assertFalse(spoofed.verify())
     }
+
+    @Test
+    fun malformedSignatureLengthReturnsFalseCleanly() {
+        val pubkey = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"
+        val unsigned = UnsignedEvent(pubkey = pubkey, createdAt = 1730000001L, kind = 1, content = "short-sig")
+        val id = unsigned.computeId()
+
+        val shortSig = Event(
+            id = id,
+            pubkey = pubkey,
+            createdAt = 1730000001L,
+            kind = 1,
+            tags = emptyList(),
+            content = "short-sig",
+            sig = "deadbeef",
+        )
+        assertFalse(shortSig.verify())
+
+        val nonHexSig = shortSig.copy(sig = "z".repeat(128))
+        assertFalse(nonHexSig.verify())
+
+        val badPubkey = shortSig.copy(pubkey = "not-hex", sig = "00".repeat(64))
+        assertFalse(badPubkey.verify())
+    }
 }
