@@ -5,6 +5,26 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-11-15
+
+### Added
+- **Video playback mode control in Media Settings.** Choose how inline feed videos behave — **On tap** (default), **Preload**, or **Autoplay** — so feeds stay quiet and data-friendly unless you explicitly opt in to preloading or autoplay.
+- **Overhauled Share Logs dialog in Settings.** Pick a time range (last day, last week, last month, or all time), toggle **Crashes only** to include uncaught crashes alongside Android system/OOM/ANR kills, see live preview counts, and copy to clipboard or share a clean, deduplicated, size-bounded diagnostic report. Crash history now retains up to 25 past crashes with app version details.
+
+### Changed
+- **Major scrolling, startup, and feed performance overhaul.**
+  - Switched BIP-340 Schnorr signature verification to native `libsecp256k1` (`secp256k1-kmp`, with automatic pure-Java fallback) and streamlined NIP-01 event ID hashing for much faster event verification.
+  - Narrowed per-card UI updates across feeds, profiles, and threads so incoming likes, replies, zaps, and profile updates only refresh the specific note card affected instead of redrawing the entire list.
+  - Batched UI updates, local database writes, profile lookups, and combined viewport engagement subscriptions (reactions, replies, zaps, and polls) to cut redundant relay traffic and keep scrolling smooth.
+  - Upgraded media rendering to non-blocking `AsyncImage` and bundled an Android Baseline Profile for faster cold starts and smoother initial scrolling.
+- **Leaner app and lower memory footprint.** Removed unused UI-kit screens, legacy Webxdc migration code and WebView dependency, unused media dependencies, and stale audit artifacts; added startup pruning for old cached events and profiles, capped in-memory caches, trimmed Coil's memory cache under memory pressure, and halved native RAM usage for the optional on-device NSFW scanner.
+
+### Fixed
+- **Random foreground crash when relay connections drop.** Disabled WebSocket `permessage-deflate` negotiation and outbound compression on relay sockets to eliminate an OkHttp 4.12.0 concurrency race where closing a dropping connection collided with an active compressed frame write and crashed the app.
+- **Write-tab Blossom server override.** Tapping a specific Blossom server chip on the Write tab now strictly overrides Settings rules (including Beaver Mode, default server, and failover): the upload token is scoped only to that chosen server, the selection persists across Android's system media picker, published Beaver Mode servers appear as selectable chips, the auto chip accurately shows `beaver`, `default`, or `random`, and errors from a chosen server are reported instead of silently uploading elsewhere.
+- **Background stability, battery, and log hygiene.** Stopped Screen Time from rewriting preferences every 30 seconds when disabled, deduplicated account and filter updates, hardened background coroutine scopes and database writes, fixed a concurrency race when unloading or switching optional AI models, downgraded routine network drops from noisy error stack traces to concise warnings, and cleanly rejected malformed relay event signatures without logging exceptions.
+
+
 ## [0.5.9] — 2026-11-14
 
 ### Added
