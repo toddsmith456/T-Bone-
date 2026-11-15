@@ -70,7 +70,11 @@ class BonyApp : Application() {
         if (BuildConfig.DEBUG) Timber.plant(Timber.DebugTree())
         Timber.plant(FileLoggingTree(logFile))
         Thread.setDefaultUncaughtExceptionHandler(
-            CrashRecorder(File(filesDir, "logs/last-crash.log"), Thread.getDefaultUncaughtExceptionHandler()),
+            CrashRecorder(
+                crashFile = File(filesDir, "logs/last-crash.log"),
+                previous = Thread.getDefaultUncaughtExceptionHandler(),
+                appVersion = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+            ),
         )
 
         createNotificationChannels(this)

@@ -73,8 +73,23 @@ import social.tbone.ui.theme.BonyType
 import social.tbone.ui.theme.appCornerShape
 import social.tbone.ui.theme.colorToHex
 import social.tbone.ui.theme.parseHexColor
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.widget.Toast
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import social.tbone.account.SignerType
+import social.tbone.logging.LogExportOptions
+import social.tbone.logging.LogFormatter
+import social.tbone.logging.LogPreviewCounts
+import social.tbone.logging.LogRepository
+import social.tbone.logging.LogTimeRange
 
 @Composable
 fun SettingsScreen(
@@ -1451,13 +1466,12 @@ private fun SettingsDebugSection(viewModel: SettingsViewModel, context: Context,
     SettingsCategoryHeader("DEBUG", compact, expanded, onToggle)
     if (compact && !expanded) return
 
+    var showShareLogsDialog by remember { mutableStateOf(false) }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable {
-                val intent = Intent.createChooser(viewModel.logRepository.buildShareIntent(), "Share logs via")
-                context.startActivity(intent)
-            }
+            .clickable { showShareLogsDialog = true }
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1465,6 +1479,14 @@ private fun SettingsDebugSection(viewModel: SettingsViewModel, context: Context,
         Text("↗", style = BonyType.body.copy(color = BonyColors.TextMute))
     }
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+
+    if (showShareLogsDialog) {
+        ShareLogsDialog(
+            logRepository = viewModel.logRepository,
+            context = context,
+            onDismiss = { showShareLogsDialog = false },
+        )
+    }
 
     Row(
         modifier = Modifier
@@ -1489,6 +1511,209 @@ private fun SettingsDebugSection(viewModel: SettingsViewModel, context: Context,
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
         }
     }
+}
+
+@Composable
+private fun ShareLogsDialog(
+    logRepository: LogRepository,
+    context: Context,
+    onDismiss: () -> Unit,
+) {
+    var selectedRange by remember { mutableStateOf(LogTimeRange.LAST_DAY) }
+    var crashesOnly by remember { mutableStateOf(false) }
+    var preview by remember { mutableStateOf<LogPreviewCounts?>(null) }
+    var isExporting by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(selectedRange, crashesOnly) {
+        preview = null
+        val opts = LogExportOptions(range = selectedRange, crashesOnly = crashesOnly)
+        preview = withContext(Dispatchers.IO) {
+            runCatching { logRepository.previewCounts(opts) }.getOrNull()
+        }
+    }
+
+    val rangeRows = remember {
+        listOf(
+            listOf(LogTimeRange.LAST_DAY, LogTimeRange.LAST_WEEK),
+            listOf(LogTimeRange.LAST_MONTH, LogTimeRange.ALL_TIME),
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!isExporting) onDismiss() },
+        containerColor = BonyColors.Surface,
+        title = {
+            Text("share logs", style = BonyType.body.copy(color = BonyColors.Text))
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("TIME RANGE", style = BonyType.tag.copy(color = BonyColors.TextMute))
+                    rangeRows.forEach { row ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            row.forEach { range ->
+                                val selected = range == selectedRange
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .background(
+                                            if (selected) BonyColors.Accent.copy(alpha = 0.12f) else Color.Transparent,
+                                        )
+                                        .appBorder(
+                                            1.dp,
+                                            if (selected) BonyColors.Accent else BonyColors.Rule,
+                                        )
+                                        .clickable(enabled = !isExporting) { selectedRange = range }
+                                        .padding(horizontal = 6.dp, vertical = 8.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Text(
+                                        text = range.label,
+                                        style = BonyType.meta.copy(
+                                            color = if (selected) BonyColors.Accent else BonyColors.TextDim,
+                                        ),
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !isExporting) { crashesOnly = !crashesOnly }
+                        .padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("crashes only", style = BonyType.body.copy(color = BonyColors.Text))
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = if (crashesOnly) {
+                                "uncaught crashes, system kills & errors only"
+                            } else {
+                                "crashes plus cleaned, trimmed activity logs"
+                            },
+                            style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    BonyToggle(
+                        checked = crashesOnly,
+                        enabled = !isExporting,
+                        onCheckedChange = { crashesOnly = it },
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .appBorder(1.dp, BonyColors.Rule)
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        text = preview?.summaryLine(crashesOnly) ?: "scanning logs…",
+                        style = BonyType.meta.copy(
+                            color = if ((preview?.totalCrashSignals ?: 0) > 0) BonyColors.Accent else BonyColors.TextDim,
+                        ),
+                    )
+                }
+
+                Text(
+                    text = "may include relay URLs & crash details. share only with trusted parties.",
+                    style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = !isExporting,
+                onClick = {
+                    isExporting = true
+                    val options = LogExportOptions(
+                        range = selectedRange,
+                        crashesOnly = crashesOnly,
+                        maxChars = LogFormatter.DEFAULT_SHARE_MAX_CHARS,
+                    )
+                    scope.launch {
+                        val intent = withContext(Dispatchers.IO) {
+                            runCatching { logRepository.buildShareIntent(options) }.getOrNull()
+                        }
+                        isExporting = false
+                        if (intent != null) {
+                            onDismiss()
+                            runCatching {
+                                context.startActivity(Intent.createChooser(intent, "Share logs via"))
+                            }.onFailure {
+                                Toast.makeText(context, "Could not open share sheet.", Toast.LENGTH_SHORT).show()
+                            }
+                        } else {
+                            Toast.makeText(context, "Could not prepare logs.", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
+            ) {
+                Text("SHARE", style = BonyType.button.copy(color = BonyColors.Accent))
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(
+                    enabled = !isExporting,
+                    onClick = onDismiss,
+                ) {
+                    Text("CANCEL", style = BonyType.button.copy(color = BonyColors.TextMute))
+                }
+                TextButton(
+                    enabled = !isExporting,
+                    onClick = {
+                        isExporting = true
+                        val options = LogExportOptions(
+                            range = selectedRange,
+                            crashesOnly = crashesOnly,
+                            maxChars = LogFormatter.DEFAULT_CLIPBOARD_MAX_CHARS,
+                        )
+                        scope.launch {
+                            val text = withContext(Dispatchers.IO) {
+                                runCatching { logRepository.buildLogText(options) }.getOrNull()
+                            }
+                            isExporting = false
+                            if (text != null) {
+                                val copied = runCatching {
+                                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val label = if (crashesOnly) "T-Bone crashes" else "T-Bone logs"
+                                    cm.setPrimaryClip(ClipData.newPlainText(label, text))
+                                }.isSuccess
+                                if (copied) {
+                                    val kind = if (crashesOnly) "crashes" else "logs"
+                                    Toast.makeText(
+                                        context,
+                                        "Copied $kind (${selectedRange.label})",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                    onDismiss()
+                                } else {
+                                    Toast.makeText(context, "Could not copy to clipboard.", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                Toast.makeText(context, "Could not prepare logs.", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                ) {
+                    Text("COPY", style = BonyType.button.copy(color = BonyColors.Text))
+                }
+            }
+        },
+    )
 }
 
 
