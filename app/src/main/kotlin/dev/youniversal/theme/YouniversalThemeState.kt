@@ -3,13 +3,10 @@ package dev.youniversal.theme
 
 import android.content.Context
 import android.content.SharedPreferences
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalContext
 
 /**
  * Holds every Youniversal setting, persists it to `SharedPreferences`, and exposes each value as
@@ -18,13 +15,6 @@ import androidx.compose.ui.platform.LocalContext
  * Properties are read-only and observable; the `set…` functions are the mutators, because they
  * also write the new value to disk. (Making the properties `var` with a private setter would
  * generate a synthetic `setEnabled` that collides with the explicit one on the JVM.)
- *
- * ```
- * val themeState = rememberYouniversalThemeState()
- * YouniversalTheme(state = themeState) {
- *     Switch(checked = themeState.enabled, onCheckedChange = themeState::setEnabled)
- * }
- * ```
  */
 @Stable
 public class YouniversalThemeState constructor(context: Context) {
@@ -227,9 +217,3 @@ public class YouniversalThemeState constructor(context: Context) {
         const val KEY_LOOK = "active_look"
     }
 }
-
-/** Creates (and remembers) a [YouniversalThemeState] backed by `SharedPreferences`. */
-@Composable
-public fun rememberYouniversalThemeState(
-    context: Context = LocalContext.current,
-): YouniversalThemeState = remember(context.applicationContext) { YouniversalThemeState(context) }

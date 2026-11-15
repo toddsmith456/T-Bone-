@@ -6,7 +6,7 @@ import social.tbone.settings.VideoQuality
 
 /** Media preferences available to note cards without threading them through every route. */
 val LocalVideoQuality = staticCompositionLocalOf { VideoQuality.REGULAR }
-val LocalVideoPlaybackMode = staticCompositionLocalOf { VideoPlaybackMode.PLAY_ON_TAP }
+val LocalVideoPlaybackMode = staticCompositionLocalOf { VideoPlaybackMode.LOAD_ON_TAP }
 val LocalVideoThumbnails = staticCompositionLocalOf { true }
 
 /**

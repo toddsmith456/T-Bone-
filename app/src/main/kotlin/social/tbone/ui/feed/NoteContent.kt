@@ -27,6 +27,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,14 +74,19 @@ import social.tbone.nostr.ProfileContent
 import social.tbone.settings.ImageLoadMode
 import social.tbone.settings.LocalContentFilter
 import social.tbone.settings.NsfwMode
+import social.tbone.settings.VideoPlaybackMode
 import social.tbone.settings.VideoQuality
 import social.tbone.ui.media.AiNsfwMediaVeil
 import social.tbone.ui.media.ImageViewer
 import social.tbone.ui.media.InlineAudioPlayer
 import social.tbone.ui.media.LocalImageLoadMode
+import social.tbone.ui.media.LocalVideoPlaybackMode
 import social.tbone.ui.media.LocalVideoQuality
 import social.tbone.ui.media.VideoViewerDialog
 import social.tbone.ui.media.rememberVideoPlayer
+import social.tbone.ui.media.shouldAutoClaimInlineVideo
+import social.tbone.ui.media.shouldMountInlineVideo
+import social.tbone.ui.media.shouldPlayInlineVideo
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -238,6 +244,9 @@ fun NoteMediaContent(
     if (mediaItems.isEmpty()) return
     val imageMode = LocalImageLoadMode.current
     val videoQuality = LocalVideoQuality.current
+    val videoPlaybackMode = LocalVideoPlaybackMode.current
+    val thumbnailsEnabled = LocalVideoThumbnails.current
+    val contentFilter = LocalContentFilter.current
     var imageViewerUrl by remember { mutableStateOf<String?>(null) }
     var imageViewerSha256 by remember { mutableStateOf<String?>(null) }
     var videoViewerUrl by remember { mutableStateOf<String?>(null) }
@@ -299,17 +308,54 @@ fun NoteMediaContent(
                     // A token identifies this particular card, not just the URL: a
                     // quote and a feed item may contain the same video.
                     val token = remember(item.url) { Any() }
+                    var userPaused by remember(token, videoPlaybackMode) { mutableStateOf(false) }
                     val selected = ActiveInlineVideo.owner === token
+                    val viewerOpen = videoViewerUrl != null
+                    val aiRequiresPlaceholder =
+                        contentFilter.aiScannerActive && thumbnailsEnabled && item.url !in aiRevealedUrls && item.meta?.image != null
+                    val autoClaim = shouldAutoClaimInlineVideo(
+                        quality = videoQuality,
+                        mode = videoPlaybackMode,
+                        userPaused = userPaused,
+                        viewerOpen = viewerOpen,
+                        aiRequiresPlaceholder = aiRequiresPlaceholder,
+                    )
+                    LaunchedEffect(token, autoClaim, ActiveInlineVideo.owner) {
+                        if (autoClaim && ActiveInlineVideo.owner == null) {
+                            ActiveInlineVideo.owner = token
+                        }
+                    }
                     DisposableEffect(token) {
                         onDispose { if (ActiveInlineVideo.owner === token) ActiveInlineVideo.owner = null }
                     }
-                    if (selected && videoViewerUrl == null) {
-                        Box(Modifier.testTag("active-inline-video")) {
+                    val mountPlayer = shouldMountInlineVideo(
+                        quality = videoQuality,
+                        mode = videoPlaybackMode,
+                        revealed = selected,
+                        viewerOpen = viewerOpen,
+                        aiRequiresPlaceholder = aiRequiresPlaceholder,
+                    )
+                    if (mountPlayer) {
+                        val playWhenReady = shouldPlayInlineVideo(
+                            mode = videoPlaybackMode,
+                            revealed = selected,
+                            started = selected,
+                            viewerOpen = viewerOpen,
+                        ) && selected && !userPaused
+                        Box(if (selected) Modifier.testTag("active-inline-video") else Modifier) {
                             InlineVideo(
                                 url = item.url,
                                 meta = item.meta,
                                 quality = if (videoQuality == VideoQuality.OFF) VideoQuality.REGULAR else videoQuality,
-                                playWhenReady = true,
+                                playWhenReady = playWhenReady,
+                                onTogglePlay = {
+                                    if (playWhenReady) {
+                                        userPaused = true
+                                    } else {
+                                        userPaused = false
+                                        ActiveInlineVideo.owner = token
+                                    }
+                                },
                                 onOpen = {
                                     ActiveInlineVideo.owner = null
                                     videoViewerUrl = item.url
@@ -324,7 +370,10 @@ fun NoteMediaContent(
                             authorPubkey = authorPubkey,
                             aiRevealed = item.url in aiRevealedUrls,
                             onAiReveal = { aiRevealedUrls = aiRevealedUrls + item.url },
-                            onOpen = { ActiveInlineVideo.owner = token },
+                            onOpen = {
+                                userPaused = false
+                                ActiveInlineVideo.owner = token
+                            },
                             onFullscreen = {
                                 ActiveInlineVideo.owner = null
                                 videoViewerUrl = item.url
@@ -374,6 +423,7 @@ private fun InlineVideo(
     meta: MediaMeta? = null,
     quality: VideoQuality,
     playWhenReady: Boolean,
+    onTogglePlay: () -> Unit,
     onOpen: () -> Unit,
     onBackground: () -> Unit,
 ) {
@@ -490,7 +540,14 @@ private fun InlineVideo(
                 modifier = Modifier.fillMaxSize(),
             )
             Box(Modifier.fillMaxSize().combinedClickable(
-                onClick = { if (player.playWhenReady) player.pause() else player.play() },
+                onClick = {
+                    if (player.playbackState == androidx.media3.common.Player.STATE_ENDED) {
+                        player.seekTo(0)
+                        if (!playWhenReady) onTogglePlay() else player.play()
+                    } else {
+                        onTogglePlay()
+                    }
+                },
                 onLongClick = { copyNoteLink(context, url) },
             ), contentAlignment = Alignment.Center) {
                 if (!isPlaying.value) VideoPlayBadge()

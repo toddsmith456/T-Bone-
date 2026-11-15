@@ -37,7 +37,6 @@ class ToolboxSecurity @Inject constructor(
     private val calendarAlarms: social.tbone.calendar.CalendarAlarmScheduler,
     private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
     private val voiceRecordingGate: social.tbone.toolbox.VoiceRecordingGate,
-    private val legacyCleanup: social.tbone.migration.LegacyMiniAppCleanup,
 ) {
 
     private val attempts = PinAttemptLimiter(context, "toolbox")
@@ -104,8 +103,7 @@ class ToolboxSecurity @Inject constructor(
      *  - toolbox settings (pin, duress pin, screenshot toggle)
      * The current database cleanup also deletes cached events and profiles,
      * but preserves notifications. Accounts and general app settings remain.
-     * Decoy notes are included. Pending legacy browser cleanup must succeed;
-     * external copies cannot be recalled.
+     * Decoy notes are included. External copies cannot be recalled.
      */
     private val wiping = java.util.concurrent.atomic.AtomicBoolean(false)
 
@@ -125,7 +123,6 @@ class ToolboxSecurity @Inject constructor(
             steps.run("pause geohash watchers") { geohashMonitor.pauseForWipe() }
             steps.run("stop active voice recording") { voiceRecordingGate.stopForWipe() }
             steps.run("pause and drain note writes") { noteWrites.pauseAndDrain() }
-            steps.run("clear mini-app browser storage") { legacyCleanup.run() }
             steps.run("block and cancel reminders") { calendarAlarms.beginSensitiveWipe() }
             steps.run("disable geohash cache") { appSettings.setGeohashCacheMillis(0L) }
             steps.run("clear geohash cache") { geohashCache.clear() }

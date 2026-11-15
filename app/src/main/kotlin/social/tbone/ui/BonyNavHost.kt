@@ -22,8 +22,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -210,19 +208,6 @@ fun BonyNavHost() {
     if (isLocked) {
         PinLockScreen(onUnlocked = { lockViewModel.unlock() })
         return
-    }
-
-    val cleanupStatus by viewModel.cleanupStatus.collectAsStateWithLifecycle()
-    var dismissedCleanupWarning by remember { mutableStateOf(false) }
-    if (cleanupStatus == social.tbone.migration.CleanupStatus.NeedsAttention &&
-        startupState is StartupState.Ready && !dismissedCleanupWarning) {
-        AlertDialog(
-            onDismissRequest = { dismissedCleanupWarning = true },
-            title = { Text("Old mini-app cleanup incomplete") },
-            text = { Text("Some old mini-app data may remain. Update Android System WebView and retry. You can retry later in Settings. Shared or exported copies cannot be removed by the app.") },
-            confirmButton = { TextButton(onClick = { viewModel.retryLegacyCleanup() }) { Text("Retry") } },
-            dismissButton = { TextButton(onClick = { dismissedCleanupWarning = true }) { Text("Later") } },
-        )
     }
 
     when (startupState) {
@@ -940,10 +925,7 @@ sealed interface StartupState {
 class StartupViewModel @Inject constructor(
     accountRepository: AccountRepository,
     deepLinkHandler: DeepLinkHandler,
-    private val legacyCleanup: social.tbone.migration.LegacyMiniAppCleanup,
 ) : ViewModel() {
-    val cleanupStatus = legacyCleanup.status
-    fun retryLegacyCleanup() = legacyCleanup.retry()
     val startupState: StateFlow<StartupState> = accountRepository.startupStatus
         .map { status ->
             when (status) {

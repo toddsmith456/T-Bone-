@@ -6,7 +6,6 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 import social.tbone.settings.AppSettings
 import social.tbone.settings.AvatarMode
 import social.tbone.settings.ImageLoadMode
@@ -15,14 +14,14 @@ import social.tbone.settings.VideoQuality
 import javax.inject.Inject
 
 /**
- * Exposes the media/appearance preferences (inline images, avatars) to the nav
+ * Exposes the media/appearance preferences (inline images, video, avatars) to the nav
  * host so they can be provided as CompositionLocals. Reads come from the same
  * AppSettings singleton the settings screen writes to, so both stay in sync
  * automatically.
  */
 @HiltViewModel
 class MediaSettingsViewModel @Inject constructor(
-    private val appSettings: AppSettings,
+    appSettings: AppSettings,
 ) : ViewModel() {
 
     val imageLoadMode: StateFlow<ImageLoadMode> = appSettings.imageLoadMode
@@ -32,45 +31,17 @@ class MediaSettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), VideoQuality.REGULAR)
 
     val videoPlaybackMode: StateFlow<VideoPlaybackMode> = appSettings.videoPlaybackMode
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), VideoPlaybackMode.PLAY_ON_TAP)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), VideoPlaybackMode.LOAD_ON_TAP)
 
     val videoThumbnails: StateFlow<Boolean> = appSettings.videoThumbnails
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
     val mediaFittedLayout: StateFlow<Boolean> = appSettings.mediaFittedLayout
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
     val avatarMode: StateFlow<AvatarMode> = appSettings.avatarMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AvatarMode.REGULAR)
 
     val avatarAnimated: StateFlow<Boolean> = appSettings.avatarAnimated
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
-
-    fun setImageLoadMode(mode: ImageLoadMode) {
-        viewModelScope.launch { appSettings.setImageLoadMode(mode) }
-    }
-
-    fun setVideoQuality(quality: VideoQuality) {
-        viewModelScope.launch { appSettings.setVideoQuality(quality) }
-    }
-
-    fun setVideoPlaybackMode(mode: VideoPlaybackMode) {
-        viewModelScope.launch { appSettings.setVideoPlaybackMode(mode) }
-    }
-
-    fun setVideoThumbnails(enabled: Boolean) {
-        viewModelScope.launch { appSettings.setVideoThumbnails(enabled) }
-    }
-
-    fun setMediaFittedLayout(enabled: Boolean) {
-        viewModelScope.launch { appSettings.setMediaFittedLayout(enabled) }
-    }
-
-    fun setAvatarMode(mode: AvatarMode) {
-        viewModelScope.launch { appSettings.setAvatarMode(mode) }
-    }
-
-    fun setAvatarAnimated(animated: Boolean) {
-        viewModelScope.launch { appSettings.setAvatarAnimated(animated) }
-    }
 }

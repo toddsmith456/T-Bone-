@@ -24,10 +24,10 @@ import javax.inject.Singleton
  *  - Internal files (logs, recordings)
  *  - Selected Android Keystore keys used by the app
  *
- * Legacy browser cleanup is retried if required; external exports are not cleared.
- * Deletion is not a forensic erasure guarantee. Other active producers need review.
- * Used by the duress PIN: entering it on the lock screen wipes instead of
- * unlocking. After wiping, the activity restarts into a clean onboarding state.
+ * External exports are not cleared. Deletion is not a forensic erasure
+ * guarantee. Used by the duress PIN: entering it on the lock screen wipes
+ * instead of unlocking. After wiping, the activity restarts into a clean
+ * onboarding state.
  */
 @Singleton
 class DataWiper @Inject constructor(
@@ -38,7 +38,6 @@ class DataWiper @Inject constructor(
     private val calendarAlarms: social.tbone.calendar.CalendarAlarmScheduler,
     private val noteWrites: social.tbone.notes.NoteWriteCoordinator,
     private val voiceRecordingGate: social.tbone.toolbox.VoiceRecordingGate,
-    private val legacyCleanup: social.tbone.migration.LegacyMiniAppCleanup,
     private val appSettings: social.tbone.settings.AppSettings,
     private val geohashCache: social.tbone.ui.toolbox.geohash.GeohashMessageCache,
     private val geohashMonitor: social.tbone.ui.toolbox.geohash.GeohashPinnedMonitor,
@@ -72,7 +71,6 @@ class DataWiper @Inject constructor(
             steps.run("pause geohash watchers") { geohashMonitor.pauseForWipe() }
             steps.run("stop active voice recording") { voiceRecordingGate.stopForWipe() }
             steps.run("pause and drain note writes") { noteWrites.pauseAndDrain() }
-            steps.run("clear mini-app browser storage") { legacyCleanup.run() }
             steps.run("block and cancel calendar reminders") { calendarAlarms.beginSensitiveWipe() }
             steps.run("cancel notifications") {
                 checkNotNull(context.getSystemService(android.app.NotificationManager::class.java)).cancelAll()
@@ -127,7 +125,7 @@ class DataWiper @Inject constructor(
                     // Keep the persisted alarm gate until all data removal is complete.
                     // Deleting it here would let a process restart deliver a stale alarm.
                     val prefsFiles = if (prefsDir.exists()) checkNotNull(prefsDir.listFiles()) { "cannot enumerate preferences" } else emptyArray()
-                    prefsFiles.filter { it.name.endsWith(".xml") && it.name != "tbone_calendar_alarms.xml" && it.name != "${social.tbone.notes.PersistentWipeState.PREFS_NAME}.xml" && it.name != "${social.tbone.migration.LegacyCleanupRunner.PREFS}.xml" }.forEach { file ->
+                    prefsFiles.filter { it.name.endsWith(".xml") && it.name != "tbone_calendar_alarms.xml" && it.name != "${social.tbone.notes.PersistentWipeState.PREFS_NAME}.xml" }.forEach { file ->
                         check(context.getSharedPreferences(file.name.removeSuffix(".xml"), Context.MODE_PRIVATE)
                             .edit().clear().commit())
                     }

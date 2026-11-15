@@ -14,14 +14,18 @@ enum class VideoQuality(val prefValue: String, val label: String) {
 }
 
 /** When an inline video is prepared and when playback begins. */
-enum class VideoPlaybackMode(val prefValue: String, val label: String) {
-    PLAY_IMMEDIATELY("play_immediately", "Load and play immediately"),
-    PLAY_ON_TAP("play_on_tap", "Load immediately, play on tap"),
-    LOAD_ON_TAP("load_on_tap", "Load and play on tap"),
+enum class VideoPlaybackMode(
+    val prefValue: String,
+    val label: String,
+    val shortLabel: String,
+) {
+    LOAD_ON_TAP("load_on_tap", "Load and play on tap", "On tap"),
+    PLAY_ON_TAP("play_on_tap", "Load immediately, play on tap", "Preload"),
+    PLAY_IMMEDIATELY("play_immediately", "Load and play immediately", "Autoplay"),
     ;
 
     companion object {
         fun fromPref(value: String?): VideoPlaybackMode =
-            entries.firstOrNull { it.prefValue == value } ?: PLAY_ON_TAP
+            entries.firstOrNull { it.prefValue == value } ?: LOAD_ON_TAP
     }
 }

@@ -31,7 +31,7 @@ public data class YouniversalExtendedColors(
     val infoContainer: Color,
     val onInfoContainer: Color,
 
-    /** Ambient backdrop gradient stops, drawn behind app content by [YouniversalBackdrop]. */
+    /** Ambient backdrop gradient stops. */
     val backdropBase: Color,
     val backdropGlowA: Color,
     val backdropGlowB: Color,

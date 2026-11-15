@@ -19,19 +19,6 @@ public fun Color.youniversalLighten(amount: Float): Color = lerp(this, Color.Whi
 /** Moves [this] toward black by [amount] (0f = unchanged, 1f = black). */
 public fun Color.youniversalDarken(amount: Float): Color = lerp(this, Color.Black, amount.coerceIn(0f, 1f))
 
-/** [this] at a fixed [alpha], useful for scrims, halos and hover states. */
-public fun Color.youniversalAt(alpha: Float): Color = copy(alpha = alpha.coerceIn(0f, 1f))
-
-/**
- * Picks black or white for content drawn on top of [this], using WCAG relative luminance so the
- * choice tracks perceived brightness rather than a naive channel average.
- */
-public fun Color.youniversalReadableContentColor(): Color {
-    // 0.179 is the relative-luminance crossover where black text and white text hit the same
-    // WCAG contrast ratio, so it is the correct switch-over point.
-    return if (youniversalRelativeLuminance() > 0.179f) Color.Black else Color.White
-}
-
 /** WCAG 2.1 relative luminance of a color, with the sRGB transfer function applied. */
 public fun Color.youniversalRelativeLuminance(): Float {
     fun channel(value: Float): Float =

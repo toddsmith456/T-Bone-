@@ -260,7 +260,7 @@ class AppSettings @Inject constructor(
     private val _videoQuality = MutableStateFlow(VideoQuality.REGULAR)
     val videoQuality = _videoQuality.asStateFlow()
 
-    private val _videoPlaybackMode = MutableStateFlow(VideoPlaybackMode.PLAY_ON_TAP)
+    private val _videoPlaybackMode = MutableStateFlow(VideoPlaybackMode.LOAD_ON_TAP)
     val videoPlaybackMode = _videoPlaybackMode.asStateFlow()
 
     private val _videoThumbnails = MutableStateFlow(true)

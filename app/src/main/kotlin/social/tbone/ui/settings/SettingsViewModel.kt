@@ -49,7 +49,6 @@ class SettingsViewModel @Inject constructor(
     private val offlineLists: social.tbone.lists.OfflineListRepository,
     private val updateManager: UpdateManager,
     private val stealthManager: StealthManager,
-    private val legacyCleanup: social.tbone.migration.LegacyMiniAppCleanup,
     private val aiModelManager: social.tbone.ai.AiModelManager,
     private val mediaScanCache: social.tbone.ai.MediaScanCache,
     @ApplicationContext context: Context,
@@ -58,9 +57,6 @@ class SettingsViewModel @Inject constructor(
     /** Whether the active account's offline follow list / block list is switched on. */
     val offlineFollowsEnabled: StateFlow<Boolean> = offlineEnabledFlow(social.tbone.lists.ListType.FOLLOWS)
     val offlineMutesEnabled: StateFlow<Boolean> = offlineEnabledFlow(social.tbone.lists.ListType.MUTES)
-
-    val cleanupStatus = legacyCleanup.status
-    fun retryLegacyCleanup() = legacyCleanup.retry()
 
     val updateState: StateFlow<UpdateState> = updateManager.state
 
@@ -120,7 +116,7 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), VideoQuality.REGULAR)
 
     val videoPlaybackMode: StateFlow<VideoPlaybackMode> = appSettings.videoPlaybackMode
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), VideoPlaybackMode.PLAY_ON_TAP)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), VideoPlaybackMode.LOAD_ON_TAP)
 
     val videoThumbnails: StateFlow<Boolean> = appSettings.videoThumbnails
     val mediaFittedLayout: StateFlow<Boolean> = appSettings.mediaFittedLayout

@@ -42,6 +42,7 @@ import social.tbone.account.Account
 import social.tbone.nostr.identity.Phrase
 import social.tbone.settings.AvatarMode
 import social.tbone.settings.ImageLoadMode
+import social.tbone.settings.VideoPlaybackMode
 import social.tbone.settings.VideoQuality
 import social.tbone.settings.openOrbotInstallPage
 import social.tbone.settings.ThemeMode
@@ -108,7 +109,6 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
-    val cleanupStatus by viewModel.cleanupStatus.collectAsStateWithLifecycle()
     val torEnabled by viewModel.torEnabled.collectAsStateWithLifecycle()
     val pinEnabled by viewModel.pinEnabled.collectAsStateWithLifecycle()
     val duressPinEnabled by viewModel.duressPinEnabled.collectAsStateWithLifecycle()
@@ -118,6 +118,7 @@ fun SettingsScreen(
     val clientTagEnabled by viewModel.clientTagEnabled.collectAsStateWithLifecycle()
     val imageLoadMode by viewModel.imageLoadMode.collectAsStateWithLifecycle()
     val videoQuality by viewModel.videoQuality.collectAsStateWithLifecycle()
+    val videoPlaybackMode by viewModel.videoPlaybackMode.collectAsStateWithLifecycle()
     val videoThumbnails by viewModel.videoThumbnails.collectAsStateWithLifecycle()
     val mediaFittedLayout by viewModel.mediaFittedLayout.collectAsStateWithLifecycle()
     val imageCacheLightweight by viewModel.imageCacheLightweight.collectAsStateWithLifecycle()
@@ -149,11 +150,6 @@ fun SettingsScreen(
             .verticalScroll(rememberScrollState()),
     ) {
         SettingsTopBar(onBack)
-        if (cleanupStatus == social.tbone.migration.CleanupStatus.NeedsAttention) {
-            Text("Old mini-app data cleanup is incomplete. Update Android System WebView, then tap to retry. Exported or shared copies remain outside this app.",
-                modifier = Modifier.fillMaxWidth().clickable { viewModel.retryLegacyCleanup() }.padding(16.dp),
-                style = BonyType.body, color = BonyColors.Danger)
-        }
         SettingsSwitchRow(
             title = "UI declutter",
             description = "compact tabs and make Settings categories collapsible",
@@ -200,6 +196,7 @@ fun SettingsScreen(
             onBlossom = onBlossom,
             imageLoadMode = imageLoadMode,
             videoQuality = videoQuality,
+            videoPlaybackMode = videoPlaybackMode,
             imageCacheLightweight = imageCacheLightweight,
             videoThumbnails = videoThumbnails,
             mediaFittedLayout = mediaFittedLayout,
@@ -515,7 +512,7 @@ private fun SettingsNoteActionsSection(noteMenuModerationEnabled: Boolean, clien
 }
 
 @Composable
-private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: () -> Unit, onBlossom: () -> Unit, imageLoadMode: ImageLoadMode, videoQuality: VideoQuality, imageCacheLightweight: Boolean, videoThumbnails: Boolean, mediaFittedLayout: Boolean, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
+private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: () -> Unit, onBlossom: () -> Unit, imageLoadMode: ImageLoadMode, videoQuality: VideoQuality, videoPlaybackMode: VideoPlaybackMode, imageCacheLightweight: Boolean, videoThumbnails: Boolean, mediaFittedLayout: Boolean, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
     // ── Media section ─────────────────────────────────────────────────────
     SettingsCategoryHeader("MEDIA", compact, expanded, onToggle)
     if (compact && !expanded) return
@@ -625,8 +622,45 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
         }
 
         Spacer(Modifier.height(14.dp))
+        Text("video playback", style = BonyType.body.copy(color = BonyColors.Text))
+        Spacer(Modifier.height(2.dp))
         Text(
-            "Videos use a lightweight placeholder. Tap to load and play one at a time. When a post supplies a preview still, it is shown instead of the placeholder — nothing is extracted from videos on this device.",
+            text = when {
+                videoQuality == VideoQuality.OFF ->
+                    "video quality is off · videos wait for a tap until you turn quality back on"
+                videoPlaybackMode == VideoPlaybackMode.LOAD_ON_TAP ->
+                    "on tap · lightweight placeholder until tapped (default)"
+                videoPlaybackMode == VideoPlaybackMode.PLAY_ON_TAP ->
+                    "preload · prepares first frame inline, plays when tapped"
+                else ->
+                    "autoplay · loads and plays one inline video automatically"
+            },
+            style = BonyType.meta.copy(color = BonyColors.TextMute),
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            VideoPlaybackMode.entries.forEach { mode ->
+                val active = mode == videoPlaybackMode
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .border(1.dp, if (active) BonyColors.Accent else BonyColors.Rule, appCornerShape(MaterialTheme.shapes.small))
+                        .clickable { viewModel.setVideoPlaybackMode(mode) }
+                        .padding(vertical = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = mode.shortLabel,
+                        style = BonyType.tag.copy(
+                            color = if (active) BonyColors.Accent else BonyColors.TextMute,
+                        ),
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "Only one inline video plays at a time. When a post supplies a preview still, it is shown on placeholders — nothing is extracted from videos on this device.",
             style = BonyType.meta.copy(color = BonyColors.TextMute),
         )
         Spacer(Modifier.height(12.dp))
