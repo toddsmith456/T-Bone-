@@ -1,9 +1,7 @@
-# T-bone privacy fork (social.tbone.fork) — fork of 5ToddSmith5/T-Bone- (which
-# itself forks daomah/bony). Installs side-by-side with the original T-Bone.
-# Before publishing this listing, update `repository`, `pubkey`, and `website`
-# to your own fork's repository and Nostr identity.
-repository: https://github.com/5ToddSmith5/T-Bone-
-pubkey: npub15gcctf2jhfs96l9hks4twk37ux72vna8dxju3e9w7z65e9f9h4dsfz08sx
+repository: https://github.com/toddsmith456/T-Bone-
+release_filter: '^v[0-9]+\.[0-9]+\.[0-9]+$'
+match: 'T-Bone-fork-v.*-release\.apk$'
+
 name: T-bone
 summary: A bare-bones, Google-free Nostr client for Android
 description: |
@@ -17,10 +15,14 @@ description: |
   original T-Bone, keeps the 100% privacy-focused / fully-open-source stance
   with CI enforcement, and publishes every release automatically from GitHub
   tags. Inline images with in-app viewer, real avatars, full notification
-  center, encrypted notes, themes, Tor support.
+  center, encrypted notes, themes, Tor support, and configurable video
+  playback.
 tags:
   - nostr
   - social
+license: MIT
+website: https://github.com/toddsmith456/T-Bone-
+
 icon: ./assets/icon.png
 images:
   - ./assets/screenshots/initial_screen.png
@@ -28,5 +30,4 @@ images:
   - ./assets/screenshots/identity.png
   - ./assets/screenshots/account_switcher.png
   - ./assets/screenshots/settings.png
-license: MIT
-website: https://github.com/5ToddSmith5/T-Bone-
+release_notes: ./CHANGELOG.md

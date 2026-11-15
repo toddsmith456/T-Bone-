@@ -1,0 +1,147 @@
+name: Publish to Zapstore
+
+# Manually triggered workflow to claim (NIP-C1 kind 30509) and publish the
+# latest signed GitHub Release of social.tbone.fork to zapstore.dev using the
+# official zapstore/zsp v2 Go library.
+#
+# Required repository secrets:
+#   - ZAPSTORE_SIGN_WITH  (bunker://... or nsec1... — NEVER commit to git!)
+#   - KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD (already set)
+#
+# Once the first claim + release succeeds, Zapstore's catalog indexer can
+# automatically pick up subsequent public GitHub Releases under your claimed
+# Nostr profile, so you can delete ZAPSTORE_SIGN_WITH and revoke the bunker
+# connection afterward if desired.
+
+on:
+  workflow_dispatch:
+    inputs:
+      owner_pubkey:
+        description: 'Optional owner Nostr pubkey (npub1... or 64-char hex). Leave blank to use the bunker URL host pubkey.'
+        required: false
+        default: ''
+      overwrite_release:
+        description: 'Allow republishing an equal versionCode'
+        required: false
+        type: boolean
+        default: false
+      overwrite_app_event:
+        description: 'Force republishing the kind 32267 app listing even if unchanged'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish-zapstore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify required secrets
+        env:
+          ZAPSTORE_SIGN_WITH: ${{ secrets.ZAPSTORE_SIGN_WITH }}
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in ZAPSTORE_SIGN_WITH KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing repository secret $name. Add it under Settings -> Secrets and variables -> Actions."
+              exit 1
+            fi
+          done
+
+      - name: Set up JDK 17 (for keytool)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Go 1.27
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          check-latest: true
+
+      - name: Extract signing certificate and key for NIP-C1 proof
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          TMP_DIR="$RUNNER_TEMP/zapstore-keystore"
+          mkdir -p "$TMP_DIR"
+          chmod 700 "$TMP_DIR"
+
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$TMP_DIR/release.keystore"
+          chmod 600 "$TMP_DIR/release.keystore"
+
+          keytool -importkeystore \
+            -srckeystore "$TMP_DIR/release.keystore" \
+            -srcstorepass:env KEYSTORE_PASSWORD \
+            -srcalias "$KEY_ALIAS" \
+            -srckeypass:env KEY_PASSWORD \
+            -destkeystore "$TMP_DIR/signing.p12" \
+            -deststoretype PKCS12 \
+            -deststorepass:env KEYSTORE_PASSWORD \
+            -destkeypass:env KEYSTORE_PASSWORD \
+            -noprompt
+          chmod 600 "$TMP_DIR/signing.p12"
+
+          openssl pkcs12 -in "$TMP_DIR/signing.p12" -passin env:KEYSTORE_PASSWORD -clcerts -nokeys -out "$TMP_DIR/cert.pem"
+          openssl pkcs12 -in "$TMP_DIR/signing.p12" -passin env:KEYSTORE_PASSWORD -nocerts -nodes -out "$TMP_DIR/key.pem"
+          chmod 600 "$TMP_DIR/cert.pem" "$TMP_DIR/key.pem"
+
+          CERT_SHA256="$(openssl x509 -in "$TMP_DIR/cert.pem" -outform DER | sha256sum | awk '{print $1}')"
+          EXPECTED="0e37601f5716b1476b26a0aed023df97ca8c2ab0c1500cb2d3a7237337f65678"
+          if [ "$CERT_SHA256" != "$EXPECTED" ]; then
+            echo "::error::Extracted cert SHA-256 ($CERT_SHA256) does not match expected release identity ($EXPECTED)"
+            exit 1
+          fi
+          echo "Verified release signing certificate SHA-256: $CERT_SHA256"
+
+      - name: Claim and publish latest release to Zapstore (zsp v2.0.1)
+        env:
+          SIGN_WITH: ${{ secrets.ZAPSTORE_SIGN_WITH }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GOTOOLCHAIN: auto
+          INPUT_OWNER_PUBKEY: ${{ inputs.owner_pubkey }}
+          INPUT_OVERWRITE_RELEASE: ${{ inputs.overwrite_release }}
+          INPUT_OVERWRITE_APP_EVENT: ${{ inputs.overwrite_app_event }}
+        run: |
+          set -euo pipefail
+          TMP_DIR="$RUNNER_TEMP/zapstore-keystore"
+          cd scripts/zapstore-publish
+          go get github.com/zapstore/zsp/v2@v2.0.1 github.com/nbd-wtf/go-nostr@v0.52.3
+          go mod tidy
+
+          ARGS=(
+            -config "$GITHUB_WORKSPACE/zapstore.yaml"
+            -cert "$TMP_DIR/cert.pem"
+            -key "$TMP_DIR/key.pem"
+          )
+          if [ -n "$INPUT_OWNER_PUBKEY" ]; then
+            ARGS+=(-owner-pubkey "$INPUT_OWNER_PUBKEY")
+          fi
+          if [ "$INPUT_OVERWRITE_RELEASE" = "true" ]; then
+            ARGS+=(-overwrite-release)
+          fi
+          if [ "$INPUT_OVERWRITE_APP_EVENT" = "true" ]; then
+            ARGS+=(-overwrite-app-event)
+          fi
+
+          go run . "${ARGS[@]}"
+
+      - name: Clean up temporary keystore and bunker client key
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/zapstore-keystore" "$HOME/.config/zsp/bunker-keys"
