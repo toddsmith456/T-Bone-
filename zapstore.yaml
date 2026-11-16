@@ -4,31 +4,33 @@ match: 'T-Bone-fork-v.*-release\.apk$'
 metadata_sources: []
 
 name: T-Bone
-summary: Privacy-first Nostr client & encrypted local toolbox for Android — zero Google services, zero tracking
+summary: Lightweight, opinionated Nostr client & encrypted toolbox for Android — zero Google services, zero tracking
 description: |
-  T-Bone is a fast, privacy-first Nostr client and encrypted local toolbox for Android — built with zero Google Play Services, zero Firebase, zero analytics, and zero tracking, enforced automatically in CI on every PR and release.
+  T-Bone is a lightweight, opinionated Nostr client for Android — built for people who want their social feed fast, sovereign, and completely free of surveillance.
 
-  Started as a minimalist Nostr fork, T-Bone has grown into a full-featured, self-sovereign Android client focused on speed, user control, and real-world privacy.
+  Most social apps treat you like a data stream: bloated SDKs, engagement algorithms, cloud lock-in, and silent telemetry baked into every screen. T-Bone takes the opposite stance. What started as a stripped-down minimalist fork has grown into a daily-driver Nostr client and encrypted local toolbox built around a few firm convictions: privacy is enforced at build time rather than promised in a footnote, your feed obeys you instead of an algorithm, your keys and private notes stay under your control, and the app stays lean while still letting you make it unmistakably yours.
 
-  Key features:
+  Zero Google Play Services, zero Firebase, zero analytics, and zero tracking — checked automatically in CI on every PR and release.
 
-  • Customizable Feeds & Full Nostr Social — Four built-in feeds (Follows, Clock time-machine 1–24 hours back, Suggested roster of 1,300+ accounts, and Global) plus custom home tabs for People lists (manual or NIP-51 sets), specific relays, hashtags, and NIP-88 polls. Full threads, quote notes, reposts, emoji reactions, NIP-51 bookmarks & folders, profile pins, search, and branded image/video share cards.
+  What makes T-Bone different:
 
-  • Fast, Lean Architecture — Native libsecp256k1 Schnorr signature verification, batched viewport engagement subscriptions, per-card UI updates, non-blocking media rendering, and an Android Baseline Profile.
+  • Your Feed, Your Rules — Four built-in feeds (Follows, Clock time-machine frozen 1–24 hours back, a curated Suggested roster of 1,300+ accounts, and Global) plus custom home tabs for People lists (manual or NIP-51 sets), specific relays, hashtags, and NIP-88 polls. Full threads, quote notes, reposts, emoji reactions, NIP-51 bookmarks & folders, profile pins, search, and branded image/video share cards.
 
-  • Multi-Account & External Signing — Switch between multiple accounts with Amber (NIP-55), nsecBunker / remote signers (NIP-46), or an Android Keystore–backed device-local key. Human-readable BIP-39 word fingerprints and QR verification make identities easy to confirm.
+  • Lightweight & Fast by Design — Native libsecp256k1 Schnorr signature verification, batched viewport engagement subscriptions, per-card UI updates, non-blocking media rendering, and an Android Baseline Profile keep scrolling crisp even across busy relay sets.
 
-  • Media, Blossom Uploads & Optional Offline AI NSFW Filter — Inline images, full-screen image/video viewers, audio playback, configurable video playback modes (On tap, Preload, Autoplay), and Blossom (BUD-11) uploads with multi-server failover, Beaver Mode (follows your kind 10063 server list), and per-post server override chips. Optional 100% on-device LiteRT AI NSFW scanner (zero cloud calls) with SHA-256-verified add-on models (Marqo ViT-384, MobileNetV2, or automatic 2-stage cascade) and tap-to-reveal veils.
+  • Sovereign Identity & Multi-Account — Switch effortlessly between accounts using Amber (NIP-55), nsecBunker / remote signers (NIP-46), or an Android Keystore–backed local key. Human-readable BIP-39 word fingerprints and QR Verify Identity make it obvious who you're actually talking to.
 
-  • Encrypted Local Toolbox — On-device AES-256-GCM + Android Keystore encrypted Notes, Checklists, Folders & Attachments (with optional Decoy Notes vault), private Local Calendar with alarms, portable passphrase-encrypted Vault Backups, Voice Recorder with on-device voice effects, anonymous Geohash Channels, and an in-app Update Center.
+  • Smarter Media, Blossom Uploads & Optional Offline AI NSFW Filter — Inline images, full-screen image/video viewers, audio playback, and On-tap / Preload / Autoplay video modes so videos never auto-blast unless you want them to. Built-in Blossom (BUD-11) uploads feature multi-server failover, Beaver Mode (follows your published kind 10063 server list), and per-post server override chips. An optional 100% on-device LiteRT AI NSFW filter scans images offline (zero cloud calls) using SHA-256-verified add-on models (Marqo ViT-384, MobileNetV2, or automatic 2-stage cascade) behind tap-to-reveal veils.
 
-  • Non-Custodial Wallet Hand-offs — Lightning zaps (NIP-57) verify the BOLT-11 invoice amount before handing off to your external Lightning wallet; Monero xaps (NIP-A3 / kind 10133) hand off directly to your external Monero wallet.
+  • Private Encrypted Toolbox — Your everyday privacy tools right alongside Nostr: AES-256-GCM + Android Keystore encrypted Notes, Checklists, Folders & Attachments (plus a Decoy Notes vault), a private Local Calendar with alarms, portable passphrase-encrypted Vault Backups, a Voice Recorder with on-device voice effects, anonymous Geohash Channels, a no-save Feed Viewer, Follow Lists manager, and an in-app Update Center.
 
-  • Privacy, OpSec & Anti-Coercion Controls — Optional Tor / Orbot routing, tracking-parameter link stripping, offline-only Follow & Block lists, App Lock and separate Toolbox PIN, Screenshot Blocking, Notepad Stealth Disguise, a Duress PIN that silently wipes private local data, content filters, screen-time limits, and a no-push-server in-app notifications inbox.
+  • Non-Custodial Wallet Hand-offs — Lightning zaps (NIP-57) verify the BOLT-11 invoice amount before handing off to your external Lightning wallet; Monero xaps (NIP-A3 / kind 10133) hand off straight to your external Monero wallet. No custody, no hidden fees.
 
-  • Youniversal Themes & 18 Launcher Icons — Light, Dark, Cream, and Automatic themes, Material You and custom accent colors, adjustable corner roundness, text scaling, Standard Sans or Nunito Sans fonts, and 18 selectable launcher icons.
+  • Real-World OpSec & Anti-Coercion Controls — Optional Tor / Orbot routing, automatic tracking-parameter link stripping, local-only Offline Follow & Block lists, App Lock and separate Toolbox PIN, Screenshot Blocking, Notepad Stealth Disguise, a Duress PIN that silently wipes private local data, content filters, screen-time limits, and a no-push-server in-app notifications inbox.
 
-  Installs side-by-side with the original T-Bone (social.tbone). Open source under the MIT license.
+  • Make It Look Like Yours — Go from a razor-sharp monospace terminal look to warm, rounded Youniversal themes (Light, Dark, Cream, Auto), Material You or custom accent colors, adjustable corner roundness, text scaling, Standard Sans or Nunito Sans fonts, and 18 selectable launcher icons.
+
+  Installs side-by-side with the original T-Bone (social.tbone). Free and open source under the MIT license.
 tags:
   - nostr
   - social
@@ -58,4 +60,8 @@ license: MIT
 website: https://github.com/toddsmith456/T-Bone-
 
 icon: ./assets/icon.png
+images:
+  - ./assets/screenshots/home-classic.png
+  - ./assets/screenshots/home-youniversal.png
+  - ./assets/screenshots/toolbox.png
 release_notes: ./CHANGELOG.md
