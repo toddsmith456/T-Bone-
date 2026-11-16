@@ -115,7 +115,7 @@ class MediaPrefetcher @Inject constructor(
 
         if (imageAhead > 0 && imageMode != ImageLoadMode.OFF) {
             val end = (visibleRange.last + imageAhead).coerceAtMost(items.lastIndex)
-            val lowQuality = imageMode == ImageLoadMode.LOW
+            val lowQuality = imageMode == ImageLoadMode.LOW_QUALITY
             for (i in start..end) {
                 val note = items[i] as? FeedListItem.Note ?: continue
                 enqueueFirstFeedImage(note.event, lowQuality)

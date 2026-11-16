@@ -135,9 +135,9 @@ class CacheStorageManager @Inject constructor(
         fun formatBytes(bytes: Long): String {
             val b = bytes.coerceAtLeast(0L)
             return when {
-                b >= 1_073_741_824L -> "%.2f GB".format(b / 1_073_741_824.0)
-                b >= 1_048_576L -> "%.1f MB".format(b / 1_048_576.0)
-                b >= 1_024L -> "%d KB".format(b / 1_024L)
+                b >= 1_073_741_824L -> "%.2f GB".format(java.util.Locale.US, b / 1_073_741_824.0)
+                b >= 1_048_576L -> "%.1f MB".format(java.util.Locale.US, b / 1_048_576.0)
+                b >= 1_024L -> "%d KB".format(java.util.Locale.US, b / 1_024L)
                 else -> "$b B"
             }
         }
@@ -147,7 +147,7 @@ class CacheStorageManager @Inject constructor(
             return when {
                 bytes >= 1_073_741_824L -> {
                     val gb = bytes / 1_073_741_824.0
-                    if (gb == gb.toLong().toDouble()) "${gb.toLong()} GB" else "%.1f GB".format(gb)
+                    if (gb == gb.toLong().toDouble()) "${gb.toLong()} GB" else "%.1f GB".format(java.util.Locale.US, gb)
                 }
                 else -> "${bytes / (1024 * 1024)} MB"
             }
