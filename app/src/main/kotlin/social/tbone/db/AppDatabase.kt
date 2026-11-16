@@ -22,8 +22,9 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DecoyNoteFolderEntity::class,
         DecoyNoteAttachmentEntity::class,
         MediaScanCacheEntity::class,
+        EngagementCacheEntity::class,
     ],
-    version = 19,
+    version = 20,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun eventDao(): EventDao
@@ -39,6 +40,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun decoyNoteFolderDao(): DecoyNoteFolderDao
     abstract fun decoyNoteAttachmentDao(): DecoyNoteAttachmentDao
     abstract fun mediaScanCacheDao(): MediaScanCacheDao
+    abstract fun engagementCacheDao(): EngagementCacheDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -287,6 +289,42 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_media_scan_cache_scannedAt` " +
                         "ON `media_scan_cache` (`scannedAt`)"
+                )
+            }
+        }
+
+        val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Profile caching upgrades: usage-based eviction, follow pinning, SWR freshness,
+                // and normalized offline search text.
+                db.execSQL("ALTER TABLE `profiles` ADD COLUMN `lastAccessedAt` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `profiles` ADD COLUMN `fetchedAt` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `profiles` ADD COLUMN `isFollowed` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `profiles` ADD COLUMN `searchText` TEXT NOT NULL DEFAULT ''")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_profiles_isFollowed_lastAccessedAt` " +
+                        "ON `profiles` (`isFollowed`, `lastAccessedAt`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_profiles_createdAt` " +
+                        "ON `profiles` (`createdAt`)"
+                )
+                // Cold-start engagement counts cache (per account + event).
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `engagement_cache` (" +
+                        "`eventId` TEXT NOT NULL, " +
+                        "`accountPubkey` TEXT NOT NULL, " +
+                        "`likeCount` INTEGER NOT NULL, " +
+                        "`replyCount` INTEGER NOT NULL, " +
+                        "`likedByMe` INTEGER NOT NULL DEFAULT 0, " +
+                        "`repliedByMe` INTEGER NOT NULL DEFAULT 0, " +
+                        "`myReactionContent` TEXT, " +
+                        "`updatedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`eventId`, `accountPubkey`))"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_engagement_cache_updatedAt` " +
+                        "ON `engagement_cache` (`updatedAt`)"
                 )
             }
         }

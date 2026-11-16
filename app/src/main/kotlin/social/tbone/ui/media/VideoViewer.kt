@@ -47,7 +47,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
@@ -251,9 +250,12 @@ fun rememberVideoPlayer(
     var state by remember(url, quality) { mutableStateOf(VideoPlayerState(null)) }
     DisposableEffect(url, quality) {
         var created: ExoPlayer? = null
+        var leaseHeld = false
         try {
+            val dataSourceFactory = social.tbone.cache.MediaCacheManager.acquireFactory()
+            leaseHeld = true
             val instance = ExoPlayer.Builder(context)
-                .setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(ImageClientProvider.client)))
+                .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
                 .build()
             created = instance
             instance.repeatMode = Player.REPEAT_MODE_OFF
@@ -267,9 +269,16 @@ fun rememberVideoPlayer(
         } catch (error: Exception) {
             runCatching { created?.release() }
             created = null
+            if (leaseHeld) {
+                social.tbone.cache.MediaCacheManager.releaseLease()
+                leaseHeld = false
+            }
             state = VideoPlayerState(null, "couldn't open this video; check the link or try another format")
         }
-        onDispose { created?.release() }
+        onDispose {
+            created?.release()
+            if (leaseHeld) social.tbone.cache.MediaCacheManager.releaseLease()
+        }
     }
     val player = state.player
     LaunchedEffect(player, playWhenReady) {

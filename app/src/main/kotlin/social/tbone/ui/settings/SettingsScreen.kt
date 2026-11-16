@@ -41,6 +41,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import social.tbone.account.Account
 import social.tbone.nostr.identity.Phrase
 import social.tbone.settings.AvatarMode
+import social.tbone.settings.CachePreset
 import social.tbone.settings.ImageLoadMode
 import social.tbone.settings.VideoPlaybackMode
 import social.tbone.settings.VideoQuality
@@ -121,7 +122,10 @@ fun SettingsScreen(
     val videoPlaybackMode by viewModel.videoPlaybackMode.collectAsStateWithLifecycle()
     val videoThumbnails by viewModel.videoThumbnails.collectAsStateWithLifecycle()
     val mediaFittedLayout by viewModel.mediaFittedLayout.collectAsStateWithLifecycle()
-    val imageCacheLightweight by viewModel.imageCacheLightweight.collectAsStateWithLifecycle()
+    val cachePreset by viewModel.cachePreset.collectAsStateWithLifecycle()
+    val cacheStats by viewModel.cacheStats.collectAsStateWithLifecycle()
+    val cacheStatusMessage by viewModel.cacheStatusMessage.collectAsStateWithLifecycle()
+    val cacheBusy by viewModel.cacheBusy.collectAsStateWithLifecycle()
     val avatarMode by viewModel.avatarMode.collectAsStateWithLifecycle()
     val avatarAnimated by viewModel.avatarAnimated.collectAsStateWithLifecycle()
     val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
@@ -197,7 +201,6 @@ fun SettingsScreen(
             imageLoadMode = imageLoadMode,
             videoQuality = videoQuality,
             videoPlaybackMode = videoPlaybackMode,
-            imageCacheLightweight = imageCacheLightweight,
             videoThumbnails = videoThumbnails,
             mediaFittedLayout = mediaFittedLayout,
             compact = declutterMode,
@@ -208,6 +211,17 @@ fun SettingsScreen(
             viewModel, avatarMode, avatarAnimated,
             compact = declutterMode, expanded = sectionExpanded("avatars"),
             onToggle = { toggleSection("avatars") },
+        )
+        SettingsStorageCacheSection(
+            viewModel = viewModel,
+            cachePreset = cachePreset,
+            cacheStats = cacheStats,
+            cacheStatusMessage = cacheStatusMessage,
+            cacheBusy = cacheBusy,
+            torEnabled = torEnabled,
+            compact = declutterMode,
+            expanded = sectionExpanded("storage_cache"),
+            onToggle = { toggleSection("storage_cache") },
         )
         SettingsThemeEngineSection(
             viewModel, uiTheme,
@@ -512,7 +526,7 @@ private fun SettingsNoteActionsSection(noteMenuModerationEnabled: Boolean, clien
 }
 
 @Composable
-private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: () -> Unit, onBlossom: () -> Unit, imageLoadMode: ImageLoadMode, videoQuality: VideoQuality, videoPlaybackMode: VideoPlaybackMode, imageCacheLightweight: Boolean, videoThumbnails: Boolean, mediaFittedLayout: Boolean, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
+private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: () -> Unit, onBlossom: () -> Unit, imageLoadMode: ImageLoadMode, videoQuality: VideoQuality, videoPlaybackMode: VideoPlaybackMode, videoThumbnails: Boolean, mediaFittedLayout: Boolean, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
     // ── Media section ─────────────────────────────────────────────────────
     SettingsCategoryHeader("MEDIA", compact, expanded, onToggle)
     if (compact && !expanded) return
@@ -699,31 +713,6 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
                 onCheckedChange = { viewModel.setMediaFittedLayout(it) },
             )
         }
-        Spacer(Modifier.height(12.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("lightweight image cache", style = BonyType.body.copy(color = BonyColors.TextDim))
-                Text(
-                    "64 MB cap · evicts old images sooner · keeps the app lightweight",
-                    style = BonyType.meta.copy(color = BonyColors.TextMute),
-                )
-            }
-            BonyToggle(
-                checked = imageCacheLightweight,
-                enabled = true,
-                onCheckedChange = { viewModel.setImageCacheLightweight(it) },
-            )
-        }
-        if (imageCacheLightweight) {
-            Text(
-                "lightweight is on — next launch trims the image cache to 64 MB",
-                style = BonyType.meta.copy(color = BonyColors.TextMute),
-                modifier = Modifier.padding(top = 6.dp),
-            )
-        }
     }
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 }
@@ -790,6 +779,202 @@ private fun SettingsAvatarSection(viewModel: SettingsViewModel, avatarMode: Avat
         }
     }
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+}
+
+@Composable
+private fun SettingsStorageCacheSection(
+    viewModel: SettingsViewModel,
+    cachePreset: CachePreset,
+    cacheStats: social.tbone.cache.CacheStorageStats,
+    cacheStatusMessage: String?,
+    cacheBusy: Boolean,
+    torEnabled: Boolean,
+    compact: Boolean,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    SettingsCategoryHeader("STORAGE & CACHE", compact, expanded, onToggle)
+    if (compact && !expanded) return
+
+    LaunchedEffect(expanded) {
+        viewModel.refreshCacheStats()
+    }
+
+    val smallShape = appCornerShape(MaterialTheme.shapes.small)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Text("cache level", style = BonyType.body.copy(color = BonyColors.Text))
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = "${cachePreset.label.lowercase()} (${cachePreset.approxTotalLabel}) · ${cachePreset.summary}",
+            style = BonyType.meta.copy(color = BonyColors.TextMute),
+        )
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            CachePreset.entries.forEach { preset ->
+                val active = preset == cachePreset
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .border(1.dp, if (active) BonyColors.Accent else BonyColors.Rule, smallShape)
+                        .background(if (active) BonyColors.AccentBg else Color.Transparent, smallShape)
+                        .clickable(enabled = !cacheBusy) { viewModel.setCachePreset(preset) }
+                        .padding(vertical = 8.dp, horizontal = 2.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = preset.shortLabel,
+                        style = BonyType.tag.copy(
+                            color = if (active) BonyColors.Accent else BonyColors.TextMute,
+                        ),
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = preset.approxTotalLabel,
+                        style = BonyType.meta.copy(
+                            color = if (active) BonyColors.Accent else BonyColors.TextMute,
+                        ),
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = if (torEnabled) {
+                "avatars stay isolated from feed photos · followed accounts stay pinned · off-screen preloading pauses while Tor is on"
+            } else {
+                "avatars stay isolated from feed photos · followed accounts stay pinned"
+            },
+            style = BonyType.meta.copy(color = BonyColors.TextMute),
+        )
+
+        Spacer(Modifier.height(14.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, BonyColors.Rule, smallShape)
+                .background(BonyColors.SurfaceAlt, smallShape)
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            CacheUsageRow(
+                label = "avatars (protected)",
+                value = "${social.tbone.cache.CacheStorageManager.formatBytes(cacheStats.avatarBytes)} / ${social.tbone.cache.CacheStorageManager.formatBudget(cachePreset.avatarDiskBytes)}",
+            )
+            CacheUsageRow(
+                label = "feed photos",
+                value = "${social.tbone.cache.CacheStorageManager.formatBytes(cacheStats.mediaBytes)} / ${social.tbone.cache.CacheStorageManager.formatBudget(cachePreset.mediaDiskBytes)}",
+            )
+            CacheUsageRow(
+                label = "videos & audio",
+                value = if (cachePreset.videoDiskBytes <= 0L) {
+                    "off"
+                } else {
+                    "${social.tbone.cache.CacheStorageManager.formatBytes(cacheStats.videoBytes)} / ${social.tbone.cache.CacheStorageManager.formatBudget(cachePreset.videoDiskBytes)}"
+                },
+            )
+            CacheUsageRow(
+                label = "database",
+                value = "${social.tbone.cache.CacheStorageManager.formatBytes(cacheStats.databaseBytes)} · ${cacheStats.profileCount} profiles · ${cacheStats.eventCount} posts",
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            CacheActionButton(
+                label = "clear photos",
+                enabled = !cacheBusy,
+                modifier = Modifier.weight(1f),
+                onClick = { viewModel.clearFeedMediaCache() },
+            )
+            CacheActionButton(
+                label = "clear videos",
+                enabled = !cacheBusy,
+                modifier = Modifier.weight(1f),
+                onClick = { viewModel.clearVideoAudioCache() },
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            CacheActionButton(
+                label = "clear avatars",
+                enabled = !cacheBusy,
+                modifier = Modifier.weight(1f),
+                onClick = { viewModel.clearAvatarCache() },
+            )
+            CacheActionButton(
+                label = "clear all cache",
+                enabled = !cacheBusy,
+                danger = true,
+                modifier = Modifier.weight(1f),
+                onClick = { viewModel.clearAllCaches() },
+            )
+        }
+
+        cacheStatusMessage?.let { status ->
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = status,
+                style = BonyType.meta.copy(color = BonyColors.Accent),
+            )
+        }
+    }
+    Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+}
+
+@Composable
+private fun CacheUsageRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = BonyType.meta.copy(color = BonyColors.TextMute))
+        Text(value, style = BonyType.meta.copy(color = BonyColors.TextDim))
+    }
+}
+
+@Composable
+private fun CacheActionButton(
+    label: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    danger: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val shape = appCornerShape(MaterialTheme.shapes.small)
+    Box(
+        modifier = modifier
+            .border(1.dp, if (danger) BonyColors.Danger else BonyColors.Rule, shape)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(vertical = 8.dp, horizontal = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            style = BonyType.tag.copy(
+                color = when {
+                    !enabled -> BonyColors.TextMute
+                    danger -> BonyColors.Danger
+                    else -> BonyColors.TextDim
+                },
+            ),
+            maxLines = 1,
+        )
+    }
 }
 
 @Composable

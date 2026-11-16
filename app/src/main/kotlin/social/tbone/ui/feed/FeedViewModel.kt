@@ -175,6 +175,8 @@ class FeedViewModel @Inject constructor(
     private val suggestedFollows: SuggestedFollows,
     private val homeLayouts: HomeLayoutRepository,
     private val feedPlanner: FeedPlanner,
+    private val mediaPrefetcher: social.tbone.cache.MediaPrefetcher,
+    private val engagementCache: social.tbone.reactions.EngagementCacheRepository,
 ) : ViewModel() {
 
     // The suggested feed's roster is known at construction, so the header can
@@ -1386,6 +1388,7 @@ class FeedViewModel @Inject constructor(
             appliedForPubkey = account.pubkey
 
             if (offlineMode) {
+                profileRepository.updateOfflinePriorityPubkeys(localFollows)
                 // Drop anything on screen from people no longer in the local list.
                 val allowed = localFollows + account.pubkey
                 val snapshot = synchronized(feedEvents) {
@@ -1409,11 +1412,23 @@ class FeedViewModel @Inject constructor(
                         }
                         val filtered = applyContentFilter(snapshot)
                         _uiState.update { state -> state.withContentFilter(filtered) }
+                        // Seed last-known like & reply counts from Room for instant frame-0 rendering.
+                        val targetIds = cached.map { ev ->
+                            if (ev.kind == EventKind.REPOST || ev.kind == EventKind.GENERIC_REPOST) {
+                                ev.parsedTags.firstOrNull { it.name == "e" }?.value() ?: ev.id
+                            } else ev.id
+                        }
+                        val cachedEngagement = engagementCache.loadForEvents(account.pubkey, targetIds)
+                        if (cachedEngagement.isNotEmpty()) {
+                            reactionsRepository.seedFromCache(cachedEngagement, account.pubkey)
+                            repliesRepository.seedFromCache(cachedEngagement)
+                        }
                         fetchProfilesForEvents(cached)
                         // Cached home rows need the same quote lookup as live
                         // relay rows; otherwise cards remain blank until tapped.
                         fetchQuotesForEvents(cached)
                         engageViewportSlice(filtered.items, visibleRange)
+                        mediaPrefetcher.prefetchFeedLookahead(filtered.items, visibleRange)
                     }
                 }
             }
@@ -2164,6 +2179,7 @@ class FeedViewModel @Inject constructor(
         // the feed events, so names render as soon as the feed appears instead of
         // lagging behind each note. Cached profiles skip the network entirely.
         fetchMetadataForAuthors(allPubkeys)
+        mediaPrefetcher.prefetchFollowAvatars(allPubkeys)
 
         // Home uses only the user's configured personal relays. Do not
         // automatically connect to discovered follow/outbox relay lists.
@@ -2303,7 +2319,9 @@ class FeedViewModel @Inject constructor(
         val clampedFirst = firstVisibleItemIndex.coerceAtLeast(0)
         val clampedLast = lastVisibleItemIndex.coerceAtLeast(clampedFirst)
         visibleRange = clampedFirst..clampedLast
-        engageViewportSlice(_uiState.value.feedItems, visibleRange)
+        val items = _uiState.value.feedItems
+        engageViewportSlice(items, visibleRange)
+        mediaPrefetcher.prefetchFeedLookahead(items, visibleRange)
     }
 
     private fun engageViewportSlice(items: List<FeedListItem>, range: IntRange) {

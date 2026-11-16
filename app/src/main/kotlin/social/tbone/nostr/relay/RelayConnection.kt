@@ -228,6 +228,59 @@ class RelayConnection(
                 .build()
         }
 
+        private val SHARED_DIRECT_MEDIA_BASE: OkHttpClient by lazy {
+            val dispatcher = okhttp3.Dispatcher().apply {
+                maxRequests = 64
+                maxRequestsPerHost = 12
+            }
+            OkHttpClient.Builder()
+                .dispatcher(dispatcher)
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(25, TimeUnit.SECONDS)
+                .writeTimeout(25, TimeUnit.SECONDS)
+                .build()
+        }
+
+        private val SHARED_TOR_MEDIA_BASE: OkHttpClient by lazy {
+            val dispatcher = okhttp3.Dispatcher().apply {
+                maxRequests = 48
+                maxRequestsPerHost = 8
+            }
+            OkHttpClient.Builder()
+                .dispatcher(dispatcher)
+                .connectTimeout(25, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
+                .writeTimeout(45, TimeUnit.SECONDS)
+                .build()
+        }
+
+        /**
+         * Builds an HTTP(S) client tuned specifically for media (avatars, images,
+         * video, audio) rather than long-lived WebSockets: bounded timeouts prevent
+         * a hung external CDN/Blossom host from stalling avatar/image workers,
+         * while keeping Tor and clearnet connection pools strictly isolated.
+         */
+        fun buildMediaClient(
+            useTor: Boolean,
+            proxyType: java.net.Proxy.Type = java.net.Proxy.Type.HTTP,
+            torPort: Int = social.tbone.Tunables.TOR_HTTP_PROXY_PORT,
+        ): OkHttpClient {
+            val base = if (useTor) SHARED_TOR_MEDIA_BASE else SHARED_DIRECT_MEDIA_BASE
+            return base.newBuilder()
+                .apply {
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                        connectionSpecs(listOf(TLS_1_2_AND_UP, ConnectionSpec.CLEARTEXT))
+                    }
+                    if (useTor) {
+                        proxy(java.net.Proxy(
+                            proxyType,
+                            java.net.InetSocketAddress("127.0.0.1", torPort),
+                        ))
+                    }
+                }
+                .build()
+        }
+
         /**
          * @param proxyType HTTP (preferred — no DNS leak) or SOCKS (fallback).
          * @param torPort   Port confirmed reachable by OrbotHelper.

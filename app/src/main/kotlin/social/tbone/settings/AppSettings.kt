@@ -57,6 +57,7 @@ class AppSettings @Inject constructor(
         private val VIDEO_THUMBNAILS = booleanPreferencesKey("video_thumbnails")
         private val MEDIA_FITTED_LAYOUT = booleanPreferencesKey("media_fitted_layout")
         private val IMAGE_CACHE_LIGHTWEIGHT = booleanPreferencesKey("image_cache_lightweight")
+        private val CACHE_PRESET = stringPreferencesKey("cache_preset")
         private val AVATAR_MODE = stringPreferencesKey("avatar_mode")
         private val AVATAR_ANIMATED = booleanPreferencesKey("avatar_animated")
         // Enabled notification-type filters (names of NotifFilter). Empty set = all on.
@@ -272,6 +273,9 @@ class AppSettings @Inject constructor(
 
     private val _imageCacheLightweight = MutableStateFlow(false)
     val imageCacheLightweight = _imageCacheLightweight.asStateFlow()
+
+    private val _cachePreset = MutableStateFlow(CachePreset.BALANCED)
+    val cachePreset = _cachePreset.asStateFlow()
 
     private val _avatarMode = MutableStateFlow(AvatarMode.REGULAR)
     val avatarMode = _avatarMode.asStateFlow()
@@ -568,7 +572,10 @@ class AppSettings @Inject constructor(
                 // existing installs that never touched this switch get the fitted
                 // layout too.
                 _mediaFittedLayout.value = prefs[MEDIA_FITTED_LAYOUT] ?: true
-                _imageCacheLightweight.value = prefs[IMAGE_CACHE_LIGHTWEIGHT] ?: false
+                val legacyLightweight = prefs[IMAGE_CACHE_LIGHTWEIGHT]
+                val resolvedPreset = CachePreset.fromPref(prefs[CACHE_PRESET], legacyLightweight)
+                _cachePreset.value = resolvedPreset
+                _imageCacheLightweight.value = resolvedPreset.isLightweightCompatible
                 _avatarMode.value = AvatarMode.fromPref(prefs[AVATAR_MODE])
                 _avatarAnimated.value = prefs[AVATAR_ANIMATED] ?: true
                 val storedFilters = prefs[NOTIFICATION_ENABLED_TYPES]
@@ -782,8 +789,16 @@ class AppSettings @Inject constructor(
     }
 
     suspend fun setImageCacheLightweight(enabled: Boolean) {
-        _imageCacheLightweight.value = enabled
-        dataStore.edit { it[IMAGE_CACHE_LIGHTWEIGHT] = enabled }
+        setCachePreset(if (enabled) CachePreset.COMPACT else CachePreset.BALANCED)
+    }
+
+    suspend fun setCachePreset(preset: CachePreset) {
+        _cachePreset.value = preset
+        _imageCacheLightweight.value = preset.isLightweightCompatible
+        dataStore.edit {
+            it[CACHE_PRESET] = preset.prefValue
+            it[IMAGE_CACHE_LIGHTWEIGHT] = preset.isLightweightCompatible
+        }
     }
 
     suspend fun setAvatarMode(mode: AvatarMode) {

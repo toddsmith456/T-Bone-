@@ -617,13 +617,21 @@ private fun InlineImage(
     var blockedVerdict by remember(url, aiRevealed, aiConfig, contentFilter.aiHasInstalledModel) {
         mutableStateOf<ScanVerdict?>(null)
     }
-    // Keep the complete URL: query parameters can identify different media.
-    val cacheKey = remember(url) { "inline-image-animated:$url" }
-    val request = remember(url, lowQuality, aiRevealed, aiConfig, contentFilter.aiHasInstalledModel, authorPubkey, meta?.sha256) {
+    // Share one canonical disk key across feed, fullscreen viewer, and gallery so
+    // tapping a feed image never re-downloads it; keep distinct RAM keys per quality tier.
+    val diskKey = remember(url) { social.tbone.cache.CacheKeyPolicy.mediaDiskKey(url) }
+    val memoryKey = remember(url, lowQuality) {
+        social.tbone.cache.CacheKeyPolicy.mediaMemoryKey(
+            url,
+            if (lowQuality) social.tbone.cache.CacheKeyPolicy.VARIANT_FEED_LOW
+            else social.tbone.cache.CacheKeyPolicy.VARIANT_FEED_FULL,
+        )
+    }
+    val request = remember(url, lowQuality, aiRevealed, aiConfig, contentFilter.aiHasInstalledModel, authorPubkey, meta?.sha256, diskKey, memoryKey) {
         ImageRequest.Builder(context)
             .data(url)
-            .memoryCacheKey(cacheKey)
-            .diskCacheKey(cacheKey)
+            .memoryCacheKey(memoryKey)
+            .diskCacheKey(diskKey)
             .crossfade(false)
             .setParameter(AiCoilParams.SURFACE, ScanSurface.FEED_MEDIA.name, memoryCacheKey = null)
             .apply {
@@ -787,6 +795,8 @@ private fun VideoPlaceholder(
         posterUrl?.let { pUrl ->
             ImageRequest.Builder(context)
                 .data(pUrl)
+                .diskCacheKey(social.tbone.cache.CacheKeyPolicy.mediaDiskKey(pUrl))
+                .memoryCacheKey(social.tbone.cache.CacheKeyPolicy.mediaMemoryKey(pUrl, social.tbone.cache.CacheKeyPolicy.VARIANT_POSTER))
                 .setParameter(AiCoilParams.SURFACE, ScanSurface.FEED_MEDIA.name, memoryCacheKey = null)
                 .apply {
                     if (aiRevealed) setParameter(AiCoilParams.BYPASS, true, memoryCacheKey = null)

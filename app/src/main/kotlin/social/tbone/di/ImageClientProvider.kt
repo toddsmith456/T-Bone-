@@ -14,7 +14,7 @@ object ImageClientProvider {
     // The persisted setting is initially unknown. A proxy-only client prevents
     // early media requests from going direct before application settings load.
     @Volatile
-    var client: OkHttpClient = guardedMediaClient(RelayConnection.buildClient(useTor = true), true, TorCallPolicy.guard)
+    var client: OkHttpClient = guardedMediaClient(RelayConnection.buildMediaClient(useTor = true), true, TorCallPolicy.guard)
         private set
 
     fun update(newClient: OkHttpClient, useTor: Boolean) {

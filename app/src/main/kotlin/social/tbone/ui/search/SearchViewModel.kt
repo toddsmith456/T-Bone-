@@ -228,8 +228,7 @@ class SearchViewModel @Inject constructor(
             ?.profiles
             .orEmpty()
             .filter { match -> match.profile?.let { ProfileSearch.matches(query, it) } == true }
-        val cachedMatches = profileRepository.profiles.value
-            .filter { (_, profile) -> ProfileSearch.matches(query, profile) }
+        val cachedMatches = profileRepository.searchCachedProfiles(query, limit = 40)
             .map { (pubkey, profile) -> ProfileMatch(pubkey, profile) }
 
         _uiState.update {

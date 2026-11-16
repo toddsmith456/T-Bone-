@@ -45,7 +45,6 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import kotlinx.coroutines.delay
@@ -265,9 +264,12 @@ internal fun rememberAudioPlayer(url: String, retry: Int): Pair<ExoPlayer?, Bool
     var initializationFailed by remember(url, retry) { mutableStateOf(false) }
     DisposableEffect(url, retry) {
         var created: ExoPlayer? = null
+        var leaseHeld = false
         try {
+            val dataSourceFactory = social.tbone.cache.MediaCacheManager.acquireFactory()
+            leaseHeld = true
             val instance = ExoPlayer.Builder(context)
-                .setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(ImageClientProvider.client)))
+                .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
                 .build()
             created = instance
             instance.setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA)
@@ -279,9 +281,16 @@ internal fun rememberAudioPlayer(url: String, retry: Int): Pair<ExoPlayer?, Bool
         } catch (_: Exception) {
             created?.release()
             created = null
+            if (leaseHeld) {
+                social.tbone.cache.MediaCacheManager.releaseLease()
+                leaseHeld = false
+            }
             initializationFailed = true
         }
-        onDispose { created?.release() }
+        onDispose {
+            created?.release()
+            if (leaseHeld) social.tbone.cache.MediaCacheManager.releaseLease()
+        }
     }
     return player to initializationFailed
 }

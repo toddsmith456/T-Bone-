@@ -27,6 +27,7 @@ import social.tbone.settings.FilterWord
 import social.tbone.settings.NsfwMode
 import social.tbone.settings.WordMatchMode
 import social.tbone.settings.AvatarMode
+import social.tbone.settings.CachePreset
 import social.tbone.settings.ImageLoadMode
 import social.tbone.settings.VideoPlaybackMode
 import social.tbone.settings.VideoQuality
@@ -51,6 +52,7 @@ class SettingsViewModel @Inject constructor(
     private val stealthManager: StealthManager,
     private val aiModelManager: social.tbone.ai.AiModelManager,
     private val mediaScanCache: social.tbone.ai.MediaScanCache,
+    private val cacheStorageManager: social.tbone.cache.CacheStorageManager,
     @ApplicationContext context: Context,
 ) : ViewModel() {
 
@@ -124,6 +126,18 @@ class SettingsViewModel @Inject constructor(
 
     val imageCacheLightweight: StateFlow<Boolean> = appSettings.imageCacheLightweight
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    val cachePreset: StateFlow<CachePreset> = appSettings.cachePreset
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CachePreset.BALANCED)
+
+    private val _cacheStats = MutableStateFlow(social.tbone.cache.CacheStorageStats())
+    val cacheStats: StateFlow<social.tbone.cache.CacheStorageStats> = _cacheStats.asStateFlow()
+
+    private val _cacheStatusMessage = MutableStateFlow<String?>(null)
+    val cacheStatusMessage: StateFlow<String?> = _cacheStatusMessage.asStateFlow()
+
+    private val _cacheBusy = MutableStateFlow(false)
+    val cacheBusy: StateFlow<Boolean> = _cacheBusy.asStateFlow()
 
     val avatarMode: StateFlow<AvatarMode> = appSettings.avatarMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AvatarMode.REGULAR)
@@ -485,6 +499,72 @@ class SettingsViewModel @Inject constructor(
 
     fun setImageCacheLightweight(enabled: Boolean) {
         viewModelScope.launch { appSettings.setImageCacheLightweight(enabled) }
+    }
+
+    fun setCachePreset(preset: CachePreset) {
+        viewModelScope.launch {
+            appSettings.setCachePreset(preset)
+            _cacheStatusMessage.value = "cache level set to ${preset.label.lowercase()} (${preset.approxTotalLabel})"
+            _cacheStats.value = cacheStorageManager.measure()
+        }
+    }
+
+    fun refreshCacheStats() {
+        viewModelScope.launch {
+            _cacheStats.value = cacheStorageManager.measure()
+        }
+    }
+
+    fun clearFeedMediaCache() {
+        if (_cacheBusy.value) return
+        viewModelScope.launch {
+            _cacheBusy.value = true
+            try {
+                _cacheStats.value = cacheStorageManager.clearFeedMedia()
+                _cacheStatusMessage.value = "feed photos cleared · avatars kept"
+            } finally {
+                _cacheBusy.value = false
+            }
+        }
+    }
+
+    fun clearVideoAudioCache() {
+        if (_cacheBusy.value) return
+        viewModelScope.launch {
+            _cacheBusy.value = true
+            try {
+                _cacheStats.value = cacheStorageManager.clearVideoAudio()
+                _cacheStatusMessage.value = "video & audio cache cleared"
+            } finally {
+                _cacheBusy.value = false
+            }
+        }
+    }
+
+    fun clearAvatarCache() {
+        if (_cacheBusy.value) return
+        viewModelScope.launch {
+            _cacheBusy.value = true
+            try {
+                _cacheStats.value = cacheStorageManager.clearAvatars()
+                _cacheStatusMessage.value = "avatar cache cleared"
+            } finally {
+                _cacheBusy.value = false
+            }
+        }
+    }
+
+    fun clearAllCaches() {
+        if (_cacheBusy.value) return
+        viewModelScope.launch {
+            _cacheBusy.value = true
+            try {
+                _cacheStats.value = cacheStorageManager.clearAllCaches()
+                _cacheStatusMessage.value = "all media & temporary caches cleared"
+            } finally {
+                _cacheBusy.value = false
+            }
+        }
     }
 
     fun setAvatarMode(mode: AvatarMode) {

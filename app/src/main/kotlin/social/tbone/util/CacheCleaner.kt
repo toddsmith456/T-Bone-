@@ -42,8 +42,8 @@ object CacheCleaner {
         cacheDir.listFiles()?.forEach { f ->
             if (!f.isFile) return@forEach
             val name = f.name
-            // Keep Coil's own folder alone
-            if (name == "image_cache") return@forEach
+            // Keep Coil & Media3 managed cache folders alone
+            if (name in social.tbone.cache.CacheDirectories.MANAGED_CACHE_DIRS) return@forEach
             val matchesPrefix = prefixes.any { name.startsWith(it) }
             val isTmp = name.endsWith(".tbbackup.tmp") || name.endsWith(".tmp")
             if ((matchesPrefix || isTmp) && isOlderThan(f, now, GRACE_MS)) {

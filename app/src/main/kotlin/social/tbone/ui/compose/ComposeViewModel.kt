@@ -452,13 +452,8 @@ class ComposeViewModel @Inject constructor(
     private suspend fun searchMentions(query: String) {
         _mentionSearching.update { true }
 
-        // Local cache matches first — instant, works offline.
-        val local = profileRepository.profiles.value
-            .filter { (_, p) ->
-                val name = p.bestName ?: p.name ?: ""
-                name.contains(query, ignoreCase = true) ||
-                    p.nip05?.contains(query, ignoreCase = true) == true
-            }
+        // Full local cache search first (RAM + Room up to 75k profiles) — instant, works offline.
+        val local = profileRepository.searchCachedProfiles(query, limit = 15)
             .map { (pubkey, p) -> ProfileMatch(pubkey, p) }
             .sortedWith(mentionSort(query))
             .take(10)

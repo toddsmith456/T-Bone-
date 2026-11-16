@@ -224,6 +224,8 @@ fun ProfileScreen(
                             val bannerRequest = remember(bannerUrl, pubkey, bannerAiKey) {
                                 coil.request.ImageRequest.Builder(bannerContext)
                                     .data(bannerUrl)
+                                    .diskCacheKey(social.tbone.cache.CacheKeyPolicy.mediaDiskKey(bannerUrl))
+                                    .memoryCacheKey(social.tbone.cache.CacheKeyPolicy.mediaMemoryKey(bannerUrl, social.tbone.cache.CacheKeyPolicy.VARIANT_BANNER))
                                     .setParameter(social.tbone.ai.AiCoilParams.SURFACE, social.tbone.ai.ScanSurface.BANNER.name, memoryCacheKey = null)
                                     .setParameter(social.tbone.ai.AiCoilParams.AUTHOR_PUBKEY, pubkey, memoryCacheKey = null)
                                     .build()

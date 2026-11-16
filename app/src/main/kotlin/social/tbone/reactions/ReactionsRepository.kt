@@ -11,12 +11,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
 import social.tbone.Tunables
+import social.tbone.account.AccountRepository
 import social.tbone.account.signer.NostrSignerFactory
+import social.tbone.db.EngagementCacheEntity
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
 import social.tbone.nostr.UnsignedEvent
@@ -40,11 +44,15 @@ class ReactionsRepository @Inject constructor(
     private val pool: RelayPool,
     private val signerFactory: NostrSignerFactory,
     private val engagementCoordinator: EngagementSubscriptionCoordinator,
+    private val accountRepository: AccountRepository,
+    private val engagementCache: EngagementCacheRepository,
 ) {
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Timber.e(throwable, "Uncaught exception in ReactionsRepository")
     }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + exceptionHandler)
+
+    @Volatile private var activePubkey: String? = null
 
     // Caps reaction data; oldest entries evicted automatically.
     private val reactionCache = LruCache<String, Set<String>>(Tunables.REACTION_CACHE_SIZE)
@@ -145,6 +153,12 @@ class ReactionsRepository @Inject constructor(
 
     init {
         scope.launch {
+            accountRepository.activeAccount
+                .map { it?.pubkey }
+                .distinctUntilChanged()
+                .collect { activePubkey = it }
+        }
+        scope.launch {
             for (signal in uiDirty) {
                 delay(Tunables.UI_BATCH_WINDOW_MS)
                 flushUiUpdates()
@@ -167,7 +181,7 @@ class ReactionsRepository @Inject constructor(
                             if (current != null && msg.event.pubkey in current) {
                                 null
                             } else {
-                                val next = (current ?: emptySet()) + msg.event.pubkey
+                                val next = EngagementCacheRepository.mergeRealReactor(current, msg.event.pubkey)
                                 reactionCache.put(targetId, next)
                                 next
                             }
@@ -175,6 +189,14 @@ class ReactionsRepository @Inject constructor(
                         if (updated != null) {
                             synchronized(pendingLock) { pendingReactions[targetId] = updated }
                             uiDirty.trySend(Unit)
+                            val acct = activePubkey
+                            if (acct != null) {
+                                val likedByMe = acct in updated
+                                val myEmoji = if (likedByMe) {
+                                    synchronized(contentCache) { contentCache.get(reactionKey(targetId, acct)) }
+                                } else null
+                                engagementCache.recordReactionSnapshot(acct, targetId, updated.size, likedByMe, myEmoji)
+                            }
                         }
                         recordContent(
                             targetId,
@@ -190,6 +212,56 @@ class ReactionsRepository @Inject constructor(
                 }
             }
         }
+    }
+
+    /** Seeds cold-start reaction counts from Room before relay EOSE returns. */
+    fun seedFromCache(entries: List<EngagementCacheEntity>, accountPubkey: String) {
+        if (entries.isEmpty()) return
+        val seededReactions = LinkedHashMap<String, Set<String>>()
+        val seededContents = LinkedHashMap<String, String>()
+        synchronized(reactionCache) {
+            for (entry in entries) {
+                if (entry.likeCount <= 0 && !entry.likedByMe) continue
+                if (reactionCache.get(entry.eventId) != null) continue
+                val set = EngagementCacheRepository.buildCachedReactorSet(
+                    cachedCount = entry.likeCount,
+                    likedByMe = entry.likedByMe,
+                    activePubkey = accountPubkey,
+                )
+                if (set.isNotEmpty()) {
+                    reactionCache.put(entry.eventId, set)
+                    seededReactions[entry.eventId] = set
+                }
+                if (entry.likedByMe && !entry.myReactionContent.isNullOrBlank() && accountPubkey.isNotBlank()) {
+                    val key = reactionKey(entry.eventId, accountPubkey)
+                    synchronized(contentCache) {
+                        if (contentCache.get(key) == null) {
+                            contentCache.put(key, entry.myReactionContent)
+                            seededContents[key] = entry.myReactionContent
+                        }
+                    }
+                }
+            }
+        }
+        if (seededReactions.isNotEmpty()) {
+            _reactions.update { current -> seededReactions + current }
+        }
+        if (seededContents.isNotEmpty()) {
+            _reactionContents.update { current -> seededContents + current }
+        }
+    }
+
+    /** Clears all in-memory reaction state (used during duress wipe). */
+    fun clearMemory() {
+        synchronized(reactionCache) { reactionCache.evictAll() }
+        synchronized(contentCache) { contentCache.evictAll() }
+        synchronized(contentTimestampCache) { contentTimestampCache.evictAll() }
+        synchronized(pendingLock) {
+            pendingReactions.clear()
+            pendingContents.clear()
+        }
+        _reactions.value = emptyMap()
+        _reactionContents.value = emptyMap()
     }
 
     /** Subscribe to reactions for any event IDs not yet tracked (batched + combined). */
@@ -211,6 +283,7 @@ class ReactionsRepository @Inject constructor(
             }
             updateReactionsBoundedImmediate(event.id, optimistic)
             recordContent(event.id, activePubkey, reaction, System.currentTimeMillis() / 1000, immediate = true)
+            engagementCache.recordReactionSnapshot(activePubkey, event.id, optimistic.size, true, reaction)
 
             val unsigned = UnsignedEvent(
                 pubkey = activePubkey,

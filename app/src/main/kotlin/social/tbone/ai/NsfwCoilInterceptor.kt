@@ -267,20 +267,15 @@ class NsfwCoilInterceptor @Inject constructor(
         config: AiFilterConfig,
         resultMemoryKey: coil.memory.MemoryCache.Key? = null,
     ) {
-        val loader = runCatching { coil.Coil.imageLoader(request.context) }.getOrNull() ?: return
-        request.memoryCacheKey?.let { memKey ->
-            runCatching { loader.memoryCache?.remove(memKey) }
-        }
-        resultMemoryKey?.let { memKey ->
-            runCatching { loader.memoryCache?.remove(memKey) }
-        }
-        // In HIDE mode or Parental PIN mode, avoid keeping blocked images in Coil's disk cache.
-        if (verdict.decision == ScanDecision.HIDE || config.parentalPinActive) {
-            val diskKey = request.diskCacheKey ?: (request.data as? String)
-            if (!diskKey.isNullOrBlank()) {
-                runCatching { loader.diskCache?.remove(diskKey) }
-            }
-        }
+        val evictDisk = verdict.decision == ScanDecision.HIDE || config.parentalPinActive
+        val diskKey = request.diskCacheKey ?: (request.data as? String)
+        social.tbone.cache.ImageLoaderRegistry.evictBlocked(
+            context = request.context,
+            memoryKey = request.memoryCacheKey,
+            resultMemoryKey = resultMemoryKey,
+            diskKey = diskKey,
+            evictDisk = evictDisk,
+        )
     }
 
     private fun parseSurface(request: ImageRequest): ScanSurface {

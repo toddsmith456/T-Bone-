@@ -1,9 +1,6 @@
 package social.tbone
 
 import android.app.Application
-import coil.Coil
-import coil.ImageLoader
-import coil.disk.DiskCache
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -12,8 +9,10 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.Call
 import social.tbone.BuildConfig
+import social.tbone.account.AccountRepository
+import social.tbone.cache.ImageLoaderRegistry
+import social.tbone.cache.MediaCacheManager
 import social.tbone.di.ImageClientProvider
 import social.tbone.calendar.CalendarAlarmScheduler
 import social.tbone.calendar.CalendarRepository
@@ -23,6 +22,7 @@ import social.tbone.logging.LOG_FILE_NAME
 import social.tbone.notifications.createNotificationChannels
 import social.tbone.nostr.identity.Phrase
 import social.tbone.nostr.relay.RelayConnection
+import social.tbone.reactions.EngagementCacheRepository
 import social.tbone.settings.AppSettings
 import social.tbone.settings.OrbotHelper
 import social.tbone.settings.OrbotStatus
@@ -46,37 +46,24 @@ class BonyApp : Application() {
     @Inject lateinit var noteWrites: social.tbone.notes.NoteWriteCoordinator
     @Inject lateinit var dataWiper: social.tbone.security.DataWiper
     @Inject lateinit var toolboxSecurity: social.tbone.ui.toolbox.ToolboxSecurity
-    @Inject lateinit var nsfwCoilInterceptor: social.tbone.ai.NsfwCoilInterceptor
+    @Inject lateinit var imageLoaderRegistry: ImageLoaderRegistry
+    @Inject lateinit var mediaCacheManager: MediaCacheManager
     @Inject lateinit var mediaScanCache: social.tbone.ai.MediaScanCache
     @Inject lateinit var aiEngine: social.tbone.ai.NsfwEngine
     @Inject lateinit var eventRepository: social.tbone.db.EventRepository
     @Inject lateinit var profileRepository: social.tbone.profile.ProfileRepository
+    @Inject lateinit var accountRepository: AccountRepository
+    @Inject lateinit var engagementCache: EngagementCacheRepository
 
     override fun onCreate() {
         super.onCreate()
 
-        // Install Coil's ImageLoader synchronously using a dynamic Call.Factory
-        // that delegates to ImageClientProvider.client (which starts as a strict
-        // proxy-only Tor-guarded client until persisted settings load). Reading
-        // the lightweight-cache preference mirror synchronously lets the single
-        // persistent DiskCache come online on frame 0 so previously cached
-        // avatars/images render immediately without a mid-startup singleton swap.
-        val dynamicCallFactory = Call.Factory { request -> ImageClientProvider.client.newCall(request) }
-        val cachePrefs = getSharedPreferences("tbone_cache_prefs", MODE_PRIVATE)
-        val initialLightweight = cachePrefs.getBoolean("image_cache_lightweight", false)
-        var installedLightweightCache = initialLightweight
-        fun buildCoilLoader(lightweight: Boolean): ImageLoader =
-            ImageLoader.Builder(this)
-                .callFactory(dynamicCallFactory)
-                .components { add(nsfwCoilInterceptor) }
-                .diskCache {
-                    DiskCache.Builder()
-                        .directory(cacheDir.resolve("image_cache"))
-                        .maxSizeBytes(if (lightweight) 64L * 1024 * 1024 else 250L * 1024 * 1024)
-                        .build()
-                }
-                .build()
-        Coil.setImageLoader(buildCoilLoader(initialLightweight))
+        // Install BOTH isolated Coil ImageLoaders (dedicated avatar_cache +
+        // feed image_cache) and configure Media3's video/audio SimpleCache
+        // synchronously on frame 0 using the persisted CachePreset mirror.
+        val initialPreset = imageLoaderRegistry.readPersistedPreset()
+        imageLoaderRegistry.initialize(initialPreset)
+        mediaCacheManager.applyPreset(initialPreset)
 
         val logFile = File(filesDir, "logs/$LOG_FILE_NAME")
 
@@ -130,45 +117,45 @@ class BonyApp : Application() {
                 }
         }
 
-        // One-time cache hygiene on every cold start (Option A): prune
-        // leaked transients older than 7 days + stale .part files. This is
-        // I/O-light and idempotent; users see the "3 GB cache" shrink after
-        // the next launch without any data loss.
+        // One-time cache hygiene on every cold start: prune leaked transients
+        // and trim Room caches according to the active CachePreset while keeping
+        // followed profiles and every local account's feed + own notes protected.
         applicationScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            appSettings.initialized.first { it }
+            val preset = appSettings.cachePreset.value
+            val ownAccounts = runCatching { accountRepository.accounts.first().map { it.pubkey } }
+                .getOrDefault(emptyList())
             try {
                 social.tbone.util.CacheCleaner.cleanup(this@BonyApp)
             } catch (_: Exception) { }
             try {
                 mediaScanCache.prune()
             } catch (_: Exception) { }
-            runCatching { eventRepository.pruneOld() }
+            runCatching { eventRepository.pruneOld(preset.maxCachedEvents, ownAccounts) }
                 .onFailure { Timber.w(it, "Startup event cache prune failed") }
-            runCatching { profileRepository.pruneOld() }
+            runCatching { profileRepository.pruneOld(preset.maxCachedProfiles) }
                 .onFailure { Timber.w(it, "Startup profile cache prune failed") }
+            runCatching { engagementCache.prune(preset.maxEngagementRows) }
+                .onFailure { Timber.w(it, "Startup engagement cache prune failed") }
         }
 
-        // Keep Coil's HTTP transport in sync with Tor and persist any changes
-        // to the lightweight-cache setting. Because Coil was already configured
-        // with dynamicCallFactory + DiskCache synchronously above, normal
-        // cold starts never tear down or replace the global ImageLoader.
+        // Keep HTTP media transport in sync with Tor (using media-tuned timeouts)
+        // and keep Coil + Media3 caches in sync with CachePreset changes.
         applicationScope.launch {
             appSettings.initialized.first { it }
-            combine(appSettings.torEnabled, appSettings.imageCacheLightweight) { tor, lightweight -> tor to lightweight }
+            combine(appSettings.torEnabled, appSettings.cachePreset) { tor, preset -> tor to preset }
                 .distinctUntilChanged()
-                .collect { (useTor, lightweight) ->
+                .collect { (useTor, preset) ->
                     val status = if (useTor) OrbotHelper.getStatus(this@BonyApp) else null
                     val connected = status as? OrbotStatus.InstalledAndConnected
-                    val client = RelayConnection.buildClient(
+                    val client = RelayConnection.buildMediaClient(
                         useTor = useTor,
                         proxyType = connected?.proxyType ?: java.net.Proxy.Type.HTTP,
                         torPort = connected?.port ?: 8118,
                     )
                     ImageClientProvider.update(client, useTor)
-                    if (installedLightweightCache != lightweight) {
-                        installedLightweightCache = lightweight
-                        cachePrefs.edit().putBoolean("image_cache_lightweight", lightweight).apply()
-                        Coil.setImageLoader(buildCoilLoader(lightweight))
-                    }
+                    imageLoaderRegistry.applyPreset(preset)
+                    mediaCacheManager.applyPreset(preset)
                 }
         }
     }
@@ -178,8 +165,6 @@ class BonyApp : Application() {
         if (level >= TRIM_MEMORY_UI_HIDDEN || level >= TRIM_MEMORY_RUNNING_LOW) {
             aiEngine.unloadAll()
         }
-        if (level >= TRIM_MEMORY_RUNNING_LOW) {
-            runCatching { Coil.imageLoader(this).memoryCache?.clear() }
-        }
+        imageLoaderRegistry.onTrimMemory(level)
     }
 }

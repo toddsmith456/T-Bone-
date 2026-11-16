@@ -254,6 +254,7 @@ dependencies {
     implementation(libs.media3.common)
     implementation(libs.media3.container)
     implementation(libs.media3.exoplayer)
+    implementation(libs.media3.database)
     implementation(libs.media3.ui)
     implementation(libs.media3.datasource.okhttp)
 

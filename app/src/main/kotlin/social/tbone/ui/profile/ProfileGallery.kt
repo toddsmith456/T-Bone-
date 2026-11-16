@@ -83,6 +83,8 @@ fun ProfileGalleryRow(
                     val thumbRequest = remember(item.url, galleryAiKey) {
                         ImageRequest.Builder(context)
                             .data(item.url)
+                            .diskCacheKey(social.tbone.cache.CacheKeyPolicy.mediaDiskKey(item.url))
+                            .memoryCacheKey(social.tbone.cache.CacheKeyPolicy.mediaMemoryKey(item.url, social.tbone.cache.CacheKeyPolicy.VARIANT_GALLERY_THUMB))
                             .setParameter(AiCoilParams.SURFACE, ScanSurface.FEED_MEDIA.name, memoryCacheKey = null)
                             .size(THUMBNAIL_PX)
                             .crossfade(true)
@@ -178,6 +180,8 @@ fun ProfileGalleryViewer(
                 val viewerRequest = remember(item.url, revealed, viewerFilter.aiFilterConfig, viewerFilter.aiHasInstalledModel) {
                     ImageRequest.Builder(viewerContext)
                         .data(item.url)
+                        .diskCacheKey(social.tbone.cache.CacheKeyPolicy.mediaDiskKey(item.url))
+                        .memoryCacheKey(social.tbone.cache.CacheKeyPolicy.mediaMemoryKey(item.url, social.tbone.cache.CacheKeyPolicy.VARIANT_VIEWER))
                         .setParameter(AiCoilParams.SURFACE, ScanSurface.FEED_MEDIA.name, memoryCacheKey = null)
                         .apply {
                             if (revealed) setParameter(AiCoilParams.BYPASS, true, memoryCacheKey = null)

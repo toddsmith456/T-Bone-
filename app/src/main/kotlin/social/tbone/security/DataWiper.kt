@@ -45,6 +45,14 @@ class DataWiper @Inject constructor(
     private val aiModelManager: social.tbone.ai.AiModelManager,
     private val aiEngine: social.tbone.ai.NsfwEngine,
     private val mediaScanCache: social.tbone.ai.MediaScanCache,
+    private val imageLoaderRegistry: social.tbone.cache.ImageLoaderRegistry,
+    private val mediaCacheManager: social.tbone.cache.MediaCacheManager,
+    private val mediaPrefetcher: social.tbone.cache.MediaPrefetcher,
+    private val profileRepository: social.tbone.profile.ProfileRepository,
+    private val eventRepository: social.tbone.db.EventRepository,
+    private val reactionsRepository: social.tbone.reactions.ReactionsRepository,
+    private val repliesRepository: social.tbone.reactions.RepliesRepository,
+    private val engagementCache: social.tbone.reactions.EngagementCacheRepository,
 ) {
 
     /**
@@ -85,6 +93,16 @@ class DataWiper @Inject constructor(
                 aiModelManager.wipeForDuress()
                 aiEngine.unloadAll()
                 mediaScanCache.clearMemory()
+            }
+            steps.run("release and clear media/profile/event caches") {
+                imageLoaderRegistry.clearAllMemory()
+                mediaCacheManager.releaseForWipe()
+                mediaPrefetcher.clearSessionDedup()
+                profileRepository.clearMemory()
+                eventRepository.clearMemory()
+                reactionsRepository.clearMemory()
+                repliesRepository.clearMemory()
+                engagementCache.clearAll()
             }
             steps.run("clear database") { appDatabase.clearAllTables() }
 

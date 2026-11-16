@@ -1,5 +1,6 @@
 package social.tbone.db
 
+import android.util.LruCache
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -12,12 +13,16 @@ import kotlinx.coroutines.launch
 import social.tbone.Tunables
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
+import social.tbone.settings.AppSettings
 import timber.log.Timber
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class EventRepository @Inject constructor(private val dao: EventDao) {
+class EventRepository @Inject constructor(
+    private val dao: EventDao,
+    private val appSettings: AppSettings,
+) {
 
     private val writeScope = CoroutineScope(
         SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, throwable ->
@@ -29,7 +34,16 @@ class EventRepository @Inject constructor(private val dao: EventDao) {
     private val flushDebounced = Channel<Unit>(Channel.CONFLATED)
     private val flushImmediate = Channel<Unit>(Channel.CONFLATED)
 
+    // Tier-scaled parsed Event RAM LRU: quotes, thread opens, and notification
+    // deep-links hit memory without SQLite reads or tagsJson re-parsing.
+    private val memCache = LruCache<String, Event>(appSettings.cachePreset.value.eventRamLimit)
+
     init {
+        writeScope.launch {
+            appSettings.cachePreset.collect { preset ->
+                runCatching { memCache.resize(preset.eventRamLimit.coerceAtLeast(1)) }
+            }
+        }
         writeScope.launch {
             for (signal in flushDebounced) {
                 delay(Tunables.DB_WRITE_BATCH_MS)
@@ -45,17 +59,24 @@ class EventRepository @Inject constructor(private val dao: EventDao) {
 
     fun feedEvents(accountPubkey: String): Flow<List<Event>> = dao.observeByKinds(
         listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.GENERIC_REPOST, EventKind.POLL), accountPubkey
-    ).map { list -> list.mapNotNull { runCatching { it.toEvent() }.getOrNull() } }
+    ).map { list ->
+        list.mapNotNull { entity ->
+            runCatching { entity.toEvent() }.getOrNull()?.also { memCache.put(it.id, it) }
+        }
+    }
 
     suspend fun getRecentFeedEvents(accountPubkey: String, limit: Int = 300): List<Event> =
         dao.getRecentByKinds(
             listOf(EventKind.TEXT_NOTE, EventKind.REPOST, EventKind.GENERIC_REPOST, EventKind.POLL),
             accountPubkey,
             limit,
-        ).mapNotNull { runCatching { it.toEvent() }.getOrNull() }
+        ).mapNotNull { entity ->
+            runCatching { entity.toEvent() }.getOrNull()?.also { memCache.put(it.id, it) }
+        }
 
     /** Immediate single-event persistence (used for bookmarks and synchronous side-loads). */
     suspend fun save(event: Event, accountPubkey: String) {
+        memCache.put(event.id, event)
         // Side-loads (threads, quotes and notifications) pass an empty account
         // because they are not feed-owned. Do not let that erase the account
         // association of an event already cached by a feed.
@@ -71,6 +92,7 @@ class EventRepository @Inject constructor(private val dao: EventDao) {
      * events are queued), preventing per-event SQLite lock contention.
      */
     fun saveQueued(event: Event, accountPubkey: String) {
+        memCache.put(event.id, event)
         val shouldFlushNow = synchronized(writeLock) {
             val existing = pendingWrites[event.id]
             val mergedOwner = accountPubkey.ifBlank { existing?.second ?: "" }
@@ -109,27 +131,82 @@ class EventRepository @Inject constructor(private val dao: EventDao) {
         }
     }
 
-    suspend fun getById(id: String): Event? =
-        dao.getById(id)?.let { runCatching { it.toEvent() }.getOrNull() }
+    suspend fun getById(id: String): Event? {
+        memCache.get(id)?.let { return it }
+        return dao.getById(id)?.let { runCatching { it.toEvent() }.getOrNull() }
+            ?.also { memCache.put(it.id, it) }
+    }
 
     suspend fun getLatestByAuthorAndKind(pubkey: String, kind: Int): Event? =
-        dao.getLatestByAuthorAndKind(pubkey.lowercase(), kind)?.let { runCatching { it.toEvent() }.getOrNull() }
+        dao.getLatestByAuthorAndKind(pubkey.lowercase(), kind)
+            ?.let { runCatching { it.toEvent() }.getOrNull() }
+            ?.also { memCache.put(it.id, it) }
 
     suspend fun getByIds(ids: List<String>): List<Event> {
         val unique = ids.distinct()
         if (unique.isEmpty()) return emptyList()
-        // Chunk IN (:ids) queries to stay well under SQLite's 999 bind-variable limit on API 26-29.
-        return unique.chunked(SQLITE_IN_BATCH)
-            .flatMap { batch -> dao.getByIds(batch) }
-            .mapNotNull { runCatching { it.toEvent() }.getOrNull() }
+        val found = ArrayList<Event>(unique.size)
+        val missing = mutableListOf<String>()
+        for (id in unique) {
+            val cached = memCache.get(id)
+            if (cached != null) found += cached else missing += id
+        }
+        if (missing.isNotEmpty()) {
+            // Chunk IN (:ids) queries to stay well under SQLite's 999 bind-variable limit on API 26-29.
+            missing.chunked(SQLITE_IN_BATCH)
+                .flatMap { batch -> dao.getByIds(batch) }
+                .mapNotNull { runCatching { it.toEvent() }.getOrNull() }
+                .forEach { ev ->
+                    memCache.put(ev.id, ev)
+                    found += ev
+                }
+        }
+        return found
     }
 
     suspend fun getRecentAuthoredEvents(pubkey: String, limit: Int = 600): List<Event> =
-        dao.getRecentByAuthor(pubkey, limit).mapNotNull { runCatching { it.toEvent() }.getOrNull() }
+        dao.getRecentByAuthor(pubkey, limit)
+            .mapNotNull { runCatching { it.toEvent() }.getOrNull() }
+            .onEach { memCache.put(it.id, it) }
 
-    /** Trims ancient cached events on startup so long-lived databases stay lean. */
-    suspend fun pruneOld(maxKeep: Int = social.tbone.Tunables.MAX_CACHED_EVENTS): Int =
-        dao.keepLatest(maxKeep)
+    /**
+     * Per-account & own-note protected pruning: prevents a busy secondary account
+     * from wiping another account's cached Home feed or own authored notes.
+     */
+    suspend fun pruneOld(
+        maxKeep: Int = appSettings.cachePreset.value.maxCachedEvents,
+        protectedOwnPubkeys: Collection<String> = emptyList(),
+    ): Int {
+        val safeMax = maxKeep.coerceAtLeast(300)
+        val accounts = (dao.distinctAccountPubkeys() + protectedOwnPubkeys)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+        if (accounts.isEmpty()) {
+            return dao.keepLatest(safeMax)
+        }
+        var deleted = 0
+        val feedBudget = (safeMax * 2) / 3
+        val perAccountKeep = (feedBudget / accounts.size).coerceAtLeast(300)
+        val ownKeep = (perAccountKeep / 3).coerceIn(150, 600)
+        val sharedKeep = (safeMax - feedBudget).coerceAtLeast(250)
+        for (acct in accounts) {
+            deleted += dao.keepLatestForAccount(acct, perAccountKeep)
+            deleted += dao.keepLatestOwnAuthored(acct, ownKeep)
+        }
+        deleted += dao.keepLatestShared(sharedKeep)
+        return deleted
+    }
+
+    fun clearMemory() {
+        synchronized(writeLock) { pendingWrites.clear() }
+        memCache.evictAll()
+    }
+
+    suspend fun clearAll() {
+        clearMemory()
+        dao.clearAll()
+    }
 
     companion object {
         private const val SQLITE_IN_BATCH = 500

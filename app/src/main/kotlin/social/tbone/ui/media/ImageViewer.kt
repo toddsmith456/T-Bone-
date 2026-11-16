@@ -156,6 +156,8 @@ fun ImageViewer(
         val viewerRequest = remember(url, revealedInViewer, authorPubkey, imetaSha256, contentFilter.aiFilterConfig, contentFilter.aiHasInstalledModel) {
             ImageRequest.Builder(context)
                 .data(url)
+                .diskCacheKey(social.tbone.cache.CacheKeyPolicy.mediaDiskKey(url))
+                .memoryCacheKey(social.tbone.cache.CacheKeyPolicy.mediaMemoryKey(url, social.tbone.cache.CacheKeyPolicy.VARIANT_VIEWER))
                 .setParameter(AiCoilParams.SURFACE, ScanSurface.FEED_MEDIA.name, memoryCacheKey = null)
                 .apply {
                     if (revealedInViewer) setParameter(AiCoilParams.BYPASS, true, memoryCacheKey = null)

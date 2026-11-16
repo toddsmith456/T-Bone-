@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import social.tbone.Tunables
 import social.tbone.account.AccountRepository
+import social.tbone.db.EngagementCacheEntity
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
 import social.tbone.nostr.replyEventId
@@ -38,6 +39,7 @@ class RepliesRepository @Inject constructor(
     private val pool: RelayPool,
     private val accountRepository: AccountRepository,
     private val engagementCoordinator: EngagementSubscriptionCoordinator,
+    private val engagementCache: EngagementCacheRepository,
 ) {
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Timber.e(throwable, "Uncaught exception in RepliesRepository")
@@ -45,6 +47,7 @@ class RepliesRepository @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + exceptionHandler)
 
     private val replyCountCache = LruCache<String, Int>(Tunables.REACTION_CACHE_SIZE)
+    private val liveReplyCountCache = LruCache<String, Int>(Tunables.REACTION_CACHE_SIZE)
     private val repliedCache = LruCache<String, Boolean>(Tunables.REACTION_CACHE_SIZE)
     // Reply event IDs already counted — prevents the SAME reply from being
     // counted multiple times when it arrives via several subscriptions
@@ -132,6 +135,47 @@ class RepliesRepository @Inject constructor(
         }
     }
 
+    /** Seeds cold-start reply counts from Room before relay EOSE returns. */
+    fun seedFromCache(entries: List<EngagementCacheEntity>) {
+        if (entries.isEmpty()) return
+        val seededCounts = LinkedHashMap<String, Int>()
+        val seededMine = LinkedHashSet<String>()
+        synchronized(replyCountCache) {
+            for (entry in entries) {
+                if (entry.replyCount > 0 && replyCountCache.get(entry.eventId) == null) {
+                    replyCountCache.put(entry.eventId, entry.replyCount)
+                    seededCounts[entry.eventId] = entry.replyCount
+                }
+                if (entry.repliedByMe) {
+                    synchronized(repliedCache) { repliedCache.put(entry.eventId, true) }
+                    seededMine += entry.eventId
+                }
+            }
+        }
+        if (seededCounts.isNotEmpty()) {
+            _replies.update { current -> seededCounts + current }
+        }
+        if (seededMine.isNotEmpty()) {
+            _repliedByMe.update { current -> current + seededMine }
+        }
+    }
+
+    /** Clears all in-memory reply count state (used during duress wipe). */
+    fun clearMemory() {
+        synchronized(replyCountCache) {
+            replyCountCache.evictAll()
+            liveReplyCountCache.evictAll()
+        }
+        synchronized(repliedCache) { repliedCache.evictAll() }
+        synchronized(countedReplyIds) { countedReplyIds.evictAll() }
+        synchronized(pendingLock) {
+            pendingReplyCounts.clear()
+            pendingRepliedByMe.clear()
+        }
+        _replies.value = emptyMap()
+        _repliedByMe.value = emptySet()
+    }
+
     /** Subscribe to replies for any note IDs not yet tracked (batched + combined). */
     fun subscribeTo(eventIds: List<String>) {
         engagementCoordinator.subscribeForNotes(eventIds)
@@ -151,17 +195,25 @@ class RepliesRepository @Inject constructor(
         if (!isNew) return
 
         val count = synchronized(replyCountCache) {
-            val next = (replyCountCache.get(parentId) ?: 0) + 1
-            replyCountCache.put(parentId, next)
-            next
+            val live = (liveReplyCountCache.get(parentId) ?: 0) + 1
+            liveReplyCountCache.put(parentId, live)
+            val displayed = maxOf(replyCountCache.get(parentId) ?: 0, live)
+            replyCountCache.put(parentId, displayed)
+            displayed
         }
         val isOwnReply = activePubkey != null && reply.pubkey == activePubkey
-        if (isOwnReply) {
+        val didReply = if (isOwnReply) {
             synchronized(repliedCache) { repliedCache.put(parentId, true) }
+            true
+        } else {
+            synchronized(repliedCache) { repliedCache.get(parentId) == true }
         }
         synchronized(pendingLock) {
             pendingReplyCounts[parentId] = count
             if (isOwnReply) pendingRepliedByMe.add(parentId)
+        }
+        activePubkey?.let { acct ->
+            engagementCache.recordReplySnapshot(acct, parentId, count, didReply)
         }
         uiDirty.trySend(Unit)
     }
