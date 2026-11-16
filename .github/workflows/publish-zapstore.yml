@@ -129,6 +129,7 @@ jobs:
             -config "$GITHUB_WORKSPACE/zapstore.yaml"
             -cert "$TMP_DIR/cert.pem"
             -key "$TMP_DIR/key.pem"
+            -deterministic-bunker-key
           )
           if [ -n "$INPUT_OWNER_PUBKEY" ]; then
             ARGS+=(-owner-pubkey "$INPUT_OWNER_PUBKEY")

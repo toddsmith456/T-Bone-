@@ -10,6 +10,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -23,6 +24,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -216,6 +218,52 @@ func resolveOwnerPubkey(explicit, signWith string) (string, error) {
 	return "", errors.New("SIGN_WITH must start with bunker:// or nsec1")
 }
 
+// ensureDeterministicBunkerClientKey seeds zsp's NIP-46 bunker client key file
+// deterministically from SIGN_WITH so ephemeral CI runners always present the
+// same client pubkey to the remote bunker instead of burning single-use bunker
+// secrets on every run.
+func ensureDeterministicBunkerClientKey(signWith string) error {
+	if !strings.HasPrefix(signWith, "bunker://") {
+		return nil
+	}
+	parsed, err := url.Parse(signWith)
+	if err != nil {
+		return fmt.Errorf("parse bunker URL: %w", err)
+	}
+	targetPubkey := parsed.Host
+	if !isLowerHex64(strings.ToLower(targetPubkey)) {
+		return errors.New("bunker URL host is not a valid 64-char hex pubkey")
+	}
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return fmt.Errorf("resolve user config dir: %w", err)
+	}
+	keyPath := filepath.Join(configDir, "zsp", "bunker-keys", targetPubkey+".key")
+	if _, err := os.Stat(keyPath); err == nil {
+		return nil
+	}
+
+	mac := hmac.New(sha256.New, []byte(signWith))
+	_, _ = mac.Write([]byte("tbone-zsp-bunker-client-v1"))
+	clientKey := hex.EncodeToString(mac.Sum(nil))
+	clientPubkey, err := gonostr.GetPublicKey(clientKey)
+	if err != nil {
+		return fmt.Errorf("derive deterministic bunker client pubkey: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(keyPath), 0o700); err != nil {
+		return fmt.Errorf("create bunker key dir: %w", err)
+	}
+	if err := os.WriteFile(keyPath, []byte(clientKey+"\n"), 0o600); err != nil {
+		return fmt.Errorf("write bunker client key: %w", err)
+	}
+	if err := os.Chmod(keyPath, 0o600); err != nil {
+		return fmt.Errorf("chmod bunker client key: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "Prepared deterministic NIP-46 bunker client pubkey %s\n", clientPubkey)
+	return nil
+}
+
 func main() {
 	configPath := flag.String("config", "zapstore.yaml", "Path to zapstore.yaml")
 	certPath := flag.String("cert", "", "Path to PEM signing certificate for NIP-C1 proof")
@@ -223,6 +271,7 @@ func main() {
 	ownerPubkey := flag.String("owner-pubkey", "", "Optional owner Nostr pubkey (npub1... or 64-char hex)")
 	overwriteRelease := flag.Bool("overwrite-release", false, "Allow republishing an equal versionCode")
 	overwriteAppEvent := flag.Bool("overwrite-app-event", false, "Republish kind 32267 even if unchanged")
+	deterministicBunkerKey := flag.Bool("deterministic-bunker-key", false, "Derive a stable NIP-46 bunker client key from SIGN_WITH for ephemeral CI runners")
 	flag.Parse()
 
 	signWith := strings.TrimSpace(os.Getenv("SIGN_WITH"))
@@ -237,6 +286,12 @@ func main() {
 	if err := os.Setenv("SIGN_WITH", signWith); err != nil {
 		fmt.Fprintf(os.Stderr, "error: set SIGN_WITH: %v\n", err)
 		os.Exit(1)
+	}
+	if *deterministicBunkerKey {
+		if err := ensureDeterministicBunkerClientKey(signWith); err != nil {
+			fmt.Fprintf(os.Stderr, "error: prepare deterministic bunker client key: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
