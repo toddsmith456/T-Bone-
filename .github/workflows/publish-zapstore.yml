@@ -1,19 +1,17 @@
 name: Publish to Zapstore
 
-# Manually triggered workflow to claim (NIP-C1 kind 30509) and publish the
-# latest signed GitHub Release of social.tbone.fork to zapstore.dev using the
-# official zapstore/zsp v2 Go library.
+# Automatically publishes each successful Release APK build to zapstore.dev
+# (and supports manual workflow_dispatch for re-publishing or updating metadata)
+# using the official zapstore/zsp v2 Go library + NIP-C1 kind 30509 proof.
 #
 # Required repository secrets:
 #   - ZAPSTORE_SIGN_WITH  (bunker://... or nsec1... — NEVER commit to git!)
 #   - KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD (already set)
-#
-# Once the first claim + release succeeds, Zapstore's catalog indexer can
-# automatically pick up subsequent public GitHub Releases under your claimed
-# Nostr profile, so you can delete ZAPSTORE_SIGN_WITH and revoke the bunker
-# connection afterward if desired.
 
 on:
+  workflow_run:
+    workflows: ["Release APK"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       owner_pubkey:
@@ -36,6 +34,9 @@ permissions:
 
 jobs:
   publish-zapstore:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -114,9 +115,9 @@ jobs:
           SIGN_WITH: ${{ secrets.ZAPSTORE_SIGN_WITH }}
           GITHUB_TOKEN: ${{ github.token }}
           GOTOOLCHAIN: auto
-          INPUT_OWNER_PUBKEY: ${{ inputs.owner_pubkey }}
-          INPUT_OVERWRITE_RELEASE: ${{ inputs.overwrite_release }}
-          INPUT_OVERWRITE_APP_EVENT: ${{ inputs.overwrite_app_event }}
+          INPUT_OWNER_PUBKEY: ${{ inputs.owner_pubkey || 'npub13c0ralhk2zdealz98kp4jz2qkmn92uc86k9cn40hpa8c237vdcyszpe8s8' }}
+          INPUT_OVERWRITE_RELEASE: ${{ inputs.overwrite_release || 'false' }}
+          INPUT_OVERWRITE_APP_EVENT: ${{ inputs.overwrite_app_event || 'false' }}
         run: |
           set -euo pipefail
           TMP_DIR="$RUNNER_TEMP/zapstore-keystore"

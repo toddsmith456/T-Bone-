@@ -5,6 +5,25 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-11-16
+
+### Added
+- **5-tier Storage & Cache presets and live storage dashboard in Settings.** Replaced the old binary lightweight toggle with five selectable presets — **Ultra-Light** (~60 MB), **Compact** (~150 MB), **Balanced** (~450 MB, default), **Performance** (~1.2 GB), and **Turbo** (~3.0 GB) — alongside live per-bucket disk/item breakdowns and granular Clear buttons for Avatars, Feed Images, Video & Audio, Unfollowed Profiles, Feed Events, or Clear All. Existing lightweight installs migrate automatically to Compact.
+- **On-disk video and audio caching (`MediaCacheManager`).** Full-screen videos and inline voice/audio notes now share a Media3 `SimpleCache` on disk (Tor-safe and cleared on duress wipe) so replaying clips or scrubbing starts instantly without re-downloading.
+- **Tor-safe avatar and viewport prefetching.** Follows' avatars warm proactively and upcoming feed avatars/images look ahead according to your chosen preset; speculative prefetching pauses automatically whenever Tor mode is enabled.
+- **Instant offline profile search and `@mention` autocomplete.** Profile search and composer `@mention` suggestions now query the full local Room profile index (`searchText`) so contacts show up immediately even before relays respond.
+- **Cold-start engagement count persistence.** Recent per-account like and reply summaries persist locally across app restarts and merge smoothly with live relay updates instead of flashing `0` until EOSE.
+
+### Changed
+- **Dedicated, protected avatar cache with WebP thumbnail normalization.** Profile pictures now live in their own isolated `avatar_cache` separate from feed images and banners, ignore hostile CDN `no-cache` headers, normalize large static avatars (≥32 KB) to crisp ≤256 px WebP thumbnails (while keeping animated GIFs and SVGs untouched), and stay warm in RAM when switching away from T-Bone.
+- **Smarter profile and event caching (Room v20).** Added follow pinning, usage-based (`lastAccessedAt`) eviction, stale-while-revalidate refresh (`fetchedAt`), exponential backoff for missing profiles, tier-scaled event RAM LRU, and own-note protection during startup pruning.
+- **Unified media cache keys and media-tuned OkHttp pools.** Proxy image parameters are preserved while tracking parameters and URL fragments are stripped; feed images, gallery thumbnails, profile banners, and full-screen viewers share a single canonical disk entry; dedicated direct/Tor media clients enforce bounded connect/read/write timeouts while keeping Tor and clearnet connection pools strictly isolated.
+
+### Fixed
+- **1-frame avatar placeholder blink while scrolling.** `UserAvatar` now checks Coil's RAM cache synchronously before drawing the fallback initial dot, eliminating the brief flicker on scroll-back.
+- **Duress wipe and cache cleanup consistency.** `CacheCleaner` preserves all managed cache directories during routine temp sweeps, while `DataWiper` cleanly releases Media3 cache leases and wipes every RAM and disk cache bucket on duress wipe.
+
+
 ## [0.6.0] — 2026-11-15
 
 ### Added

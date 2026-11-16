@@ -16,7 +16,7 @@ description: |
 
   • Your Feed, Your Rules — Four built-in feeds (Follows, Clock time-machine frozen 1–24 hours back, a curated Suggested roster of 1,300+ accounts, and Global) plus custom home tabs for People lists (manual or NIP-51 sets), specific relays, hashtags, and NIP-88 polls. Full threads, quote notes, reposts, emoji reactions, NIP-51 bookmarks & folders, profile pins, search, and branded image/video share cards.
 
-  • Lightweight & Fast by Design — Native libsecp256k1 Schnorr signature verification, batched viewport engagement subscriptions, per-card UI updates, non-blocking media rendering, and an Android Baseline Profile keep scrolling crisp even across busy relay sets.
+  • Lightweight & Fast by Design — Native libsecp256k1 Schnorr signature verification, a dedicated protected avatar cache with WebP thumbnail normalization, on-disk video/audio caching, 5-tier Storage & Cache presets with granular clear controls, instant offline profile search, batched viewport engagement subscriptions, per-card UI updates, non-blocking media rendering, and an Android Baseline Profile keep scrolling crisp even across busy relay sets.
 
   • Sovereign Identity & Multi-Account — Switch effortlessly between accounts using Amber (NIP-55), nsecBunker / remote signers (NIP-46), or an Android Keystore–backed local key. Human-readable BIP-39 word fingerprints and QR Verify Identity make it obvious who you're actually talking to.
 
