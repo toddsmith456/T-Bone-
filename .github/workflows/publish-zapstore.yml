@@ -17,9 +17,9 @@ on:
   workflow_dispatch:
     inputs:
       owner_pubkey:
-        description: 'Optional owner Nostr pubkey (npub1... or 64-char hex). Leave blank to use the bunker URL host pubkey.'
+        description: 'Owner Nostr pubkey (npub1... or 64-char hex). Defaults to T-Bone developer npub.'
         required: false
-        default: ''
+        default: 'npub13c0ralhk2zdealz98kp4jz2qkmn92uc86k9cn40hpa8c237vdcyszpe8s8'
       overwrite_release:
         description: 'Allow republishing an equal versionCode'
         required: false

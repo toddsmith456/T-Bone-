@@ -1,33 +1,61 @@
 repository: https://github.com/toddsmith456/T-Bone-
 release_filter: '^v[0-9]+\.[0-9]+\.[0-9]+$'
 match: 'T-Bone-fork-v.*-release\.apk$'
+metadata_sources: []
 
-name: T-bone
-summary: A bare-bones, Google-free Nostr client for Android
+name: T-Bone
+summary: Privacy-first Nostr client & encrypted local toolbox for Android — zero Google services, zero tracking
 description: |
-  T-bone is a bare-bones Nostr client for Android — no Google Services, no
-  analytics, no tracking. Your private key never touches the app; signing is
-  always handled by an external signer like Amber. Identity is shown as
-  human-readable word phrases derived from your pubkey rather than truncated
-  hex strings.
+  T-Bone is a fast, privacy-first Nostr client and encrypted local toolbox for Android — built with zero Google Play Services, zero Firebase, zero analytics, and zero tracking, enforced automatically in CI on every PR and release.
 
-  This privacy fork (social.tbone.fork) installs side-by-side with the
-  original T-Bone, keeps the 100% privacy-focused / fully-open-source stance
-  with CI enforcement, and publishes every release automatically from GitHub
-  tags. Inline images with in-app viewer, real avatars, full notification
-  center, encrypted notes, themes, Tor support, and configurable video
-  playback.
+  Started as a minimalist Nostr fork, T-Bone has grown into a full-featured, self-sovereign Android client focused on speed, user control, and real-world privacy.
+
+  Key features:
+
+  • Customizable Feeds & Full Nostr Social — Four built-in feeds (Follows, Clock time-machine 1–24 hours back, Suggested roster of 1,300+ accounts, and Global) plus custom home tabs for People lists (manual or NIP-51 sets), specific relays, hashtags, and NIP-88 polls. Full threads, quote notes, reposts, emoji reactions, NIP-51 bookmarks & folders, profile pins, search, and branded image/video share cards.
+
+  • Fast, Lean Architecture — Native libsecp256k1 Schnorr signature verification, batched viewport engagement subscriptions, per-card UI updates, non-blocking media rendering, and an Android Baseline Profile.
+
+  • Multi-Account & External Signing — Switch between multiple accounts with Amber (NIP-55), nsecBunker / remote signers (NIP-46), or an Android Keystore–backed device-local key. Human-readable BIP-39 word fingerprints and QR verification make identities easy to confirm.
+
+  • Media, Blossom Uploads & Optional Offline AI NSFW Filter — Inline images, full-screen image/video viewers, audio playback, configurable video playback modes (On tap, Preload, Autoplay), and Blossom (BUD-11) uploads with multi-server failover, Beaver Mode (follows your kind 10063 server list), and per-post server override chips. Optional 100% on-device LiteRT AI NSFW scanner (zero cloud calls) with SHA-256-verified add-on models (Marqo ViT-384, MobileNetV2, or automatic 2-stage cascade) and tap-to-reveal veils.
+
+  • Encrypted Local Toolbox — On-device AES-256-GCM + Android Keystore encrypted Notes, Checklists, Folders & Attachments (with optional Decoy Notes vault), private Local Calendar with alarms, portable passphrase-encrypted Vault Backups, Voice Recorder with on-device voice effects, anonymous Geohash Channels, and an in-app Update Center.
+
+  • Non-Custodial Wallet Hand-offs — Lightning zaps (NIP-57) verify the BOLT-11 invoice amount before handing off to your external Lightning wallet; Monero xaps (NIP-A3 / kind 10133) hand off directly to your external Monero wallet.
+
+  • Privacy, OpSec & Anti-Coercion Controls — Optional Tor / Orbot routing, tracking-parameter link stripping, offline-only Follow & Block lists, App Lock and separate Toolbox PIN, Screenshot Blocking, Notepad Stealth Disguise, a Duress PIN that silently wipes private local data, content filters, screen-time limits, and a no-push-server in-app notifications inbox.
+
+  • Youniversal Themes & 18 Launcher Icons — Light, Dark, Cream, and Automatic themes, Material You and custom accent colors, adjustable corner roundness, text scaling, Standard Sans or Nunito Sans fonts, and 18 selectable launcher icons.
+
+  Installs side-by-side with the original T-Bone (social.tbone). Open source under the MIT license.
 tags:
   - nostr
   - social
+  - privacy
+  - open-source
+supported_nips:
+  - "01"
+  - "02"
+  - "09"
+  - "10"
+  - "18"
+  - "19"
+  - "21"
+  - "25"
+  - "27"
+  - "42"
+  - "44"
+  - "46"
+  - "51"
+  - "55"
+  - "56"
+  - "57"
+  - "65"
+  - "88"
+  - "A3"
 license: MIT
 website: https://github.com/toddsmith456/T-Bone-
 
 icon: ./assets/icon.png
-images:
-  - ./assets/screenshots/initial_screen.png
-  - ./assets/screenshots/home.png
-  - ./assets/screenshots/identity.png
-  - ./assets/screenshots/account_switcher.png
-  - ./assets/screenshots/settings.png
 release_notes: ./CHANGELOG.md
