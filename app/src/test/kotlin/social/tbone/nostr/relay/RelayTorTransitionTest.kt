@@ -2,8 +2,9 @@ package social.tbone.nostr.relay
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -36,7 +37,7 @@ class RelayTorTransitionTest {
             guard.update(true)
             assertFalse(connection.send(ClientMessage.Close("private-subscription")))
         } finally {
-            scope.cancel()
+            scope.coroutineContext[Job]?.cancelAndJoin()
             client.dispatcher.cancelAll()
             client.connectionPool.evictAll()
             client.dispatcher.executorService.shutdownNow()
@@ -83,7 +84,7 @@ class RelayTorTransitionTest {
             guard.update(true)
             withTimeout(5_000) { completed.await() }
         } finally {
-            scope.cancel()
+            scope.coroutineContext[Job]?.cancelAndJoin()
             client.dispatcher.cancelAll()
             client.connectionPool.evictAll()
             client.dispatcher.executorService.shutdownNow()

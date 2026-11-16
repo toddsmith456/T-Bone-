@@ -6,8 +6,9 @@ import androidx.datastore.preferences.core.Preferences
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -23,15 +24,16 @@ class PollVoteStoreTest {
     @Before
     fun setUp() {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        file = File.createTempFile("poll-votes", ".preferences_pb").also { it.delete() }
+        file = File.createTempFile("poll-votes", ".preferences_pb")
         dataStore = PreferenceDataStoreFactory.create(scope = scope) { file }
         store = PollVoteStore(dataStore)
     }
 
     @After
-    fun tearDown() {
-        scope.cancel()
+    fun tearDown() = runBlocking {
+        scope.coroutineContext[Job]?.cancelAndJoin()
         file.delete()
+        Unit
     }
 
     @Test

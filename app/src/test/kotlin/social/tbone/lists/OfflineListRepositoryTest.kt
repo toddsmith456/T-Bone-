@@ -5,8 +5,9 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -38,13 +39,17 @@ class OfflineListRepositoryTest {
 
     @Before fun setUp() {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        file = File.createTempFile("prefs", ".preferences_pb").also { it.delete() }
+        file = File.createTempFile("prefs", ".preferences_pb")
         store = PreferenceDataStoreFactory.create(scope = scope) { file }
         val pool = RelayPool(scope) { error("no network in unit tests") }
         repo = OfflineListRepository(store, RelayListFetcher(pool))
     }
 
-    @After fun tearDown() { scope.cancel(); file.delete() }
+    @After fun tearDown() = runBlocking {
+        scope.coroutineContext[Job]?.cancelAndJoin()
+        file.delete()
+        Unit
+    }
 
     private fun state(type: ListType, who: String) = runBlocking { repo.snapshot(type, who) }
 

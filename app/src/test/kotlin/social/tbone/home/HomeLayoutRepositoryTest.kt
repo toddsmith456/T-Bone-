@@ -7,8 +7,9 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -36,12 +37,16 @@ class HomeLayoutRepositoryTest {
 
     @Before fun setUp() {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        file = File.createTempFile("home_layout", ".preferences_pb").also { it.delete() }
+        file = File.createTempFile("home_layout", ".preferences_pb")
         store = PreferenceDataStoreFactory.create(scope = scope) { file }
         repo = HomeLayoutRepository(store)
     }
 
-    @After fun tearDown() { scope.cancel(); file.delete() }
+    @After fun tearDown() = runBlocking {
+        scope.coroutineContext[Job]?.cancelAndJoin()
+        file.delete()
+        Unit
+    }
 
     private fun awaitReady() = runBlocking {
         withTimeout(5_000) { while (!repo.loaded.value) delay(10) }

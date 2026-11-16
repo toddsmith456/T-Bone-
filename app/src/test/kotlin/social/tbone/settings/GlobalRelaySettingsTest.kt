@@ -3,8 +3,9 @@ package social.tbone.settings
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -20,12 +21,16 @@ class GlobalRelaySettingsTest {
     private lateinit var store: androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences>
     @Before fun setup() {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        file = File.createTempFile("relay-test", ".preferences_pb").also { it.delete() }
+        file = File.createTempFile("relay-test", ".preferences_pb")
         store = PreferenceDataStoreFactory.create(scope = scope) { file }
         settings = AppSettings(store, scope)
         runBlocking { settings.initialized.first { it } }
     }
-    @After fun cleanup() { scope.cancel(); file.delete() }
+    @After fun cleanup() = runBlocking {
+        scope.coroutineContext[Job]?.cancelAndJoin()
+        file.delete()
+        Unit
+    }
 
     @Test fun `empty global list and zero enabled are preserved, reset is explicit`() = runBlocking {
         val relay = "wss://example.org"
