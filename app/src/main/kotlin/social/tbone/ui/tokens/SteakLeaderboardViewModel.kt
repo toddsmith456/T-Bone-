@@ -62,7 +62,7 @@ class SteakLeaderboardViewModel @Inject constructor(
         pubkey?.let { summaries[it] ?: ProfileSteakSummary(pubkey = it) }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    val cooldownUntilEpochSec: StateFlow<Long> = steakRepository.cooldownUntilEpochSec
+    val cooldownUntilByRecipient: StateFlow<Map<String, Long>> = steakRepository.cooldownUntilByRecipient
 
     val incomingOffers: StateFlow<List<IncomingSteakOffer>> = steakRepository.incomingOffers
 

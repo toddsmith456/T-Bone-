@@ -180,9 +180,18 @@ class DailyTokensProtocolTest {
     }
 
     @Test
-    fun `rolling 24h sender cooldown rejects second offer within 86400s even if first went unclaimed`() {
-        // Alice sends Offer 1 to Charlie at T (unclaimed)
-        val o1 = requireNotNull(
+    fun `rolling 24h per-recipient cooldown allows unlimited distinct recipients while blocking same-recipient repeats`() {
+        // Alice sends Offer 1 to Bob at T (unclaimed)
+        val oBob1 = requireNotNull(
+            DailyTokens.parseOffer(
+                finalizeMined(DailyTokens.buildUnsignedOffer(alice, bob, DailyTokens.STEAK_SLUG, baseTime), 8),
+                baseTime + 100_000L,
+                requireSig = false,
+                minPowBits = 8,
+            ),
+        )
+        // Alice ALSO sends to Charlie at the EXACT same second T — allowed because Charlie is a different person!
+        val oCharlie1 = requireNotNull(
             DailyTokens.parseOffer(
                 finalizeMined(DailyTokens.buildUnsignedOffer(alice, charlie, DailyTokens.STEAK_SLUG, baseTime), 8),
                 baseTime + 100_000L,
@@ -190,8 +199,8 @@ class DailyTokensProtocolTest {
                 minPowBits = 8,
             ),
         )
-        // Alice cheats and sends Offer 2 to Bob at T + 86399s (1 second too early!)
-        val o2 = requireNotNull(
+        // Alice tries to send a second steak to Bob at T + 86399s (1 second too early for Bob!)
+        val oBobTooEarly = requireNotNull(
             DailyTokens.parseOffer(
                 finalizeMined(DailyTokens.buildUnsignedOffer(alice, bob, DailyTokens.STEAK_SLUG, baseTime + 86_399L), 8),
                 baseTime + 100_000L,
@@ -199,8 +208,8 @@ class DailyTokensProtocolTest {
                 minPowBits = 8,
             ),
         )
-        // Alice sends Offer 3 to Bob at T + 86400s (exact rolling 24h cooldown elapsed!)
-        val o3 = requireNotNull(
+        // Alice sends a valid second steak to Bob at T + 86400s (exact rolling 24h cooldown elapsed for Bob!)
+        val oBob2 = requireNotNull(
             DailyTokens.parseOffer(
                 finalizeMined(DailyTokens.buildUnsignedOffer(alice, bob, DailyTokens.STEAK_SLUG, baseTime + 86_400L), 8),
                 baseTime + 100_000L,
@@ -209,22 +218,35 @@ class DailyTokensProtocolTest {
             ),
         )
 
-        val validOfferIds = DailyTokens.resolveValidOfferIdsForSender(listOf(o3, o2, o1))
-        assertTrue(o1.offerId in validOfferIds)
-        assertFalse("Offer 2 violated 86400s rolling cooldown", o2.offerId in validOfferIds)
-        assertTrue("Offer 3 respected 86400s rolling cooldown from Offer 1", o3.offerId in validOfferIds)
+        val validOfferIds = DailyTokens.resolveValidOfferIds(listOf(oBob2, oBobTooEarly, oCharlie1, oBob1))
+        assertTrue("First offer to Bob is valid", oBob1.offerId in validOfferIds)
+        assertTrue("Simultaneous offer to Charlie is valid", oCharlie1.offerId in validOfferIds)
+        assertFalse("Second offer to Bob within 86400s is rejected", oBobTooEarly.offerId in validOfferIds)
+        assertTrue("Second offer to Bob after 86400s is valid", oBob2.offerId in validOfferIds)
 
-        // Bob tries to claim Offer 2 — extraSenderOffers exposes Offer 1, disqualifying Offer 2
-        val c2 = requireNotNull(
+        // Check per-recipient cooldown helper right after sending only to Bob at baseTime:
+        assertEquals(
+            baseTime + 86_400L,
+            DailyTokens.cooldownUntilForRecipient(alice, bob, DailyTokens.STEAK_SLUG, listOf(oBob1), baseTime + 100L),
+        )
+        assertEquals(
+            0L,
+            DailyTokens.cooldownUntilForRecipient(alice, charlie, DailyTokens.STEAK_SLUG, listOf(oBob1), baseTime + 100L),
+        )
+        val map = DailyTokens.cooldownUntilByRecipient(alice, DailyTokens.STEAK_SLUG, listOf(oBob1), baseTime + 100L)
+        assertEquals(mapOf(bob to (baseTime + 86_400L)), map)
+
+        // Bob tries to claim oBobTooEarly — extraSenderOffers exposes unclaimed oBob1 to Bob, disqualifying oBobTooEarly
+        val cTooEarly = requireNotNull(
             DailyTokens.parseClaim(
-                finalizeMined(DailyTokens.buildUnsignedClaim(bob, o2, baseTime + 86_450L).getOrThrow(), 8),
+                finalizeMined(DailyTokens.buildUnsignedClaim(bob, oBobTooEarly, baseTime + 86_450L).getOrThrow(), 8),
                 requireSig = false,
                 minPowBits = 8,
             ),
         )
-        val c3 = requireNotNull(
+        val cBob2 = requireNotNull(
             DailyTokens.parseClaim(
-                finalizeMined(DailyTokens.buildUnsignedClaim(bob, o3, baseTime + 86_460L).getOrThrow(), 8),
+                finalizeMined(DailyTokens.buildUnsignedClaim(bob, oBob2, baseTime + 86_460L).getOrThrow(), 8),
                 requireSig = false,
                 minPowBits = 8,
             ),
@@ -236,8 +258,8 @@ class DailyTokensProtocolTest {
                         ownerPubkey = bob,
                         slug = DailyTokens.STEAK_SLUG,
                         entries = listOf(
-                            DailyTokens.LedgerEntry(c2.claimId, o2.offerId),
-                            DailyTokens.LedgerEntry(c3.claimId, o3.offerId),
+                            DailyTokens.LedgerEntry(cTooEarly.claimId, oBobTooEarly.offerId),
+                            DailyTokens.LedgerEntry(cBob2.claimId, oBob2.offerId),
                         ),
                         createdAt = baseTime + 86_500L,
                     ),
@@ -250,13 +272,13 @@ class DailyTokensProtocolTest {
             recipientPubkey = bob,
             slug = DailyTokens.STEAK_SLUG,
             primaryLedger = ledger,
-            offersById = mapOf(o2.offerId to o2, o3.offerId to o3),
-            claimsById = mapOf(c2.claimId to c2, c3.claimId to c3),
-            extraSenderOffers = listOf(o1),
+            offersById = mapOf(oBobTooEarly.offerId to oBobTooEarly, oBob2.offerId to oBob2),
+            claimsById = mapOf(cTooEarly.claimId to cTooEarly, cBob2.claimId to cBob2),
+            extraSenderOffers = listOf(oBob1, oCharlie1),
         )
 
         assertEquals(1, verified.size)
-        assertEquals(o3.offerId, verified.first().offerId)
+        assertEquals(oBob2.offerId, verified.first().offerId)
     }
 
     @Test

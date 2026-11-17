@@ -122,9 +122,13 @@ class SteakRepository @Inject constructor(
     /** Latest parsed primary ledger observed per pubkey (in-memory hot mirror). */
     private val observedLedgers = ConcurrentHashMap<String, DailyTokens.ParsedTokenLedger>()
 
-    private val _cooldownUntilEpochSec = MutableStateFlow(0L)
-    /** Epoch seconds when the active user's next steak unlocks, or 0L if ready now. */
-    val cooldownUntilEpochSec: StateFlow<Long> = _cooldownUntilEpochSec.asStateFlow()
+    private val _cooldownUntilByRecipient = MutableStateFlow<Map<String, Long>>(emptyMap())
+    /**
+     * Active rolling 24-hour cooldown expiry timestamps (epoch seconds) keyed by
+     * `recipientPubkey`. Recipients not in this map (or with value <= now) can
+     * receive a steak right now.
+     */
+    val cooldownUntilByRecipient: StateFlow<Map<String, Long>> = _cooldownUntilByRecipient.asStateFlow()
 
     private val _incomingOffers = MutableStateFlow<List<IncomingSteakOffer>>(emptyList())
     val incomingOffers: StateFlow<List<IncomingSteakOffer>> = _incomingOffers.asStateFlow()
@@ -184,7 +188,7 @@ class SteakRepository @Inject constructor(
         mySentOffers.clear()
         myIncomingOffers.clear()
         myClaimsByOfferId.clear()
-        _cooldownUntilEpochSec.value = 0L
+        _cooldownUntilByRecipient.value = emptyMap()
         _incomingOffers.value = emptyList()
         _claimedOfferIds.value = emptySet()
         _claimingOfferIds.value = emptySet()
@@ -212,13 +216,13 @@ class SteakRepository @Inject constructor(
         val now = nowEpochSeconds()
         liveSubId = pool.subscribe(
             filters = listOf(
-                // My outgoing steak offers in the last 24h (cooldown sync).
+                // My outgoing steak offers in the last 24h (per-recipient cooldown sync).
                 Filter(
                     kinds = listOf(EventKind.TOKEN_OFFER),
                     authors = listOf(pubkey),
                     tTags = listOf(DailyTokens.STEAK_SLUG),
                     since = now - DailyTokens.COOLDOWN_SECONDS,
-                    limit = 20,
+                    limit = 200,
                 ),
                 // Incoming steak offers addressed to me in the last 24h.
                 Filter(
@@ -307,7 +311,7 @@ class SteakRepository @Inject constructor(
     }
 
     private fun recomputeCooldown(me: String) {
-        _cooldownUntilEpochSec.value = DailyTokens.cooldownUntilEpochSeconds(
+        _cooldownUntilByRecipient.value = DailyTokens.cooldownUntilByRecipient(
             senderPubkey = me,
             slug = DailyTokens.STEAK_SLUG,
             offers = mySentOffers.values,
@@ -366,16 +370,17 @@ class SteakRepository @Inject constructor(
 
         _sendingToPubkey.value = recipientPubkey
         try {
-            // Check relays for recent offers from us to avoid racing another device.
+            // Check relays for recent offers from us to this specific recipient to avoid racing another device.
             val nowCheck = nowEpochSeconds()
             val recentRelayOffers = queryOnce(
                 filters = listOf(
                     Filter(
                         kinds = listOf(EventKind.TOKEN_OFFER),
                         authors = listOf(me),
+                        pTags = listOf(recipientPubkey),
                         tTags = listOf(DailyTokens.STEAK_SLUG),
                         since = nowCheck - DailyTokens.COOLDOWN_SECONDS,
-                        limit = 20,
+                        limit = 10,
                     ),
                 ),
                 label = "steak-cooldown-check",
@@ -383,17 +388,27 @@ class SteakRepository @Inject constructor(
             )
             recentRelayOffers.forEach { ev ->
                 DailyTokens.parseOffer(ev, nowCheck, requireSig = true)
-                    ?.takeIf { it.slug == DailyTokens.STEAK_SLUG && it.senderPubkey == me }
+                    ?.takeIf {
+                        it.slug == DailyTokens.STEAK_SLUG &&
+                            it.senderPubkey == me &&
+                            it.recipientPubkey == recipientPubkey
+                    }
                     ?.let { mySentOffers[it.offerId] = it }
             }
             recomputeCooldown(me)
 
-            val unlockAt = _cooldownUntilEpochSec.value
             val now = nowEpochSeconds()
+            val unlockAt = DailyTokens.cooldownUntilForRecipient(
+                senderPubkey = me,
+                recipientPubkey = recipientPubkey,
+                slug = DailyTokens.STEAK_SLUG,
+                offers = mySentOffers.values,
+                nowSeconds = now,
+            )
             if (unlockAt > now) {
                 val wait = DailyTokens.formatRemainingDuration(unlockAt - now)
                 return@withLock Result.failure(
-                    IllegalStateException("Daily steak already sent — next steak ready in $wait"),
+                    IllegalStateException("You already sent them a steak — next ready in $wait"),
                 )
             }
 
@@ -901,9 +916,9 @@ class SteakRepository @Inject constructor(
             }
         }
 
-        // Optional deeper cooldown audit: check each sender's surrounding 8701 history on relays.
+        // Optional deeper cooldown audit: check each sender's surrounding 8701 history to this recipient on relays.
         val extraSenderOffers = if (auditSenderCooldowns && offersById.isNotEmpty()) {
-            fetchSurroundingSenderOffers(offersById.values)
+            fetchSurroundingSenderOffers(primary.ownerPubkey, offersById.values)
         } else {
             emptyList()
         }
@@ -1011,8 +1026,8 @@ class SteakRepository @Inject constructor(
     ): List<DailyTokens.VerifiedTokenReceipt> {
         val unique = receipts.distinctBy { it.offerId }
         val kept = mutableListOf<DailyTokens.VerifiedTokenReceipt>()
-        for ((_, bySender) in unique.groupBy { it.senderPubkey }) {
-            val sorted = bySender.sortedWith(
+        for ((_, byPair) in unique.groupBy { it.senderPubkey to it.recipientPubkey }) {
+            val sorted = byPair.sortedWith(
                 compareBy<DailyTokens.VerifiedTokenReceipt> { it.offeredAt }.thenBy { it.offerId },
             )
             var lastValidAt: Long? = null
@@ -1162,6 +1177,7 @@ class SteakRepository @Inject constructor(
     }
 
     private suspend fun fetchSurroundingSenderOffers(
+        recipientPubkey: String,
         offers: Collection<DailyTokens.ParsedTokenOffer>,
     ): List<DailyTokens.ParsedTokenOffer> {
         val senders = offers.map { it.senderPubkey }.distinct()
@@ -1176,6 +1192,7 @@ class SteakRepository @Inject constructor(
                     Filter(
                         kinds = listOf(EventKind.TOKEN_OFFER),
                         authors = chunk,
+                        pTags = listOf(recipientPubkey),
                         tTags = listOf(DailyTokens.STEAK_SLUG),
                         since = minAt.coerceAtLeast(0L),
                         until = maxAt,
@@ -1186,7 +1203,9 @@ class SteakRepository @Inject constructor(
                 timeoutMs = 3_000L,
             )
             events.mapNotNull { DailyTokens.parseOffer(it, now, requireSig = true) }
-                .filterTo(extra) { it.slug == DailyTokens.STEAK_SLUG }
+                .filterTo(extra) {
+                    it.slug == DailyTokens.STEAK_SLUG && it.recipientPubkey == recipientPubkey
+                }
         }
         return extra
     }
@@ -1266,7 +1285,7 @@ class SteakRepository @Inject constructor(
         myIncomingOffers.clear()
         myClaimsByOfferId.clear()
         observedLedgers.clear()
-        _cooldownUntilEpochSec.value = 0L
+        _cooldownUntilByRecipient.value = emptyMap()
         _incomingOffers.value = emptyList()
         _claimedOfferIds.value = emptySet()
         _claimingOfferIds.value = emptySet()

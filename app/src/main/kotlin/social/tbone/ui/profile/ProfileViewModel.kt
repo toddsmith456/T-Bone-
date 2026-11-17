@@ -298,7 +298,13 @@ class ProfileViewModel @Inject constructor(
                 ?: social.tbone.tokens.ProfileSteakSummary(pubkey = pubkey),
         )
 
-    val steakCooldownUntil: StateFlow<Long> = steakRepository.cooldownUntilEpochSec
+    val steakCooldownUntil: StateFlow<Long> = steakRepository.cooldownUntilByRecipient
+        .map { it[pubkey] ?: 0L }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            steakRepository.cooldownUntilByRecipient.value[pubkey] ?: 0L,
+        )
 
     val isSendingSteak: StateFlow<Boolean> = steakRepository.sendingToPubkey
         .map { it == pubkey }

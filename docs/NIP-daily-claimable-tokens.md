@@ -6,7 +6,7 @@
 
 This NIP defines lightweight, text-only, peer-to-peer **Daily Claimable Tokens** on Nostr (for example, `steak`).
 
-- Any pubkey may send **one** token of a given type every **24 hours** (rolling cooldown) to any other pubkey.
+- Any pubkey may send **one** token of a given type every **24 hours** (rolling cooldown) **per recipient** — a sender can send to as many different people as they want in a day, and can send to the same person again once 24 hours have passed.
 - The recipient must **claim** the token within **24 hours** of when it was sent, or it expires unclaimed and does not count.
 - Accepted tokens are listed on the recipient's **Profile Token Ledger** (analogous to NIP-58 Profile Badges) so clients can display verified token counts on profiles and build decentralized leaderboards.
 - Tokens are **text-only** (`content` is empty; no hosted image URLs). All visual artwork is rendered client-side.
@@ -169,18 +169,18 @@ For a `(claim, offer)` pair belonging to recipient `R` and token `<slug>` to be 
 ### One Claim Per Offer
 9. Each `offer.id` may be counted **at most once**. If multiple valid `8702` Claims exist for the same `offer.id`, only the earliest `(created_at ASC, id ASC)` is canonical. Duplicate `claim` or `offer` references in a `38701` ledger MUST be deduplicated by `offer.id`.
 
-### Rolling 24-Hour Sender Cooldown (86,400 seconds)
-10. A sender `S` may only issue **one** valid Offer of token `<slug>` per rolling 24-hour window (to any recipient; sending to the same recipient again after 24 hours is allowed).
+### Rolling 24-Hour Per-Recipient Cooldown (86,400 seconds)
+10. A sender `S` may send a token `<slug>` to as many **different** recipients per day as they wish, but may only issue **one** valid Offer of `<slug>` to any given recipient `R` per rolling 24-hour window (sending to `R` again after 86,400 seconds is allowed).
 11. To resolve cooldown deterministically across clients:
-    - Collect all structurally valid `kind: 8701` Offers by `(S, <slug>)` and sort ascending by `(created_at ASC, id ASC)`.
+    - Collect all structurally valid `kind: 8701` Offers for the tuple `(S, R, <slug>)` and sort ascending by `(created_at ASC, id ASC)`.
     - Initialize `last_valid_at = null`.
     - For each offer in order:
       - If `last_valid_at == null` OR `offer.created_at - last_valid_at >= 86400`, mark the offer **cooldown-valid** and set `last_valid_at = offer.created_at`.
       - Otherwise, mark the offer **invalid** (cooldown violation).
-    - **Unclaimed offers still consume the sender's cooldown.** This prevents senders from broadcasting multiple offers hoping one is accepted.
+    - **Unclaimed offers to `R` still consume the sender's 24-hour cooldown for `R`.** This prevents senders from broadcasting multiple offers to the same recipient hoping one is accepted.
 
 > **Verification Depth (Fast vs. Full):**
-> At minimum, clients MUST enforce rule 11 across all offers observed in a profile or leaderboard verification batch (preventing a sender from awarding multiple tokens to the same recipient within 24 hours). For higher assurance on profile detail views and top leaderboard rows, clients SHOULD additionally query each sender's recent `kind: 8701` offers around `[offer.created_at - 86400, offer.created_at]` on connected relays.
+> At minimum, clients MUST enforce rule 11 across all offers observed in a profile or leaderboard verification batch (preventing a sender from awarding multiple tokens to the same recipient within 24 hours). For higher assurance on profile detail views, clients SHOULD additionally query each sender's recent `kind: 8701` offers addressed to `R` (`#p = [R]`) around `[offer.created_at - 86400, offer.created_at]` on connected relays.
 
 ---
 
@@ -192,9 +192,9 @@ All primary queries use single-letter NIP-01 indexed tags (`#p`, `#t`, `#e`, `#d
   ```json
   ["REQ", "sub", {"kinds": [8701], "#p": ["<bob>"], "#t": ["steak"], "since": "<now - 86400>"}]
   ```
-- **Check whether `alice` is on cooldown:**
+- **Check whether `alice` is on cooldown for `bob` (or omit `#p` to hydrate all active recipients):**
   ```json
-  ["REQ", "sub", {"kinds": [8701], "authors": ["<alice>"], "#t": ["steak"], "since": "<now - 86400>"}]
+  ["REQ", "sub", {"kinds": [8701], "authors": ["<alice>"], "#p": ["<bob>"], "#t": ["steak"], "since": "<now - 86400>"}]
   ```
 - **Check whether `bob` already claimed a set of offers:**
   ```json

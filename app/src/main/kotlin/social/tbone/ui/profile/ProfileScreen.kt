@@ -557,7 +557,7 @@ fun ProfileScreen(
                                 Spacer(Modifier.width(8.dp))
                                 Text(
                                     text = if (cooldownRemaining > 0L) {
-                                        "NEXT STEAK IN ${DailyTokens.formatRemainingDuration(cooldownRemaining).uppercase()}"
+                                        "SENT · NEXT IN ${DailyTokens.formatRemainingDuration(cooldownRemaining).uppercase()}"
                                     } else {
                                         "SEND STEAK"
                                     },
@@ -711,14 +711,14 @@ fun ProfileScreen(
                         SteakIcon(size = 26.dp, contentDescription = null)
                         Spacer(Modifier.width(10.dp))
                         Text(
-                            text = "Send today's Steak?",
+                            text = "Send a Steak?",
                             style = BonyType.title.copy(color = BonyColors.Text),
                         )
                     }
                 },
                 text = {
                     Text(
-                        text = "Send a steak to $targetName. They must accept it within 24 hours for it to count on their profile, and your next steak unlocks in 24 hours.",
+                        text = "Send a steak to $targetName. They have 24 hours to accept it for it to count on their profile. You can send 1 steak per person every 24 hours.",
                         style = BonyType.body.copy(color = BonyColors.TextDim),
                     )
                 },

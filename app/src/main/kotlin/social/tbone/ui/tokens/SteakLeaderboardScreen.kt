@@ -62,7 +62,7 @@ fun SteakLeaderboardScreen(
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
     val activePubkey by viewModel.activePubkey.collectAsStateWithLifecycle()
     val mySummary by viewModel.mySummary.collectAsStateWithLifecycle()
-    val cooldownUntil by viewModel.cooldownUntilEpochSec.collectAsStateWithLifecycle()
+    val cooldownUntilByRecipient by viewModel.cooldownUntilByRecipient.collectAsStateWithLifecycle()
     val incomingOffers by viewModel.incomingOffers.collectAsStateWithLifecycle()
     val unlistedClaimCount by viewModel.unlistedClaimCount.collectAsStateWithLifecycle()
 
@@ -73,7 +73,7 @@ fun SteakLeaderboardScreen(
 
     val nowEpochSec by produceState(
         initialValue = System.currentTimeMillis() / 1000L,
-        key1 = cooldownUntil,
+        key1 = cooldownUntilByRecipient.size,
         key2 = incomingOffers.size,
     ) {
         while (true) {
@@ -172,7 +172,7 @@ fun SteakLeaderboardScreen(
                 // ── Own Status Card ───────────────────────────────────────────
                 item(key = "own_status") {
                     val myCount = mySummary?.count ?: 0
-                    val cooldownLeft = (cooldownUntil - nowEpochSec).coerceAtLeast(0L)
+                    val sentLast24h = cooldownUntilByRecipient.values.count { it > nowEpochSec }
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -190,14 +190,12 @@ fun SteakLeaderboardScreen(
                                     style = BonyType.body.copy(color = BonyColors.Text),
                                 )
                                 Text(
-                                    text = if (cooldownLeft > 0L) {
-                                        "Daily send on cooldown · next in ${DailyTokens.formatRemainingDuration(cooldownLeft)}"
+                                    text = if (sentLast24h > 0) {
+                                        "Sent to $sentLast24h ${if (sentLast24h == 1) "person" else "people"} in the last 24h · visit any profile to send more"
                                     } else {
-                                        "Today's steak ready — visit any profile to send"
+                                        "Visit any profile to send a steak · 1 per person every 24h"
                                     },
-                                    style = BonyType.caption.copy(
-                                        color = if (cooldownLeft > 0L) BonyColors.TextMute else BonyColors.Accent,
-                                    ),
+                                    style = BonyType.caption.copy(color = BonyColors.Accent),
                                 )
                             }
                         }
@@ -320,7 +318,7 @@ fun SteakLeaderboardScreen(
                 // ── Verification Footer ───────────────────────────────────────
                 item(key = "footer") {
                     Text(
-                        text = "All counts verified cryptographically on-device (NIP-XX · 16-bit PoW · 24h claim window · 1 send per 24h).",
+                        text = "All counts verified cryptographically on-device (NIP-XX · 16-bit PoW · 24h claim window · 1 per person / 24h).",
                         style = BonyType.caption.copy(color = BonyColors.TextMute),
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
                     )

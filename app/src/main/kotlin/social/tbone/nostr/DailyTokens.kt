@@ -400,20 +400,24 @@ object DailyTokens {
     // ── Deterministic Cooldown & Pair Verification ────────────────────────────
 
     /**
-     * Resolves which offers from a single `(sender, slug)` pass the rolling
-     * 86,400-second cooldown rule.
+     * Resolves which offers pass the rolling 86,400-second **per-recipient**
+     * cooldown rule (scoped to `(sender, recipient, slug)`).
      *
-     * Offers are sorted deterministically by `(createdAt ASC, id ASC)`.
-     * Unclaimed offers still consume the sender's cooldown so senders cannot
-     * broadcast multiple offers hoping one is accepted.
+     * A sender may send to as many *different* recipients per day as they wish,
+     * while each `(sender, recipient, slug)` pair is rate-limited to at most
+     * one valid offer per rolling 24 hours.
+     *
+     * Within each `(sender, recipient, slug)` group, offers are sorted
+     * deterministically by `(createdAt ASC, id ASC)`. Unclaimed offers to a
+     * recipient still consume that recipient's 24-hour cooldown.
      */
-    fun resolveValidOfferIdsForSender(offers: Collection<ParsedTokenOffer>): Set<String> {
+    fun resolveValidOfferIds(offers: Collection<ParsedTokenOffer>): Set<String> {
         if (offers.isEmpty()) return emptySet()
         val valid = HashSet<String>(offers.size)
-        val bySenderAndSlug = offers
+        val byPairAndSlug = offers
             .distinctBy { it.offerId }
-            .groupBy { it.senderPubkey to it.slug }
-        for ((_, group) in bySenderAndSlug) {
+            .groupBy { Triple(it.senderPubkey, it.recipientPubkey, it.slug) }
+        for ((_, group) in byPairAndSlug) {
             val sorted = group.sortedWith(compareBy<ParsedTokenOffer> { it.offeredAt }.thenBy { it.offerId })
             var lastValidAt: Long? = null
             for (offer in sorted) {
@@ -430,7 +434,7 @@ object DailyTokens {
     /**
      * Verifies a single `(offer, claim)` pair for [recipientPubkey] and [slug]
      * against all structural, cryptographic, and 24-hour window rules (excluding
-     * cross-offer sender cooldown, which is checked by [resolveValidOfferIdsForSender]).
+     * cross-offer per-recipient cooldown, which is checked by [resolveValidOfferIds]).
      */
     fun isValidPair(
         offer: ParsedTokenOffer,
@@ -491,12 +495,12 @@ object DailyTokens {
         }
         if (referenced.isEmpty()) return emptyList()
 
-        // Evaluate sender rolling 24h cooldown across all observed valid offers.
+        // Evaluate rolling 24h per-recipient cooldown across all observed valid offers.
         val allObservedOffers = buildList {
             addAll(offersById.values)
             addAll(extraSenderOffers)
-        }.filter { it.slug == slug }
-        val cooldownValidOfferIds = resolveValidOfferIdsForSender(allObservedOffers)
+        }.filter { it.slug == slug && it.recipientPubkey == recipientPubkey }
+        val cooldownValidOfferIds = resolveValidOfferIds(allObservedOffers)
 
         val verified = mutableListOf<VerifiedTokenReceipt>()
         for ((offerId, entry) in referenced) {
@@ -523,21 +527,52 @@ object DailyTokens {
     }
 
     /**
-     * Computes when [senderPubkey]'s rolling 24-hour cooldown expires based on
-     * their valid [offers] for [slug]. Returns `0L` if ready to send right now.
+     * Computes when [senderPubkey]'s rolling 24-hour cooldown expires for a
+     * specific [recipientPubkey] and [slug]. Returns `0L` if ready to send
+     * to [recipientPubkey] right now.
      */
-    fun cooldownUntilEpochSeconds(
+    fun cooldownUntilForRecipient(
         senderPubkey: String,
+        recipientPubkey: String,
         slug: String,
         offers: Collection<ParsedTokenOffer>,
         nowSeconds: Long = System.currentTimeMillis() / 1000,
     ): Long {
-        val mine = offers.filter { it.senderPubkey == senderPubkey && it.slug == slug }
-        if (mine.isEmpty()) return 0L
-        val validIds = resolveValidOfferIdsForSender(mine)
-        val latestValid = mine.filter { it.offerId in validIds }.maxOfOrNull { it.offeredAt } ?: return 0L
+        val toRecipient = offers.filter {
+            it.senderPubkey == senderPubkey &&
+                it.recipientPubkey == recipientPubkey &&
+                it.slug == slug
+        }
+        if (toRecipient.isEmpty()) return 0L
+        val validIds = resolveValidOfferIds(toRecipient)
+        val latestValid = toRecipient.filter { it.offerId in validIds }.maxOfOrNull { it.offeredAt } ?: return 0L
         val unlockAt = latestValid + COOLDOWN_SECONDS
         return if (unlockAt > nowSeconds) unlockAt else 0L
+    }
+
+    /**
+     * Computes active rolling 24-hour cooldown expiry timestamps keyed by
+     * `recipientPubkey` for all recipients [senderPubkey] has recently sent
+     * [slug] tokens to. Recipients not present in the map are ready to receive.
+     */
+    fun cooldownUntilByRecipient(
+        senderPubkey: String,
+        slug: String,
+        offers: Collection<ParsedTokenOffer>,
+        nowSeconds: Long = System.currentTimeMillis() / 1000,
+    ): Map<String, Long> {
+        val mine = offers.filter { it.senderPubkey == senderPubkey && it.slug == slug }
+        if (mine.isEmpty()) return emptyMap()
+        val validIds = resolveValidOfferIds(mine)
+        val result = LinkedHashMap<String, Long>()
+        for ((recipient, group) in mine.groupBy { it.recipientPubkey }) {
+            val latestValid = group.filter { it.offerId in validIds }.maxOfOrNull { it.offeredAt } ?: continue
+            val unlockAt = latestValid + COOLDOWN_SECONDS
+            if (unlockAt > nowSeconds) {
+                result[recipient] = unlockAt
+            }
+        }
+        return result
     }
 
     /** Formats a remaining duration in seconds as `"18h 24m"`, `"42m"`, or `"< 1m"`. */

@@ -355,7 +355,11 @@ private fun NotificationFilterSheet(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (filter == NotifFilter.STEAKS) {
-                        SteakIcon(size = 22.dp, dimmed = !enabled, contentDescription = null)
+                        SteakIcon(
+                            size = 22.dp,
+                            tint = if (enabled) BonyColors.Accent else BonyColors.TextMute,
+                            contentDescription = null,
+                        )
                     } else {
                         Icon(
                             imageVector = filter.icon(),
@@ -501,7 +505,7 @@ private fun SteakSummaryStat(
             )
             .padding(horizontal = 8.dp, vertical = 5.dp),
     ) {
-        SteakIcon(size = 18.dp, contentDescription = "Steaks")
+        SteakIcon(size = 18.dp, tint = tint, contentDescription = "Steaks")
         Spacer(Modifier.width(5.dp))
         Text(text = value, style = BonyType.meta.copy(color = tint))
     }
