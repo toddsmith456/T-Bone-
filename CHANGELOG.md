@@ -5,6 +5,17 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.6.2] — 2026-11-17
+
+### Added
+- **Steaks (NIP-XX Daily Claimable Tokens).** Send text-only, peer-to-peer daily Steaks directly from any user's profile page (`kind: 8701` Offer, `kind: 8702` Claim, `kind: 38701` Profile Token Ledger with automatic archival sharding beyond 500 steaks).
+  - **Per-recipient 24-hour cooldown:** Send steaks to as many different people per day as you want, with a rolling 24-hour cooldown per recipient (self-sends forbidden; unclaimed offers consume that recipient's 24-hour window).
+  - **24-hour claim window & 1-tap acceptance:** Incoming steaks appear in Notifications (with a dedicated Steaks summary counter, filter toggle, live 24-hour countdown, and 1-tap **ACCEPT** button) as well as on your own Profile Steak shelf and the Leaderboard status card.
+  - **Profile Steak badge & shelf:** Every profile displays its cryptographically verified Steak count; tapping the chip opens the Steak shelf with verified sender history, sync/claim controls, and direct Leaderboard access.
+  - **Verified Follows & Global Leaderboard:** Reachable from any Profile Steak badge and from the Toolbox (with an indicator dot whenever fresh steaks are waiting to be claimed). Defaults to **Follows** with a **Global** tab, backed by on-device cryptographic verification and a local Room v21 cache (`verified_tokens` & `token_ledgers`, cleared on duress and Toolbox wipes).
+  - **Anti-spam 16-bit NIP-13 Proof-of-Work & accent outline T-Bone icon:** Offers and Claims require 16-bit NIP-13 PoW (preserved intact across Amber, NIP-46 bunker, and local signers by skipping `client`-tag mutation on `nonce`-tagged events), and the T-Bone steak icon is rendered 100% locally in your active theme's accent color with zero hosted images.
+- **Open protocol specification (`docs/NIP-daily-claimable-tokens.md`).** Documented the general Daily Claimable Tokens NIP and updated `docs/nip-compatibility.md` with NIP-13 and NIP-XX support.
+
 ## [0.6.1] — 2026-11-16
 
 ### Added
