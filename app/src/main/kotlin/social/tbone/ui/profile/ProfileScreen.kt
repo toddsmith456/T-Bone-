@@ -13,6 +13,7 @@ import androidx.compose.material3.MaterialTheme
 import dev.youniversal.theme.YouniversalTheme
 import social.tbone.ui.theme.appBackground
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -31,14 +33,20 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ModalBottomSheet
 import dev.youniversal.theme.YouniversalSnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -48,14 +56,22 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import social.tbone.nostr.DailyTokens
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
 import social.tbone.nostr.Nip19
+import social.tbone.nostr.ProfileContent
 import social.tbone.nostr.identity.Phrase
+import social.tbone.tokens.IncomingSteakOffer
+import social.tbone.tokens.OfferStatus
+import social.tbone.tokens.ProfileSteakSummary
+import social.tbone.ui.components.SteakIcon
 import social.tbone.ui.components.UserAvatar
 import social.tbone.ui.feed.ObservedNoteCard
 import social.tbone.ui.media.LocalVideoQuality
@@ -87,6 +103,7 @@ fun ProfileScreen(
     onReplyClick: (Event) -> Unit = {},
     onQuoteClick: (Event) -> Unit = {},
     onEditProfile: () -> Unit = {},
+    onSteakLeaderboardClick: () -> Unit = {},
     viewModel: ProfileViewModel = hiltViewModel(),
 ) {
     val profile by viewModel.profile.collectAsStateWithLifecycle()
@@ -105,7 +122,27 @@ fun ProfileScreen(
     val followIsLocal by viewModel.followIsLocal.collectAsStateWithLifecycle()
     val blockIsLocal by viewModel.blockIsLocal.collectAsStateWithLifecycle()
     val activePubkey by viewModel.activePubkey.collectAsStateWithLifecycle()
+    val steakSummary by viewModel.steakSummary.collectAsStateWithLifecycle()
+    val steakCooldownUntil by viewModel.steakCooldownUntil.collectAsStateWithLifecycle()
+    val isSendingSteak by viewModel.isSendingSteak.collectAsStateWithLifecycle()
+    val incomingSteaks by viewModel.incomingSteaks.collectAsStateWithLifecycle()
+    val unlistedSteakClaims by viewModel.unlistedSteakClaims.collectAsStateWithLifecycle()
+    val allProfiles by viewModel.profiles.collectAsStateWithLifecycle()
     val pubkey = viewModel.pubkey
+
+    // Ticks every 30s while a cooldown or pending steak timer is active.
+    val nowEpochSec by produceState(
+        initialValue = System.currentTimeMillis() / 1000L,
+        key1 = steakCooldownUntil,
+        key2 = incomingSteaks.size,
+    ) {
+        while (true) {
+            value = System.currentTimeMillis() / 1000L
+            delay(30_000L)
+        }
+    }
+    var showSteakSheet by remember { mutableStateOf(false) }
+    var showSendSteakConfirm by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     // Which cards the current tab shows. NOTES is top-level notes, ALL adds
@@ -352,6 +389,49 @@ fun ProfileScreen(
                         }
                     }
 
+                    Spacer(Modifier.height(10.dp))
+
+                    // ── Profile Steaks badge chip (NIP-XX) ────────────────────
+                    val pendingClaimableCount = remember(incomingSteaks, nowEpochSec, isActiveUserProfile) {
+                        if (!isActiveUserProfile) 0
+                        else incomingSteaks.count { it.statusAt(nowEpochSec) == OfferStatus.CLAIMABLE }
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .appBorder(1.dp, if (pendingClaimableCount > 0) BonyColors.Accent else BonyColors.Rule)
+                            .background(BonyColors.SurfaceAlt)
+                            .clickable { showSteakSheet = true }
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                    ) {
+                        SteakIcon(size = 20.dp, contentDescription = "Steaks")
+                        Spacer(Modifier.width(8.dp))
+                        val steakCount = steakSummary.count
+                        Text(
+                            text = "$steakCount ${if (steakCount == 1) "steak" else "steaks"}",
+                            style = BonyType.body.copy(color = BonyColors.Text),
+                        )
+                        if (steakSummary.isLoading) {
+                            Spacer(Modifier.width(8.dp))
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(12.dp),
+                                color = BonyColors.Accent,
+                                strokeWidth = 1.dp,
+                            )
+                        } else if (pendingClaimableCount > 0) {
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "· $pendingClaimableCount to claim",
+                                style = BonyType.caption.copy(color = BonyColors.Accent),
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "↗",
+                            style = BonyType.caption.copy(color = BonyColors.TextMute),
+                        )
+                    }
+
                     Spacer(Modifier.height(12.dp))
 
                     // Own profile: edit picture / banner.
@@ -438,6 +518,54 @@ fun ProfileScreen(
                                 },
                                 style = BonyType.caption.copy(color = BonyColors.TextMute),
                             )
+                        }
+
+                        // ── Send daily Steak button (profile-only entry point) ──
+                        Spacer(Modifier.height(8.dp))
+                        val cooldownRemaining = (steakCooldownUntil - nowEpochSec).coerceAtLeast(0L)
+                        val canSendSteak = !isSendingSteak && cooldownRemaining <= 0L
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .appBorder(1.dp, if (canSendSteak) BonyColors.Accent else BonyColors.Rule)
+                                .background(if (canSendSteak) BonyColors.Surface else BonyColors.SurfaceAlt)
+                                .then(
+                                    if (canSendSteak) Modifier.clickable { showSendSteakConfirm = true }
+                                    else Modifier,
+                                )
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                        ) {
+                            if (isSendingSteak) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = BonyColors.Accent,
+                                    strokeWidth = 1.5.dp,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = "SIZZLING STEAK…",
+                                    style = BonyType.tag.copy(color = BonyColors.Accent),
+                                )
+                            } else {
+                                SteakIcon(
+                                    size = 18.dp,
+                                    dimmed = !canSendSteak,
+                                    contentDescription = null,
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = if (cooldownRemaining > 0L) {
+                                        "NEXT STEAK IN ${DailyTokens.formatRemainingDuration(cooldownRemaining).uppercase()}"
+                                    } else {
+                                        "SEND STEAK"
+                                    },
+                                    style = BonyType.tag.copy(
+                                        color = if (canSendSteak) BonyColors.Accent else BonyColors.TextMute,
+                                    ),
+                                )
+                            }
                         }
                     }
 
@@ -573,6 +701,263 @@ fun ProfileScreen(
                 onClose = { videoViewerUrl = null },
             )
         }
+        if (showSendSteakConfirm) {
+            val targetName = profile?.bestName ?: phrase6.take(2).joinToString("·")
+            AlertDialog(
+                onDismissRequest = { showSendSteakConfirm = false },
+                containerColor = BonyColors.Surface,
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        SteakIcon(size = 26.dp, contentDescription = null)
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = "Send today's Steak?",
+                            style = BonyType.title.copy(color = BonyColors.Text),
+                        )
+                    }
+                },
+                text = {
+                    Text(
+                        text = "Send a steak to $targetName. They must accept it within 24 hours for it to count on their profile, and your next steak unlocks in 24 hours.",
+                        style = BonyType.body.copy(color = BonyColors.TextDim),
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showSendSteakConfirm = false
+                            viewModel.sendSteak()
+                        },
+                    ) {
+                        Text("SEND STEAK", style = BonyType.tag.copy(color = BonyColors.Accent))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showSendSteakConfirm = false }) {
+                        Text("CANCEL", style = BonyType.tag.copy(color = BonyColors.TextMute))
+                    }
+                },
+            )
+        }
+        if (showSteakSheet) {
+            ProfileSteakShelfSheet(
+                summary = steakSummary,
+                profiles = allProfiles,
+                isOwnProfile = isActiveUserProfile,
+                incomingSteaks = incomingSteaks,
+                unlistedClaims = unlistedSteakClaims,
+                nowEpochSec = nowEpochSec,
+                onClaimSteak = viewModel::claimSteak,
+                onSyncShelf = viewModel::syncSteakShelf,
+                onRefresh = viewModel::refreshSteaks,
+                onOpenProfile = { pk ->
+                    showSteakSheet = false
+                    if (pk != pubkey) onProfileClick(pk)
+                },
+                onOpenLeaderboard = {
+                    showSteakSheet = false
+                    onSteakLeaderboardClick()
+                },
+                onDismiss = { showSteakSheet = false },
+            )
+        }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProfileSteakShelfSheet(
+    summary: ProfileSteakSummary,
+    profiles: Map<String, ProfileContent>,
+    isOwnProfile: Boolean,
+    incomingSteaks: List<IncomingSteakOffer>,
+    unlistedClaims: Int,
+    nowEpochSec: Long,
+    onClaimSteak: (Event) -> Unit,
+    onSyncShelf: () -> Unit,
+    onRefresh: () -> Unit,
+    onOpenProfile: (String) -> Unit,
+    onOpenLeaderboard: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val pending = remember(incomingSteaks, nowEpochSec, isOwnProfile) {
+        if (!isOwnProfile) emptyList()
+        else incomingSteaks.filter {
+            val st = it.statusAt(nowEpochSec)
+            st == OfferStatus.CLAIMABLE || st == OfferStatus.CLAIMING
+        }
+    }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = BonyColors.Surface) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SteakIcon(size = 32.dp, contentDescription = "Steaks")
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "${summary.count} verified ${if (summary.count == 1) "steak" else "steaks"}",
+                        style = BonyType.title.copy(color = BonyColors.Text),
+                    )
+                    Text(
+                        text = "NIP-XX · 16-bit PoW · 24h claim window",
+                        style = BonyType.caption.copy(color = BonyColors.TextMute),
+                    )
+                }
+                Text(
+                    text = if (summary.isLoading) "…" else "↻",
+                    style = BonyType.body.copy(color = BonyColors.Accent),
+                    modifier = Modifier
+                        .clickable(enabled = !summary.isLoading, onClick = onRefresh)
+                        .padding(8.dp),
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+            BonyButton(
+                label = "STEAK LEADERBOARD →",
+                primary = true,
+                onClick = onOpenLeaderboard,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            if (isOwnProfile && unlistedClaims > 0) {
+                Spacer(Modifier.height(8.dp))
+                BonyButton(
+                    label = "SYNC $unlistedClaims CLAIMED STEAK${if (unlistedClaims == 1) "" else "S"} TO PROFILE",
+                    primary = false,
+                    onClick = onSyncShelf,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            if (pending.isNotEmpty()) {
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    text = "FRESH STEAKS TO CLAIM",
+                    style = BonyType.caption.copy(color = BonyColors.Accent),
+                )
+                Spacer(Modifier.height(6.dp))
+                pending.forEach { item ->
+                    val senderProfile = profiles[item.offer.senderPubkey]
+                    val senderName = senderProfile?.bestName
+                        ?: Phrase.wordsFor(item.offer.senderPubkey, 2).joinToString("·")
+                    val remaining = item.remainingSecondsAt(nowEpochSec)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        UserAvatar(
+                            pubkeyHex = item.offer.senderPubkey,
+                            profile = senderProfile,
+                            size = 30.dp,
+                            modifier = Modifier.clickable { onOpenProfile(item.offer.senderPubkey) },
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = senderName,
+                                style = BonyType.body.copy(color = BonyColors.Text),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = "expires in ${DailyTokens.formatRemainingDuration(remaining)}",
+                                style = BonyType.caption.copy(color = BonyColors.TextMute),
+                            )
+                        }
+                        if (item.claiming) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = BonyColors.Accent,
+                                strokeWidth = 1.5.dp,
+                            )
+                        } else {
+                            Text(
+                                text = "ACCEPT",
+                                style = BonyType.tag.copy(color = BonyColors.Bg),
+                                modifier = Modifier
+                                    .background(BonyColors.Accent)
+                                    .clickable { onClaimSteak(item.offer.event) }
+                                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+            HorizontalDivider(color = BonyColors.Rule)
+            Spacer(Modifier.height(10.dp))
+
+            if (summary.receipts.isEmpty()) {
+                Text(
+                    text = if (summary.isLoading) "verifying profile steaks…" else "no verified steaks yet",
+                    style = BonyType.meta.copy(color = BonyColors.TextMute),
+                    modifier = Modifier.padding(vertical = 16.dp),
+                )
+            } else {
+                Text(
+                    text = "ACCEPTED STEAKS",
+                    style = BonyType.caption.copy(color = BonyColors.TextMute),
+                )
+                Spacer(Modifier.height(6.dp))
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 300.dp),
+                ) {
+                    items(summary.receipts, key = { it.offerId }) { receipt ->
+                        val senderProfile = profiles[receipt.senderPubkey]
+                        val senderName = senderProfile?.bestName
+                            ?: Phrase.wordsFor(receipt.senderPubkey, 2).joinToString("·")
+                        val claimedDate = remember(receipt.claimedAt) {
+                            java.time.Instant.ofEpochSecond(receipt.claimedAt)
+                                .atZone(java.time.ZoneId.systemDefault())
+                                .format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy"))
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onOpenProfile(receipt.senderPubkey) }
+                                .padding(vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            SteakIcon(size = 18.dp, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            UserAvatar(
+                                pubkeyHex = receipt.senderPubkey,
+                                profile = senderProfile,
+                                size = 28.dp,
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = senderName,
+                                    style = BonyType.bodyDim.copy(color = BonyColors.Text),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = "accepted $claimedDate",
+                                    style = BonyType.caption.copy(color = BonyColors.TextMute),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

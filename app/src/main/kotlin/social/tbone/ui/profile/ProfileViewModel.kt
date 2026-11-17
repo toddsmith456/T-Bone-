@@ -95,6 +95,7 @@ class ProfileViewModel @Inject constructor(
     private val listFetcher: RelayListFetcher,
     private val followMutations: social.tbone.lists.FollowMutationCoordinator,
     private val pins: social.tbone.lists.PinListRepository,
+    private val steakRepository: social.tbone.tokens.SteakRepository,
 ) : ViewModel() {
 
     val pubkey: String = checkNotNull(savedStateHandle["pubkey"])
@@ -288,9 +289,29 @@ class ProfileViewModel @Inject constructor(
         .map { it?.pubkey }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    val steakSummary: StateFlow<social.tbone.tokens.ProfileSteakSummary> = steakRepository.profileSummaries
+        .map { it[pubkey] ?: social.tbone.tokens.ProfileSteakSummary(pubkey = pubkey) }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            steakRepository.profileSummaries.value[pubkey]
+                ?: social.tbone.tokens.ProfileSteakSummary(pubkey = pubkey),
+        )
+
+    val steakCooldownUntil: StateFlow<Long> = steakRepository.cooldownUntilEpochSec
+
+    val isSendingSteak: StateFlow<Boolean> = steakRepository.sendingToPubkey
+        .map { it == pubkey }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    val incomingSteaks: StateFlow<List<social.tbone.tokens.IncomingSteakOffer>> = steakRepository.incomingOffers
+
+    val unlistedSteakClaims: StateFlow<Int> = steakRepository.unlistedClaimCount
+
     private var notesSubId: String? = null
 
     init {
+        steakRepository.loadProfileSteaks(pubkey)
         // Kind 6 (reposts) included: the "all" feed is supposed to show what the
         // profile amplified, not just what they wrote.
         notesSubId = pool.subscribe(listOf(
@@ -437,6 +458,46 @@ class ProfileViewModel @Inject constructor(
     }
 
     fun react(event: Event) = reactionsRepository.react(event)
+
+    fun sendSteak() {
+        viewModelScope.launch {
+            steakRepository.sendSteak(pubkey)
+                .onSuccess {
+                    _messages.tryEmit("Steak sent! They have 24 hours to accept it.")
+                }
+                .onFailure { err ->
+                    _messages.tryEmit(err.message ?: "Couldn't send steak")
+                }
+        }
+    }
+
+    fun claimSteak(offerEvent: Event) {
+        viewModelScope.launch {
+            steakRepository.claimSteak(offerEvent)
+                .onSuccess {
+                    _messages.tryEmit("Steak accepted & added to your profile!")
+                }
+                .onFailure { err ->
+                    _messages.tryEmit(err.message ?: "Couldn't accept steak")
+                }
+        }
+    }
+
+    fun syncSteakShelf() {
+        viewModelScope.launch {
+            steakRepository.syncUnlistedClaims()
+                .onSuccess { count ->
+                    if (count > 0) _messages.tryEmit("Synced $count steak${if (count == 1) "" else "s"} to your profile")
+                }
+                .onFailure { err ->
+                    _messages.tryEmit(err.message ?: "Couldn't sync steak shelf")
+                }
+        }
+    }
+
+    fun refreshSteaks() {
+        steakRepository.loadProfileSteaks(pubkey, forceRefresh = true)
+    }
 
     fun voteOnPoll(poll: Event, optionIds: List<String>) =
         pollsRepository.vote(poll, optionIds)

@@ -13,6 +13,7 @@ Legend: ✅ Supported &nbsp;|&nbsp; 🚧 Partial &nbsp;|&nbsp; 🔌 Plugin &nbsp
 | 7 | Reaction | NIP-25 `+` reactions tracked per event; optimistic publish with rollback; like count displayed |
 | 10002 | Relay List | Read relays extracted and connected on login; list persisted to account |
 | 10133 | Payment Targets | NIP-A3 Monero/xmr targets read from connected relays; own address updates preserve other and unknown tags |
+| 8701 / 8702 / 38701 | Daily Claimable Tokens (`steak`) | NIP-XX text-only peer-to-peer daily tokens with 16-bit NIP-13 PoW, 24h claim window, rolling 24h send cooldown, profile ledger, and Follows/Global leaderboard |
 | 22242 | Auth | Signed automatically in response to NIP-42 relay challenges |
 | 24133 | Nostr Connect | Used internally by `NsecBunkerSigner` for NIP-46 request/response |
 
@@ -56,7 +57,8 @@ Legend: ✅ Supported &nbsp;|&nbsp; 🚧 Partial &nbsp;|&nbsp; 🔌 Plugin &nbsp
 
 | NIP | Name | Status | Notes |
 |---|---|---|---|
-| [NIP-13](https://github.com/nostr-protocol/nips/blob/master/13.md) | Proof of work | — | Anti-spam; relay-dependent |
+| [NIP-13](https://github.com/nostr-protocol/nips/blob/master/13.md) | Proof of work | ✅ | 16-bit NIP-13 PoW mining & verification used for Daily Claimable Tokens (NIP-XX) |
+| [NIP-XX](NIP-daily-claimable-tokens.md) | Daily Claimable Tokens (`steak`) | ✅ | Text-only client-rendered daily tokens (`8701` Offer, `8702` Claim, `38701` Profile Token Ledger) |
 | [NIP-23](https://github.com/nostr-protocol/nips/blob/master/23.md) | Long-form content | 🔌 | Articles / blogs |
 | [NIP-40](https://github.com/nostr-protocol/nips/blob/master/40.md) | Expiration timestamp | planned | |
 | [NIP-50](https://github.com/nostr-protocol/nips/blob/master/50.md) | Search | 🔌 | Relay-dependent full-text search |

@@ -53,6 +53,7 @@ class DataWiper @Inject constructor(
     private val reactionsRepository: social.tbone.reactions.ReactionsRepository,
     private val repliesRepository: social.tbone.reactions.RepliesRepository,
     private val engagementCache: social.tbone.reactions.EngagementCacheRepository,
+    private val steakRepository: social.tbone.tokens.SteakRepository,
 ) {
 
     /**
@@ -103,6 +104,7 @@ class DataWiper @Inject constructor(
                 reactionsRepository.clearMemory()
                 repliesRepository.clearMemory()
                 engagementCache.clearAll()
+                steakRepository.clearMemory()
             }
             steps.run("clear database") { appDatabase.clearAllTables() }
 

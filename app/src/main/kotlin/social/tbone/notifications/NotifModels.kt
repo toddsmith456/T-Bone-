@@ -10,7 +10,7 @@ import social.tbone.nostr.Event
  * (no DMs, no group chats). ZAP covers NIP-57 zap receipts.
  */
 @Serializable
-enum class NotifType { REACTION, REPOST, REPLY, QUOTE, MENTION, VOTE, CALENDAR, ZAP }
+enum class NotifType { REACTION, REPOST, REPLY, QUOTE, MENTION, VOTE, CALENDAR, ZAP, STEAK }
 
 /**
  * Filterable notification categories shown in the summary bar and the filter
@@ -23,6 +23,7 @@ enum class NotifFilter(val label: String) {
     MENTIONS("MENTIONS"),
     VOTES("VOTES"),
     ZAPS("ZAPS"),
+    STEAKS("STEAKS"),
     CALENDAR("CALENDAR"),
     ;
 
@@ -125,6 +126,8 @@ data class FlatNotifItem(
     val zapSats: Long? = null,
     /** The zapper's own comment, when they left one. */
     val zapComment: String? = null,
+    /** NIP-XX: signed kind:8701 Token Offer event for STEAK notifications. */
+    val tokenOffer: Event? = null,
 )
 
 /** 24h counts shown in the summary bar — mirrors Wisp's NotificationSummary. */
@@ -136,6 +139,7 @@ data class NotifSummary(
     val quoteCount: Int = 0,
     val voteCount: Int = 0,
     val zapCount: Int = 0,
+    val steakCount: Int = 0,
     val calendarCount: Int = 0,
 )
 
@@ -149,6 +153,7 @@ internal fun summarizeNotifications(items: List<FlatNotifItem>, nowEpochSeconds:
     var quotes = 0
     var votes = 0
     var zaps = 0
+    var steaks = 0
     var calendars = 0
     for (item in items) {
         if (item.type == NotifType.CALENDAR) {
@@ -164,6 +169,7 @@ internal fun summarizeNotifications(items: List<FlatNotifItem>, nowEpochSeconds:
             NotifType.MENTION -> mentions++
             NotifType.VOTE -> votes++
             NotifType.ZAP -> zaps++
+            NotifType.STEAK -> steaks++
             NotifType.CALENDAR -> Unit
         }
     }
@@ -175,6 +181,7 @@ internal fun summarizeNotifications(items: List<FlatNotifItem>, nowEpochSeconds:
         quoteCount = quotes,
         voteCount = votes,
         zapCount = zaps,
+        steakCount = steaks,
         calendarCount = calendars,
     )
 }

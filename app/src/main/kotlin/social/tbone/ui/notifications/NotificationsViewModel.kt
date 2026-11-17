@@ -41,6 +41,7 @@ class NotificationsViewModel @Inject constructor(
     private val muteRepository: social.tbone.lists.MuteListRepository,
     private val accountRepository: social.tbone.account.AccountRepository,
     private val pollsRepository: PollsRepository,
+    private val steakRepository: social.tbone.tokens.SteakRepository,
     profileRepository: ProfileRepository,
 ) : ViewModel() {
 
@@ -164,6 +165,24 @@ class NotificationsViewModel @Inject constructor(
     val pollMyVotes: StateFlow<Map<String, List<String>>> = pollsRepository.myVotes
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
+    val claimedSteakOfferIds: StateFlow<Set<String>> = steakRepository.claimedOfferIds
+    val claimingSteakOfferIds: StateFlow<Set<String>> = steakRepository.claimingOfferIds
+
+    private val _steakMessages = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val steakMessages: kotlinx.coroutines.flow.SharedFlow<String> = _steakMessages
+
+    fun claimSteak(offerEvent: Event) {
+        viewModelScope.launch {
+            steakRepository.claimSteak(offerEvent)
+                .onSuccess {
+                    _steakMessages.tryEmit("Steak accepted & added to your profile!")
+                }
+                .onFailure { err ->
+                    _steakMessages.tryEmit(err.message ?: "Couldn't accept steak")
+                }
+        }
+    }
+
     init {
         // Persisted filter set → enabled filters. AppSettings resolves the
         // absent case to "everything on" and hands back a non-empty set, so the
@@ -237,6 +256,7 @@ class NotificationsViewModel @Inject constructor(
         NotifType.MENTION -> NotifFilter.MENTIONS
         NotifType.VOTE -> NotifFilter.VOTES
         NotifType.ZAP -> NotifFilter.ZAPS
+        NotifType.STEAK -> NotifFilter.STEAKS
         NotifType.CALENDAR -> NotifFilter.CALENDAR
     }
 }

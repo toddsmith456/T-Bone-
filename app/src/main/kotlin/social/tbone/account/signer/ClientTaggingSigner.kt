@@ -30,7 +30,9 @@ object ClientEventTag {
     const val CLIENT_NAME = "T-Bone"
 
     fun decorate(event: UnsignedEvent, enabled: Boolean): UnsignedEvent {
-        if (!enabled || event.tags.any(::isClientTag)) return event
+        // Never mutate an event that already carries a NIP-13 PoW nonce tag:
+        // appending a client tag changes the event id and destroys the mined PoW.
+        if (!enabled || event.tags.any(::isClientTag) || event.tags.any(::isNonceTag)) return event
         val clientTag = buildJsonArray {
             add(JsonPrimitive(TAG_NAME))
             add(JsonPrimitive(CLIENT_NAME))
@@ -41,4 +43,7 @@ object ClientEventTag {
     private fun isClientTag(tag: JsonArray): Boolean =
         (tag.getOrNull(0) as? JsonPrimitive)?.content == TAG_NAME &&
             (tag.getOrNull(1) as? JsonPrimitive)?.content?.isNotEmpty() == true
+
+    private fun isNonceTag(tag: JsonArray): Boolean =
+        (tag.getOrNull(0) as? JsonPrimitive)?.content == "nonce"
 }

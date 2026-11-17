@@ -78,12 +78,14 @@ fun ToolboxScreen(
     onUpdateCenter: () -> Unit,
     onFollowLists: () -> Unit,
     onFeedViewer: () -> Unit,
+    onSteakLeaderboard: () -> Unit,
     onToolboxSettings: () -> Unit,
     viewModel: ToolboxViewModel = hiltViewModel(),
     lockViewModel: ToolboxLockViewModel = hiltViewModel(),
 ) {
     val savedOrder by viewModel.toolOrder.collectAsStateWithLifecycle()
     val isLocked by lockViewModel.isLocked.collectAsStateWithLifecycle()
+    val hasPendingSteaks by viewModel.hasPendingSteaks.collectAsStateWithLifecycle()
 
     val hasUpdate = LocalUpdateAvailable.current
 
@@ -113,6 +115,14 @@ fun ToolboxScreen(
             "following, followers & mutes", onFollowLists))
         put("feedviewer", ToolEntry(Icons.AutoMirrored.Outlined.Article, "feed viewer",
             "read any feed without saving it", onFeedViewer))
+        put("steaks", ToolEntry(
+            icon = Icons.Outlined.Bolt,
+            title = "steak leaderboard",
+            subtitle = "daily steaks & verified rankings",
+            onClick = onSteakLeaderboard,
+            hasBadge = hasPendingSteaks,
+            customIcon = { social.tbone.ui.components.SteakIcon(size = 24.dp, contentDescription = null) },
+        ))
 
     }
 
@@ -235,6 +245,7 @@ fun ToolboxScreen(
                     subtitle = tool.subtitle,
                     onClick = tool.onClick,
                     hasBadge = tool.hasBadge,
+                    customIcon = tool.customIcon,
                 )
             }
             // Drop indicator while dragging.
@@ -268,10 +279,18 @@ private data class ToolEntry(
     val subtitle: String,
     val onClick: () -> Unit,
     val hasBadge: Boolean = false,
+    val customIcon: (@Composable () -> Unit)? = null,
 )
 
 @Composable
-internal fun ToolRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit, hasBadge: Boolean = false) {
+internal fun ToolRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    hasBadge: Boolean = false,
+    customIcon: (@Composable () -> Unit)? = null,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -286,12 +305,16 @@ internal fun ToolRow(icon: ImageVector, title: String, subtitle: String, onClick
                 .background(BonyColors.SurfaceAlt),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = BonyColors.Accent,
-                modifier = Modifier.size(22.dp),
-            )
+            if (customIcon != null) {
+                customIcon()
+            } else {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = BonyColors.Accent,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
             if (hasBadge) {
                 Box(
                     modifier = Modifier

@@ -66,6 +66,7 @@ class NotificationsRepository @Inject constructor(
     private val appSettings: AppSettings,
     private val notificationDao: NotificationDao,
     private val calendarRepository: CalendarRepository,
+    private val steakRepository: social.tbone.tokens.SteakRepository,
 ) {
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
         Timber.e(throwable, "Uncaught exception in NotificationsRepository")
@@ -489,6 +490,10 @@ class NotificationsRepository @Inject constructor(
                 item
             }
             NotificationClass.ZAP -> synchronized(lock) { mergeZapLocked(event) }
+            NotificationClass.STEAK -> {
+                steakRepository.onIncomingOfferObserved(event)
+                synchronized(lock) { mergeSteakLocked(event) }
+            }
             null -> null
         }
     }
@@ -558,6 +563,14 @@ class NotificationsRepository @Inject constructor(
             // gate when it was ingested; there is no referenced note to re-check
             // and the actor is the sender decoded from the receipt.
             NotifType.ZAP -> true
+            NotifType.STEAK -> {
+                val offer = item.tokenOffer ?: return false
+                offer.pubkey != me && social.tbone.nostr.DailyTokens.parseOffer(
+                    event = offer,
+                    nowSeconds = now(),
+                    requireSig = false,
+                )?.let { it.slug == social.tbone.nostr.DailyTokens.STEAK_SLUG && it.recipientPubkey == me } == true
+            }
             NotifType.CALENDAR -> true
         }
     }
@@ -711,6 +724,19 @@ class NotificationsRepository @Inject constructor(
             // Keep the comment short enough for a row; the full text is still in
             // the receipt if it is ever needed.
             zapComment = receipt.comment.take(280).ifBlank { null },
+        )
+        addFlatLocked(item)
+        return item
+    }
+
+    /** NIP-XX: incoming daily Steak Offer (`kind: 8701`) addressed to us. */
+    private fun mergeSteakLocked(event: Event): FlatNotifItem {
+        val item = FlatNotifItem(
+            id = "steak:${event.id}",
+            type = NotifType.STEAK,
+            actorPubkey = event.pubkey,
+            timestamp = event.createdAt,
+            tokenOffer = event,
         )
         addFlatLocked(item)
         return item
@@ -887,10 +913,13 @@ class NotificationsRepository @Inject constructor(
                     else -> Unit
                 }
             }
-            // Zaps are one row per receipt (not grouped), so they are counted
+            // Zaps and steaks are one row per event (not grouped), so they are counted
             // straight off the flat list rather than through groupMap.
             zaps = flatItems.count {
                 it.type == NotifType.ZAP && it.timestamp >= cutoff
+            }
+            val steaks = flatItems.count {
+                it.type == NotifType.STEAK && it.timestamp >= cutoff
             }
             _summary.value = NotifSummary(
                 replyCount = replies,
@@ -900,6 +929,7 @@ class NotificationsRepository @Inject constructor(
                 quoteCount = quotes,
                 voteCount = votes,
                 zapCount = zaps,
+                steakCount = steaks,
             )
             _isLoading.value = false
         }

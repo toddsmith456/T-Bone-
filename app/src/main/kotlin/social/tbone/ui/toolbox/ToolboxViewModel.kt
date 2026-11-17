@@ -7,13 +7,24 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.map
 import social.tbone.settings.AppSettings
+import social.tbone.tokens.OfferStatus
+import social.tbone.tokens.SteakRepository
 import javax.inject.Inject
 
 @HiltViewModel
 class ToolboxViewModel @Inject constructor(
     private val appSettings: AppSettings,
+    steakRepository: SteakRepository,
 ) : ViewModel() {
+
+    val hasPendingSteaks: StateFlow<Boolean> = steakRepository.incomingOffers
+        .map { offers ->
+            val now = System.currentTimeMillis() / 1000L
+            offers.any { it.statusAt(now) == OfferStatus.CLAIMABLE }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     val pinEnabled: StateFlow<Boolean> = appSettings.toolboxPinEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
@@ -31,7 +42,7 @@ class ToolboxViewModel @Inject constructor(
     /** Default order used until the user reorders. */
     val defaultToolOrder: List<String> =
         listOf(
-            "feedviewer", "notes", "bookmarks", "voice", "geohash",
+            "steaks", "feedviewer", "notes", "bookmarks", "voice", "geohash",
             "calendar", "wallet", "updates", "followlists",
         )
 

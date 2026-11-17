@@ -70,6 +70,7 @@ class AppSettings @Inject constructor(
          * off on every launch.
          */
         private val NOTIFICATION_FILTERS_MIGRATED = booleanPreferencesKey("notification_filters_migrated")
+        private val NOTIFICATION_STEAKS_MIGRATED = booleanPreferencesKey("notification_steaks_migrated")
         // Global relay list — separate from personal relay list, used only for the Global feed.
         private val GLOBAL_RELAYS = stringSetPreferencesKey("global_relays")
         private val GLOBAL_ACTIVE_RELAYS = stringSetPreferencesKey("global_active_relays")
@@ -587,19 +588,26 @@ class AppSettings @Inject constructor(
                 val zapsAddedByThisMigration = !storedFilters.isNullOrEmpty() &&
                     NotifFilterNames.ZAPS !in storedFilters &&
                     prefs[NOTIFICATION_FILTERS_MIGRATED] != true
+                val steaksAddedByThisMigration = !storedFilters.isNullOrEmpty() &&
+                    NotifFilterNames.STEAKS !in storedFilters &&
+                    prefs[NOTIFICATION_STEAKS_MIGRATED] != true
                 val effectiveFilters = when {
                     // Never set = every filter on.
                     storedFilters.isNullOrEmpty() -> NotifFilterNames.ALL
-                    zapsAddedByThisMigration -> storedFilters + NotifFilterNames.ZAPS
-                    else -> storedFilters
+                    else -> buildSet {
+                        addAll(storedFilters)
+                        if (zapsAddedByThisMigration) add(NotifFilterNames.ZAPS)
+                        if (steaksAddedByThisMigration) add(NotifFilterNames.STEAKS)
+                    }
                 }
                 _notificationEnabledTypes.value = effectiveFilters
-                if (zapsAddedByThisMigration) {
+                if (zapsAddedByThisMigration || steaksAddedByThisMigration) {
                     scope.launch {
                         runCatching {
                             dataStore.edit { editPrefs ->
                                 editPrefs[NOTIFICATION_ENABLED_TYPES] = effectiveFilters
-                                editPrefs[NOTIFICATION_FILTERS_MIGRATED] = true
+                                if (zapsAddedByThisMigration) editPrefs[NOTIFICATION_FILTERS_MIGRATED] = true
+                                if (steaksAddedByThisMigration) editPrefs[NOTIFICATION_STEAKS_MIGRATED] = true
                             }
                         }
                     }
@@ -1374,8 +1382,9 @@ object NotifFilterNames {
     const val MENTIONS = "MENTIONS"
     const val VOTES = "VOTES"
     const val ZAPS = "ZAPS"
+    const val STEAKS = "STEAKS"
     const val CALENDAR = "CALENDAR"
 
     /** Every filter enabled — the state a brand-new install starts in. */
-    val ALL: Set<String> = setOf(REPLIES, REACTIONS, REPOSTS, MENTIONS, VOTES, ZAPS, CALENDAR)
+    val ALL: Set<String> = setOf(REPLIES, REACTIONS, REPOSTS, MENTIONS, VOTES, ZAPS, STEAKS, CALENDAR)
 }

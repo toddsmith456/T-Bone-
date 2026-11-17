@@ -48,4 +48,11 @@ class ClientEventTagTest {
 
         assertSame(source, ClientEventTag.decorate(source, enabled = true))
     }
+
+    @Test
+    fun `leaves NIP-13 PoW mined events untouched so event id stays valid`() {
+        val source = event(listOf(tag("t", "steak"), tag("nonce", "48219", "16")))
+
+        assertSame(source, ClientEventTag.decorate(source, enabled = true))
+    }
 }

@@ -29,6 +29,9 @@ object EventKind {
     const val BOOKMARK_SET = 30003   // NIP-51: bookmark set (a named folder)
     const val BLOSSOM_SERVER_LIST = 10063 // BUD-03: user's Blossom server list
     const val PAYMENT_TARGETS = 10133  // NIP-A3: replaceable payment-target list
+    const val TOKEN_OFFER = 8701       // NIP-XX: daily claimable token offer (immutable)
+    const val TOKEN_CLAIM = 8702       // NIP-XX: daily claimable token claim (immutable)
+    const val TOKEN_LEDGER = 38701     // NIP-XX: addressable profile token ledger
     const val ZAP_REQUEST = 9734       // NIP-57: zap request
     const val ZAP_RECEIPT = 9735       // NIP-57: zap receipt (published by the LN node)
     const val AUTH = 22242             // NIP-42: relay authentication

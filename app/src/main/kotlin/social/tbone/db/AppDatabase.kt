@@ -23,8 +23,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DecoyNoteAttachmentEntity::class,
         MediaScanCacheEntity::class,
         EngagementCacheEntity::class,
+        VerifiedTokenEntity::class,
+        TokenLedgerStateEntity::class,
     ],
-    version = 20,
+    version = 21,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun eventDao(): EventDao
@@ -41,6 +43,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun decoyNoteAttachmentDao(): DecoyNoteAttachmentDao
     abstract fun mediaScanCacheDao(): MediaScanCacheDao
     abstract fun engagementCacheDao(): EngagementCacheDao
+    abstract fun tokenCacheDao(): TokenCacheDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -325,6 +328,47 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_engagement_cache_updatedAt` " +
                         "ON `engagement_cache` (`updatedAt`)"
+                )
+            }
+        }
+
+        val MIGRATION_20_21 = object : Migration(20, 21) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `verified_tokens` (" +
+                        "`offerId` TEXT NOT NULL, " +
+                        "`claimId` TEXT NOT NULL, " +
+                        "`slug` TEXT NOT NULL, " +
+                        "`recipientPubkey` TEXT NOT NULL, " +
+                        "`senderPubkey` TEXT NOT NULL, " +
+                        "`offeredAt` INTEGER NOT NULL, " +
+                        "`claimedAt` INTEGER NOT NULL, " +
+                        "`relayHint` TEXT, " +
+                        "`verifiedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`offerId`))"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_verified_tokens_slug_recipientPubkey_claimedAt` " +
+                        "ON `verified_tokens` (`slug`, `recipientPubkey`, `claimedAt`)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_verified_tokens_slug_senderPubkey_offeredAt` " +
+                        "ON `verified_tokens` (`slug`, `senderPubkey`, `offeredAt`)"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `token_ledgers` (" +
+                        "`pubkey` TEXT NOT NULL, " +
+                        "`slug` TEXT NOT NULL, " +
+                        "`ledgerEventId` TEXT NOT NULL, " +
+                        "`ledgerCreatedAt` INTEGER NOT NULL, " +
+                        "`verifiedCount` INTEGER NOT NULL, " +
+                        "`latestClaimedAt` INTEGER NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`pubkey`, `slug`))"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_token_ledgers_slug_verifiedCount_latestClaimedAt` " +
+                        "ON `token_ledgers` (`slug`, `verifiedCount`, `latestClaimedAt`)"
                 )
             }
         }

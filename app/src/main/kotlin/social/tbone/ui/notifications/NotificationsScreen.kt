@@ -2,12 +2,15 @@ package social.tbone.ui.notifications
 
 import social.tbone.ui.theme.feedShellBackground
 import dev.youniversal.theme.YouniversalEmptyState
+import dev.youniversal.theme.YouniversalSnackbarHost
 import dev.youniversal.theme.YouniversalTheme
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,6 +43,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -60,6 +64,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import social.tbone.nostr.DailyTokens
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
 import social.tbone.nostr.Nip19
@@ -70,6 +75,7 @@ import social.tbone.notifications.FlatNotifItem
 import social.tbone.notifications.NotifFilter
 import social.tbone.notifications.NotifSummary
 import social.tbone.notifications.NotifType
+import social.tbone.ui.components.SteakIcon
 import social.tbone.ui.components.UserAvatar
 import social.tbone.ui.feed.QuotedNoteCard
 import social.tbone.ui.theme.BonyColors
@@ -103,11 +109,18 @@ fun NotificationsScreen(
     val pollVoteCounts by viewModel.pollVoteCounts.collectAsStateWithLifecycle()
     val pollTotalVotes by viewModel.pollTotalVotes.collectAsStateWithLifecycle()
     val pollMyVotes by viewModel.pollMyVotes.collectAsStateWithLifecycle()
+    val claimedSteakOfferIds by viewModel.claimedSteakOfferIds.collectAsStateWithLifecycle()
+    val claimingSteakOfferIds by viewModel.claimingSteakOfferIds.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
+    val snackbarHostState = remember { SnackbarHostState() }
 
     // Only one row expanded at a time.
     var expandedId by remember { mutableStateOf<String?>(null) }
     var showFilterSheet by remember { mutableStateOf(false) }
+
+    LaunchedEffect(viewModel) {
+        viewModel.steakMessages.collect { snackbarHostState.showSnackbar(it) }
+    }
 
     // Subscribe to poll votes whenever an expanded notification involves a poll.
     LaunchedEffect(expandedId, items, referencedNotes) {
@@ -129,6 +142,7 @@ fun NotificationsScreen(
     val allEnabled = enabledFilters.size == NotifFilter.entries.size
 
     Scaffold(
+        snackbarHost = { YouniversalSnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -245,6 +259,9 @@ fun NotificationsScreen(
                             pollTotalVotes = pollTotalVotes,
                             pollMyVotes = pollMyVotes,
                             onPollVote = viewModel::voteOnPoll,
+                            claimedSteakOfferIds = claimedSteakOfferIds,
+                            claimingSteakOfferIds = claimingSteakOfferIds,
+                            onAcceptSteak = viewModel::claimSteak,
                         )
                         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
                     }
@@ -337,12 +354,16 @@ private fun NotificationFilterSheet(
                         .padding(horizontal = 24.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(
-                        imageVector = filter.icon(),
-                        contentDescription = null,
-                        tint = if (enabled) BonyColors.Accent else BonyColors.TextMute,
-                        modifier = Modifier.size(22.dp),
-                    )
+                    if (filter == NotifFilter.STEAKS) {
+                        SteakIcon(size = 22.dp, dimmed = !enabled, contentDescription = null)
+                    } else {
+                        Icon(
+                            imageVector = filter.icon(),
+                            contentDescription = null,
+                            tint = if (enabled) BonyColors.Accent else BonyColors.TextMute,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
                     Spacer(Modifier.width(14.dp))
                     Text(
                         text = filter.label,
@@ -390,6 +411,7 @@ private fun NotifFilter.icon(): ImageVector = when (this) {
     NotifFilter.MENTIONS -> Icons.Outlined.AlternateEmail
     NotifFilter.VOTES -> Icons.Outlined.BarChart
     NotifFilter.ZAPS -> Icons.Outlined.Bolt
+    NotifFilter.STEAKS -> Icons.Outlined.FavoriteBorder // Rendered via SteakIcon in UI
     NotifFilter.CALENDAR -> Icons.Outlined.CalendarMonth
 }
 
@@ -407,8 +429,9 @@ private fun DailySummaryBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(BonyColors.Surface)
+            .horizontalScroll(rememberScrollState())
             .padding(horizontal = 10.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         SummaryStat(
@@ -447,12 +470,40 @@ private fun DailySummaryBar(
             active = isFiltered && NotifFilter.ZAPS in enabledFilters,
             onClick = { onFilterSelect(NotifFilter.ZAPS) },
         )
+        SteakSummaryStat(
+            value = summary.steakCount.toString(),
+            active = isFiltered && NotifFilter.STEAKS in enabledFilters,
+            onClick = { onFilterSelect(NotifFilter.STEAKS) },
+        )
         SummaryStat(
             icon = Icons.Outlined.CalendarMonth,
             value = calendarCount.toString(),
             active = isFiltered && NotifFilter.CALENDAR in enabledFilters,
             onClick = { onFilterSelect(NotifFilter.CALENDAR) },
         )
+    }
+}
+
+@Composable
+private fun SteakSummaryStat(
+    value: String,
+    active: Boolean,
+    onClick: () -> Unit,
+) {
+    val tint = if (active) BonyColors.Accent else BonyColors.TextMute
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .then(
+                if (active) Modifier.appBorder(1.dp, BonyColors.AccentDim)
+                else Modifier
+            )
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+    ) {
+        SteakIcon(size = 18.dp, contentDescription = "Steaks")
+        Spacer(Modifier.width(5.dp))
+        Text(text = value, style = BonyType.meta.copy(color = tint))
     }
 }
 
@@ -494,6 +545,9 @@ private fun NotificationRow(
     pollTotalVotes: Map<String, Int> = emptyMap(),
     pollMyVotes: Map<String, List<String>> = emptyMap(),
     onPollVote: (Event, List<String>) -> Unit = { _, _ -> },
+    claimedSteakOfferIds: Set<String> = emptySet(),
+    claimingSteakOfferIds: Set<String> = emptySet(),
+    onAcceptSteak: (Event) -> Unit = {},
     isExpanded: Boolean,
     onToggle: () -> Unit,
     onOpenThread: (String) -> Unit,
@@ -505,6 +559,17 @@ private fun NotificationRow(
     // but tap straight into the event instead of a thread/profile.
     if (item.type == NotifType.CALENDAR) {
         CalendarNotifRow(item, onOpenCalendarEvent)
+        return
+    }
+    if (item.type == NotifType.STEAK) {
+        SteakNotifRow(
+            item = item,
+            profile = profile,
+            claimed = item.tokenOffer?.id in claimedSteakOfferIds,
+            claiming = item.tokenOffer?.id in claimingSteakOfferIds,
+            onAccept = { item.tokenOffer?.let(onAcceptSteak) },
+            onOpenProfile = onOpenProfile,
+        )
         return
     }
 
@@ -572,7 +637,7 @@ private fun NotificationRow(
             exit = shrinkVertically(),
         ) {
             when (item.type) {
-                NotifType.CALENDAR -> Unit
+                NotifType.CALENDAR, NotifType.STEAK -> Unit
                 NotifType.ZAP -> {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         val sats = item.zapSats
@@ -804,6 +869,7 @@ private fun NotifTypeIcon(item: FlatNotifItem) {
             NotifType.ZAP -> Icon(
                 Icons.Outlined.Bolt, "zap", Modifier.size(18.dp), BonyColors.Accent,
             )
+            NotifType.STEAK -> SteakIcon(size = 20.dp, contentDescription = "steak")
             NotifType.CALENDAR -> Icon(
                 Icons.Outlined.CalendarMonth, "calendar", Modifier.size(18.dp), BonyColors.Accent,
             )
@@ -819,7 +885,127 @@ private fun actionText(item: FlatNotifItem): String = when (item.type) {
     NotifType.MENTION -> "mentioned you"
     NotifType.VOTE -> "voted"
     NotifType.ZAP -> "zapped"
+    NotifType.STEAK -> "sent you a steak"
     NotifType.CALENDAR -> "upcoming"
+}
+
+@Composable
+private fun SteakNotifRow(
+    item: FlatNotifItem,
+    profile: ProfileContent?,
+    claimed: Boolean,
+    claiming: Boolean,
+    onAccept: () -> Unit,
+    onOpenProfile: (String) -> Unit,
+) {
+    val actorName = profile?.bestName ?: item.actorPubkey.phraseHandle()
+    val nowSeconds by androidx.compose.runtime.produceState(
+        initialValue = System.currentTimeMillis() / 1000L,
+        key1 = item.id,
+        key2 = claimed,
+    ) {
+        if (claimed) return@produceState
+        while (true) {
+            value = System.currentTimeMillis() / 1000L
+            if (value > item.timestamp + DailyTokens.CLAIM_WINDOW_SECONDS) break
+            kotlinx.coroutines.delay(60_000L)
+        }
+    }
+    val expiresAt = item.timestamp + DailyTokens.CLAIM_WINDOW_SECONDS
+    val remaining = (expiresAt - nowSeconds).coerceAtLeast(0L)
+    val expired = !claimed && remaining <= 0L
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onOpenProfile(item.actorPubkey) }
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(modifier = Modifier.size(26.dp), contentAlignment = Alignment.Center) {
+            SteakIcon(size = 22.dp, dimmed = expired, contentDescription = "Steak")
+        }
+        Spacer(Modifier.width(10.dp))
+        UserAvatar(
+            pubkeyHex = item.actorPubkey,
+            profile = profile,
+            size = 32.dp,
+            modifier = Modifier.clickable { onOpenProfile(item.actorPubkey) },
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = actorName,
+                    style = BonyType.bodyDim.copy(color = BonyColors.Text),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "sent a steak",
+                    style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+                    maxLines = 1,
+                )
+            }
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = when {
+                    claimed -> "accepted · on your profile"
+                    claiming -> "claiming steak…"
+                    expired -> "expired after 24h"
+                    else -> "accept within ${DailyTokens.formatRemainingDuration(remaining)}"
+                },
+                style = BonyType.caption.copy(
+                    color = when {
+                        claimed -> BonyColors.Accent
+                        expired -> BonyColors.TextMute
+                        else -> BonyColors.TextDim
+                    },
+                ),
+                maxLines = 1,
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        when {
+            claiming -> {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    color = BonyColors.Accent,
+                    strokeWidth = 1.5.dp,
+                )
+            }
+            claimed -> {
+                Text(
+                    text = "✓ CLAIMED",
+                    style = BonyType.caption.copy(color = BonyColors.Accent),
+                    modifier = Modifier
+                        .appBorder(1.dp, BonyColors.AccentDim)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
+            expired -> {
+                Text(
+                    text = "EXPIRED",
+                    style = BonyType.caption.copy(color = BonyColors.TextMute),
+                    modifier = Modifier
+                        .appBorder(1.dp, BonyColors.Rule)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
+            item.tokenOffer != null -> {
+                Text(
+                    text = "ACCEPT",
+                    style = BonyType.tag.copy(color = BonyColors.Bg),
+                    modifier = Modifier
+                        .background(BonyColors.Accent)
+                        .clickable(onClick = onAccept)
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                )
+            }
+        }
+    }
 }
 
 /** A calendar event row — same look and feel as the other notification rows. */

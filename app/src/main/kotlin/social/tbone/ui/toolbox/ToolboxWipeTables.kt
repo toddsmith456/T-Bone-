@@ -11,6 +11,7 @@ internal suspend fun clearToolboxTables(database: AppDatabase) {
             "bookmarks", "bookmark_folders", "note_attachments", "note_folders",
             "calendar_events", "notes", "decoy_note_attachments", "decoy_note_folders",
             "decoy_notes", "events", "profiles", "geohash_messages",
+            "verified_tokens", "token_ledgers",
         ).forEach { table -> db.execSQL("DELETE FROM $table") }
     }
 }

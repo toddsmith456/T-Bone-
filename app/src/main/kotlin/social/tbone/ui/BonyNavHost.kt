@@ -138,6 +138,7 @@ private const val ROUTE_CHECKLIST_EDITOR   = "checklist_editor?id={id}&folder={f
 private const val ROUTE_FOLDER             = "folder/{id}?name={name}"
 private const val ROUTE_NOTES_INFO         = "notes_info"
 private const val ROUTE_TOOLBOX            = "toolbox"
+private const val ROUTE_STEAK_LEADERBOARD  = "steak_leaderboard"
 private const val ROUTE_VOICE              = "voice"
 private const val ROUTE_WALLET             = "wallet"
 private const val ROUTE_UPDATE_CENTER      = "update_center"
@@ -324,8 +325,15 @@ fun BonyNavHost() {
                             onFollowLists = { navController.navigate(ROUTE_FOLLOW_LISTS) },
                             onToolboxSettings = { navController.navigate(ROUTE_TOOLBOX_SETTINGS) },
                             onFeedViewer = { navController.navigate(ROUTE_FEED_VIEWER) },
+                            onSteakLeaderboard = { navController.navigate(ROUTE_STEAK_LEADERBOARD) },
                         )
                     }
+                }
+                composable(ROUTE_STEAK_LEADERBOARD) {
+                    social.tbone.ui.tokens.SteakLeaderboardScreen(
+                        onBack = { navController.popBackStack() },
+                        onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
+                    )
                 }
                 composable(ROUTE_BOOKMARKS) {
                     WithBottomBar(current = BottomTab.TOOLS, navController = navController) {
@@ -677,6 +685,7 @@ fun BonyNavHost() {
                             onReplyClick = { event -> navController.navigate("compose?replyToId=${event.id}") },
                             onQuoteClick = { event -> navController.navigate("compose?quoteToId=${event.id}") },
                             onEditProfile = { navController.navigate(ROUTE_PROFILE_EDIT) },
+                            onSteakLeaderboardClick = { navController.navigate(ROUTE_STEAK_LEADERBOARD) },
                         )
                     }
                     composable(ROUTE_VERIFY_IDENTITY) {

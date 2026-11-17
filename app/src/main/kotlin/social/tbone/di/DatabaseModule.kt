@@ -47,6 +47,7 @@ object DatabaseModule {
                 AppDatabase.MIGRATION_17_18,
                 AppDatabase.MIGRATION_18_19,
                 AppDatabase.MIGRATION_19_20,
+                AppDatabase.MIGRATION_20_21,
             )
             .build()
 
@@ -91,4 +92,7 @@ object DatabaseModule {
 
     @Provides
     fun provideEngagementCacheDao(db: AppDatabase): social.tbone.db.EngagementCacheDao = db.engagementCacheDao()
+
+    @Provides
+    fun provideTokenCacheDao(db: AppDatabase): social.tbone.db.TokenCacheDao = db.tokenCacheDao()
 }

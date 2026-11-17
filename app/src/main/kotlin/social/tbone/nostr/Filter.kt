@@ -81,6 +81,8 @@ data class Filter(
                 // incoming zaps. (`P` on a receipt is the *sender*, which is why it
                 // cannot be added to this filter — the keys AND together.)
                 EventKind.ZAP_RECEIPT,
+                // NIP-XX daily claimable token offers (kind 8701) carry `p` = recipient.
+                EventKind.TOKEN_OFFER,
             ),
             pTags = listOf(pubkey),
             limit = limit,

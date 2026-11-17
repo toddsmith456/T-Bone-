@@ -1,5 +1,6 @@
 package social.tbone.notifications
 
+import social.tbone.nostr.DailyTokens
 import social.tbone.nostr.Event
 import social.tbone.nostr.EventKind
 import social.tbone.nostr.Nip57
@@ -9,7 +10,7 @@ import social.tbone.nostr.replyEventId
 import social.tbone.ui.feed.extractInlineQuoteIds
 
 /** How an event relates to the account owner, if it does at all. */
-internal enum class NotificationClass { REACTION, REPOST, REPLY, QUOTE, MENTION, VOTE, ZAP }
+internal enum class NotificationClass { REACTION, REPOST, REPLY, QUOTE, MENTION, VOTE, ZAP, STEAK }
 
 /**
  * The single eligibility gate every notification must pass, no matter which
@@ -66,6 +67,22 @@ internal fun classifyNotification(
                 // move sats, not an interaction worth notifying about).
                 receipt.sender?.equals(me, ignoreCase = true) == true -> null
                 else -> NotificationClass.ZAP
+            }
+        }
+        EventKind.TOKEN_OFFER -> {
+            val offer = DailyTokens.parseOffer(
+                event = event,
+                nowSeconds = System.currentTimeMillis() / 1000L,
+                requireSig = false,
+            )
+            if (offer != null &&
+                offer.slug == DailyTokens.STEAK_SLUG &&
+                offer.recipientPubkey == me &&
+                offer.senderPubkey != me
+            ) {
+                NotificationClass.STEAK
+            } else {
+                null
             }
         }
         EventKind.TEXT_NOTE, EventKind.COMMENT, EventKind.POLL -> {
