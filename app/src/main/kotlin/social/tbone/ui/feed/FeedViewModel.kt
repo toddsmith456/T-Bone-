@@ -1610,6 +1610,10 @@ class FeedViewModel @Inject constructor(
                 label = "global-feed",
                 relays = globalInitialExpectedRelays,
             )
+            // Once the initial query is live, consider its current state
+            // resumable even before EOSE. Returning from Search can reconnect this
+            // subscription and retain partial events instead of discarding them.
+            globalFeedLoaded = true
 
             loadWatchdog.start(
                 timeoutMs = GLOBAL_PAGE_TIMEOUT_MS,
