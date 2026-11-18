@@ -9,6 +9,15 @@
     <uses-permission android:name="android.permission.UWB_RANGING" tools:node="remove" />
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- FORK: libraries inject these into the merged manifest (the source
+         manifest never declares them); drop them like the BT permissions
+         above. The privacy gate reads this file, not the merged output. -->
+    <uses-permission
+        android:name="android.permission.READ_PHONE_STATE"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        tools:node="remove" />
     <!-- Needed only when the user chooses to install a verified APK from GitHub or Zapstore. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Voice recorder (toolbox): needed to capture audio. -->
