@@ -209,13 +209,13 @@ fun SettingsScreen(
         SettingsSearchVisibility(settingsSearch, "follow follows lists offline people mutes") {
             SettingsFollowListsLink(onFollowLists = onFollowLists, compact = declutterMode, expanded = sectionExpanded("lists"), onToggle = { toggleSection("lists") })
         }
-        SettingsSearchVisibility(settingsSearch, "content filters hide hidden words nsfw sensitive screen time moderation") {
+        SettingsSearchVisibility(settingsSearch, "content filters hide hidden words nsfw sensitive screen time moderation limit schedule mute block") {
             SettingsContentFiltersSection(onContentFilters, compact = declutterMode, expanded = sectionExpanded("content"), onToggle = { toggleSection("content") })
         }
-        SettingsSearchVisibility(settingsSearch, "home feeds timeline clock global tabs hashtags polls") {
+        SettingsSearchVisibility(settingsSearch, "home feeds timeline clock global tabs hashtags polls reorder add follows auto load interval") {
             SettingsHomeFeedsLink(onHomeFeeds = onHomeFeeds, compact = declutterMode, expanded = sectionExpanded("home_feeds"), onToggle = { toggleSection("home_feeds") })
         }
-        SettingsSearchVisibility(settingsSearch, "write compose account switch switcher avatar profile name hash 3-word three word default note actions client tag moderation reply") {
+        SettingsSearchVisibility(settingsSearch, "write compose account switch switcher avatar profile name hash 3-word three word default note actions client tag moderation mute report T-Bone NIP-89") {
             SettingsNoteActionsSection(
                 noteMenuModerationEnabled, clientTagEnabled, writeAccountSwitcherStyle, viewModel,
                 compact = declutterMode, expanded = sectionExpanded("note_actions"),
@@ -225,22 +225,22 @@ fun SettingsScreen(
         SettingsSearchVisibility(settingsSearch, "reactions emoji likes reaction picker") {
             ReactionSettingsSection(viewModel, compact = declutterMode, expanded = sectionExpanded("reactions"), onToggle = { toggleSection("reactions") })
         }
-        SettingsSearchVisibility(settingsSearch, "media image video audio playback autoplay preload quality thumbnail fit blossom profile compression upload server") {
+        SettingsSearchVisibility(settingsSearch, "media image video audio playback autoplay preload quality thumbnail fit blossom profile picture banner compression compress upload server fitted layout") {
             SettingsMediaSection(viewModel, onProfileEdit, onBlossom, imageLoadMode, videoQuality, videoPlaybackMode, videoThumbnails, mediaFittedLayout, compact = declutterMode, expanded = sectionExpanded("media"), onToggle = { toggleSection("media") })
         }
-        SettingsSearchVisibility(settingsSearch, "avatars avatar gif animated animation mode") {
+        SettingsSearchVisibility(settingsSearch, "avatars avatar gif animated animation mode initials regular rounded still") {
             SettingsAvatarSection(viewModel, avatarMode, avatarAnimated, compact = declutterMode, expanded = sectionExpanded("avatars"), onToggle = { toggleSection("avatars") })
         }
-        SettingsSearchVisibility(settingsSearch, "storage cache memory files preset clear database temporary download logs") {
+        SettingsSearchVisibility(settingsSearch, "storage cache memory files preset clear database temporary download logs performance balanced lightweight space") {
             SettingsStorageCacheSection(viewModel, cachePreset, cacheStats, cacheStatusMessage, cacheBusy, torEnabled, compact = declutterMode, expanded = sectionExpanded("storage_cache"), onToggle = { toggleSection("storage_cache") })
         }
-        SettingsSearchVisibility(settingsSearch, "theme engine bony youniversal interface ui") {
+        SettingsSearchVisibility(settingsSearch, "theme engine bony youniversal interface ui material you dynamic color seed") {
             SettingsThemeEngineSection(viewModel, uiTheme, compact = declutterMode, expanded = sectionExpanded("theme_engine"), onToggle = { toggleSection("theme_engine") })
         }
-        SettingsSearchVisibility(settingsSearch, "appearance color accent dark light cream font contrast background palette") {
+        SettingsSearchVisibility(settingsSearch, "appearance color accent dark light cream font contrast background palette look custom") {
             SettingsAppearanceSection(viewModel, uiTheme, themeMode, accentColor, youniversalState, onChooseAccent = { showAccentSheet = true }, compact = declutterMode, expanded = sectionExpanded("appearance"), onToggle = { toggleSection("appearance") })
         }
-        SettingsSearchVisibility(settingsSearch, "privacy pin duress screenshot lock external links tor keypad auto lock confirmation") {
+        SettingsSearchVisibility(settingsSearch, "privacy pin duress screenshot lock external links tor keypad auto lock confirmation timeout scramble") {
             SettingsPrivacySection(viewModel, context, torEnabled, pinEnabled, screenshotBlockEnabled, duressPinEnabled, onPinSetup, onDuressPinSetup, scrambleAppPinKeypad, compact = declutterMode, expanded = sectionExpanded("privacy"), onToggle = { toggleSection("privacy") })
         }
         SettingsSearchVisibility(settingsSearch, "stealth notepad disguise decoy hidden") {
@@ -302,12 +302,12 @@ fun SettingsScreen(
 private val SETTINGS_SEARCH_TERMS = listOf(
     "ui declutter compact tabs collapsible categories", "tor relay connection status network",
     "account profile identity signer keys add manage", "relay relays connection server websocket global personal",
-    "follow follows lists offline people mutes", "content filters hide hidden words nsfw sensitive screen time moderation",
-    "home feeds timeline clock global tabs hashtags polls", "write compose account switch switcher avatar profile name hash 3-word three word default note actions client tag moderation reply",
-    "reactions emoji likes reaction picker", "media image video audio playback autoplay preload quality thumbnail fit blossom profile compression upload server",
-    "avatars avatar gif animated animation mode", "storage cache memory files preset clear database temporary download logs",
-    "theme engine bony youniversal interface ui", "appearance color accent dark light cream font contrast background palette",
-    "privacy pin duress screenshot lock external links tor keypad auto lock confirmation", "stealth notepad disguise decoy hidden",
+    "follow follows lists offline people mutes", "content filters hide hidden words nsfw sensitive screen time moderation limit schedule mute block",
+    "home feeds timeline clock global tabs hashtags polls reorder add follows auto load interval", "write compose account switch switcher avatar profile name hash 3-word three word default note actions client tag moderation mute report T-Bone NIP-89",
+    "reactions emoji likes reaction picker", "media image video audio playback autoplay preload quality thumbnail fit blossom profile picture banner compression compress upload server fitted layout",
+    "avatars avatar gif animated animation mode initials regular rounded still", "storage cache memory files preset clear database temporary download logs performance balanced lightweight space",
+    "theme engine bony youniversal interface ui material you dynamic color seed", "appearance color accent dark light cream font contrast background palette look custom",
+    "privacy pin duress screenshot lock external links tor keypad auto lock confirmation timeout scramble", "stealth notepad disguise decoy hidden",
     "debug logs updates diagnostics crash share export",
 )
 
