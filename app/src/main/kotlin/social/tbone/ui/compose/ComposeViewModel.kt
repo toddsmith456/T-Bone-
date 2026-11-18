@@ -235,7 +235,13 @@ class ComposeViewModel @Inject constructor(
                 _uiState.update { it.copy(initialText = draft) }
             }
             if (!replyToId.isNullOrEmpty()) {
-                val event = resolveReplyTarget(replyToId)
+                val event = try {
+                    resolveReplyTarget(replyToId)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
                 _uiState.update {
                     it.copy(
                         replyToEvent = event,
@@ -381,7 +387,7 @@ class ComposeViewModel @Inject constructor(
                 }
             }
             val event = (result?.message as? RelayMessage.EventMessage)?.event ?: return null
-            eventRepository.save(event, "")
+            runCatching { eventRepository.save(event, "") }
             return event
         } finally {
             pool.unsubscribe(subId)
