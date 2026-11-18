@@ -115,20 +115,20 @@ private const val ROUTE_ONBOARDING        = "onboarding"
 private const val ROUTE_FEED              = "feed"
 private const val ROUTE_THREAD            = "thread/{eventId}"
 private const val ROUTE_COMPOSE           = "compose?replyToId={replyToId}&quoteToId={quoteToId}&quoteFolderId={quoteFolderId}&draft={draft}&audioPath={audioPath}"
-private const val ROUTE_SETTINGS          = "settings"
+private const val ROUTE_SETTINGS          = "settings?q={q}"
 private const val ROUTE_HOME_FEEDS        = "home_feeds"
 private const val ROUTE_FEED_VIEWER       = "feed_viewer"
-private const val ROUTE_CONTENT_FILTERS   = "content_filters"
-private const val ROUTE_BLOSSOM           = "blossom_settings"
+private const val ROUTE_CONTENT_FILTERS   = "content_filters?q={q}"
+private const val ROUTE_BLOSSOM           = "blossom_settings?q={q}"
 private const val ROUTE_OFFLINE_LIST      = "offline_list/{type}"
 private const val ROUTE_FOLLOW_LISTS        = "follow_lists"
-private const val ROUTE_SCREEN_TIME       = "screen_time_settings"
+private const val ROUTE_SCREEN_TIME       = "screen_time_settings?q={q}"
 private const val ROUTE_PROFILE_EDIT      = "profile_edit"
 private const val ROUTE_PROFILE           = "profile/{pubkey}"
 private const val ROUTE_VERIFY_IDENTITY   = "verify/{pubkey}"
 private const val ROUTE_ADD_ACCOUNT       = "add_account"
-private const val ROUTE_ACCOUNT_MANAGEMENT = "account_management"
-private const val ROUTE_RELAY_MANAGEMENT  = "relay_management"
+private const val ROUTE_ACCOUNT_MANAGEMENT = "account_management?q={q}"
+private const val ROUTE_RELAY_MANAGEMENT  = "relay_management?q={q}"
 private const val ROUTE_NOTIFICATIONS     = "notifications"
 private const val ROUTE_NOTES              = "notes"
 private const val ROUTE_BOOKMARKS          = "bookmarks"
@@ -296,7 +296,7 @@ fun BonyNavHost() {
                         FeedScreen(
                             onThreadClick = { eventId -> navController.navigate("thread/$eventId") },
                             onComposeClick = { navController.navigate("compose") },
-                            onSettingsClick = { navController.navigate(ROUTE_SETTINGS) },
+                            onSettingsClick = { navController.navigate("settings") },
                             onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
                             onHashtagClick = { tag -> navController.navigate("hashtag/" + Uri.encode(tag)) },
                             onRelayManagementClick = { navController.navigate(ROUTE_RELAY_MANAGEMENT) },
@@ -585,14 +585,28 @@ fun BonyNavHost() {
                         // calls in 0.5.1 could empty the graph and show black.
                         ComposeScreen(onExit = { navController.exitCompose() })
                     }
-                    composable(ROUTE_CONTENT_FILTERS) {
+                    composable(
+                        ROUTE_CONTENT_FILTERS,
+                        arguments = listOf(navArgument("q") {
+                            type = NavType.StringType; defaultValue = ""
+                        }),
+                    ) { entry ->
                         ContentFiltersScreen(
                             onBack = { navController.popBackStack() },
                             onScreenTime = { navController.navigate(ROUTE_SCREEN_TIME) },
+                            initialSearch = entry.arguments?.getString("q").orEmpty(),
                         )
                     }
-                    composable(ROUTE_BLOSSOM) {
-                        BlossomSettingsScreen(onBack = { navController.popBackStack() })
+                    composable(
+                        ROUTE_BLOSSOM,
+                        arguments = listOf(navArgument("q") {
+                            type = NavType.StringType; defaultValue = ""
+                        }),
+                    ) { entry ->
+                        BlossomSettingsScreen(
+                            onBack = { navController.popBackStack() },
+                            initialSearch = entry.arguments?.getString("q").orEmpty(),
+                        )
                     }
                     composable(
                         ROUTE_OFFLINE_LIST,
@@ -600,8 +614,16 @@ fun BonyNavHost() {
                     ) {
                         OfflineListScreen(onBack = { navController.popBackStack() })
                     }
-                    composable(ROUTE_SCREEN_TIME) {
-                        ScreenTimeSettingsScreen(onBack = { navController.popBackStack() })
+                    composable(
+                        ROUTE_SCREEN_TIME,
+                        arguments = listOf(navArgument("q") {
+                            type = NavType.StringType; defaultValue = ""
+                        }),
+                    ) { entry ->
+                        ScreenTimeSettingsScreen(
+                            onBack = { navController.popBackStack() },
+                            initialSearch = entry.arguments?.getString("q").orEmpty(),
+                        )
                     }
                     composable(ROUTE_PROFILE_EDIT) {
                         ProfileEditScreen(onBack = { navController.popBackStack() })
@@ -628,9 +650,33 @@ fun BonyNavHost() {
                         )
                     }
 
-                    composable(ROUTE_SETTINGS) {
+                    composable(
+                        ROUTE_SETTINGS,
+                        arguments = listOf(navArgument("q") {
+                            type = NavType.StringType; defaultValue = ""
+                        }),
+                    ) { entry ->
                         SettingsScreen(
                             onBack = { navController.popBackStack() },
+                            initialSearch = entry.arguments?.getString("q").orEmpty(),
+                            onOpenSearchHit = { query ->
+                                // Deep-feature hits land on the screen that owns
+                                // the control: content filters (and screen time
+                                // behind its PIN gate), relays, blossom, accounts.
+                                val top = social.tbone.settings.search.SettingsSearch
+                                    .bestHit(query)
+                                    ?.entry
+                                val route = when (top?.group) {
+                                    social.tbone.settings.search.SettingsGroup.RELAYS -> ROUTE_RELAY_MANAGEMENT
+                                    social.tbone.settings.search.SettingsGroup.BLOSSOM -> ROUTE_BLOSSOM
+                                    social.tbone.settings.search.SettingsGroup.ACCOUNTS -> ROUTE_ACCOUNT_MANAGEMENT
+                                    social.tbone.settings.search.SettingsGroup.SCREEN_TIME -> ROUTE_SCREEN_TIME
+                                    else -> ROUTE_CONTENT_FILTERS
+                                }
+                                navController.navigate(
+                                    route.replace("{q}", Uri.encode(query)),
+                                )
+                            },
                             onAddAccount = { navController.navigate(ROUTE_ADD_ACCOUNT) },
                             onAccountManagement = { navController.navigate(ROUTE_ACCOUNT_MANAGEMENT) },
                             onRelayManagement = { navController.navigate(ROUTE_RELAY_MANAGEMENT) },
@@ -657,13 +703,27 @@ fun BonyNavHost() {
                             isDuress = duress,
                         )
                     }
-                    composable(ROUTE_RELAY_MANAGEMENT) {
-                        RelayManagementScreen(onBack = { navController.popBackStack() })
+                    composable(
+                        ROUTE_RELAY_MANAGEMENT,
+                        arguments = listOf(navArgument("q") {
+                            type = NavType.StringType; defaultValue = ""
+                        }),
+                    ) { entry ->
+                        RelayManagementScreen(
+                            onBack = { navController.popBackStack() },
+                            initialSearch = entry.arguments?.getString("q").orEmpty(),
+                        )
                     }
-                    composable(ROUTE_ACCOUNT_MANAGEMENT) {
+                    composable(
+                        ROUTE_ACCOUNT_MANAGEMENT,
+                        arguments = listOf(navArgument("q") {
+                            type = NavType.StringType; defaultValue = ""
+                        }),
+                    ) { entry ->
                         AccountManagementScreen(
                             onBack = { navController.popBackStack() },
                             onAddAccount = { navController.navigate(ROUTE_ADD_ACCOUNT) },
+                            initialSearch = entry.arguments?.getString("q").orEmpty(),
                         )
                     }
                     composable(ROUTE_ADD_ACCOUNT) {
@@ -854,7 +914,7 @@ private fun routeFor(tab: BottomTab): String = when (tab) {
     BottomTab.COMPOSE -> "compose"
     BottomTab.NOTIF -> ROUTE_NOTIFICATIONS
     BottomTab.TOOLS -> ROUTE_TOOLBOX
-    BottomTab.CONF -> ROUTE_SETTINGS
+    BottomTab.CONF -> "settings"
 }
 
 /**

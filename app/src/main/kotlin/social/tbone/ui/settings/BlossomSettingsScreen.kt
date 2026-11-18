@@ -1,6 +1,13 @@
 package social.tbone.ui.settings
 
 import social.tbone.ui.theme.appBorder
+import social.tbone.settings.search.SettingsGroup
+import social.tbone.ui.settings.search.SettingsAnchor
+import social.tbone.ui.settings.search.SettingsSearchEmptyHint
+import social.tbone.ui.settings.search.SettingsSearchField
+import social.tbone.ui.settings.search.SettingsSearchSummary
+import social.tbone.ui.settings.search.rememberSettingsScreenSearch
+import social.tbone.ui.settings.search.rememberSettingsSearchQuery
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -48,8 +55,17 @@ import androidx.compose.material3.TextButton
 @Composable
 fun BlossomSettingsScreen(
     onBack: () -> Unit,
+    initialSearch: String = "",
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
+    val searchQuery = rememberSettingsSearchQuery().apply {
+        if (value.isEmpty() && initialSearch.isNotEmpty()) value = initialSearch
+    }
+    val screenSearch = rememberSettingsScreenSearch(searchQuery.value)
+    val jumpAnchor = remember(initialSearch) {
+        if (initialSearch.isBlank()) null
+        else screenSearch.hits.firstOrNull { it.entry.group == SettingsGroup.BLOSSOM }?.entry?.anchor
+    }
     val servers by viewModel.blossomServers.collectAsStateWithLifecycle()
     val defaultServer by viewModel.blossomDefaultServer.collectAsStateWithLifecycle()
     val compress by viewModel.blossomCompress.collectAsStateWithLifecycle()
@@ -79,6 +95,12 @@ fun BlossomSettingsScreen(
             Spacer(Modifier.width(8.dp))
             Text("blossom uploads", style = BonyType.body.copy(color = BonyColors.Text))
         }
+        SettingsSearchField(
+            value = searchQuery.value,
+            onValueChange = { searchQuery.value = it },
+        )
+        SettingsSearchSummary(screenSearch, SettingsGroup.BLOSSOM)
+        SettingsSearchEmptyHint(screenSearch, SettingsGroup.BLOSSOM) { searchQuery.value = it }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
         Column(
@@ -121,6 +143,7 @@ fun BlossomSettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                SettingsAnchor("blossom_beaver")
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Beaver Mode", style = BonyType.body.copy(color = BonyColors.Text))
                     Spacer(Modifier.height(2.dp))
@@ -239,6 +262,7 @@ fun BlossomSettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                SettingsAnchor("blossom_compress_images")
                 Column(modifier = Modifier.weight(1f)) {
                     Text("compress uploads", style = BonyType.meta.copy(color = BonyColors.Text))
                     Spacer(Modifier.height(2.dp))
@@ -270,6 +294,7 @@ fun BlossomSettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                SettingsAnchor("blossom_compress_audio")
                 Column(modifier = Modifier.weight(1f)) {
                     Text("compress audio uploads", style = BonyType.meta.copy(color = BonyColors.Text))
                     Spacer(Modifier.height(2.dp))
@@ -286,6 +311,7 @@ fun BlossomSettingsScreen(
                         .clickable { viewModel.setBlossomAudioCompress(!audioCompress) }
                         .padding(2.dp),
                 ) {
+                    SettingsAnchor("blossom_sync_list")
                     Box(
                         modifier = Modifier
                             .size(16.dp)

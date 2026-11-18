@@ -21,6 +21,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.runtime.CompositionLocalProvider
+import social.tbone.settings.search.SettingsGroup
+import social.tbone.ui.settings.search.LocalSettingsJumpAnchor
+import social.tbone.ui.settings.search.LocalSettingsScreenSearch
+import social.tbone.ui.settings.search.SettingsAnchor
+import social.tbone.ui.settings.search.SettingsSearchEmptyHint
+import social.tbone.ui.settings.search.SettingsSearchField
+import social.tbone.ui.settings.search.SettingsSearchSummary
+import social.tbone.ui.settings.search.SettingsSectionAnchor
+import social.tbone.ui.settings.search.rememberSettingsScreenSearch
+import social.tbone.ui.settings.search.rememberSettingsSearchQuery
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.LinearProgressIndicator
@@ -68,6 +79,7 @@ import social.tbone.ui.theme.BonyType
 fun ContentFiltersScreen(
     onBack: () -> Unit,
     onScreenTime: () -> Unit = {},
+    initialSearch: String = "",
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     // This screen is the gate of the Content Filters folder: leaving it
@@ -100,6 +112,15 @@ fun ContentFiltersScreen(
         return
     }
 
+    val searchQuery = rememberSettingsSearchQuery().apply {
+        if (value.isEmpty() && initialSearch.isNotEmpty()) value = initialSearch
+    }
+    val screenSearch = rememberSettingsScreenSearch(searchQuery.value)
+    val jumpAnchor = remember(initialSearch) {
+        if (initialSearch.isBlank()) null
+        else screenSearch.hits.firstOrNull { it.entry.group == SettingsGroup.CONTENT_FILTERS }?.entry?.anchor
+    }
+
     var bleepInput by remember { mutableStateOf("") }
     var bleepNewMode by remember { mutableStateOf(WordMatchMode.WHOLE_WORD) }
     var hideInput by remember { mutableStateOf("") }
@@ -126,6 +147,12 @@ fun ContentFiltersScreen(
             Text("content filters", style = BonyType.body.copy(color = BonyColors.Text))
         }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+        SettingsSearchField(
+            value = searchQuery.value,
+            onValueChange = { searchQuery.value = it },
+        )
+        SettingsSearchSummary(screenSearch, SettingsGroup.CONTENT_FILTERS)
+        SettingsSearchEmptyHint(screenSearch, SettingsGroup.CONTENT_FILTERS) { searchQuery.value = it }
 
         if (showSetPin) {
             ParentalPinSetup(
@@ -135,10 +162,15 @@ fun ContentFiltersScreen(
             return
         }
 
+        CompositionLocalProvider(
+            LocalSettingsScreenSearch provides screenSearch,
+            LocalSettingsJumpAnchor provides jumpAnchor,
+        ) {
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             // ── Parental: screen time (lives inside the pin-locked folder so a
             // child can't turn the limit off without the parental pin) ──────
             item {
+                SettingsSectionAnchor("cf_parental_controls") {
                 FilterSection("parental controls") {
                     Row(
                         modifier = Modifier
@@ -147,6 +179,7 @@ fun ContentFiltersScreen(
                             .padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        SettingsAnchor("screen_time")
                         Column(modifier = Modifier.weight(1f)) {
                             Text("screen time", style = BonyType.body.copy(color = BonyColors.TextDim))
                             Text(
@@ -163,10 +196,13 @@ fun ContentFiltersScreen(
                         Text("→", style = BonyType.body.copy(color = BonyColors.TextMute))
                     }
                 }
+                }
             }
 
             // ── NSFW / content-warning handling ───────────────────────────
             item {
+                SettingsSectionAnchor("cf_nsfw_warnings") {
+                SettingsAnchor("nsfw_mode")
                 FilterSection("nsfw / content warnings") {
                     Text(
                         text = "what happens to notes labelled with a NIP-36 content-warning tag",
@@ -202,10 +238,12 @@ fun ContentFiltersScreen(
                         style = BonyType.metaDim.copy(color = BonyColors.TextMute),
                     )
                 }
+                }
             }
 
             // ── Offline AI NSFW media scanner (optional add-on models) ───────
             item {
+                SettingsSectionAnchor("cf_ai_scanner") {
                 OfflineAiScannerSection(
                     config = aiConfig,
                     modelStates = aiModelStates,
@@ -225,10 +263,13 @@ fun ContentFiltersScreen(
                     onImportLocal = { importModelLauncher.launch(arrayOf("*/*")) },
                     onClearCache = viewModel::clearAiScanCache,
                 )
+                }
             }
 
             // ── Bleep words ────────────────────────────────────────────────────
             item {
+                SettingsSectionAnchor("cf_bleep_words") {
+                SettingsAnchor("bleep_words")
                 FilterSection("bleep words") {
                     Text(
                         text = "these words are replaced with asterisks in notes (the note still shows). exact word = on its own only; anywhere = even inside other words",
@@ -271,10 +312,13 @@ fun ContentFiltersScreen(
                         )
                     }
                 }
+                }
             }
 
             // ── Hide words ─────────────────────────────────────────────────────
             item {
+                SettingsSectionAnchor("cf_hide_words") {
+                SettingsAnchor("hide_words")
                 FilterSection("hide words") {
                     Text(
                         text = "any note matching these words is hidden entirely. exact word = on its own only; anywhere = even inside other words (may hide innocent posts)",
@@ -317,10 +361,13 @@ fun ContentFiltersScreen(
                         )
                     }
                 }
+                }
             }
 
             // ── Parental pin ───────────────────────────────────────────────────
             item {
+                SettingsSectionAnchor("cf_parental_pin") {
+                SettingsAnchor("parental_pin")
                 FilterSection("parental pin") {
                     if (parentalEnabled) {
                         Text(
@@ -372,9 +419,11 @@ fun ContentFiltersScreen(
                         )
                     }
                 }
+                }
             }
 
             item { Spacer(Modifier.height(24.dp)) }
+        }
         }
     }
 }

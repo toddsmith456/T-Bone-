@@ -29,6 +29,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import social.tbone.settings.search.SettingsGroup
+import social.tbone.ui.settings.search.SettingsSearchEmptyHint
+import social.tbone.ui.settings.search.SettingsSearchField
+import social.tbone.ui.settings.search.SettingsSearchSummary
+import social.tbone.ui.settings.search.rememberSettingsScreenSearch
+import social.tbone.ui.settings.search.rememberSettingsSearchQuery
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -81,6 +87,7 @@ import social.tbone.ui.theme.appBorder
 @Composable
 fun RelayManagementScreen(
     onBack: () -> Unit,
+    initialSearch: String = "",
     viewModel: RelayManagementViewModel = hiltViewModel(),
     globalViewModel: GlobalRelayViewModel = hiltViewModel(),
 ) {
@@ -97,6 +104,10 @@ fun RelayManagementScreen(
     val globalActive by globalViewModel.globalActiveRelays.collectAsStateWithLifecycle()
     val globalStatuses by globalViewModel.relayStatuses.collectAsStateWithLifecycle()
 
+    val searchQuery = rememberSettingsSearchQuery().apply {
+        if (value.isEmpty() && initialSearch.isNotEmpty()) value = initialSearch
+    }
+    val screenSearch = rememberSettingsScreenSearch(searchQuery.value)
     var showAddDialog by remember { mutableStateOf(false) }
     var showAddGlobalDialog by remember { mutableStateOf(false) }
     var showGlobalPopup by remember { mutableStateOf(false) }
@@ -145,6 +156,15 @@ fun RelayManagementScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            item(key = "relay_search") {
+                SettingsSearchField(
+                    value = searchQuery.value,
+                    onValueChange = { searchQuery.value = it },
+                )
+                SettingsSearchSummary(screenSearch, SettingsGroup.RELAYS)
+                SettingsSearchEmptyHint(screenSearch, SettingsGroup.RELAYS) { searchQuery.value = it }
+            }
+
             // ── Sync status ───────────────────────────────────────────────
             item(key = "relay_sync_status") {
                 syncState.message?.let { message ->

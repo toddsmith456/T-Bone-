@@ -1,6 +1,17 @@
 package social.tbone.ui.settings
 
 import social.tbone.ui.theme.appBorder
+import androidx.compose.runtime.CompositionLocalProvider
+import social.tbone.settings.search.SettingsGroup
+import social.tbone.ui.settings.search.LocalSettingsJumpAnchor
+import social.tbone.ui.settings.search.LocalSettingsScreenSearch
+import social.tbone.ui.settings.search.SettingsAnchor
+import social.tbone.ui.settings.search.SettingsSearchEmptyHint
+import social.tbone.ui.settings.search.SettingsSearchField
+import social.tbone.ui.settings.search.SettingsSearchSummary
+import social.tbone.ui.settings.search.SettingsSectionAnchor
+import social.tbone.ui.settings.search.rememberSettingsScreenSearch
+import social.tbone.ui.settings.search.rememberSettingsSearchQuery
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -38,8 +49,17 @@ import social.tbone.ui.theme.BonyType
 @Composable
 fun ScreenTimeSettingsScreen(
     onBack: () -> Unit,
+    initialSearch: String = "",
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
+    val searchQuery = rememberSettingsSearchQuery().apply {
+        if (value.isEmpty() && initialSearch.isNotEmpty()) value = initialSearch
+    }
+    val screenSearch = rememberSettingsScreenSearch(searchQuery.value)
+    val jumpAnchor = remember(initialSearch) {
+        if (initialSearch.isBlank()) null
+        else screenSearch.hits.firstOrNull { it.entry.group == SettingsGroup.SCREEN_TIME }?.entry?.anchor
+    }
     val parentalEnabled by viewModel.parentalPinEnabled.collectAsStateWithLifecycle()
     val unlocked by viewModel.filtersUnlocked.collectAsStateWithLifecycle()
     // Part of the pin-locked Content Filters folder: never reachable unlocked.
@@ -78,7 +98,18 @@ fun ScreenTimeSettingsScreen(
             Text("screen time", style = BonyType.body.copy(color = BonyColors.Text))
         }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+        SettingsSearchField(
+            value = searchQuery.value,
+            onValueChange = { searchQuery.value = it },
+        )
+        SettingsSearchSummary(screenSearch, SettingsGroup.SCREEN_TIME)
+        SettingsSearchEmptyHint(screenSearch, SettingsGroup.SCREEN_TIME) { searchQuery.value = it }
 
+        CompositionLocalProvider(
+            LocalSettingsScreenSearch provides screenSearch,
+            LocalSettingsJumpAnchor provides jumpAnchor,
+        ) {
+        SettingsSectionAnchor("st_all") {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -86,6 +117,7 @@ fun ScreenTimeSettingsScreen(
                 .padding(horizontal = 14.dp, vertical = 12.dp),
         ) {
             // ── Enable toggle ─────────────────────────────────────────────────
+            SettingsAnchor("st_enabled") {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -115,8 +147,10 @@ fun ScreenTimeSettingsScreen(
                 }
             }
 
+            }
             Spacer(Modifier.height(24.dp))
 
+            SettingsAnchor("st_allowance") {
             if (enabled) {
                 Text(
                     text = "daily allowance",
@@ -174,6 +208,9 @@ fun ScreenTimeSettingsScreen(
                     style = BonyType.metaDim.copy(color = BonyColors.TextMute),
                 )
             }
+            }
+        }
+        }
         }
     }
 }

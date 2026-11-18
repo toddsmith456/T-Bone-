@@ -72,6 +72,15 @@ import social.tbone.ui.theme.ThemeViewModel
 import social.tbone.ui.components.DotAvatar
 import social.tbone.ui.components.SectionHeader
 import social.tbone.ui.components.LocalUiDeclutter
+import social.tbone.ui.settings.search.LocalSettingsJumpAnchor
+import social.tbone.ui.settings.search.LocalSettingsScreenSearch
+import social.tbone.ui.settings.search.SettingsAnchor
+import social.tbone.ui.settings.search.SettingsElsewhereResults
+import social.tbone.ui.settings.search.SettingsSearchField
+import social.tbone.ui.settings.search.SettingsSectionAnchor
+import social.tbone.ui.settings.search.rememberSettingsScreenSearch
+import social.tbone.settings.search.SettingsGroup
+import social.tbone.settings.search.SettingsSearch
 import social.tbone.ui.onboarding.BonyButton
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
@@ -84,6 +93,7 @@ import android.widget.Toast
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
@@ -111,6 +121,8 @@ fun SettingsScreen(
     onOfflineList: (String) -> Unit = {},
     onFollowLists: () -> Unit = {},
     onProfileEdit: () -> Unit = {},
+    initialSearch: String = "",
+    onOpenSearchHit: (String) -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -139,7 +151,14 @@ fun SettingsScreen(
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
     var showAccentSheet by remember { mutableStateOf(false) }
     var showNotepadPopup by remember { mutableStateOf(false) }
-    var settingsSearch by rememberSaveable { mutableStateOf("") }
+    var settingsSearch by rememberSaveable { mutableStateOf(initialSearch) }
+    val screenSearch = rememberSettingsScreenSearch(settingsSearch)
+    // Arriving from another screen's "found elsewhere" carries the query; the
+    // top hit on this screen becomes the row to flash.
+    val jumpAnchor = remember(initialSearch) {
+        if (initialSearch.isBlank()) null
+        else screenSearch.hits.firstOrNull { it.entry.group == SettingsGroup.SETTINGS }?.entry?.anchor
+    }
     val writeAccountSwitcherStyle by viewModel.writeAccountSwitcherStyle.collectAsStateWithLifecycle()
     val themeViewModel: ThemeViewModel = hiltViewModel()
     val youniversalState = themeViewModel.youniversalState
@@ -160,26 +179,50 @@ fun SettingsScreen(
             .verticalScroll(rememberScrollState()),
     ) {
         SettingsTopBar(onBack)
-        OutlinedTextField(
-            value = settingsSearch,
-            onValueChange = { settingsSearch = it },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
-            singleLine = true,
-            shape = appCornerShape(MaterialTheme.shapes.medium),
-            placeholder = { Text("Search settings", color = BonyColors.TextMute) },
-            leadingIcon = { Text("⌕", style = BonyType.title.copy(color = BonyColors.TextMute)) },
-            trailingIcon = {
-                if (settingsSearch.isNotEmpty()) {
-                    IconButton(onClick = { settingsSearch = "" }) {
-                        Text("×", style = BonyType.body.copy(color = BonyColors.TextMute))
+        SettingsSearchField(value = settingsSearch, onValueChange = { settingsSearch = it })
+        if (settingsSearch.isNotBlank()) {
+            val localHits = screenSearch.hits.count { it.entry.group == SettingsGroup.SETTINGS }
+            Text(
+                text = if (localHits == 0) "no matching settings on this screen" else "$localHits matches on this screen",
+                style = BonyType.meta.copy(
+                    color = if (localHits == 0) BonyColors.TextMute else BonyColors.Accent,
+                ),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+            )
+            if (localHits == 0) {
+                val hints = SettingsSearch.suggestions(settingsSearch)
+                if (hints.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text("try", style = BonyType.meta.copy(color = BonyColors.TextMute))
+                        hints.forEach { hint ->
+                            Text(
+                                text = hint,
+                                style = BonyType.meta.copy(color = BonyColors.Accent),
+                                modifier = Modifier
+                                    .appBorder(1.dp, BonyColors.AccentDim)
+                                    .clickable { settingsSearch = hint }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                            )
+                        }
                     }
+                    Spacer(Modifier.height(6.dp))
                 }
-            },
-        )
-        if (settingsSearch.isNotBlank() && SETTINGS_SEARCH_TERMS.none { settingsSearchMatches(settingsSearch, it) }) {
-            Text("No matching settings", style = BonyType.meta.copy(color = BonyColors.TextMute), modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
+            }
+            SettingsElsewhereResults(
+                state = screenSearch,
+                group = SettingsGroup.SETTINGS,
+                onOpen = { _, query -> onOpenSearchHit(query) },
+            )
         }
-        SettingsSearchVisibility(settingsSearch, "ui declutter compact tabs collapsible categories") {
+        CompositionLocalProvider(
+            LocalSettingsScreenSearch provides screenSearch,
+            LocalSettingsJumpAnchor provides jumpAnchor,
+        ) {
+        SettingsSectionAnchor("set_ui_declutter") {
+            SettingsAnchor("ui_declutter")
             SettingsSwitchRow(
                 title = "UI declutter",
                 description = "compact tabs and make Settings categories collapsible",
@@ -188,59 +231,60 @@ fun SettingsScreen(
             )
             Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
         }
-        SettingsSearchVisibility(settingsSearch, "tor relay connection status network") { TorActiveStrip(torEnabled) }
-        SettingsSearchVisibility(settingsSearch, "account profile identity signer keys add manage") {
+        SettingsSectionAnchor("set_tor_strip") { TorActiveStrip(torEnabled) }
+        SettingsSectionAnchor("set_account") {
             SettingsAccountSection(
                 activeAccount, onAddAccount, onAccountManagement,
                 compact = declutterMode, expanded = sectionExpanded("account"),
                 onToggle = { toggleSection("account") },
             )
         }
-        SettingsSearchVisibility(settingsSearch, "relay relays connection server websocket global personal") {
+        SettingsSectionAnchor("set_relays") {
             SettingsRelaySection(onRelayManagement, compact = declutterMode, expanded = sectionExpanded("relays"), onToggle = { toggleSection("relays") })
         }
-        SettingsSearchVisibility(settingsSearch, "follow follows lists offline people mutes") {
+        SettingsSectionAnchor("set_lists") {
             SettingsFollowListsLink(onFollowLists = onFollowLists, compact = declutterMode, expanded = sectionExpanded("lists"), onToggle = { toggleSection("lists") })
         }
-        SettingsSearchVisibility(settingsSearch, "content filters hide hidden words nsfw sensitive screen time moderation limit schedule mute block") {
+        SettingsSectionAnchor("set_content_filters") {
             SettingsContentFiltersSection(onContentFilters, compact = declutterMode, expanded = sectionExpanded("content"), onToggle = { toggleSection("content") })
         }
-        SettingsSearchVisibility(settingsSearch, "home feeds timeline clock global tabs hashtags polls reorder add follows auto load interval") {
+        SettingsSectionAnchor("set_home_feeds") {
             SettingsHomeFeedsLink(onHomeFeeds = onHomeFeeds, compact = declutterMode, expanded = sectionExpanded("home_feeds"), onToggle = { toggleSection("home_feeds") })
         }
-        SettingsSearchVisibility(settingsSearch, "write compose account switch switcher avatar profile name hash 3-word three word default note actions client tag moderation mute report T-Bone NIP-89") {
+        SettingsSectionAnchor("set_note_actions") {
             SettingsNoteActionsSection(
                 noteMenuModerationEnabled, clientTagEnabled, writeAccountSwitcherStyle, viewModel,
                 compact = declutterMode, expanded = sectionExpanded("note_actions"),
                 onToggle = { toggleSection("note_actions") },
             )
         }
-        SettingsSearchVisibility(settingsSearch, "reactions emoji likes reaction picker") {
+        SettingsSectionAnchor("set_reactions") {
             ReactionSettingsSection(viewModel, compact = declutterMode, expanded = sectionExpanded("reactions"), onToggle = { toggleSection("reactions") })
         }
-        SettingsSearchVisibility(settingsSearch, "media image video audio playback autoplay preload quality thumbnail fit blossom profile picture banner compression compress upload server fitted layout") {
+        SettingsSectionAnchor("set_media") {
             SettingsMediaSection(viewModel, onProfileEdit, onBlossom, imageLoadMode, videoQuality, videoPlaybackMode, videoThumbnails, mediaFittedLayout, compact = declutterMode, expanded = sectionExpanded("media"), onToggle = { toggleSection("media") })
         }
-        SettingsSearchVisibility(settingsSearch, "avatars avatar gif animated animation mode initials regular rounded still") {
+        SettingsSectionAnchor("set_avatars") {
             SettingsAvatarSection(viewModel, avatarMode, avatarAnimated, compact = declutterMode, expanded = sectionExpanded("avatars"), onToggle = { toggleSection("avatars") })
         }
-        SettingsSearchVisibility(settingsSearch, "storage cache memory files preset clear database temporary download logs performance balanced lightweight space") {
+        SettingsSectionAnchor("set_storage_cache") {
             SettingsStorageCacheSection(viewModel, cachePreset, cacheStats, cacheStatusMessage, cacheBusy, torEnabled, compact = declutterMode, expanded = sectionExpanded("storage_cache"), onToggle = { toggleSection("storage_cache") })
         }
-        SettingsSearchVisibility(settingsSearch, "theme engine bony youniversal interface ui material you dynamic color seed") {
+        SettingsSectionAnchor("set_theme_engine") {
             SettingsThemeEngineSection(viewModel, uiTheme, compact = declutterMode, expanded = sectionExpanded("theme_engine"), onToggle = { toggleSection("theme_engine") })
         }
-        SettingsSearchVisibility(settingsSearch, "appearance color accent dark light cream font contrast background palette look custom") {
+        SettingsSectionAnchor("set_appearance") {
             SettingsAppearanceSection(viewModel, uiTheme, themeMode, accentColor, youniversalState, onChooseAccent = { showAccentSheet = true }, compact = declutterMode, expanded = sectionExpanded("appearance"), onToggle = { toggleSection("appearance") })
         }
-        SettingsSearchVisibility(settingsSearch, "privacy pin duress screenshot lock external links tor keypad auto lock confirmation timeout scramble") {
+        SettingsSectionAnchor("set_privacy") {
             SettingsPrivacySection(viewModel, context, torEnabled, pinEnabled, screenshotBlockEnabled, duressPinEnabled, onPinSetup, onDuressPinSetup, scrambleAppPinKeypad, compact = declutterMode, expanded = sectionExpanded("privacy"), onToggle = { toggleSection("privacy") })
         }
-        SettingsSearchVisibility(settingsSearch, "stealth notepad disguise decoy hidden") {
+        SettingsSectionAnchor("set_stealth") {
             SettingsStealthSection(viewModel, compact = declutterMode, expanded = sectionExpanded("stealth"), onToggle = { toggleSection("stealth") }, onShowPopup = { showNotepadPopup = true })
         }
-        SettingsSearchVisibility(settingsSearch, "debug logs updates diagnostics crash share export") {
+        SettingsSectionAnchor("set_debug") {
             SettingsDebugSection(viewModel, context, accounts, activeAccount, compact = declutterMode, expanded = sectionExpanded("debug"), onToggle = { toggleSection("debug") })
+            }
         }
         Spacer(Modifier.height(96.dp))
     }
@@ -292,33 +336,6 @@ fun SettingsScreen(
         }
     }
 }
-private val SETTINGS_SEARCH_TERMS = listOf(
-    "ui declutter compact tabs collapsible categories", "tor relay connection status network",
-    "account profile identity signer keys add manage", "relay relays connection server websocket global personal",
-    "follow follows lists offline people mutes", "content filters hide hidden words nsfw sensitive screen time moderation limit schedule mute block",
-    "home feeds timeline clock global tabs hashtags polls reorder add follows auto load interval", "write compose account switch switcher avatar profile name hash 3-word three word default note actions client tag moderation mute report T-Bone NIP-89",
-    "reactions emoji likes reaction picker", "media image video audio playback autoplay preload quality thumbnail fit blossom profile picture banner compression compress upload server fitted layout",
-    "avatars avatar gif animated animation mode initials regular rounded still", "storage cache memory files preset clear database temporary download logs performance balanced lightweight space",
-    "theme engine bony youniversal interface ui material you dynamic color seed", "appearance color accent dark light cream font contrast background palette look custom",
-    "privacy pin duress screenshot lock external links tor keypad auto lock confirmation timeout scramble", "stealth notepad disguise decoy hidden",
-    "debug logs updates diagnostics crash share export",
-)
-
-private fun settingsSearchMatches(query: String, terms: String): Boolean {
-    val tokens = query.trim().lowercase().split(Regex("\\s+")).filter { it.isNotBlank() }
-    if (tokens.isEmpty()) return true
-    val normalizedTerms = terms.lowercase()
-    return tokens.all { token -> normalizedTerms.contains(token) }
-}
-
-@Composable
-private fun SettingsSearchVisibility(query: String, terms: String, content: @Composable () -> Unit) {
-    // Keep filtering synchronous and remove hidden sections from measurement.
-    // AnimatedVisibility's vertical expand/shrink inside the Settings scroll
-    // column produced transient overlapping layouts while multiple sections
-    // changed height together. Clearing the query naturally restores every row.
-    if (settingsSearchMatches(query, terms)) content()
-}
 
 @Composable
 private fun SettingsTopBar(onBack: () -> Unit) {
@@ -363,6 +380,7 @@ private fun TorActiveStrip(torEnabled: Boolean) {
         ) {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    SettingsAnchor("tor_strip")
                     Box(
                         modifier = Modifier
                             .size(8.dp)
@@ -371,6 +389,7 @@ private fun TorActiveStrip(torEnabled: Boolean) {
                     Spacer(Modifier.width(8.dp))
                     Text("TOR ACTIVE", style = BonyType.tag.copy(color = BonyColors.Warn))
                     Spacer(Modifier.weight(1f))
+                    SettingsAnchor("account")
                     Box(
                         modifier = Modifier
                             .appBorder(1.dp, BonyColors.WarnDim)
@@ -400,6 +419,7 @@ private fun SettingsAccountSection(activeAccount: Account?, onAddAccount: () -> 
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
     }
 
+    SettingsAnchor("add_account")
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -420,6 +440,7 @@ private fun SettingsRelaySection(onRelayManagement: () -> Unit, compact: Boolean
     SettingsCategoryHeader("RELAYS", compact, expanded, onToggle)
     if (compact && !expanded) return
 
+    SettingsAnchor("relays")
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -446,6 +467,7 @@ private fun SettingsFollowListsLink(onFollowLists: () -> Unit, compact: Boolean,
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        SettingsAnchor("lists")
         Column(modifier = Modifier.weight(1f)) {
             Text("follow lists", style = BonyType.body.copy(color = BonyColors.TextDim))
             Text(
@@ -471,6 +493,7 @@ private fun SettingsContentFiltersSection(onContentFilters: () -> Unit, compact:
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        SettingsAnchor("content_filters")
         Column(modifier = Modifier.weight(1f)) {
             Text("content filters", style = BonyType.body.copy(color = BonyColors.TextDim))
             Text(
@@ -496,6 +519,7 @@ private fun SettingsHomeFeedsLink(onHomeFeeds: () -> Unit, compact: Boolean, exp
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        SettingsAnchor("home_feeds")
         Column(modifier = Modifier.weight(1f)) {
             Text("home feeds", style = BonyType.body.copy(color = BonyColors.TextDim))
             Text(
@@ -513,6 +537,7 @@ private fun SettingsNoteActionsSection(noteMenuModerationEnabled: Boolean, clien
     // ── Note actions and event attribution ─────────────────────────────────
     SettingsCategoryHeader("NOTE ACTIONS", compact, expanded, onToggle)
     if (compact && !expanded) return
+    SettingsAnchor("note_moderation")
     SettingsSwitchRow(
         title = "show mute/report actions",
         description = "Adds mute poster and public NIP-56 report to note menus · off by default",
@@ -520,12 +545,14 @@ private fun SettingsNoteActionsSection(noteMenuModerationEnabled: Boolean, clien
         onCheckedChange = viewModel::setNoteMenuModerationEnabled,
     )
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+    SettingsAnchor("client_tag")
     SettingsSwitchRow(
         title = "add T-Bone client tag",
         description = "Adds a public NIP-89 client tag to events you sign · on by default",
         checked = clientTagEnabled,
         onCheckedChange = viewModel::setClientTagEnabled,
     )
+    SettingsAnchor("write_switcher")
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
     Text("Write-tab account switcher", style = BonyType.body.copy(color = BonyColors.Text), modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp))
@@ -556,6 +583,7 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
     if (compact && !expanded) return
 
     // Profile picture & banner upload.
+    SettingsAnchor("profile_picture")
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -569,6 +597,7 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
     // Blossom upload servers.
+    SettingsAnchor("blossom")
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -581,6 +610,7 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
     }
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
+    SettingsAnchor("inline_images")
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -622,6 +652,7 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
 
     // Video playback is kept separate from image loading because videos can
     // consume substantially more bandwidth and battery than a still image.
+    SettingsAnchor("video_quality")
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -641,6 +672,7 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             VideoQuality.entries.forEach { quality ->
                 val active = quality == videoQuality
+                SettingsAnchor("video_playback")
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -706,6 +738,7 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            SettingsAnchor("video_thumbnails")
             Column(modifier = Modifier.weight(1f)) {
                 Text("video thumbnails", style = BonyType.body.copy(color = BonyColors.TextDim))
                 Text(
@@ -724,6 +757,7 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            SettingsAnchor("media_fitted")
             Column(modifier = Modifier.weight(1f)) {
                 Text("fit media to its real shape", style = BonyType.body.copy(color = BonyColors.TextDim))
                 Text(
@@ -747,6 +781,7 @@ private fun SettingsAvatarSection(viewModel: SettingsViewModel, avatarMode: Avat
     SettingsCategoryHeader("AVATARS", compact, expanded, onToggle)
     if (compact && !expanded) return
 
+    SettingsAnchor("avatar_style")
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -788,6 +823,7 @@ private fun SettingsAvatarSection(viewModel: SettingsViewModel, avatarMode: Avat
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            SettingsAnchor("avatar_animated")
             Column(modifier = Modifier.weight(1f)) {
                 Text("animated avatars", style = BonyType.body.copy(color = BonyColors.Text))
                 Text(
@@ -825,6 +861,7 @@ private fun SettingsStorageCacheSection(
     }
 
     val smallShape = appCornerShape(MaterialTheme.shapes.small)
+    SettingsAnchor("cache_preset")
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -888,6 +925,7 @@ private fun SettingsStorageCacheSection(
                 .padding(horizontal = 10.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
+            SettingsAnchor("cache_usage")
             CacheUsageRow(
                 label = "avatars (protected)",
                 value = "${social.tbone.cache.CacheStorageManager.formatBytes(cacheStats.avatarBytes)} / ${social.tbone.cache.CacheStorageManager.formatBudget(cachePreset.avatarDiskBytes)}",
@@ -911,6 +949,7 @@ private fun SettingsStorageCacheSection(
         }
 
         Spacer(Modifier.height(10.dp))
+        SettingsAnchor("clear_videos")
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -929,6 +968,7 @@ private fun SettingsStorageCacheSection(
             )
         }
         Spacer(Modifier.height(6.dp))
+        SettingsAnchor("clear_avatars")
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1006,6 +1046,7 @@ private fun SettingsThemeEngineSection(viewModel: SettingsViewModel, uiTheme: Ui
     // ── Theme engine (Bony vs Youniversal) ──────────────────────────────
     SettingsCategoryHeader("THEME ENGINE", compact, expanded, onToggle)
     if (compact && !expanded) return
+    SettingsAnchor("ui_theme")
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1064,6 +1105,7 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
     if (compact && !expanded) return
 
     if (uiTheme == UiTheme.BONY) {
+        SettingsAnchor("theme_mode")
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1105,6 +1147,7 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                SettingsAnchor("accent_color")
                 Column(modifier = Modifier.weight(1f)) {
                     Text("accent color", style = BonyType.body.copy(color = BonyColors.Text))
                     Text(
@@ -1177,6 +1220,7 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
                 YouniversalFontOption.entries.forEach { option ->
                     val active = option == youniversalState.fontOption
                     val shape = appCornerShape(MaterialTheme.shapes.small)
+                    SettingsAnchor("background")
                     Column(
                         modifier = Modifier
                             .weight(1f)
@@ -1207,6 +1251,7 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 YouniversalBackgroundStyle.entries.forEach { style ->
                     val active = style == youniversalState.backgroundStyle
+                    SettingsAnchor("contrast")
                     Column(
                         modifier = Modifier
                             .weight(1f)
@@ -1253,6 +1298,7 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                SettingsAnchor("material_you")
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Material You", style = BonyType.body.copy(color = BonyColors.Text))
                     val available = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
@@ -1328,6 +1374,7 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                SettingsAnchor("corner_radius")
                 Column(modifier = Modifier.weight(1f)) {
                     Text("corner radius", style = BonyType.body.copy(color = BonyColors.Text))
                     Text(
@@ -1346,6 +1393,7 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                SettingsAnchor("text_size")
                 Column(modifier = Modifier.weight(1f)) {
                     Text("text size", style = BonyType.body.copy(color = BonyColors.Text))
                     Text(
@@ -1364,6 +1412,7 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                SettingsAnchor("animate_theme")
                 Column(modifier = Modifier.weight(1f)) {
                     Text("animate theme changes", style = BonyType.body.copy(color = BonyColors.Text))
                     Text("morph colors instead of snapping", style = BonyType.meta.copy(color = BonyColors.TextMute))
@@ -1531,6 +1580,7 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        SettingsAnchor("orbot")
         Column(modifier = Modifier.weight(1f)) {
             Text("route via tor", style = BonyType.body.copy(color = BonyColors.Text))
             if (!viewModel.orbotInstalled) {
@@ -1555,6 +1605,7 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        SettingsAnchor("orbot_check_upload")
         Column(modifier = Modifier.weight(1f)) {
             Text("check Orbot before upload", style = BonyType.body.copy(color = BonyColors.Text))
             Text("checks Orbot before Blossom uploads; not a network-wide kill switch and active uploads are not monitored", style = BonyType.meta.copy(color = BonyColors.TextMute))
@@ -1571,6 +1622,7 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        SettingsAnchor("app_lock")
         Column(modifier = Modifier.weight(1f)) {
             Text("app lock (PIN)", style = BonyType.body.copy(color = BonyColors.Text))
             if (pinEnabled) {
@@ -1592,6 +1644,7 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
 
     if (pinEnabled) {
         val pinAutoLockMinutes by viewModel.pinAutoLockMinutes.collectAsStateWithLifecycle()
+        SettingsAnchor("auto_lock")
         AutoLockMinutesRow(
             currentMinutes = pinAutoLockMinutes,
             onSelect = viewModel::setPinAutoLockMinutes,
@@ -1600,6 +1653,7 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
         )
     }
 
+    SettingsAnchor("scramble_keypad")
     SettingsSwitchRow(
         title = "scramble app PIN keypad",
         description = "randomize digit positions for each PIN entry",
@@ -1615,6 +1669,7 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        SettingsAnchor("screenshot_block")
         Column(modifier = Modifier.weight(1f)) {
             Text("screenshot blocker", style = BonyType.body.copy(color = BonyColors.Text))
             Text(
@@ -1641,6 +1696,7 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        SettingsAnchor("duress_pin")
         Column(modifier = Modifier.weight(1f)) {
             Text("duress pin", style = BonyType.body.copy(color = BonyColors.Text))
             Text(
@@ -1673,6 +1729,7 @@ private fun SettingsStealthSection(viewModel: SettingsViewModel, compact: Boolea
 
     val notepadEnabled by viewModel.notepadFrontEnabled.collectAsStateWithLifecycle()
 
+    SettingsAnchor("notepad_front")
     SettingsSwitchRow(
         title = "Notepad front",
         description = "Disguise app as Notepad on launcher · decoy notes only · tap key storage 10× in encryption screen to unlock full app",
@@ -1711,6 +1768,7 @@ private fun SettingsDebugSection(viewModel: SettingsViewModel, context: Context,
 
     var showShareLogsDialog by remember { mutableStateOf(false) }
 
+    SettingsAnchor("share_logs")
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1731,6 +1789,7 @@ private fun SettingsDebugSection(viewModel: SettingsViewModel, context: Context,
         )
     }
 
+    SettingsAnchor("version")
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1743,6 +1802,7 @@ private fun SettingsDebugSection(viewModel: SettingsViewModel, context: Context,
     // Sign out — in Danger color, only if multiple accounts
     if (accounts.size > 1) {
         activeAccount?.let { acct ->
+            SettingsAnchor("sign_out")
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
