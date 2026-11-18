@@ -3,6 +3,7 @@ package social.tbone.ui.settings
 import social.tbone.ui.theme.appBorder
 import androidx.compose.runtime.CompositionLocalProvider
 import social.tbone.settings.search.SettingsGroup
+import social.tbone.settings.search.SettingsSearch as SettingsSearchIndex
 import social.tbone.ui.settings.search.LocalSettingsJumpAnchor
 import social.tbone.ui.settings.search.LocalSettingsScreenSearch
 import social.tbone.ui.settings.search.SettingsAnchor
@@ -12,6 +13,7 @@ import social.tbone.ui.settings.search.SettingsSearchSummary
 import social.tbone.ui.settings.search.SettingsSectionAnchor
 import social.tbone.ui.settings.search.rememberSettingsScreenSearch
 import social.tbone.ui.settings.search.rememberSettingsSearchQuery
+import social.tbone.ui.settings.search.searchRowHighlight
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -56,9 +58,12 @@ fun ScreenTimeSettingsScreen(
         if (value.isEmpty() && initialSearch.isNotEmpty()) value = initialSearch
     }
     val screenSearch = rememberSettingsScreenSearch(searchQuery.value)
+    // Flash only the row an incoming jump handed over — typing in this
+    // screen's own field shows every matching row instead of one target.
     val jumpAnchor = remember(initialSearch) {
         if (initialSearch.isBlank()) null
-        else screenSearch.hits.firstOrNull { it.entry.group == SettingsGroup.SCREEN_TIME }?.entry?.anchor
+        else SettingsSearchIndex.search(initialSearch)
+            .firstOrNull { it.entry.group == SettingsGroup.SCREEN_TIME }?.entry?.anchor
     }
     val parentalEnabled by viewModel.parentalPinEnabled.collectAsStateWithLifecycle()
     val unlocked by viewModel.filtersUnlocked.collectAsStateWithLifecycle()
@@ -117,9 +122,9 @@ fun ScreenTimeSettingsScreen(
                 .padding(horizontal = 14.dp, vertical = 12.dp),
         ) {
             // ── Enable toggle ─────────────────────────────────────────────────
-            SettingsAnchor("st_enabled") {
+        SettingsAnchor("st_enabled") {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = searchRowHighlight(Modifier.fillMaxWidth(), "st_enabled"),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -147,10 +152,10 @@ fun ScreenTimeSettingsScreen(
                 }
             }
 
-            }
+        }
             Spacer(Modifier.height(24.dp))
 
-            SettingsAnchor("st_allowance") {
+        SettingsAnchor("st_allowance") {
             if (enabled) {
                 Text(
                     text = "daily allowance",
@@ -208,7 +213,7 @@ fun ScreenTimeSettingsScreen(
                     style = BonyType.metaDim.copy(color = BonyColors.TextMute),
                 )
             }
-            }
+        }
         }
         }
         }

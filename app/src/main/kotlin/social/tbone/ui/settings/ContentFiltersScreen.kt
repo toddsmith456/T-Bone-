@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.CompositionLocalProvider
 import social.tbone.settings.search.SettingsGroup
+import social.tbone.settings.search.SettingsSearch as SettingsSearchIndex
 import social.tbone.ui.settings.search.LocalSettingsJumpAnchor
 import social.tbone.ui.settings.search.LocalSettingsScreenSearch
 import social.tbone.ui.settings.search.SettingsAnchor
@@ -32,6 +33,7 @@ import social.tbone.ui.settings.search.SettingsSearchSummary
 import social.tbone.ui.settings.search.SettingsSectionAnchor
 import social.tbone.ui.settings.search.rememberSettingsScreenSearch
 import social.tbone.ui.settings.search.rememberSettingsSearchQuery
+import social.tbone.ui.settings.search.searchRowHighlight
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.LinearProgressIndicator
@@ -116,9 +118,12 @@ fun ContentFiltersScreen(
         if (value.isEmpty() && initialSearch.isNotEmpty()) value = initialSearch
     }
     val screenSearch = rememberSettingsScreenSearch(searchQuery.value)
+    // Flash only the row an incoming jump handed over — typing in this
+    // screen's own field shows every matching row instead of one target.
     val jumpAnchor = remember(initialSearch) {
         if (initialSearch.isBlank()) null
-        else screenSearch.hits.firstOrNull { it.entry.group == SettingsGroup.CONTENT_FILTERS }?.entry?.anchor
+        else SettingsSearchIndex.search(initialSearch)
+            .firstOrNull { it.entry.group == SettingsGroup.CONTENT_FILTERS }?.entry?.anchor
     }
 
     var bleepInput by remember { mutableStateOf("") }
@@ -172,14 +177,14 @@ fun ContentFiltersScreen(
             item {
                 SettingsSectionAnchor("cf_parental_controls") {
                 FilterSection("parental controls") {
+                SettingsAnchor("screen_time") {
                     Row(
-                        modifier = Modifier
+                        modifier = searchRowHighlight(Modifier
                             .fillMaxWidth()
                             .clickable { onScreenTime() }
-                            .padding(vertical = 4.dp),
+                            .padding(vertical = 4.dp), "screen_time"),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        SettingsAnchor("screen_time")
                         Column(modifier = Modifier.weight(1f)) {
                             Text("screen time", style = BonyType.body.copy(color = BonyColors.TextDim))
                             Text(
@@ -197,12 +202,13 @@ fun ContentFiltersScreen(
                     }
                 }
                 }
+                }
             }
 
             // ── NSFW / content-warning handling ───────────────────────────
             item {
                 SettingsSectionAnchor("cf_nsfw_warnings") {
-                SettingsAnchor("nsfw_mode")
+                SettingsAnchor("nsfw_mode") {
                 FilterSection("nsfw / content warnings") {
                     Text(
                         text = "what happens to notes labelled with a NIP-36 content-warning tag",
@@ -239,6 +245,7 @@ fun ContentFiltersScreen(
                     )
                 }
                 }
+                }
             }
 
             // ── Offline AI NSFW media scanner (optional add-on models) ───────
@@ -269,7 +276,7 @@ fun ContentFiltersScreen(
             // ── Bleep words ────────────────────────────────────────────────────
             item {
                 SettingsSectionAnchor("cf_bleep_words") {
-                SettingsAnchor("bleep_words")
+                SettingsAnchor("bleep_words") {
                 FilterSection("bleep words") {
                     Text(
                         text = "these words are replaced with asterisks in notes (the note still shows). exact word = on its own only; anywhere = even inside other words",
@@ -313,12 +320,13 @@ fun ContentFiltersScreen(
                     }
                 }
                 }
+                }
             }
 
             // ── Hide words ─────────────────────────────────────────────────────
             item {
                 SettingsSectionAnchor("cf_hide_words") {
-                SettingsAnchor("hide_words")
+                SettingsAnchor("hide_words") {
                 FilterSection("hide words") {
                     Text(
                         text = "any note matching these words is hidden entirely. exact word = on its own only; anywhere = even inside other words (may hide innocent posts)",
@@ -362,12 +370,13 @@ fun ContentFiltersScreen(
                     }
                 }
                 }
+                }
             }
 
             // ── Parental pin ───────────────────────────────────────────────────
             item {
                 SettingsSectionAnchor("cf_parental_pin") {
-                SettingsAnchor("parental_pin")
+                SettingsAnchor("parental_pin") {
                 FilterSection("parental pin") {
                     if (parentalEnabled) {
                         Text(
@@ -418,6 +427,7 @@ fun ContentFiltersScreen(
                                 .padding(horizontal = 12.dp, vertical = 10.dp),
                         )
                     }
+                }
                 }
                 }
             }

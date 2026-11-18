@@ -62,24 +62,38 @@ class SettingsSearchAnchorTest {
      * backlog, and the test fails if an entry is neither marked nor listed.
      */
     private val knownUnanchored = setOf(
-        // Main Settings rows still without a marker.
-        "client_tag", "write_switcher", "video_playback", "video_thumbnails", "media_fitted",
-        "avatar_animated", "cache_usage", "clear_photos", "clear_videos", "clear_avatars",
-        "clear_all_cache", "accent_color", "background", "contrast", "accent_seed",
-        "corner_radius", "text_size", "animate_theme", "material_you", "orbot",
-        "orbot_install", "scramble_keypad", "screenshot_block", "lists", "add_account",
-        "reactions", "database", "youniversal_reset", "screen_time", "font", "confirm_links",
-        // Sub-screen rows: those screens are filtered at section level today.
-        "nsfw_mode", "ai_scanner", "ai_sensitivity", "ai_scan_avatars", "ai_scan_banners",
-        "ai_exempt_follows", "ai_require_pin", "ai_models", "ai_clear_cache",
-        "bleep_words", "hide_words", "word_match_mode", "parental_pin",
+        // Main Settings rows that still have no marker of their own.
+        "orbot_install", "font", "confirm_links", "database", "youniversal_reset",
+        "accent_seed", "reactions",
+        // Content Filters: the AI scanner block and the word-matching mode row.
+        "ai_scanner", "ai_sensitivity", "ai_scan_avatars", "ai_scan_banners",
+        "ai_exempt_follows", "ai_require_pin", "ai_models", "ai_clear_cache", "word_match_mode",
+        // Relay / Blossom / Accounts / Reactions sub-screens filter at section level.
         "relay_list", "relay_add", "relay_citrine", "relay_import_export", "relay_global",
         "relay_enable_all",
-        "blossom_servers", "blossom_add_server", "blossom_beaver", "blossom_compress_images",
-        "blossom_compress_audio", "blossom_sync_list",
+        "blossom_servers", "blossom_add_server",
         "accounts_active", "accounts_hidden", "accounts_hide", "accounts_add",
         "reactions_multi", "reactions_saved",
     )
+
+    /**
+     * Regression guard for the Settings-row overlap bug.
+     *
+     * Anchors used to be emitted as bare statements (`SettingsAnchor("x")` with no
+     * block), which still wrapped the row in a zero-height Box and stole a slot
+     * from the enclosing Row/Column. Every anchor must now wrap real content.
+     */
+    @Test
+    fun noAnchorIsEmittedAsABareStatement() {
+        val bare = Regex("""^\s*Settings(?:Section)?Anchor\(\s*"[^"]+"\s*\)\s*$""", RegexOption.MULTILINE)
+        val offenders = sourceFiles().flatMap { file ->
+            bare.findAll(file.readText()).map { "${file.name}: ${it.value.trim()}" }.toList()
+        }
+        assertTrue(
+            "anchors must wrap content, never stand alone (they break Row/Column layout): $offenders",
+            offenders.isEmpty(),
+        )
+    }
 
     @Test
     fun everyCatalogEntryIsAnchoredOrKnown() {

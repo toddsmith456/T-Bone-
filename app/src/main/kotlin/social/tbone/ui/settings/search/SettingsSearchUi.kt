@@ -13,7 +13,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,9 +41,6 @@ val LocalSettingsScreenSearch = staticCompositionLocalOf<SettingsScreenSearchSta
 
 /** Anchor a jump from another screen should scroll to and highlight. */
 val LocalSettingsJumpAnchor = compositionLocalOf<String?> { null }
-
-/** Section the anchor currently being composed belongs to. */
-private val LocalCurrentSection = staticCompositionLocalOf<String?> { null }
 
 /**
  * Result of a search on the screen that owns it.
@@ -204,8 +200,10 @@ fun SettingsSearchEmptyHint(
 /**
  * A block of rows that belongs to one section.
  *
- * Hides the whole block when the live query matches nothing inside it, and
- * tells nested [SettingsAnchor]s which section they belong to.
+ * Hides the whole block when the live query matches nothing inside it. It is
+ * layout-transparent: no Box, no spacing, no extra layout node. A Box here
+ * would turn the wrapped rows into one child of their Row/LazyColumn item and
+ * shift everything under it — the bug that made Settings rows overlap.
  */
 @Composable
 fun SettingsSectionAnchor(
@@ -215,17 +213,21 @@ fun SettingsSectionAnchor(
 ) {
     val search = LocalSettingsScreenSearch.current
     if (search != null && !search.sectionVisible(section)) return
-    CompositionLocalProvider(LocalCurrentSection provides section) {
-        Box(modifier) { content() }
-    }
+    content()
 }
 
 /**
  * Marks one catalog row so a search hit can point at it.
  *
- * Anchors never hide their content: rows stay put and the section-level anchor
- * above them decides visibility. When a hit from another screen targets this
- * anchor, the row is tinted so the eye lands on the control that matched.
+ * This is a composition scope, never a layout container. An earlier version
+ * wrapped each row in a `Box`, which is what made Settings rows overlap: a Box
+ * is one child of the surrounding `Row`, so the `Modifier.weight(1f)` that used
+ * to sit on the row went to the Box instead, and every wrapped row in a
+ * `Column`/`LazyColumn` measured its children with the wrong constraints.
+ *
+ * Anchors therefore draw nothing themselves. The row keeps its own modifier and
+ * asks [searchRowHighlight] for the tint when a jump from another screen targets
+ * it, so the highlight never changes the row's measurement.
  */
 @Composable
 fun SettingsAnchor(
@@ -233,7 +235,29 @@ fun SettingsAnchor(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit = {},
 ) {
-    val highlighted = LocalSettingsJumpAnchor.current?.let { it == anchor } == true
-    val base = if (highlighted) modifier.background(BonyColors.AccentBg) else modifier
-    Box(base) { content() }
+    content()
+}
+
+/**
+ * Highlight for the row a search jump targeted.
+ *
+ * Rows call this and pass the result into the modifier they already build:
+ * ```
+ * SettingsAnchor("app_lock") {
+ *     Row(modifier = searchRowHighlight(Modifier.fillMaxWidth(), "app_lock")) { … }
+ * }
+ * ```
+ * The Modifier is the first parameter so the call reads as a suffix on the
+ * chain the row already had.
+ * Because the tint is drawn by the row itself, wrapping a row in an anchor can
+ * never move it.
+ */
+@Composable
+fun searchRowHighlight(base: Modifier = Modifier, anchor: String): Modifier {
+    val target = LocalSettingsJumpAnchor.current
+    return if (target != null && target == anchor) {
+        base.background(BonyColors.AccentBg)
+    } else {
+        base
+    }
 }

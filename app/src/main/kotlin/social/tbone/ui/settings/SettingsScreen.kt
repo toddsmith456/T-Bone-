@@ -79,8 +79,10 @@ import social.tbone.ui.settings.search.SettingsElsewhereResults
 import social.tbone.ui.settings.search.SettingsSearchField
 import social.tbone.ui.settings.search.SettingsSectionAnchor
 import social.tbone.ui.settings.search.rememberSettingsScreenSearch
+import social.tbone.ui.settings.search.searchRowHighlight
 import social.tbone.settings.search.SettingsGroup
 import social.tbone.settings.search.SettingsSearch
+import social.tbone.settings.search.SettingsSearch as SettingsSearchIndex
 import social.tbone.ui.onboarding.BonyButton
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
@@ -155,9 +157,12 @@ fun SettingsScreen(
     val screenSearch = rememberSettingsScreenSearch(settingsSearch)
     // Arriving from another screen's "found elsewhere" carries the query; the
     // top hit on this screen becomes the row to flash.
+    // Only a handed-over query (from another screen's "found elsewhere") flashes a
+    // row; typing in this screen's own field must not highlight anything.
     val jumpAnchor = remember(initialSearch) {
         if (initialSearch.isBlank()) null
-        else screenSearch.hits.firstOrNull { it.entry.group == SettingsGroup.SETTINGS }?.entry?.anchor
+        else SettingsSearchIndex.search(initialSearch)
+            .firstOrNull { it.entry.group == SettingsGroup.SETTINGS }?.entry?.anchor
     }
     val writeAccountSwitcherStyle by viewModel.writeAccountSwitcherStyle.collectAsStateWithLifecycle()
     val themeViewModel: ThemeViewModel = hiltViewModel()
@@ -222,13 +227,14 @@ fun SettingsScreen(
             LocalSettingsJumpAnchor provides jumpAnchor,
         ) {
         SettingsSectionAnchor("set_ui_declutter") {
-            SettingsAnchor("ui_declutter")
+        SettingsAnchor("ui_declutter") {
             SettingsSwitchRow(
                 title = "UI declutter",
                 description = "compact tabs and make Settings categories collapsible",
                 checked = declutterEnabled,
                 onCheckedChange = themeViewModel::setUiDeclutterEnabled,
             )
+        }
             Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
         }
         SettingsSectionAnchor("set_tor_strip") { TorActiveStrip(torEnabled) }
@@ -379,17 +385,16 @@ private fun TorActiveStrip(torEnabled: Boolean) {
                 .padding(horizontal = 14.dp, vertical = 12.dp),
         ) {
             Column {
+            SettingsAnchor("tor_strip") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    SettingsAnchor("tor_strip")
                     Box(
-                        modifier = Modifier
+                        modifier = searchRowHighlight(Modifier
                             .size(8.dp)
-                            .background(BonyColors.Warn, shape = androidx.compose.foundation.shape.CircleShape),
+                            .background(BonyColors.Warn, shape = androidx.compose.foundation.shape.CircleShape), "tor_strip"),
                     )
                     Spacer(Modifier.width(8.dp))
                     Text("TOR ACTIVE", style = BonyType.tag.copy(color = BonyColors.Warn))
                     Spacer(Modifier.weight(1f))
-                    SettingsAnchor("account")
                     Box(
                         modifier = Modifier
                             .appBorder(1.dp, BonyColors.WarnDim)
@@ -398,6 +403,7 @@ private fun TorActiveStrip(torEnabled: Boolean) {
                         Text("ON", style = BonyType.tag.copy(color = BonyColors.Warn))
                     }
                 }
+            }
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "all relay traffic routed through orbot",
@@ -415,22 +421,25 @@ private fun SettingsAccountSection(activeAccount: Account?, onAddAccount: () -> 
     if (compact && !expanded) return
 
     activeAccount?.let { account ->
+    SettingsAnchor("account") {
         AccountSettingsRow(account = account, onManage = onAccountManagement)
+    }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
     }
 
-    SettingsAnchor("add_account")
+SettingsAnchor("add_account") {
     Row(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
             .clickable { onAddAccount() }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "add_account"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("+", style = BonyType.body.copy(color = BonyColors.TextDim))
         Spacer(Modifier.width(10.dp))
         Text("add account", style = BonyType.body.copy(color = BonyColors.TextDim))
     }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 }
 
@@ -440,17 +449,18 @@ private fun SettingsRelaySection(onRelayManagement: () -> Unit, compact: Boolean
     SettingsCategoryHeader("RELAYS", compact, expanded, onToggle)
     if (compact && !expanded) return
 
-    SettingsAnchor("relays")
+SettingsAnchor("relays") {
     Row(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
             .clickable { onRelayManagement() }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "relays"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("manage relays", style = BonyType.body.copy(color = BonyColors.TextDim), modifier = Modifier.weight(1f))
         Text("→", style = BonyType.body.copy(color = BonyColors.TextMute))
     }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 }
 
@@ -460,14 +470,14 @@ private fun SettingsFollowListsLink(onFollowLists: () -> Unit, compact: Boolean,
     SettingsCategoryHeader("LISTS", compact, expanded, onToggle)
     if (compact && !expanded) return
 
+SettingsAnchor("lists") {
     Row(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
             .clickable { onFollowLists() }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "lists"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SettingsAnchor("lists")
         Column(modifier = Modifier.weight(1f)) {
             Text("follow lists", style = BonyType.body.copy(color = BonyColors.TextDim))
             Text(
@@ -477,6 +487,7 @@ private fun SettingsFollowListsLink(onFollowLists: () -> Unit, compact: Boolean,
         }
         Text("→", style = BonyType.body.copy(color = BonyColors.TextMute))
     }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 }
 
@@ -486,14 +497,14 @@ private fun SettingsContentFiltersSection(onContentFilters: () -> Unit, compact:
     SettingsCategoryHeader("CONTENT", compact, expanded, onToggle)
     if (compact && !expanded) return
 
+SettingsAnchor("content_filters") {
     Row(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
             .clickable { onContentFilters() }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "content_filters"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SettingsAnchor("content_filters")
         Column(modifier = Modifier.weight(1f)) {
             Text("content filters", style = BonyType.body.copy(color = BonyColors.TextDim))
             Text(
@@ -503,6 +514,7 @@ private fun SettingsContentFiltersSection(onContentFilters: () -> Unit, compact:
         }
         Text("→", style = BonyType.body.copy(color = BonyColors.TextMute))
     }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 }
 
@@ -512,14 +524,14 @@ private fun SettingsHomeFeedsLink(onHomeFeeds: () -> Unit, compact: Boolean, exp
     SettingsCategoryHeader("HOME FEEDS", compact, expanded, onToggle)
     if (compact && !expanded) return
 
+SettingsAnchor("home_feeds") {
     Row(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
             .clickable { onHomeFeeds() }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "home_feeds"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SettingsAnchor("home_feeds")
         Column(modifier = Modifier.weight(1f)) {
             Text("home feeds", style = BonyType.body.copy(color = BonyColors.TextDim))
             Text(
@@ -529,6 +541,7 @@ private fun SettingsHomeFeedsLink(onHomeFeeds: () -> Unit, compact: Boolean, exp
         }
         Text("→", style = BonyType.body.copy(color = BonyColors.TextMute))
     }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 }
 
@@ -537,25 +550,28 @@ private fun SettingsNoteActionsSection(noteMenuModerationEnabled: Boolean, clien
     // ── Note actions and event attribution ─────────────────────────────────
     SettingsCategoryHeader("NOTE ACTIONS", compact, expanded, onToggle)
     if (compact && !expanded) return
-    SettingsAnchor("note_moderation")
+SettingsAnchor("note_moderation") {
     SettingsSwitchRow(
         title = "show mute/report actions",
         description = "Adds mute poster and public NIP-56 report to note menus · off by default",
         checked = noteMenuModerationEnabled,
         onCheckedChange = viewModel::setNoteMenuModerationEnabled,
     )
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
-    SettingsAnchor("client_tag")
+SettingsAnchor("client_tag") {
     SettingsSwitchRow(
         title = "add T-Bone client tag",
         description = "Adds a public NIP-89 client tag to events you sign · on by default",
         checked = clientTagEnabled,
         onCheckedChange = viewModel::setClientTagEnabled,
     )
-    SettingsAnchor("write_switcher")
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
-    Text("Write-tab account switcher", style = BonyType.body.copy(color = BonyColors.Text), modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp))
+SettingsAnchor("write_switcher") {
+    Text("Write-tab account switcher", style = BonyType.body.copy(color = BonyColors.Text), modifier = searchRowHighlight(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), "write_switcher"))
+}
     Text("Choose how the active account appears beside SEND", style = BonyType.meta.copy(color = BonyColors.TextMute), modifier = Modifier.padding(horizontal = 14.dp))
     Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
         WriteAccountSwitcherStyle.entries.forEach { option ->
@@ -583,38 +599,40 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
     if (compact && !expanded) return
 
     // Profile picture & banner upload.
-    SettingsAnchor("profile_picture")
+SettingsAnchor("profile_picture") {
     Row(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
             .clickable { onProfileEdit() }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "profile_picture"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("profile picture & banner", style = BonyType.body.copy(color = BonyColors.TextDim), modifier = Modifier.weight(1f))
         Text("→", style = BonyType.body.copy(color = BonyColors.TextMute))
     }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
     // Blossom upload servers.
-    SettingsAnchor("blossom")
+SettingsAnchor("blossom") {
     Row(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
             .clickable { onBlossom() }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "blossom"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("blossom uploads", style = BonyType.body.copy(color = BonyColors.TextDim), modifier = Modifier.weight(1f))
         Text("→", style = BonyType.body.copy(color = BonyColors.TextMute))
     }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
-    SettingsAnchor("inline_images")
+SettingsAnchor("inline_images") {
     Column(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "inline_images"),
     ) {
         Text("inline images", style = BonyType.body.copy(color = BonyColors.Text))
         Spacer(Modifier.height(2.dp))
@@ -648,15 +666,16 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
             }
         }
     }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
     // Video playback is kept separate from image loading because videos can
     // consume substantially more bandwidth and battery than a still image.
-    SettingsAnchor("video_quality")
+SettingsAnchor("video_quality") {
     Column(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "video_quality"),
     ) {
         Text("video quality", style = BonyType.body.copy(color = BonyColors.Text))
         Spacer(Modifier.height(2.dp))
@@ -672,7 +691,6 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             VideoQuality.entries.forEach { quality ->
                 val active = quality == videoQuality
-                SettingsAnchor("video_playback")
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -692,6 +710,7 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
         }
 
         Spacer(Modifier.height(14.dp))
+    SettingsAnchor("video_playback") {
         Text("video playback", style = BonyType.body.copy(color = BonyColors.Text))
         Spacer(Modifier.height(2.dp))
         Text(
@@ -728,17 +747,18 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
                 }
             }
         }
+    }
         Spacer(Modifier.height(10.dp))
         Text(
             "Only one inline video plays at a time. When a post supplies a preview still, it is shown on placeholders — nothing is extracted from videos on this device.",
             style = BonyType.meta.copy(color = BonyColors.TextMute),
         )
         Spacer(Modifier.height(12.dp))
+    SettingsAnchor("video_thumbnails") {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = searchRowHighlight(Modifier.fillMaxWidth(), "video_thumbnails"),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SettingsAnchor("video_thumbnails")
             Column(modifier = Modifier.weight(1f)) {
                 Text("video thumbnails", style = BonyType.body.copy(color = BonyColors.TextDim))
                 Text(
@@ -752,12 +772,13 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
                 onCheckedChange = { viewModel.setVideoThumbnails(it) },
             )
         }
+    }
         Spacer(Modifier.height(12.dp))
+    SettingsAnchor("media_fitted") {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = searchRowHighlight(Modifier.fillMaxWidth(), "media_fitted"),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SettingsAnchor("media_fitted")
             Column(modifier = Modifier.weight(1f)) {
                 Text("fit media to its real shape", style = BonyType.body.copy(color = BonyColors.TextDim))
                 Text(
@@ -772,6 +793,8 @@ private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: ()
             )
         }
     }
+    }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 }
 
@@ -781,11 +804,11 @@ private fun SettingsAvatarSection(viewModel: SettingsViewModel, avatarMode: Avat
     SettingsCategoryHeader("AVATARS", compact, expanded, onToggle)
     if (compact && !expanded) return
 
-    SettingsAnchor("avatar_style")
+SettingsAnchor("avatar_style") {
     Column(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "avatar_style"),
     ) {
         Text("avatar style", style = BonyType.body.copy(color = BonyColors.Text))
         Spacer(Modifier.height(2.dp))
@@ -819,11 +842,11 @@ private fun SettingsAvatarSection(viewModel: SettingsViewModel, avatarMode: Avat
             }
         }
         Spacer(Modifier.height(12.dp))
+    SettingsAnchor("avatar_animated") {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = searchRowHighlight(Modifier.fillMaxWidth(), "avatar_animated"),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SettingsAnchor("avatar_animated")
             Column(modifier = Modifier.weight(1f)) {
                 Text("animated avatars", style = BonyType.body.copy(color = BonyColors.Text))
                 Text(
@@ -838,6 +861,8 @@ private fun SettingsAvatarSection(viewModel: SettingsViewModel, avatarMode: Avat
             )
         }
     }
+    }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 }
 
@@ -861,11 +886,11 @@ private fun SettingsStorageCacheSection(
     }
 
     val smallShape = appCornerShape(MaterialTheme.shapes.small)
-    SettingsAnchor("cache_preset")
+SettingsAnchor("cache_preset") {
     Column(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "cache_preset"),
     ) {
         Text("cache level", style = BonyType.body.copy(color = BonyColors.Text))
         Spacer(Modifier.height(2.dp))
@@ -917,15 +942,15 @@ private fun SettingsStorageCacheSection(
         )
 
         Spacer(Modifier.height(14.dp))
+    SettingsAnchor("cache_usage") {
         Column(
-            modifier = Modifier
+            modifier = searchRowHighlight(Modifier
                 .fillMaxWidth()
                 .border(1.dp, BonyColors.Rule, smallShape)
                 .background(BonyColors.SurfaceAlt, smallShape)
-                .padding(horizontal = 10.dp, vertical = 8.dp),
+                .padding(horizontal = 10.dp, vertical = 8.dp), "cache_usage"),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            SettingsAnchor("cache_usage")
             CacheUsageRow(
                 label = "avatars (protected)",
                 value = "${social.tbone.cache.CacheStorageManager.formatBytes(cacheStats.avatarBytes)} / ${social.tbone.cache.CacheStorageManager.formatBudget(cachePreset.avatarDiskBytes)}",
@@ -947,45 +972,52 @@ private fun SettingsStorageCacheSection(
                 value = "${social.tbone.cache.CacheStorageManager.formatBytes(cacheStats.databaseBytes)} · ${cacheStats.profileCount} profiles · ${cacheStats.eventCount} posts",
             )
         }
+    }
 
         Spacer(Modifier.height(10.dp))
-        SettingsAnchor("clear_videos")
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+        SettingsAnchor("clear_photos") {
             CacheActionButton(
                 label = "clear photos",
                 enabled = !cacheBusy,
-                modifier = Modifier.weight(1f),
+                modifier = searchRowHighlight(Modifier.weight(1f), "clear_photos"),
                 onClick = { viewModel.clearFeedMediaCache() },
             )
+        }
+        SettingsAnchor("clear_videos") {
             CacheActionButton(
                 label = "clear videos",
                 enabled = !cacheBusy,
-                modifier = Modifier.weight(1f),
+                modifier = searchRowHighlight(Modifier.weight(1f), "clear_videos"),
                 onClick = { viewModel.clearVideoAudioCache() },
             )
         }
+        }
         Spacer(Modifier.height(6.dp))
-        SettingsAnchor("clear_avatars")
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+        SettingsAnchor("clear_avatars") {
             CacheActionButton(
                 label = "clear avatars",
                 enabled = !cacheBusy,
-                modifier = Modifier.weight(1f),
+                modifier = searchRowHighlight(Modifier.weight(1f), "clear_avatars"),
                 onClick = { viewModel.clearAvatarCache() },
             )
+        }
+        SettingsAnchor("clear_all_cache") {
             CacheActionButton(
                 label = "clear all cache",
                 enabled = !cacheBusy,
                 danger = true,
-                modifier = Modifier.weight(1f),
+                modifier = searchRowHighlight(Modifier.weight(1f), "clear_all_cache"),
                 onClick = { viewModel.clearAllCaches() },
             )
+        }
         }
 
         cacheStatusMessage?.let { status ->
@@ -996,6 +1028,7 @@ private fun SettingsStorageCacheSection(
             )
         }
     }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 }
 
@@ -1046,11 +1079,11 @@ private fun SettingsThemeEngineSection(viewModel: SettingsViewModel, uiTheme: Ui
     // ── Theme engine (Bony vs Youniversal) ──────────────────────────────
     SettingsCategoryHeader("THEME ENGINE", compact, expanded, onToggle)
     if (compact && !expanded) return
-    SettingsAnchor("ui_theme")
+SettingsAnchor("ui_theme") {
     Column(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "ui_theme"),
     ) {
         Text("UI theme", style = BonyType.body.copy(color = BonyColors.Text))
         Spacer(Modifier.height(2.dp))
@@ -1095,6 +1128,7 @@ private fun SettingsThemeEngineSection(viewModel: SettingsViewModel, uiTheme: Ui
             )
         }
     }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 }
 
@@ -1105,11 +1139,11 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
     if (compact && !expanded) return
 
     if (uiTheme == UiTheme.BONY) {
-        SettingsAnchor("theme_mode")
+    SettingsAnchor("theme_mode") {
         Column(
-            modifier = Modifier
+            modifier = searchRowHighlight(Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp), "theme_mode"),
         ) {
             Text("theme", style = BonyType.body.copy(color = BonyColors.Text))
             Spacer(Modifier.height(2.dp))
@@ -1143,11 +1177,11 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
                 }
             }
             Spacer(Modifier.height(12.dp))
+        SettingsAnchor("accent_color") {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = searchRowHighlight(Modifier.fillMaxWidth(), "accent_color"),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SettingsAnchor("accent_color")
                 Column(modifier = Modifier.weight(1f)) {
                     Text("accent color", style = BonyType.body.copy(color = BonyColors.Text))
                     Text(
@@ -1173,6 +1207,8 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
                 )
             }
         }
+        }
+    }
     } else {
         // Youniversal controls — live, persisted via YouniversalThemeState (SharedPreferences)
         Column(
@@ -1216,18 +1252,18 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
             // App-wide typeface. Standard is intentionally the Youniversal
             // default; Soft provides a warmer, rounded sans-serif alternative.
             Text("app font", style = BonyType.meta.copy(color = BonyColors.TextMute))
+        SettingsAnchor("background") {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 YouniversalFontOption.entries.forEach { option ->
                     val active = option == youniversalState.fontOption
                     val shape = appCornerShape(MaterialTheme.shapes.small)
-                    SettingsAnchor("background")
                     Column(
-                        modifier = Modifier
+                        modifier = searchRowHighlight(Modifier
                             .weight(1f)
                             .clip(shape)
                             .border(1.dp, if (active) BonyColors.Accent else BonyColors.Rule, shape)
                             .clickable { youniversalState.setFontOption(option) }
-                            .padding(horizontal = 6.dp, vertical = 8.dp),
+                            .padding(horizontal = 6.dp, vertical = 8.dp), "background"),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
@@ -1245,19 +1281,20 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
                     }
                 }
             }
+        }
 
             // Background
             Text("background", style = BonyType.meta.copy(color = BonyColors.TextMute))
+        SettingsAnchor("contrast") {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 YouniversalBackgroundStyle.entries.forEach { style ->
                     val active = style == youniversalState.backgroundStyle
-                    SettingsAnchor("contrast")
                     Column(
-                        modifier = Modifier
+                        modifier = searchRowHighlight(Modifier
                             .weight(1f)
                             .border(1.dp, if (active) BonyColors.Accent else BonyColors.Rule, appCornerShape(MaterialTheme.shapes.small))
                             .clickable { youniversalState.setBackgroundStyle(style) }
-                            .padding(vertical = 8.dp),
+                            .padding(vertical = 8.dp), "contrast"),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
@@ -1269,6 +1306,7 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
                     }
                 }
             }
+        }
 
             // Contrast
             Text("contrast", style = BonyType.meta.copy(color = BonyColors.TextMute))
@@ -1294,11 +1332,11 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
             }
 
             // Dynamic color
+        SettingsAnchor("material_you") {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = searchRowHighlight(Modifier.fillMaxWidth(), "material_you"),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SettingsAnchor("material_you")
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Material You", style = BonyType.body.copy(color = BonyColors.Text))
                     val available = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
@@ -1318,6 +1356,7 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
                     onCheckedChange = { youniversalState.setDynamicColor(it) },
                 )
             }
+        }
 
             // Accent seed
             Text("accent seed", style = BonyType.meta.copy(color = BonyColors.TextMute))
@@ -1370,11 +1409,11 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
             )
 
             // Corner scale
+        SettingsAnchor("corner_radius") {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = searchRowHighlight(Modifier.fillMaxWidth(), "corner_radius"),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SettingsAnchor("corner_radius")
                 Column(modifier = Modifier.weight(1f)) {
                     Text("corner radius", style = BonyType.body.copy(color = BonyColors.Text))
                     Text(
@@ -1387,13 +1426,14 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
                     BonyButton(label = "+", primary = false, onClick = { youniversalState.setCornerScale((youniversalState.cornerScale + 0.2f).coerceIn(0f, 2f)) })
                 }
             }
+        }
 
             // Font scale
+        SettingsAnchor("text_size") {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = searchRowHighlight(Modifier.fillMaxWidth(), "text_size"),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SettingsAnchor("text_size")
                 Column(modifier = Modifier.weight(1f)) {
                     Text("text size", style = BonyType.body.copy(color = BonyColors.Text))
                     Text(
@@ -1406,13 +1446,14 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
                     BonyButton(label = "+", primary = false, onClick = { youniversalState.setFontScale((youniversalState.fontScale + 0.1f).coerceIn(0.7f, 2f)) })
                 }
             }
+        }
 
             // Animate
+        SettingsAnchor("animate_theme") {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = searchRowHighlight(Modifier.fillMaxWidth(), "animate_theme"),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SettingsAnchor("animate_theme")
                 Column(modifier = Modifier.weight(1f)) {
                     Text("animate theme changes", style = BonyType.body.copy(color = BonyColors.Text))
                     Text("morph colors instead of snapping", style = BonyType.meta.copy(color = BonyColors.TextMute))
@@ -1423,6 +1464,7 @@ private fun SettingsAppearanceSection(viewModel: SettingsViewModel, uiTheme: UiT
                     onCheckedChange = { youniversalState.setAnimateTransitions(it) },
                 )
             }
+        }
 
             // Reset
             Row(
@@ -1565,8 +1607,9 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
     )
     Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
+SettingsAnchor("orbot") {
     Row(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
             .then(
                 if (!viewModel.orbotInstalled)
@@ -1577,10 +1620,9 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
                     }
                 else Modifier,
             )
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "orbot"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SettingsAnchor("orbot")
         Column(modifier = Modifier.weight(1f)) {
             Text("route via tor", style = BonyType.body.copy(color = BonyColors.Text))
             if (!viewModel.orbotInstalled) {
@@ -1596,16 +1638,17 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
             onCheckedChange = { viewModel.setTorEnabled(it) },
         )
     }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
     // This is a preflight check, not continuous monitoring of active requests.
+SettingsAnchor("orbot_check_upload") {
     Row(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "orbot_check_upload"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SettingsAnchor("orbot_check_upload")
         Column(modifier = Modifier.weight(1f)) {
             Text("check Orbot before upload", style = BonyType.body.copy(color = BonyColors.Text))
             Text("checks Orbot before Blossom uploads; not a network-wide kill switch and active uploads are not monitored", style = BonyType.meta.copy(color = BonyColors.TextMute))
@@ -1613,16 +1656,17 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
         val killSwitch by viewModel.torKillSwitch.collectAsStateWithLifecycle()
         BonyToggle(checked = killSwitch, enabled = torEnabled, onCheckedChange = viewModel::setTorKillSwitch)
     }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
+SettingsAnchor("app_lock") {
     Row(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
             .clickable { if (pinEnabled) viewModel.disablePin() else onPinSetup() }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "app_lock"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SettingsAnchor("app_lock")
         Column(modifier = Modifier.weight(1f)) {
             Text("app lock (PIN)", style = BonyType.body.copy(color = BonyColors.Text))
             if (pinEnabled) {
@@ -1640,11 +1684,12 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
             },
         )
     }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
     if (pinEnabled) {
         val pinAutoLockMinutes by viewModel.pinAutoLockMinutes.collectAsStateWithLifecycle()
-        SettingsAnchor("auto_lock")
+    SettingsAnchor("auto_lock") {
         AutoLockMinutesRow(
             currentMinutes = pinAutoLockMinutes,
             onSelect = viewModel::setPinAutoLockMinutes,
@@ -1652,24 +1697,26 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
             description = "require PIN after the app has been in the background this long",
         )
     }
+    }
 
-    SettingsAnchor("scramble_keypad")
+SettingsAnchor("scramble_keypad") {
     SettingsSwitchRow(
         title = "scramble app PIN keypad",
         description = "randomize digit positions for each PIN entry",
         checked = scrambleAppPinKeypad,
         onCheckedChange = viewModel::setAppPinKeypadScrambled,
     )
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
     // ── Screenshot blocker (app-wide) ────────────────────────────────────
+SettingsAnchor("screenshot_block") {
     Row(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "screenshot_block"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SettingsAnchor("screenshot_block")
         Column(modifier = Modifier.weight(1f)) {
             Text("screenshot blocker", style = BonyType.body.copy(color = BonyColors.Text))
             Text(
@@ -1683,20 +1730,21 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
             onCheckedChange = viewModel::setScreenshotBlockEnabled,
         )
     }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
     // ── Duress pin ────────────────────────────────────────────────────────
+SettingsAnchor("duress_pin") {
     Row(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
             .clickable {
                 if (duressPinEnabled) viewModel.disableDuressPin()
                 else onDuressPinSetup()
             }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "duress_pin"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SettingsAnchor("duress_pin")
         Column(modifier = Modifier.weight(1f)) {
             Text("duress pin", style = BonyType.body.copy(color = BonyColors.Text))
             Text(
@@ -1719,6 +1767,7 @@ private fun SettingsPrivacySection(viewModel: SettingsViewModel, context: Contex
             },
         )
     }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 }
 
@@ -1729,7 +1778,7 @@ private fun SettingsStealthSection(viewModel: SettingsViewModel, compact: Boolea
 
     val notepadEnabled by viewModel.notepadFrontEnabled.collectAsStateWithLifecycle()
 
-    SettingsAnchor("notepad_front")
+SettingsAnchor("notepad_front") {
     SettingsSwitchRow(
         title = "Notepad front",
         description = "Disguise app as Notepad on launcher · decoy notes only · tap key storage 10× in encryption screen to unlock full app",
@@ -1739,6 +1788,7 @@ private fun SettingsStealthSection(viewModel: SettingsViewModel, compact: Boolea
             if (enabled) onShowPopup()
         },
     )
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
     if (notepadEnabled) {
@@ -1768,17 +1818,18 @@ private fun SettingsDebugSection(viewModel: SettingsViewModel, context: Context,
 
     var showShareLogsDialog by remember { mutableStateOf(false) }
 
-    SettingsAnchor("share_logs")
+SettingsAnchor("share_logs") {
     Row(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
             .clickable { showShareLogsDialog = true }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "share_logs"),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("share logs", style = BonyType.body.copy(color = BonyColors.TextDim), modifier = Modifier.weight(1f))
         Text("↗", style = BonyType.body.copy(color = BonyColors.TextMute))
     }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
     if (showShareLogsDialog) {
@@ -1789,28 +1840,30 @@ private fun SettingsDebugSection(viewModel: SettingsViewModel, context: Context,
         )
     }
 
-    SettingsAnchor("version")
+SettingsAnchor("version") {
     Row(
-        modifier = Modifier
+        modifier = searchRowHighlight(Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp), "version"),
     ) {
         Text("version  ${social.tbone.BuildConfig.VERSION_NAME} (${social.tbone.BuildConfig.VERSION_CODE})", style = BonyType.meta.copy(color = BonyColors.TextMute))
     }
+}
     Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
     // Sign out — in Danger color, only if multiple accounts
     if (accounts.size > 1) {
         activeAccount?.let { acct ->
-            SettingsAnchor("sign_out")
+        SettingsAnchor("sign_out") {
             Row(
-                modifier = Modifier
+                modifier = searchRowHighlight(Modifier
                     .fillMaxWidth()
                     .clickable { viewModel.removeAccount(acct.pubkey) }
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                    .padding(horizontal = 14.dp, vertical = 12.dp), "sign_out"),
             ) {
                 Text("sign out", style = BonyType.body.copy(color = BonyColors.Danger))
             }
+        }
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
         }
     }

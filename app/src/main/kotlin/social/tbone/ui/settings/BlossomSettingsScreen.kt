@@ -8,6 +8,7 @@ import social.tbone.ui.settings.search.SettingsSearchField
 import social.tbone.ui.settings.search.SettingsSearchSummary
 import social.tbone.ui.settings.search.rememberSettingsScreenSearch
 import social.tbone.ui.settings.search.rememberSettingsSearchQuery
+import social.tbone.ui.settings.search.searchRowHighlight
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -116,17 +117,19 @@ fun BlossomSettingsScreen(
             Spacer(Modifier.height(12.dp))
             // Sync now asks merge-vs-replace instead of silently merging, because
             // replacing is the only way to drop servers you no longer publish.
+        SettingsAnchor("blossom_sync_list") {
             Box(
-                modifier = Modifier
+                modifier = searchRowHighlight(Modifier
                     .appBorder(1.dp, if (syncState.syncing) BonyColors.Rule else BonyColors.AccentDim)
                     .clickable(enabled = !syncState.syncing) { syncChoiceOpen = true }
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .padding(horizontal = 12.dp, vertical = 10.dp), "blossom_sync_list"),
             ) {
                 Text(
                     text = if (syncState.syncing) "SYNCING PUBLISHED LIST…" else "SYNC FROM PUBLISHED LIST",
                     style = BonyType.tag.copy(color = if (syncState.syncing) BonyColors.TextMute else BonyColors.Accent),
                 )
             }
+        }
             syncState.message?.let { message ->
                 Text(
                     text = message,
@@ -139,11 +142,11 @@ fun BlossomSettingsScreen(
             Spacer(Modifier.height(16.dp))
 
             // ── Beaver Mode ───────────────────────────────────────────────────
+        SettingsAnchor("blossom_beaver") {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = searchRowHighlight(Modifier.fillMaxWidth(), "blossom_beaver"),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SettingsAnchor("blossom_beaver")
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Beaver Mode", style = BonyType.body.copy(color = BonyColors.Text))
                     Spacer(Modifier.height(2.dp))
@@ -161,6 +164,7 @@ fun BlossomSettingsScreen(
                     onCheckedChange = { viewModel.setBlossomBeaverMode(it) },
                 )
             }
+        }
 
             Spacer(Modifier.height(12.dp))
 
@@ -258,11 +262,11 @@ fun BlossomSettingsScreen(
             Spacer(Modifier.height(16.dp))
 
             // ── Compression toggle ────────────────────────────────────────────
+        SettingsAnchor("blossom_compress_images") {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = searchRowHighlight(Modifier.fillMaxWidth(), "blossom_compress_images"),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SettingsAnchor("blossom_compress_images")
                 Column(modifier = Modifier.weight(1f)) {
                     Text("compress uploads", style = BonyType.meta.copy(color = BonyColors.Text))
                     Spacer(Modifier.height(2.dp))
@@ -287,14 +291,15 @@ fun BlossomSettingsScreen(
                     )
                 }
             }
+        }
 
             // Audio compression is deliberately separate and opt-in. With it
             // off, the source file is uploaded unchanged (including MP3 files).
+        SettingsAnchor("blossom_compress_audio") {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = searchRowHighlight(Modifier.fillMaxWidth(), "blossom_compress_audio"),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SettingsAnchor("blossom_compress_audio")
                 Column(modifier = Modifier.weight(1f)) {
                     Text("compress audio uploads", style = BonyType.meta.copy(color = BonyColors.Text))
                     Spacer(Modifier.height(2.dp))
@@ -311,7 +316,6 @@ fun BlossomSettingsScreen(
                         .clickable { viewModel.setBlossomAudioCompress(!audioCompress) }
                         .padding(2.dp),
                 ) {
-                    SettingsAnchor("blossom_sync_list")
                     Box(
                         modifier = Modifier
                             .size(16.dp)
@@ -320,6 +324,7 @@ fun BlossomSettingsScreen(
                     )
                 }
             }
+        }
 
             Spacer(Modifier.height(16.dp))
 
