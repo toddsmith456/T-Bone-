@@ -64,6 +64,23 @@ class ShareCardBodyTest {
     }
 
     @Test
+    fun nostrEntitiesBecomeReadableLabelsAndSecretsAreRedacted() {
+        val npub = Nip19.hexToNpub(authorId)
+        val note = Nip19.hexToNote(eventId)
+        val nevent = Nip19.hexToNevent(eventId, authorId, 1)
+        val naddr = Nip19.addressToNaddr(Nip19.Address("my-article", authorId, 30023))
+
+        val formatted = formatNostrEntities("nostr:$npub nostr:$note nostr:$nevent nostr:$naddr")
+
+        assertTrue(formatted.contains("@${authorId.take(8)}…${authorId.takeLast(6)}"))
+        assertTrue(formatted.contains("[note ${eventId.take(8)}…${eventId.takeLast(6)}]"))
+        assertTrue(formatted.contains("kind 30023 · my-article"))
+        assertTrue(!formatted.contains("npub1"))
+        assertTrue(!formatted.contains("note1"))
+        assertTrue(formatNostrEntities("nostr:nsec1not-real").contains("[secret key hidden]"))
+    }
+
+    @Test
     fun textAroundAQuoteSurvives() {
         val nevent = Nip19.hexToNevent(eventId, authorId, 1)
         val event = note("this is the take nostr:$nevent wild, right?")

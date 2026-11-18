@@ -19,6 +19,8 @@ import android.text.TextUtils
 import okhttp3.Request
 import social.tbone.di.ImageClientProvider
 import social.tbone.nostr.Event
+import social.tbone.nostr.Nip19
+import social.tbone.nostr.Nip88
 import social.tbone.nostr.quotedEventId
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -57,10 +59,10 @@ object NoteShareCardGenerator {
     private const val WIDTH = 1080
     private const val MAX_HEIGHT = 8_000
     private const val MAX_CARD_MEDIA = 6
-    private const val OUTER_MARGIN = 54f
+    private const val OUTER_MARGIN = 32f
     private const val CARD_TOP = 52f
     private const val CARD_RADIUS = 38f
-    private const val CARD_PADDING = 50f
+    private const val CARD_PADDING = 34f
     private const val MAX_IMAGE_RESPONSE_BYTES = 18L * 1024L * 1024L
     /** Quoted bodies are capped the same way the feed caps them. */
     private const val QUOTE_MAX_LINES = 6
@@ -90,13 +92,22 @@ object NoteShareCardGenerator {
         val quotedId = event.parsedTags.quotedEventId ?: extractInlineQuoteId(event.content)
         // A quote must never print its own reference: the reference is drawn as
         // a quote block below the text, exactly like NoteCard does in the feed.
-        val body = shareCardBodyText(event.content, media, quotedId)
-        val hasBody = body.isNotBlank()
         val cardLeft = OUTER_MARGIN
         val cardRight = WIDTH - OUTER_MARGIN
         val innerLeft = cardLeft + CARD_PADDING
         val innerRight = cardRight - CARD_PADDING
         val innerWidth = innerRight - innerLeft
+        val body = formatNostrEntities(shareCardBodyText(event.content, media, quotedId))
+        val hasBody = body.isNotBlank()
+        val pollOptions = if (event.kind == Nip88.KIND_POLL) Nip88.parsePollOptions(event) else emptyList()
+        val pollLayouts = pollOptions.map { option ->
+            StaticLayout.Builder.obtain(option.label, 0, option.label.length,
+                textPaint(Color.rgb(208, 226, 224), 25f, "sans-serif"), (innerWidth - 92f).toInt())
+                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                .setIncludePad(false)
+                .setLineSpacing(3f, 1.08f)
+                .build()
+        }
 
         val bodyPaint = textPaint(Color.rgb(235, 242, 241), 40f, "sans-serif")
         val bodyLayout = StaticLayout.Builder.obtain(body, 0, body.length, bodyPaint, innerWidth.toInt())
@@ -167,10 +178,18 @@ object NoteShareCardGenerator {
         val audioCount = media.count { it.kind == ShareMediaKind.AUDIO }
         val audioTop = if (audioCount > 0) nextTop + 12f else nextTop
         val audioBottom = if (audioCount > 0) audioTop + 40f else audioTop
+        val pollTop = if (pollLayouts.isNotEmpty()) max(nextTop, audioBottom) + 14f else null
+        val pollBottom = pollTop?.let { top ->
+            top + 42f + pollLayouts.fold(0f) { total, layout -> total + layout.height + 26f } +
+                if (Nip88.isPollEnded(event)) 30f else 0f
+        } ?: audioBottom
         val footerTop = max(
-            if (hasBody) bodyTop + bodyLayout.height + 44f
-            else (quoteBlock?.bounds?.bottom ?: (bodyTop - 24f)) + 20f,
-            audioBottom + 20f,
+            max(
+                if (hasBody) bodyTop + bodyLayout.height + 44f
+                else (quoteBlock?.bounds?.bottom ?: (bodyTop - 24f)) + 20f,
+                audioBottom + 20f,
+            ),
+            pollBottom + 20f,
         )
         val cardBottom = footerTop + 104f
         val imageHeight = max(640, (cardBottom + CARD_TOP + 30f).toInt())
@@ -193,7 +212,7 @@ object NoteShareCardGenerator {
             canvas.drawRoundRect(card, CARD_RADIUS, CARD_RADIUS, Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.rgb(44, 69, 70)
                 style = Paint.Style.STROKE
-                strokeWidth = 2f
+                strokeWidth = 1f
             })
 
             val accent = Color.rgb(112, 226, 185)
@@ -288,6 +307,33 @@ object NoteShareCardGenerator {
                     audioRect.centerY() + 7f,
                     textPaint(accent, 18f, "sans-serif-medium"),
                 )
+            }
+            pollTop?.let { top ->
+                val pollRect = RectF(innerLeft, top, innerRight, pollBottom)
+                canvas.drawRoundRect(pollRect, 16f, 16f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(19, 35, 38) })
+                canvas.drawRoundRect(pollRect, 16f, 16f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = rule; style = Paint.Style.STROKE; strokeWidth = 1.5f
+                })
+                canvas.drawText("POLL OPTIONS", innerLeft + 18f, top + 28f, textPaint(accent, 16f, "sans-serif-bold"))
+                var optionTop = top + 42f
+                pollLayouts.forEachIndexed { index, layout ->
+                    val rowTop = optionTop
+                    canvas.drawCircle(innerLeft + 25f, rowTop + 11f, 7f, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = accent; style = Paint.Style.STROKE; strokeWidth = 2f
+                    })
+                    canvas.save()
+                    canvas.translate(innerLeft + 46f, rowTop)
+                    layout.draw(canvas)
+                    canvas.restore()
+                    optionTop += layout.height + 26f
+                    if (index < pollLayouts.lastIndex) {
+                        canvas.drawLine(innerLeft + 16f, optionTop - 7f, innerRight - 16f, optionTop - 7f,
+                            Paint(Paint.ANTI_ALIAS_FLAG).apply { color = rule; strokeWidth = 1f })
+                    }
+                }
+                if (Nip88.isPollEnded(event)) {
+                    canvas.drawText("POLL ENDED", innerLeft + 18f, pollBottom - 10f, textPaint(muted, 14f, "sans-serif-medium"))
+                }
             }
 
             canvas.drawLine(innerLeft, footerTop, innerRight, footerTop, Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -551,3 +597,24 @@ internal fun shareCardBodyText(
     val plain = ShareCardMediaParser.stripMediaUrls(content, media)
     return if (quotedId != null) stripQuoteRefs(plain, quotedId) else plain
 }
+
+/** Converts NIP-19 URIs into useful labels instead of printing opaque bech32. */
+internal fun formatNostrEntities(text: String): String {
+    val entityPattern = Regex("""nostr:(npub|nprofile|note|nevent|naddr|nsec)1[a-z0-9]+""", RegexOption.IGNORE_CASE)
+    return entityPattern.replace(text) { match ->
+        val raw = match.value
+        val entity = raw.substringAfter(':').lowercase()
+        when {
+            entity.startsWith("npub1") -> Nip19.npubToHex(entity)?.let { "@${shortHex(it)}" } ?: "[invalid profile reference]"
+            entity.startsWith("nprofile1") -> Nip19.nprofileToHex(entity)?.let { "@${shortHex(it)}" } ?: "[invalid profile reference]"
+            entity.startsWith("note1") || entity.startsWith("nevent1") ->
+                Nip19.nostrUriToEventId(raw)?.let { "[note ${shortHex(it)}]" } ?: "[invalid note reference]"
+            entity.startsWith("naddr1") -> Nip19.naddrToAddress(raw)?.let { "[addressable note · kind ${it.kind} · ${it.identifier}]" }
+                ?: "[invalid address reference]"
+            // A secret-key entity should never be copied into a share image.
+            else -> "[secret key hidden]"
+        }
+    }
+}
+
+private fun shortHex(hex: String): String = "${hex.take(8)}…${hex.takeLast(6)}"
