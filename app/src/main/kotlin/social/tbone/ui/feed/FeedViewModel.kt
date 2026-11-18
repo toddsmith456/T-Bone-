@@ -352,6 +352,8 @@ class FeedViewModel @Inject constructor(
     private var slotActivateJob: Job? = null
     private val acquiredSlotRelays: MutableSet<String> = ConcurrentHashMap.newKeySet()
     @Volatile private var pendingGlobalLoadOnVisible = false
+    @Volatile private var globalFeedLoaded = false
+    @Volatile private var globalFeedRelays: Set<String> = emptySet()
     @Volatile private var subscribedFollowSet: Set<String>? = null
 
     private var collectJob: Job? = null
@@ -570,8 +572,17 @@ class FeedViewModel @Inject constructor(
         if (!visible) {
             globalSession.reconcile(false, emptySet())
         } else if (_currentFeed.value == FeedTab.GLOBAL) {
-            pendingGlobalLoadOnVisible = false
-            currentAccount()?.let { loadGlobalFeed(it) }
+            val currentRelays = appSettings.globalActiveRelays.value.map(RelayPool::normalize).toSet()
+            if (pendingGlobalLoadOnVisible || !globalFeedLoaded || currentRelays != globalFeedRelays) {
+                pendingGlobalLoadOnVisible = false
+                currentAccount()?.let { loadGlobalFeed(it) }
+            } else {
+                // Search/profile/thread routes can cover the feed without changing
+                // its selected slot. Reconnect the retained Global subscriptions,
+                // but leave the already-loaded list, paging cursor, and scroll state
+                // intact instead of starting the initial page over.
+                globalSession.reconcile(true, currentRelays)
+            }
         }
     }
 
@@ -634,6 +645,8 @@ class FeedViewModel @Inject constructor(
         // any other slot tears it down, exactly as the old tab switch did.
         if (slot.source !is FeedSource.Global) {
             pendingGlobalLoadOnVisible = false
+            globalFeedLoaded = false
+            globalFeedRelays = emptySet()
             globalSession.reconcile(false, emptySet())
         }
 
@@ -1515,6 +1528,7 @@ class FeedViewModel @Inject constructor(
             return
         }
         pendingGlobalLoadOnVisible = false
+        globalFeedLoaded = false
         releaseSlotRelays()
         loadJob?.cancel()
         appliedFollowMode = null
@@ -1573,6 +1587,7 @@ class FeedViewModel @Inject constructor(
 
             // Dedicated pool: global requests cannot leak into personal subscriptions or publishing.
             val globalRelays = appSettings.globalActiveRelays.value.map(RelayPool::normalize).toSet()
+            globalFeedRelays = globalRelays
             globalSession.reconcile(true, globalRelays)
             if (globalRelays.isEmpty()) {
                 endLoad("No Global relays enabled. Configure Global relays to load this feed.")
@@ -1908,6 +1923,7 @@ class FeedViewModel @Inject constructor(
     }
 
     private fun settleGlobalInitial(emptyMessage: String? = null) {
+        globalFeedLoaded = true
         if (!feedSettled) {
             feedSettled = true
             flushBuffer()
@@ -2417,6 +2433,8 @@ class FeedViewModel @Inject constructor(
         slotActivateJob?.cancel()
         loadWatchdog.finish()
         pendingGlobalLoadOnVisible = false
+        globalFeedLoaded = false
+        globalFeedRelays = emptySet()
         releaseSlotRelays()
         globalSession.reconcile(false, emptySet())
         loadJob?.cancel()

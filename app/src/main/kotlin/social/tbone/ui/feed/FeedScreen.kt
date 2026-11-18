@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -77,6 +78,7 @@ import social.tbone.ui.components.AccountSwitcherSheet
 import social.tbone.ui.components.BonyBottomBar
 import social.tbone.ui.components.LocalUiDeclutter
 import social.tbone.ui.components.RelayHealthDot
+import social.tbone.ui.components.UserAvatar
 import social.tbone.ui.components.BottomTab
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
@@ -226,16 +228,25 @@ fun FeedScreen(
             onBrightnessClick = { showBrightness = true },
             onSettingsClick = onSettingsClick,
             compact = uiDeclutter,
-        )
-
-        // ── Account row: avatar + name open the profile; ↕ switches accounts ──
-        FeedAccountSwitcherRow(
             activeAccount = activeAccount,
             accounts = accounts,
             profilesFlow = viewModel.profiles,
-            onSwitch = viewModel::switchAccount,
+            onSwitchAccount = viewModel::switchAccount,
             onProfileClick = activeAccount?.let { { onProfileClick(it.pubkey) } },
         )
+
+        // Declutter mode places the active-profile shortcut and account switcher
+        // in the unused left side of the top bar. Keep the classic full-width row
+        // untouched when declutter is off.
+        if (!uiDeclutter) {
+            FeedAccountSwitcherRow(
+                activeAccount = activeAccount,
+                accounts = accounts,
+                profilesFlow = viewModel.profiles,
+                onSwitch = viewModel::switchAccount,
+                onProfileClick = activeAccount?.let { { onProfileClick(it.pubkey) } },
+            )
+        }
 
         // ── Feed tab strip ───────────────────────────────────────────────────
         // Rendered from the stored layout rather than from the FeedTab enum, so a
@@ -664,6 +675,11 @@ private fun FeedTopBar(
     onBrightnessClick: () -> Unit,
     onSettingsClick: () -> Unit,
     compact: Boolean,
+    activeAccount: social.tbone.account.Account?,
+    accounts: List<social.tbone.account.Account>,
+    profilesFlow: StateFlow<Map<String, ProfileContent>>,
+    onSwitchAccount: (String) -> Unit,
+    onProfileClick: (() -> Unit)?,
 ) {
     val relayStatuses by viewModel.relayStatuses.collectAsStateWithLifecycle()
     val torEnabled by viewModel.torEnabled.collectAsStateWithLifecycle()
@@ -711,6 +727,13 @@ private fun FeedTopBar(
                 Spacer(Modifier.width(10.dp))
             }
         } else {
+            CompactFeedAccountSwitcher(
+                activeAccount = activeAccount,
+                accounts = accounts,
+                profilesFlow = profilesFlow,
+                onSwitch = onSwitchAccount,
+                onProfileClick = onProfileClick,
+            )
             Spacer(Modifier.weight(1f))
         }
 
@@ -1154,6 +1177,85 @@ private fun clockTimeLabel(anchorSeconds: Long): String {
     val h = cal.get(java.util.Calendar.HOUR_OF_DAY)
     val m = cal.get(java.util.Calendar.MINUTE)
     return "%02d:%02d".format(h, m)
+}
+
+/** Compact profile shortcut + switch control for the declutter top bar. */
+@Composable
+private fun CompactFeedAccountSwitcher(
+    activeAccount: social.tbone.account.Account?,
+    accounts: List<social.tbone.account.Account>,
+    profilesFlow: StateFlow<Map<String, ProfileContent>>,
+    onSwitch: (String) -> Unit,
+    onProfileClick: (() -> Unit)?,
+) {
+    val accountPubkeys = remember(activeAccount?.pubkey, accounts) {
+        buildSet {
+            activeAccount?.pubkey?.let(::add)
+            accounts.forEach { add(it.pubkey) }
+        }
+    }
+    val profiles by remember(accountPubkeys, profilesFlow) {
+        profilesFlow.map { all -> sliceProfiles(all, accountPubkeys) }.distinctUntilChanged()
+    }.collectAsStateWithLifecycle(initialValue = sliceProfiles(profilesFlow.value, accountPubkeys))
+    var showAccounts by remember { mutableStateOf(false) }
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier.size(36.dp).clickable(onClick = { onProfileClick?.invoke() }),
+            contentAlignment = Alignment.Center,
+        ) {
+            activeAccount?.let { account ->
+                UserAvatar(pubkeyHex = account.pubkey, profile = profiles[account.pubkey], size = 28.dp)
+            } ?: Text("◉", style = BonyType.body.copy(color = BonyColors.TextMute))
+        }
+        if (accounts.size > 1) {
+            Box(
+                modifier = Modifier.size(width = 28.dp, height = 36.dp).clickable { showAccounts = true },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("↕", style = BonyType.meta.copy(color = BonyColors.TextMute))
+            }
+        }
+    }
+
+    if (showAccounts) {
+        AlertDialog(
+            onDismissRequest = { showAccounts = false },
+            containerColor = BonyColors.Surface,
+            title = { Text("Accounts", style = BonyType.body.copy(color = BonyColors.Text)) },
+            text = {
+                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    accounts.forEach { account ->
+                        val selected = account.pubkey == activeAccount?.pubkey
+                        Row(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                onSwitch(account.pubkey)
+                                showAccounts = false
+                            }.padding(vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            UserAvatar(pubkeyHex = account.pubkey, profile = profiles[account.pubkey], size = 32.dp)
+                            Spacer(Modifier.width(9.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    profiles[account.pubkey]?.bestName ?: account.displayName ?: account.pubkey.take(12),
+                                    style = BonyType.bodyDim.copy(color = if (selected) BonyColors.Accent else BonyColors.Text),
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    social.tbone.nostr.identity.Phrase.wordsFor(account.pubkey, 3).joinToString(" · "),
+                                    style = BonyType.caption.copy(color = BonyColors.TextMute),
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            if (selected) Text("current", style = BonyType.caption.copy(color = BonyColors.Accent))
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+        )
+    }
 }
 
 /**

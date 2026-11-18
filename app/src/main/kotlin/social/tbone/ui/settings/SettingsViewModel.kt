@@ -34,6 +34,7 @@ import social.tbone.settings.VideoQuality
 import social.tbone.settings.OrbotHelper
 import social.tbone.settings.ThemeMode
 import social.tbone.settings.UiTheme
+import social.tbone.settings.WriteAccountSwitcherStyle
 import social.tbone.stealth.StealthManager
 import social.tbone.updates.UpdateInstallResult
 import social.tbone.updates.UpdateManager
@@ -110,6 +111,11 @@ class SettingsViewModel @Inject constructor(
 
     val noteMenuModerationEnabled: StateFlow<Boolean> = appSettings.noteMenuModerationEnabled
     val clientTagEnabled: StateFlow<Boolean> = appSettings.clientTagEnabled
+    val writeAccountSwitcherStyle: StateFlow<WriteAccountSwitcherStyle> = appSettings.writeAccountSwitcherStyle
+
+    fun setWriteAccountSwitcherStyle(style: WriteAccountSwitcherStyle) {
+        viewModelScope.launch { appSettings.setWriteAccountSwitcherStyle(style) }
+    }
 
     val imageLoadMode: StateFlow<ImageLoadMode> = appSettings.imageLoadMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ImageLoadMode.ON)

@@ -94,6 +94,7 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import social.tbone.Tunables
@@ -123,6 +124,7 @@ fun ComposeScreen(
     val switchingAccount by viewModel.switchingAccount.collectAsStateWithLifecycle()
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
     val activeAccount by viewModel.activeAccount.collectAsStateWithLifecycle()
+    val accountSwitcherStyle by viewModel.accountSwitcherStyle.collectAsStateWithLifecycle()
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
     var showPreview by rememberSaveable { mutableStateOf(false) }
     val currentOnExit by rememberUpdatedState(onExit)
@@ -317,7 +319,9 @@ fun ComposeScreen(
         }
     }
 
-    val isReply = uiState.replyToEvent != null
+    val isReply = uiState.replyTargetRequired || uiState.replyToEvent != null
+    val canPublish = fieldValue.text.isNotBlank() && !uiState.isPublishing &&
+        !uiState.replyResolutionPending && (!uiState.replyTargetRequired || uiState.replyToEvent != null)
     val isQuote = uiState.quoteToEvent != null || uiState.quoteFolderEvents.isNotEmpty()
     val title = when {
         isReply -> "compose.reply"
@@ -359,7 +363,7 @@ fun ComposeScreen(
                     modifier = Modifier.weight(1f),
                 )
 
-                ComposeAvatarSwitcher(activeAccount, accounts, profiles, viewModel::switchAccount, enabled = !switchingAccount && !uiState.isPublishing)
+                ComposeAvatarSwitcher(activeAccount, accounts, profiles, viewModel::switchAccount, accountSwitcherStyle, enabled = !switchingAccount && !uiState.isPublishing)
                 Spacer(Modifier.width(8.dp))
                 if (uiState.isPublishing || switchingAccount) {
                     CircularProgressIndicator(
@@ -370,9 +374,9 @@ fun ComposeScreen(
                 } else {
                     Box(
                         modifier = Modifier
-                            .appBorder(1.dp, if (fieldValue.text.isNotBlank()) BonyColors.Accent else BonyColors.Rule)
-                            .background(if (fieldValue.text.isNotBlank()) BonyColors.Accent else BonyColors.Bg)
-                            .then(if (fieldValue.text.isNotBlank()) Modifier.clickable {
+                            .appBorder(1.dp, if (canPublish) BonyColors.Accent else BonyColors.Rule)
+                            .background(if (canPublish) BonyColors.Accent else BonyColors.Bg)
+                            .then(if (canPublish) Modifier.clickable {
                                 // Mentions (@Name) become nostr:npub1… URIs so the
                                 // published note renders a nice, clickable @Name —
                                 // and each mentioned pubkey becomes a NIP-08 p-tag.
@@ -392,9 +396,13 @@ fun ComposeScreen(
                             .padding(horizontal = 10.dp, vertical = 4.dp),
                     ) {
                         Text(
-                            text = "SEND ↗",
+                            text = when {
+                                uiState.replyResolutionPending -> "LOADING REPLY…"
+                                uiState.replyTargetRequired && uiState.replyToEvent == null -> "REPLY UNAVAILABLE"
+                                else -> "SEND ↗"
+                            },
                             style = BonyType.button.copy(
-                                color = if (fieldValue.text.isNotBlank()) BonyColors.Bg else BonyColors.TextMute,
+                                color = if (canPublish) BonyColors.Bg else BonyColors.TextMute,
                             ),
                         )
                     }
@@ -403,8 +411,17 @@ fun ComposeScreen(
             Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
             // ── Reply/quote context card ──────────────────────────────────────
-            uiState.replyToEvent?.let { parent ->
-                ComposeContextCard(event = parent, label = "↳ REPLYING TO")
+            if (uiState.replyTargetRequired) {
+                val parent = uiState.replyToEvent
+                if (parent != null) {
+                    ComposeContextCard(event = parent, label = "↳ REPLYING TO")
+                } else {
+                    Text(
+                        text = if (uiState.replyResolutionPending) "loading reply target…" else "reply target unavailable · this reply cannot be sent as a standalone note",
+                        style = BonyType.meta.copy(color = if (uiState.replyResolutionPending) BonyColors.TextMute else BonyColors.Danger),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                    )
+                }
                 Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
             }
             uiState.quoteToEvent?.let { original ->
@@ -974,15 +991,53 @@ private fun ComposeAvatarSwitcher(
     accounts: List<social.tbone.account.Account>,
     profiles: Map<String, ProfileContent>,
     onSwitch: (String) -> Unit,
+    style: social.tbone.settings.WriteAccountSwitcherStyle,
     enabled: Boolean,
 ) {
     var showMenu by remember { mutableStateOf(false) }
-    Text(
-        text = "switch account",
-        style = BonyType.tag.copy(color = BonyColors.Accent),
-        modifier = Modifier.clickable(enabled = enabled) { showMenu = true }.padding(horizontal = 6.dp, vertical = 8.dp),
-        maxLines = 1,
-    )
+    Box(
+        modifier = Modifier
+            .appBorder(1.dp, BonyColors.Rule)
+            .clickable(enabled = enabled) { showMenu = true }
+            .padding(horizontal = 7.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        when (style) {
+            social.tbone.settings.WriteAccountSwitcherStyle.AVATAR -> {
+                if (activeAccount != null) UserAvatar(
+                    pubkeyHex = activeAccount.pubkey,
+                    profile = profiles[activeAccount.pubkey],
+                    size = 28.dp,
+                ) else Text("account", style = BonyType.caption.copy(color = BonyColors.TextMute))
+            }
+            social.tbone.settings.WriteAccountSwitcherStyle.PROFILE_NAME -> {
+                val displayName = activeAccount?.let { account ->
+                    profiles[account.pubkey]?.bestName ?: account.displayName
+                } ?: "account"
+                Text(
+                    text = displayName,
+                    style = BonyType.tag.copy(color = BonyColors.Accent),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 116.dp),
+                )
+            }
+            social.tbone.settings.WriteAccountSwitcherStyle.THREE_WORD_HASH -> {
+                val words = remember(activeAccount?.pubkey) {
+                    activeAccount?.let { Phrase.wordsFor(it.pubkey, 3) }.orEmpty()
+                }
+                Column(verticalArrangement = Arrangement.Top) {
+                    (words.ifEmpty { listOf("account", "not", "set") }).forEach { word ->
+                        Text(
+                            text = word,
+                            style = BonyType.metaDim.copy(color = BonyColors.Accent, fontSize = 9.sp, lineHeight = 9.sp),
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+    }
     if (showMenu) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showMenu = false },

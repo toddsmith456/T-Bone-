@@ -83,6 +83,7 @@ class AppSettings @Inject constructor(
         private val UI_THEME = stringPreferencesKey("ui_theme")
         // One-switch compact chrome and separately randomized PIN keypads.
         private val UI_DECLUTTER_ENABLED = booleanPreferencesKey("ui_declutter_enabled")
+        private val WRITE_ACCOUNT_SWITCHER_STYLE = stringPreferencesKey("write_account_switcher_style")
         private val APP_PIN_KEYPAD_SCRAMBLED = booleanPreferencesKey("app_pin_keypad_scrambled")
         private val TOOLBOX_PIN_KEYPAD_SCRAMBLED = booleanPreferencesKey("toolbox_pin_keypad_scrambled")
         // Screenshot blocker (FLAG_SECURE) — app-wide.
@@ -299,6 +300,9 @@ class AppSettings @Inject constructor(
 
     private val _uiDeclutterEnabled = MutableStateFlow(false)
     val uiDeclutterEnabled = _uiDeclutterEnabled.asStateFlow()
+
+    private val _writeAccountSwitcherStyle = MutableStateFlow(WriteAccountSwitcherStyle.AVATAR)
+    val writeAccountSwitcherStyle = _writeAccountSwitcherStyle.asStateFlow()
 
     private val _screenshotBlockEnabled = MutableStateFlow(false)
     val screenshotBlockEnabled = _screenshotBlockEnabled.asStateFlow()
@@ -616,6 +620,7 @@ class AppSettings @Inject constructor(
                 _accentColor.value = prefs[ACCENT_COLOR]
                 _uiTheme.value = UiTheme.fromPref(prefs[UI_THEME])
                 _uiDeclutterEnabled.value = prefs[UI_DECLUTTER_ENABLED] ?: false
+                _writeAccountSwitcherStyle.value = WriteAccountSwitcherStyle.fromPref(prefs[WRITE_ACCOUNT_SWITCHER_STYLE])
                 _screenshotBlockEnabled.value = prefs[SCREENSHOT_BLOCK_ENABLED] ?: false
                 _toolboxScreenshotBlockEnabled.value = prefs[TOOLBOX_SCREENSHOT_BLOCK_ENABLED] ?: false
                 _toolboxPinEnabled.value = prefs[TOOLBOX_PIN_ENABLED] ?: false
@@ -837,6 +842,11 @@ class AppSettings @Inject constructor(
     suspend fun setUiDeclutterEnabled(enabled: Boolean) {
         _uiDeclutterEnabled.value = enabled
         dataStore.edit { it[UI_DECLUTTER_ENABLED] = enabled }
+    }
+
+    suspend fun setWriteAccountSwitcherStyle(style: WriteAccountSwitcherStyle) {
+        _writeAccountSwitcherStyle.value = style
+        dataStore.edit { it[WRITE_ACCOUNT_SWITCHER_STYLE] = style.name }
     }
 
     /** Custom accent color as "#RRGGBB", or null to use the default green. */

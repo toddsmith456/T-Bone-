@@ -46,11 +46,10 @@ import social.tbone.nostr.UnsignedEvent
 import social.tbone.nostr.relay.RelayMessage
 import social.tbone.nostr.relay.RelayPool
 import social.tbone.nostr.quotedEventId
-import social.tbone.nostr.replyToPubkeys
 import social.tbone.notes.BookmarksRepository
-import social.tbone.nostr.rootEventId
 import social.tbone.profile.ProfileRepository
 import social.tbone.settings.AppSettings
+import social.tbone.settings.WriteAccountSwitcherStyle
 import social.tbone.ui.search.ProfileMatch
 import android.content.Context
 import android.net.Uri
@@ -61,6 +60,8 @@ import javax.inject.Inject
 data class ComposeUiState(
     val isPublishing: Boolean = false,
     val error: String? = null,
+    val replyTargetRequired: Boolean = false,
+    val replyResolutionPending: Boolean = false,
     val replyToEvent: Event? = null,
     val quoteToEvent: Event? = null,
     /** Ordered folder quotes; serialized payloads stay encrypted in the vault. */
@@ -118,6 +119,8 @@ class ComposeViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(
         ComposeUiState(
+            replyTargetRequired = !replyToId.isNullOrBlank(),
+            replyResolutionPending = !replyToId.isNullOrBlank(),
             blossomServer = savedStateHandle.get<String>(KEY_BLOSSOM_SERVER)
                 ?.trim()
                 ?.trimEnd('/')
@@ -135,6 +138,8 @@ class ComposeViewModel @Inject constructor(
     val activeAccount: StateFlow<Account?> = accountRepository.activeAccount.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val profiles: StateFlow<Map<String, social.tbone.nostr.ProfileContent>> = profileRepository.profiles
+
+    val accountSwitcherStyle: StateFlow<WriteAccountSwitcherStyle> = appSettings.writeAccountSwitcherStyle
 
     private val _switchingAccount = MutableStateFlow(false)
     val switchingAccount = _switchingAccount.asStateFlow()
@@ -230,8 +235,14 @@ class ComposeViewModel @Inject constructor(
                 _uiState.update { it.copy(initialText = draft) }
             }
             if (!replyToId.isNullOrEmpty()) {
-                val event = eventRepository.getById(replyToId)
-                _uiState.update { it.copy(replyToEvent = event) }
+                val event = resolveReplyTarget(replyToId)
+                _uiState.update {
+                    it.copy(
+                        replyToEvent = event,
+                        replyResolutionPending = false,
+                        error = if (event == null) "Couldn't load the reply target. This reply is blocked to prevent publishing it as a standalone note." else it.error,
+                    )
+                }
             }
             if (!quoteToId.isNullOrEmpty()) {
                 val event = eventRepository.getById(quoteToId)
@@ -338,6 +349,43 @@ class ComposeViewModel @Inject constructor(
                     )
                 }
             }
+        }
+    }
+
+    /**
+     * Resolve the explicitly requested reply target before enabling SEND.
+     * A missing local cache entry must never turn a reply into an ordinary note.
+     */
+    private suspend fun resolveReplyTarget(id: String): Event? {
+        val local = runCatching { eventRepository.getById(id) }.getOrNull()
+        if (local != null && local.verify()) return local
+
+        val relay = Tunables.SEARCH_RELAY
+        pool.acquireRelay(relay)
+        val subId = "compose-reply-" + java.util.UUID.randomUUID().toString().take(10)
+        try {
+            pool.subscribeTo(
+                listOf(Filter(ids = listOf(id), limit = 1)),
+                id = subId,
+                label = "compose-reply-target",
+                relays = setOf(relay),
+            )
+            val result = withTimeoutOrNull(Tunables.SEARCH_EOSE_TIMEOUT_MS) {
+                pool.messages.first { (relayUrl, message) ->
+                    RelayPool.normalize(relayUrl) == RelayPool.normalize(relay) && when (message) {
+                        is RelayMessage.EventMessage -> message.subscriptionId == subId &&
+                            message.event.id.equals(id, ignoreCase = true) && message.event.verify()
+                        is RelayMessage.EndOfStoredEvents -> message.subscriptionId == subId
+                        else -> false
+                    }
+                }
+            }
+            val event = (result?.message as? RelayMessage.EventMessage)?.event ?: return null
+            eventRepository.save(event, "")
+            return event
+        } finally {
+            pool.unsubscribe(subId)
+            pool.releaseRelay(relay)
         }
     }
 
@@ -570,6 +618,12 @@ class ComposeViewModel @Inject constructor(
     ) {
         val trimmed = content.trim()
         if (trimmed.isBlank()) return
+        if (_uiState.value.replyTargetRequired && _uiState.value.replyToEvent == null) {
+            _uiState.update {
+                it.copy(error = "Reply target is unavailable. Publishing is blocked so this cannot become a standalone note.")
+            }
+            return
+        }
         // A fast double-tap on SEND must not create two publish jobs before
         // isPublishing recomposes. This is independent of the Compose flag.
         if (!publishInFlight.compareAndSet(false, true)) return
@@ -594,31 +648,7 @@ class ComposeViewModel @Inject constructor(
                 val quoteIds = quoteEvents.map { it.id }
 
                 val tags = buildList {
-                    if (replyTo != null) {
-                        // NIP-10: retain the root and mark the actual parent as
-                        // reply. Do not let a q-tag or a mention become the reply
-                        // target, and do not emit the same event twice when replying
-                        // directly to a root note.
-                        val rootId = replyTo.parsedTags.rootEventId
-                        if (rootId != null && rootId != replyTo.id) {
-                            add(buildJsonArray {
-                                add(JsonPrimitive("e")); add(JsonPrimitive(rootId))
-                                add(JsonPrimitive("")); add(JsonPrimitive("root"))
-                            })
-                        }
-                        add(buildJsonArray {
-                            add(JsonPrimitive("e")); add(JsonPrimitive(replyTo.id))
-                            add(JsonPrimitive("")); add(JsonPrimitive("reply"))
-                        })
-
-                        // p tags: author of the actual reply target + existing
-                        // NIP-10 participants. The quote's author is added below
-                        // separately, so both relationships survive publishing.
-                        val mentions = (listOf(replyTo.pubkey) + replyTo.parsedTags.replyToPubkeys).distinct()
-                        mentions.forEach { pubkey ->
-                            add(buildJsonArray { add(JsonPrimitive("p")); add(JsonPrimitive(pubkey)) })
-                        }
-                    }
+                    if (replyTo != null) addAll(nip10ReplyTags(replyTo))
                     // NIP-18 quote references remain separate from NIP-10 reply
                     // e-tags. Folder quotes emit one q-tag (and author p-tag) per
                     // saved event, preserving the folder's displayed order.
