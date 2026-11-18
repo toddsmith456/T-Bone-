@@ -164,10 +164,12 @@ class RelayConnection(
          * include TLS 1.3 while still permitting 1.2. Nothing here disables
          * certificate validation: there is no custom TrustManager.
          *
-         * CLEARTEXT is deliberately NOT enabled for public relays. Loopback
-         * relays (ws://localhost:4869) are exempted from the spec below, since
-         * OkHttp only applies connection specs to https URLs.
-         */
+                 * CLEARTEXT for public hosts is governed by the network security
+                 * config (base-config is fail-closed; loopback is exempt), which
+                 * OkHttp consults per host via Platform#isCleartextTrafficPermitted
+                 * in RealConnection. The CLEARTEXT spec here keeps local ws://
+                 * relays working on API 26-28, where OkHttp only applies
+                 * connection specs to https URLs.
         private val TLS_1_2_AND_UP: ConnectionSpec = ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
             .tlsVersions(TlsVersion.TLS_1_3, TlsVersion.TLS_1_2)
             .build()
