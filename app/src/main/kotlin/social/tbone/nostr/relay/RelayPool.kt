@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,10 +46,31 @@ class RelayPool(
             size > Tunables.RELAY_DEDUP_CACHE_SIZE
     }
 
-    private val _messages = MutableSharedFlow<PoolMessage>(
+    /**
+     * Multiplexed relay messages.
+     *
+     * This used to be a plain suspending MutableSharedFlow, and every relay
+     * collector published into it inline. That made the whole multiplexer run at
+     * the speed of its slowest subscriber: one busy consumer — notifications
+     * persisting a 24 h backfill, a steak ledger refresh, a quote batch — would
+     * suspend the collector for *all* relays, the buffer would fill, and the
+     * per-socket channels upstream (512 slots, `trySend`, so they cannot wait)
+     * would start silently dropping messages while every socket still reported
+     * CONNECTED. That is the "relays look connected but nothing ever arrives"
+     * failure on a bad network, and it is why the feed could spin until the
+     * 14 s watchdog gave up.
+     *
+     * DROP_OLDEST makes `emit` non-suspending: a slow consumer now loses its own
+     * backlog instead of starving every other relay. Delivery is identical
+     * whenever subscribers keep up, which is the normal case; the buffer is
+     * still bounded, so overload costs dropped messages (counted below) rather
+     * than unbounded memory.
+     */
+    private val mutableMessages = MutableSharedFlow<PoolMessage>(
         extraBufferCapacity = Tunables.RELAY_POOL_BUFFER_CAPACITY,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
-    val messages: SharedFlow<PoolMessage> = _messages.asSharedFlow()
+    val messages: SharedFlow<PoolMessage> = mutableMessages.asSharedFlow()
 
     private val _relayStatuses = MutableStateFlow<Map<String, RelayStatus>>(emptyMap())
     val relayStatuses: StateFlow<Map<String, RelayStatus>> = _relayStatuses.asStateFlow()
@@ -59,6 +81,8 @@ class RelayPool(
     // visible in logcat without a profiler.
     private val eventCounter = AtomicLong(0)
     private val eoseCounter = AtomicLong(0)
+    /** Emissions that found the multiplexed buffer full and displaced the oldest entry. */
+    private val droppedMessageCounter = AtomicLong(0)
 
     init {
         scope.launch {
@@ -66,7 +90,8 @@ class RelayPool(
                 delay(STATS_INTERVAL_MS)
                 val events = eventCounter.getAndSet(0)
                 val eose = eoseCounter.getAndSet(0)
-                if (events == 0L && activeSubscriptions.isEmpty()) continue
+                val dropped = droppedMessageCounter.getAndSet(0)
+                if (events == 0L && activeSubscriptions.isEmpty() && dropped == 0L) continue
                 val byLabel = activeSubscriptions.values
                     .groupingBy { it.label }
                     .eachCount()
@@ -77,7 +102,7 @@ class RelayPool(
                     "PoolStats: ${events / (STATS_INTERVAL_MS / 1000)} evt/s, " +
                         "${eose / (STATS_INTERVAL_MS / 1000)} eose/s, " +
                         "activeSubs=${activeSubscriptions.size} [$byLabel], " +
-                        "relays=${connections.size}",
+                        "relays=${connections.size}, dropped=$dropped",
                 )
             }
         }
@@ -304,7 +329,11 @@ class RelayPool(
                             ) {
                                 reconnectPolicy.recordHealthySession()
                             }
-                            _messages.emit(PoolMessage(url, message))
+                            // Non-blocking: a slow consumer must never stall the
+                            // multiplexer shared by every relay.
+                            if (!mutableMessages.tryEmit(PoolMessage(url, message))) {
+                                droppedMessageCounter.incrementAndGet()
+                            }
                         }
                     }
                 }

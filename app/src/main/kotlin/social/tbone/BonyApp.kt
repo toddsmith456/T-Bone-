@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -145,6 +146,12 @@ class BonyApp : Application() {
             appSettings.initialized.first { it }
             combine(appSettings.torEnabled, appSettings.cachePreset) { tor, preset -> tor to preset }
                 .distinctUntilChanged()
+                // The first emission is the same state onCreate already installed
+                // synchronously (readPersistedPreset + startupRequiresTor). Acting on
+                // it rebuilt both Coil loaders and shut the freshly installed ones
+                // down — cancelling every image request in flight during the first
+                // frame, then re-issuing them — for no change in configuration.
+                .drop(1)
                 .collect { (useTor, preset) ->
                     val status = if (useTor) OrbotHelper.getStatus(this@BonyApp) else null
                     val connected = status as? OrbotStatus.InstalledAndConnected
