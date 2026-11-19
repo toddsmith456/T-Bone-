@@ -16,7 +16,11 @@ change conflicts with it, the change does not merge.
    but not limited to Meta/Facebook, AppsFlyer, Amplitude, Mixpanel, Segment,
    Sentry, Bugsnag, New Relic, Datadog RUM, CleverTap, Branch, OneSignal,
    Pusher, Airship — never. Crash reports are local log files the user chooses
-   to share (Settings → Share logs). Push notifications are in-app only.
+   to share (Settings → Share logs). Push notifications are in-app only. What
+   those exports contain is spelled out in
+   [privacy-diagnostics.md](privacy-diagnostics.md) — in short, the performance
+   numbers are counts and timings only, while the log section can include relay
+   hostnames and short key prefixes.
 5. **Hardcoded tracking endpoints** (google-analytics.com, googletagmanager,
    crashlytics.com, firebaseio.com, facebook graph, appsflyer, amplitude,
    mixpanel, segment, sentry, bugsnag, onesignal, …) — never.
