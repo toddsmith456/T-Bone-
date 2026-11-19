@@ -57,7 +57,7 @@ class RelayListFetcherTest {
         }
         try {
             val urls = servers.map { it.url("/").toString().replaceFirst("http://", "ws://") }
-            val pool = RelayPool(scope) { url -> RelayConnection(url, client) }
+            val pool = RelayPool(scope, { url -> RelayConnection(url, client) })
             val result = RelayListFetcher(pool).fetchLatest("1".repeat(64), EventKind.FOLLOW_LIST, urls, timeoutMs = 5_000)
             checkResult(result)
         } finally {

@@ -75,7 +75,7 @@ class RelayPoolBackpressureTest {
 
     private fun poolFor(server: MockWebServer): RelayPool {
         val url = server.url("/").toString().replaceFirst("http", "ws")
-        val pool = RelayPool(scope) { RelayConnection(it, OkHttpClient()) }
+        val pool = RelayPool(scope, { RelayConnection(it, OkHttpClient()) })
         pools += pool
         pool.addRelay(url)
         return pool

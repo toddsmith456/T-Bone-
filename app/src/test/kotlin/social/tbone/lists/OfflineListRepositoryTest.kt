@@ -41,7 +41,7 @@ class OfflineListRepositoryTest {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         file = File.createTempFile("prefs", ".preferences_pb")
         store = PreferenceDataStoreFactory.create(scope = scope) { file }
-        val pool = RelayPool(scope) { error("no network in unit tests") }
+        val pool = RelayPool(scope, { error("no network in unit tests") })
         repo = OfflineListRepository(store, RelayListFetcher(pool))
     }
 
@@ -182,7 +182,7 @@ class OfflineListRepositoryTest {
 
     @Test fun persistsAcrossRepositoryInstances() = runBlocking {
         repo.replaceFromSync(ListType.FOLLOWS, alice, listOf(ListEntry(pk(1))), enable = true)
-        val again = OfflineListRepository(store, RelayListFetcher(RelayPool(scope) { error("x") }))
+        val again = OfflineListRepository(store, RelayListFetcher(RelayPool(scope, { error("x") })))
         assertEquals(1, again.state(ListType.FOLLOWS, alice).first().size)
     }
 

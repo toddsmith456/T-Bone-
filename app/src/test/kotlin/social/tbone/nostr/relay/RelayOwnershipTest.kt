@@ -15,7 +15,7 @@ import social.tbone.Tunables
 class RelayOwnershipTest {
     private val scope = CoroutineScope(SupervisorJob() + StandardTestDispatcher())
     private val client = OkHttpClient()
-    private fun pool() = RelayPool(scope) { RelayConnection(it, client) }
+    private fun pool() = RelayPool(scope, { RelayConnection(it, client) })
     private val a = "wss://one.example"
     private val b = "wss://two.example"
 

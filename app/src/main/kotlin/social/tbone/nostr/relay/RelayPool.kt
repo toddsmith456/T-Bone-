@@ -33,6 +33,8 @@ enum class RelayStatus { CONNECTING, CONNECTED, DISCONNECTED }
 class RelayPool(
     private val scope: CoroutineScope,
     private var connectionFactory: (url: String) -> RelayConnection,
+    // Kept last and defaulted: tests construct RelayPool positionally as
+    // (scope, connectionFactory), so a parameter inserted before it breaks them.
     /** Optional sink so a diagnostics screen can report real pool numbers. */
     private val metrics: social.tbone.logging.StartupMetrics? = null,
 ) {
