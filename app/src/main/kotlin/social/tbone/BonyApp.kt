@@ -6,7 +6,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -142,16 +141,16 @@ class BonyApp : Application() {
 
         // Keep HTTP media transport in sync with Tor (using media-tuned timeouts)
         // and keep Coil + Media3 caches in sync with CachePreset changes.
+        // Do not skip the first settings emission: ImageClientProvider starts with
+        // a fail-closed Tor-only client, and onCreate installs the Coil loaders but
+        // does not yet install the saved media transport. The first emission is
+        // therefore required even when Tor is off. applyPreset() is already a
+        // no-op when the synchronously installed preset is unchanged, so handling
+        // this emission does not churn the image loaders.
         applicationScope.launch {
             appSettings.initialized.first { it }
             combine(appSettings.torEnabled, appSettings.cachePreset) { tor, preset -> tor to preset }
                 .distinctUntilChanged()
-                // The first emission is the same state onCreate already installed
-                // synchronously (readPersistedPreset + startupRequiresTor). Acting on
-                // it rebuilt both Coil loaders and shut the freshly installed ones
-                // down — cancelling every image request in flight during the first
-                // frame, then re-issuing them — for no change in configuration.
-                .drop(1)
                 .collect { (useTor, preset) ->
                     val status = if (useTor) OrbotHelper.getStatus(this@BonyApp) else null
                     val connected = status as? OrbotStatus.InstalledAndConnected

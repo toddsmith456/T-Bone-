@@ -12,6 +12,42 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class GuardedMediaClientTest {
+    @Test fun failClosedStartupClientIsReplacedWhenSavedModeIsTorOff() {
+        val guard = TorCallGuard(initialTor = true)
+        val startupClient = guardedMediaClient(OkHttpClient(), true, guard)
+        val server = MockWebServer()
+        server.enqueue(MockResponse().setBody("image bytes"))
+        server.start()
+        var directClient: OkHttpClient? = null
+        try {
+            // Settings loading changes the guard to the saved Tor-off mode. The
+            // bootstrap client must stay rejected; the first configured client
+            // must be able to fetch the image without waiting for another setting
+            // change.
+            guard.update(false)
+            try {
+                startupClient.newCall(Request.Builder().url(server.url("/stale-image")).build())
+                    .execute().use { fail("bootstrap Tor client was accepted after Tor was disabled") }
+            } catch (_: IOException) { }
+            assertNull("stale client must not reach the server", server.takeRequest(200, TimeUnit.MILLISECONDS))
+
+            // Build the replacement only after the guard publishes the saved mode,
+            // just as ImageClientProvider.update() does in the startup collector.
+            val configuredClient = guardedMediaClient(OkHttpClient(), false, guard)
+            directClient = configuredClient
+            configuredClient.newCall(Request.Builder().url(server.url("/image")).build()).execute().use {
+                assertEquals("image bytes", it.body!!.string())
+            }
+            assertNotNull("configured media client should reach the server", server.takeRequest(5, TimeUnit.SECONDS))
+        } finally {
+            startupClient.dispatcher.executorService.shutdownNow()
+            startupClient.connectionPool.evictAll()
+            directClient?.dispatcher?.executorService?.shutdownNow()
+            directClient?.connectionPool?.evictAll()
+            server.shutdown()
+        }
+    }
+
     @Test fun staleClientCannotRestartAfterAnOffOnOffCycle() {
         val guard = TorCallGuard()
         val client = guardedMediaClient(OkHttpClient(), false, guard)
