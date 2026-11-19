@@ -75,6 +75,14 @@ class SteakLeaderboardViewModel @Inject constructor(
         steakRepository.refreshLeaderboard(LeaderboardScope.FOLLOWS)
     }
 
+    /** The leaderboard is a steak surface: hold the live subscription while visible. */
+    fun onSurfaceVisible() {
+        steakRepository.acquireLiveUpdates()
+        steakRepository.refreshLeaderboard(_scope.value)
+    }
+
+    fun onSurfaceHidden() = steakRepository.releaseLiveUpdates()
+
     fun selectScope(newScope: LeaderboardScope) {
         if (_scope.value == newScope) return
         _scope.value = newScope

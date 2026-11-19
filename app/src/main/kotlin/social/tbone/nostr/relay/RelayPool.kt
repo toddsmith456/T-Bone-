@@ -33,6 +33,8 @@ enum class RelayStatus { CONNECTING, CONNECTED, DISCONNECTED }
 class RelayPool(
     private val scope: CoroutineScope,
     private var connectionFactory: (url: String) -> RelayConnection,
+    /** Optional sink so a diagnostics screen can report real pool numbers. */
+    private val metrics: social.tbone.logging.StartupMetrics? = null,
 ) {
     private val connections = ConcurrentHashMap<String, RelayEntry>()
     private val activeSubscriptions = ConcurrentHashMap<String, Subscription>()
@@ -98,6 +100,12 @@ class RelayPool(
                     .entries
                     .sortedByDescending { it.value }
                     .joinToString(", ") { "${it.key}=${it.value}" }
+                metrics?.relaySnapshot(
+                    events = events,
+                    dropped = dropped,
+                    subscriptions = activeSubscriptions.size,
+                    relays = _relayStatuses.value.count { it.value == RelayStatus.CONNECTED },
+                )
                 Timber.d(
                     "PoolStats: ${events / (STATS_INTERVAL_MS / 1000)} evt/s, " +
                         "${eose / (STATS_INTERVAL_MS / 1000)} eose/s, " +

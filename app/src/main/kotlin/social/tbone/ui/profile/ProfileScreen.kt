@@ -144,6 +144,24 @@ fun ProfileScreen(
     var showSteakSheet by remember { mutableStateOf(false) }
     var showSendSteakConfirm by remember { mutableStateOf(false) }
 
+    // The steak shelf is the only surface on this screen that needs live steak
+    // events, so the subscription is held only while the sheet is open.
+    //
+    // Keyed on the sheet's visibility and capturing the value *inside* the effect:
+    // reading `showSteakSheet` from the onDispose lambda would observe the state
+    // after it flipped and never release. openSteakSurface/closeSteakSurface are
+    // reference-counted, so the extra 0-second effect on first composition is
+    // harmless.
+    androidx.compose.runtime.LaunchedEffect(showSteakSheet) {
+        if (!showSteakSheet) return@LaunchedEffect
+        viewModel.openSteakSurface()
+        try {
+            kotlinx.coroutines.awaitCancellation()
+        } finally {
+            viewModel.closeSteakSurface()
+        }
+    }
+
     val context = LocalContext.current
     // Which cards the current tab shows. NOTES is top-level notes, ALL adds
     // replies and reposts, REPLIES is replies only, and MEDIA is the gallery.

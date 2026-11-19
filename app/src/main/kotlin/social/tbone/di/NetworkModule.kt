@@ -56,8 +56,9 @@ object NetworkModule {
         appSettings: AppSettings,
         @ApplicationContext context: Context,
         accountRepository: AccountRepository,
+        startupMetrics: social.tbone.logging.StartupMetrics,
     ): RelayPool {
-        val pool = createPool(scope, appSettings, context)
+        val pool = createPool(scope, appSettings, context, startupMetrics)
         scope.launch {
             appSettings.initialized.first { it }
             accountRepository.activeAccount.map { it?.effectiveRelays().orEmpty() }
@@ -69,12 +70,22 @@ object NetworkModule {
     @Provides
     @Singleton
     @GlobalFeedPool
-    fun provideGlobalFeedPool(scope: CoroutineScope, appSettings: AppSettings, @ApplicationContext context: Context): RelayPool =
-        createPool(scope, appSettings, context)
+    fun provideGlobalFeedPool(
+        scope: CoroutineScope,
+        appSettings: AppSettings,
+        @ApplicationContext context: Context,
+        startupMetrics: social.tbone.logging.StartupMetrics,
+    ): RelayPool = createPool(scope, appSettings, context, startupMetrics)
 
-    private fun createPool(scope: CoroutineScope, appSettings: AppSettings, context: Context): RelayPool {
+    private fun createPool(
+        scope: CoroutineScope,
+        appSettings: AppSettings,
+        context: Context,
+        metrics: social.tbone.logging.StartupMetrics? = null,
+    ): RelayPool {
         val pool = RelayPool(
             scope = scope,
+            metrics = metrics,
             connectionFactory = { url ->
                 val tor = startupRequiresTor(appSettings.initialized.value, appSettings.torEnabled.value)
                 RelayConnection(url, RelayConnection.buildClient(

@@ -46,6 +46,14 @@ interface NotificationDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: NotificationEntity)
 
+    /**
+     * Batch insert used by the coalesced writer. A cold-start backfill can produce
+     * thousands of rows; one INSERT per row plus a trim per row meant thousands of
+     * separate SQLite transactions competing with the feed's reads.
+     */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(entities: List<NotificationEntity>)
+
     @Query(
         "DELETE FROM notifications WHERE pubkey = :pubkey AND id NOT IN (" +
             "SELECT id FROM notifications WHERE pubkey = :pubkey " +

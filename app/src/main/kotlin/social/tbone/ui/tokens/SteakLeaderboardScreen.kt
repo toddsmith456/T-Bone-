@@ -67,6 +67,12 @@ fun SteakLeaderboardScreen(
     val unlistedClaimCount by viewModel.unlistedClaimCount.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
+    // The leaderboard is a steak surface: hold the live subscription while it is
+    // composed. Keyed on the stable view model, so onDispose always releases.
+    androidx.compose.runtime.DisposableEffect(viewModel) {
+        viewModel.onSurfaceVisible()
+        androidx.compose.runtime.onDispose { viewModel.onSurfaceHidden() }
+    }
     LaunchedEffect(viewModel) {
         viewModel.messages.collect { snackbarHostState.showSnackbar(it) }
     }

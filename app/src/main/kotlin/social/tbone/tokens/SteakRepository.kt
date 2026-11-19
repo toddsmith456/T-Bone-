@@ -18,6 +18,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import social.tbone.account.Account
 import social.tbone.account.AccountRepository
 import social.tbone.account.signer.NostrSignerFactory
 import social.tbone.db.TokenCacheDao
@@ -108,7 +109,16 @@ class SteakRepository @Inject constructor(
     private val claimMutex = Mutex()
 
     @Volatile private var activePubkey: String? = null
+
+    /** Relay list per account, refreshed when the account changes (see switchAccount). */
+    private val cachedAccountRelays = ConcurrentHashMap<String, List<String>>()
+
+    /** Guards [liveSubId] and [liveCollectorJob]; surface counting is in [surfaces]. */
+    private val liveLock = Any()
     private var liveSubId: String? = null
+    private var liveCollectorJob: Job? = null
+    /** How many steak surfaces are currently on screen. */
+    private val surfaces = SurfaceRefCounter()
 
     /** Offers observed sent by the active user (drives rolling 24h cooldown). */
     private val mySentOffers = ConcurrentHashMap<String, DailyTokens.ParsedTokenOffer>()
@@ -166,24 +176,22 @@ class SteakRepository @Inject constructor(
             accountRepository.activeAccount
                 .distinctUntilChangedBy { it?.pubkey }
                 .collect { account ->
-                    switchAccount(account?.pubkey)
+                    switchAccount(account)
                 }
-        }
-        scope.launch {
-            pool.messages.collect { poolMessage ->
-                val msg = poolMessage.message
-                if (msg is RelayMessage.EventMessage && msg.subscriptionId == liveSubId) {
-                    handleLiveEvent(msg.event)
-                }
-            }
         }
     }
 
     // ── Account lifecycle ─────────────────────────────────────────────────────
 
-    private suspend fun switchAccount(pubkey: String?) {
-        liveSubId?.let { pool.unsubscribe(it) }
-        liveSubId = null
+    private suspend fun switchAccount(account: Account?) {
+        val pubkey = account?.pubkey
+        synchronized(liveLock) {
+            liveSubId?.let { pool.unsubscribe(it) }
+            liveSubId = null
+        }
+        if (pubkey != null && account != null) {
+            cachedAccountRelays[pubkey] = account.effectiveRelays()
+        }
         activePubkey = pubkey
         mySentOffers.clear()
         myIncomingOffers.clear()
@@ -213,8 +221,79 @@ class SteakRepository @Inject constructor(
             }
         }
 
+        // A surface opened before the account was known still expects live data.
+        if (surfaces.isHeld()) startLiveUpdates()
+        loadProfileSteaks(pubkey)
+        // Badge state for the Toolbox without keeping a live subscription open.
+        refreshPendingBadge()
+    }
+
+    // ── Lazy live updates ─────────────────────────────────────────────────────
+
+    /**
+     * Steak data is only fetched while a steak surface is on screen.
+     *
+     * This repository used to open an unscoped four-filter subscription in
+     * `init`, i.e. on every cold start, before the user had opened anything —
+     * four REQs times every connected relay, re-sent on every reconnect, and one
+     * more collector competing for the shared message flow during the window
+     * where the feed is trying to fill. Nothing on the Home feed needs it: the
+     * feed never reads steak data.
+     *
+     * The live subscription now starts on the first [acquireLiveUpdates] and stops
+     * on the last [releaseLiveUpdates], so it costs nothing unless someone is
+     * actually looking at steaks.
+     */
+    fun acquireLiveUpdates() {
+        if (surfaces.acquire()) startLiveUpdates()
+    }
+
+    fun releaseLiveUpdates() {
+        if (surfaces.release()) scope.launch { stopLiveUpdates() }
+    }
+
+    /** True while a steak surface holds the live subscription. */
+    fun isLiveActive(): Boolean = synchronized(liveLock) { liveSubId != null }
+
+    private fun startLiveUpdates() {
+        val pubkey = activePubkey ?: return
+        scope.launch {
+            synchronized(liveLock) {
+                if (liveSubId != null) return@launch
+            }
+            ensureLiveCollector()
+            subscribeLive(pubkey)
+        }
+    }
+
+    private suspend fun stopLiveUpdates() {
+        val id = synchronized(liveLock) {
+            val current = liveSubId
+            liveSubId = null
+            current
+        }
+        id?.let { pool.unsubscribe(it) }
+    }
+
+    /** One long-lived collector, created the first time a surface needs it. */
+    private fun ensureLiveCollector() {
+        synchronized(liveLock) {
+            if (liveCollectorJob?.isActive == true) return
+            liveCollectorJob = scope.launch {
+                pool.messages.collect { poolMessage ->
+                    val msg = poolMessage.message
+                    val id = synchronized(liveLock) { liveSubId }
+                    if (msg is RelayMessage.EventMessage && msg.subscriptionId == id) {
+                        handleLiveEvent(msg.event)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun subscribeLive(pubkey: String) {
         val now = nowEpochSeconds()
-        liveSubId = pool.subscribe(
+        val created = pool.subscribe(
             filters = listOf(
                 // My outgoing steak offers in the last 24h (per-recipient cooldown sync).
                 Filter(
@@ -249,9 +328,71 @@ class SteakRepository @Inject constructor(
                 ),
             ),
             label = "steaks-live",
+            // Only relays that can plausibly hold this account's own steak events:
+            // its write relays plus the relays other users' offers would arrive on.
+            // An unscoped sub sent the same four REQs to every connected relay and
+            // re-sent them on each reconnect.
+            relays = steakRelays(pubkey),
         )
+        synchronized(liveLock) { liveSubId = created }
+    }
 
-        loadProfileSteaks(pubkey)
+    /**
+     * Relay set for the live steak subscription.
+     *
+     * The account's own write relays are where its offers, claims and ledger land.
+     * Offers from other people are addressed to `p = <me>`, which the sender
+     * publishes to whichever relays it considers ours, so the configured personal
+     * relays are included as well. Capped so a large relay list cannot fan the
+     * subscription back out into the problem this is fixing.
+     */
+    private fun steakRelays(pubkey: String): Set<String> {
+        val relays = LinkedHashSet<String>()
+        // Where this account publishes, so its own offers/claims/ledger are visible.
+        relays.addAll(cachedAccountRelays[pubkey].orEmpty())
+        relays.addAll(pool.relayUrls())
+        return relays.map(RelayPool::normalize).filter(RelayPool::isValidRelayUrl)
+            .take(MAX_LIVE_RELAYS).toSet()
+    }
+
+    /**
+     * Cheap badge refresh: one REQ for claimable offers addressed to the active
+     * account, with no live subscription.
+     *
+     * The Toolbox shows a dot when a steak is waiting. That used to be free
+     * because a live subscription always existed; now that the live subscription
+     * only runs while a steak surface is open, the badge is refreshed on demand —
+     * once at startup and whenever the Toolbox is opened. One short request per
+     * launch is a fair price for not keeping four filters on every relay for the
+     * whole session.
+     */
+    fun refreshPendingBadge() {
+        val me = activePubkey ?: return
+        scope.launch {
+            runCatching {
+                val offers = queryOnce(
+                    filters = listOf(
+                        Filter(
+                            kinds = listOf(EventKind.TOKEN_OFFER),
+                            pTags = listOf(me),
+                            tTags = listOf(DailyTokens.STEAK_SLUG),
+                            since = nowEpochSeconds() - DailyTokens.CLAIM_WINDOW_SECONDS,
+                            limit = 25,
+                        ),
+                    ),
+                    label = "steak-badge",
+                    timeoutMs = 3_000L,
+                )
+                offers.forEach { ev ->
+                    val parsed = DailyTokens.parseOffer(ev, nowEpochSeconds(), requireSig = true)
+                        ?: return@forEach
+                    if (parsed.slug == DailyTokens.STEAK_SLUG && parsed.recipientPubkey == me) {
+                        myIncomingOffers[parsed.offerId] = parsed
+                    }
+                }
+                rebuildIncomingOffers()
+            }.onFailure { Timber.w(it, "refreshPendingBadge failed") }
+        }
     }
 
     /** Called by NotificationsRepository when a steak offer arrives on its subscription. */
@@ -1274,8 +1415,14 @@ class SteakRepository @Inject constructor(
 
     /** Clears all in-memory state on duress wipe (Room tables cleared by AppDatabase.clearAllTables). */
     fun clearMemory() {
-        liveSubId?.let { pool.unsubscribe(it) }
-        liveSubId = null
+        synchronized(liveLock) {
+            liveSubId?.let { pool.unsubscribe(it) }
+            liveSubId = null
+            liveCollectorJob?.cancel()
+            liveCollectorJob = null
+        }
+        surfaces.reset()
+        cachedAccountRelays.clear()
         activePubkey = null
         activeProfileRefreshJobs.values.forEach { it.cancel() }
         activeProfileRefreshJobs.clear()
@@ -1329,5 +1476,12 @@ class SteakRepository @Inject constructor(
         private const val ID_QUERY_CHUNK = 80
         private const val MAX_LEADERBOARD_VERIFY_IDS = 1_200
         private const val MAX_UNCACHED_PAIRS_PER_LEDGER_IN_LEADERBOARD = 60
+        /**
+         * Upper bound on relays the live steak subscription talks to. Without a
+         * cap a large relay list fans four filters back out across every one of
+         * them, which is exactly the cost this subscription was moved off the
+         * startup path to avoid.
+         */
+        private const val MAX_LIVE_RELAYS = 6
     }
 }

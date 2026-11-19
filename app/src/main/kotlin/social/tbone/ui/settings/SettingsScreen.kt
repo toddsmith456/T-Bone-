@@ -1877,13 +1877,20 @@ private fun ShareLogsDialog(
 ) {
     var selectedRange by remember { mutableStateOf(LogTimeRange.LAST_DAY) }
     var crashesOnly by remember { mutableStateOf(false) }
+    // Performance numbers are a separate stream from crash data: different
+    // question, different content, no message text or keys either way.
+    var includePerformance by remember { mutableStateOf(true) }
     var preview by remember { mutableStateOf<LogPreviewCounts?>(null) }
     var isExporting by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(selectedRange, crashesOnly) {
+    LaunchedEffect(selectedRange, crashesOnly, includePerformance) {
         preview = null
-        val opts = LogExportOptions(range = selectedRange, crashesOnly = crashesOnly)
+        val opts = LogExportOptions(
+            range = selectedRange,
+            crashesOnly = crashesOnly,
+            includePerformance = includePerformance,
+        )
         preview = withContext(Dispatchers.IO) {
             runCatching { logRepository.previewCounts(opts) }.getOrNull()
         }
@@ -1969,6 +1976,35 @@ private fun ShareLogsDialog(
                     )
                 }
 
+                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !isExporting) { includePerformance = !includePerformance }
+                        .padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("performance", style = BonyType.body.copy(color = BonyColors.Text))
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = if (includePerformance) {
+                                "startup timings & counters — separate from crash data"
+                            } else {
+                                "crashes and logs only, no performance section"
+                            },
+                            style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    BonyToggle(
+                        checked = includePerformance,
+                        enabled = !isExporting,
+                        onCheckedChange = { includePerformance = it },
+                    )
+                }
+
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1998,6 +2034,7 @@ private fun ShareLogsDialog(
                         range = selectedRange,
                         crashesOnly = crashesOnly,
                         maxChars = LogFormatter.DEFAULT_SHARE_MAX_CHARS,
+                        includePerformance = includePerformance,
                     )
                     scope.launch {
                         val intent = withContext(Dispatchers.IO) {

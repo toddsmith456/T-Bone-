@@ -23,6 +23,15 @@ data class LogExportOptions(
     val range: LogTimeRange = LogTimeRange.LAST_DAY,
     val crashesOnly: Boolean = false,
     val maxChars: Int = LogFormatter.DEFAULT_SHARE_MAX_CHARS,
+    /**
+     * Include the performance section.
+     *
+     * Kept separate from [crashesOnly] on purpose: crash logs are crash logs, and
+     * performance numbers answer a different question ("why was it slow?") with a
+     * different kind of data (timings and counts, no message content, no relay
+     * URLs, no pubkeys). A report can carry either, both or neither.
+     */
+    val includePerformance: Boolean = true,
 )
 
 /** One recorded uncaught Java/Kotlin crash. */
@@ -304,6 +313,7 @@ object LogFormatter {
         systemExits: List<SystemExitRecord>,
         logRecords: List<LogRecord>,
         zoneId: ZoneId = ZoneId.systemDefault(),
+        performanceSection: String? = null,
     ): String {
         val cutoff = options.range.durationMillis?.let { nowMillis - it }
         val maxChars = options.maxChars.coerceAtLeast(1_024)
@@ -337,6 +347,13 @@ object LogFormatter {
 
         val sections = StringBuilder()
         sections.append(header)
+
+        // 0. Performance block first when requested: it is the shortest path to
+        // "was this a cold-start problem or a crash?" for whoever reads the share.
+        if (options.includePerformance && !performanceSection.isNullOrBlank()) {
+            sections.appendLine()
+            sections.append(performanceSection)
+        }
 
         // 1. Uncaught Java/Kotlin crashes (always highest priority, newest first).
         if (filteredCrashes.isNotEmpty()) {

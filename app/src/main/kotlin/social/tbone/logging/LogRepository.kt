@@ -22,6 +22,7 @@ private const val MAX_EXIT_REASONS = 25
 @Singleton
 class LogRepository @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val startupMetrics: social.tbone.logging.StartupMetrics,
 ) {
     private val logsDir: File = File(context.filesDir, LOG_DIR)
     val logFile: File = File(logsDir, LOG_FILE_NAME)
@@ -48,13 +49,18 @@ class LogRepository @Inject constructor(
         crashes = loadCrashes(),
         systemExits = loadSystemExits(),
         logRecords = loadLogRecords(),
+        performanceSection = if (options.includePerformance) startupMetrics.report() else null,
     )
 
     /** Returns an Intent that shares the cleaned, filtered log file via any app the user picks. */
     fun buildShareIntent(options: LogExportOptions = LogExportOptions()): Intent {
         val shareOptions = options.copy(maxChars = LogFormatter.DEFAULT_SHARE_MAX_CHARS)
         val reportText = buildLogText(shareOptions)
-        val fileName = if (shareOptions.crashesOnly) "tbone-crashes.txt" else "tbone-logs.txt"
+        val fileName = when {
+            shareOptions.crashesOnly -> "tbone-crashes.txt"
+            shareOptions.includePerformance -> "tbone-diagnostics.txt"
+            else -> "tbone-logs.txt"
+        }
         val sharedFile = runCatching {
             val target = File(logsDir, "share/$fileName")
             target.parentFile?.mkdirs()

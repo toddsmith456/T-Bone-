@@ -177,7 +177,12 @@ class FeedViewModel @Inject constructor(
     private val feedPlanner: FeedPlanner,
     private val mediaPrefetcher: social.tbone.cache.MediaPrefetcher,
     private val engagementCache: social.tbone.reactions.EngagementCacheRepository,
+    private val startupMetrics: social.tbone.logging.StartupMetrics,
 ) : ViewModel() {
+
+    /** Timestamp of the current home load, for first-event timing. */
+    @Volatile private var homeLoadStartedAt = 0L
+    @Volatile private var homeFirstEventRecorded = false
 
     // The suggested feed's roster is known at construction, so the header can
     // show "1,346 accounts" before the first request finishes.
@@ -1501,6 +1506,8 @@ class FeedViewModel @Inject constructor(
             // later statement and could be skipped entirely when a newer load
             // took over; the watchdog is generation-guarded, so a superseded
             // timer cannot publish over a newer load and a live one always ends.
+            homeLoadStartedAt = startupMetrics.onFeedLoadStart()
+            homeFirstEventRecorded = false
             loadWatchdog.start(
                 timeoutMs = HOME_LOAD_TIMEOUT_MS,
                 isEmpty = { _uiState.value.events.isEmpty() },
@@ -1508,6 +1515,10 @@ class FeedViewModel @Inject constructor(
                     if (!feedSettled) {
                         feedSettled = true
                         flushBuffer()
+                    }
+                    if (nothingArrived && homeLoadStartedAt > 0L) {
+                        startupMetrics.feedTimedOut(homeLoadStartedAt)
+                        homeLoadStartedAt = 0L
                     }
                     endLoad(
                         if (nothingArrived) {
@@ -2083,6 +2094,13 @@ class FeedViewModel @Inject constructor(
 
     private fun handleEvent(event: Event) {
         if (EventKind.isPrivateMessaging(event.kind)) return
+        if (!homeFirstEventRecorded && homeLoadStartedAt > 0L &&
+            event.kind in FEED_KINDS
+        ) {
+            homeFirstEventRecorded = true
+            startupMetrics.feedFirstEvent(homeLoadStartedAt)
+            homeLoadStartedAt = 0L
+        }
         when (event.kind) {
             EventKind.FOLLOW_LIST -> expandFeedToFollows(event)
             EventKind.METADATA    -> {
@@ -2129,6 +2147,8 @@ class FeedViewModel @Inject constructor(
         if (!isSameSubscribedFollowSet(followsReceived, subscribedFollowSet, followed)) {
             appliedFollowMode = FollowMode(offline = false, follows = followed.toSet())
             applyFollowedSet(selfPubkey, followed)
+            homeLoadStartedAt = startupMetrics.onFeedLoadStart()
+            homeFirstEventRecorded = false
             loadWatchdog.start(
                 timeoutMs = HOME_LOAD_TIMEOUT_MS,
                 isEmpty = { _uiState.value.events.isEmpty() },
@@ -2136,6 +2156,10 @@ class FeedViewModel @Inject constructor(
                     if (!feedSettled) {
                         feedSettled = true
                         flushBuffer()
+                    }
+                    if (nothingArrived && homeLoadStartedAt > 0L) {
+                        startupMetrics.feedTimedOut(homeLoadStartedAt)
+                        homeLoadStartedAt = 0L
                     }
                     endLoad(
                         if (nothingArrived) {

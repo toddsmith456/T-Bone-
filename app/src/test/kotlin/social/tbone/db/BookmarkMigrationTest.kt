@@ -33,6 +33,35 @@ class BookmarkMigrationTest {
     }
 
     /**
+     * 21 -> 22 adds the events index behind `getRecentByAuthor`.
+     *
+     * Room validates the migrated schema against the @Entity and refuses to open
+     * the database if an index is missing, which would be a launch crash, so the
+     * statement must match `EventEntity` exactly: same name, same column order.
+     */
+    @Test
+    fun migration21To22AddsTheAuthorTimelineIndex() {
+        val statements = mutableListOf<String>()
+        val database = Proxy.newProxyInstance(
+            SupportSQLiteDatabase::class.java.classLoader,
+            arrayOf(SupportSQLiteDatabase::class.java),
+        ) { _, method, args ->
+            if (method.name == "execSQL") statements += args!![0] as String
+            null
+        } as SupportSQLiteDatabase
+
+        AppDatabase.MIGRATION_21_22.migrate(database)
+
+        assertEquals(1, statements.size)
+        assertEquals(
+            "CREATE INDEX IF NOT EXISTS `index_events_pubkey_createdAt` ON `events` (`pubkey`, `createdAt`)",
+            statements[0],
+        )
+        // Room's generated index name, so the validator finds it.
+        assertTrue(statements[0].contains("index_events_pubkey_createdAt"))
+    }
+
+    /**
      * 17 -> 18 added online bookmark folders.
      *
      * This test exists because the first version of this migration crashed the

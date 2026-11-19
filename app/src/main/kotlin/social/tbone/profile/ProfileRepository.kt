@@ -75,6 +75,8 @@ class ProfileRepository @Inject constructor(
     private val pool: RelayPool,
     private val appSettings: AppSettings,
     private val accountRepository: AccountRepository,
+    /** Optional diagnostics sink (see StartupMetrics); null in unit tests. */
+    private val startupMetrics: social.tbone.logging.StartupMetrics? = null,
 ) {
 
     private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
@@ -436,6 +438,7 @@ class ProfileRepository @Inject constructor(
             label = "profile-batch",
         )
         scope.launch(Dispatchers.Default) {
+            val batchStartedAt = System.currentTimeMillis()
             try {
                 val answeredRelays = mutableSetOf<String>()
                 val expectedRelays = pool.relayStatuses.value
@@ -456,6 +459,7 @@ class ProfileRepository @Inject constructor(
             } catch (t: Throwable) {
                 Timber.w(t, "Batched metadata subscription %s failed while waiting for EOSE", subId)
             } finally {
+                startupMetrics?.metadataBatch(System.currentTimeMillis() - batchStartedAt)
                 pool.unsubscribe(subId)
             }
         }

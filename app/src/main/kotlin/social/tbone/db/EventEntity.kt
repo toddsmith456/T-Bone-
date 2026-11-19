@@ -12,6 +12,10 @@ import social.tbone.nostr.NostrJson
     indices = [
         Index(value = ["kind", "accountPubkey"]),
         Index(value = ["createdAt"]),
+        // `getRecentByAuthor` filters on pubkey and orders by createdAt. Without
+        // this it scans the whole events table, which is thousands of rows and
+        // runs on the notification cold-start path.
+        Index(value = ["pubkey", "createdAt"]),
     ],
 )
 data class EventEntity(

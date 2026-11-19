@@ -465,6 +465,15 @@ class ProfileViewModel @Inject constructor(
 
     fun react(event: Event) = reactionsRepository.react(event)
 
+    /**
+     * Steak surfaces hold the live subscription only while they are on screen.
+     * The shelf sheet is the surface here, so it acquires on open and releases
+     * on close; the repository reference-counts across screens.
+     */
+    fun openSteakSurface() = steakRepository.acquireLiveUpdates()
+
+    fun closeSteakSurface() = steakRepository.releaseLiveUpdates()
+
     fun sendSteak() {
         viewModelScope.launch {
             steakRepository.sendSteak(pubkey)

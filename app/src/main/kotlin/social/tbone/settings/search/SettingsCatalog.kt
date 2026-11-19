@@ -315,8 +315,10 @@ object SettingsCatalog {
         ),
         e(
             "settings.share_logs", SettingsGroup.SETTINGS, "set_debug", "share_logs",
-            "share logs", "export the debug log",
-            "logs,debug,export,share,diagnostics,support",
+            "share logs", "export the debug log and performance numbers",
+            // The performance section lives inside this dialog as its own toggle,
+            // so it is reachable through this row rather than a separate anchor.
+            "logs,debug,export,share,diagnostics,support,performance,startup,slow,lag,timing,cold start,metrics",
         ),
         e(
             "settings.version", SettingsGroup.SETTINGS, "set_debug", "version",

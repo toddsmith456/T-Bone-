@@ -16,8 +16,18 @@ import javax.inject.Inject
 @HiltViewModel
 class ToolboxViewModel @Inject constructor(
     private val appSettings: AppSettings,
-    steakRepository: SteakRepository,
+    private val steakRepository: SteakRepository,
 ) : ViewModel() {
+
+    /**
+     * Redeem the pending-steak dot on demand.
+     *
+     * The dot used to piggyback on a live steak subscription that existed for the
+     * whole process. That subscription now only runs while a steak surface is
+     * open, so the badge does one short request when the toolbox is opened
+     * instead of holding four filters on every relay for the whole session.
+     */
+    fun refreshPendingSteaks() = steakRepository.refreshPendingBadge()
 
     val hasPendingSteaks: StateFlow<Boolean> = steakRepository.incomingOffers
         .map { offers ->

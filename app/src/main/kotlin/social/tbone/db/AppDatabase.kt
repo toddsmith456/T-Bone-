@@ -26,7 +26,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         VerifiedTokenEntity::class,
         TokenLedgerStateEntity::class,
     ],
-    version = 21,
+    version = 22,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun eventDao(): EventDao
@@ -369,6 +369,22 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE INDEX IF NOT EXISTS `index_token_ledgers_slug_verifiedCount_latestClaimedAt` " +
                         "ON `token_ledgers` (`slug`, `verifiedCount`, `latestClaimedAt`)"
+                )
+            }
+        }
+
+        /**
+         * 21 -> 22 adds the events index used by `getRecentByAuthor`.
+         *
+         * Room compares the migrated schema against the schema generated from the
+         * @Entity and rejects the database if an index is missing, so this must
+         * match `EventEntity` exactly. No table is rebuilt and no row is touched.
+         */
+        val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_events_pubkey_createdAt` " +
+                        "ON `events` (`pubkey`, `createdAt`)"
                 )
             }
         }

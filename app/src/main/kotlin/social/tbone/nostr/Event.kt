@@ -11,6 +11,19 @@ import timber.log.Timber
 import java.security.MessageDigest
 
 /**
+ * Process-wide tap so verification work can be counted without giving this
+ * hot-path data class a dependency on Hilt or on the diagnostics UI.
+ */
+object StartupMetricsProbe {
+    @Volatile
+    var metrics: social.tbone.logging.StartupMetrics? = null
+
+    fun verification(cheap: Boolean) {
+        metrics?.verification(cheap)
+    }
+}
+
+/**
  * Caches verified event IDs so the Schnorr curve maths is done once per unique
  * event, no matter how many repositories, ViewModels or subscriptions handle it.
  *
@@ -81,7 +94,12 @@ data class Event(
         // A cached signature only authenticates the original payload, not a
         // different event claiming the same id. Always recompute the id first
         // for any unverified Event instance.
-        val outcome = runCatching { verifyId() && (VerifiedEventCache.contains(id) || verifySignature()) }
+        // A cached id still re-hashes the payload (see verifyId) but skips the
+        // Schnorr curve maths, which is the expensive half. Counting both makes
+        // that visible in the performance diagnostics.
+        val cachedSignature = VerifiedEventCache.contains(id)
+        StartupMetricsProbe.verification(cheap = cachedSignature)
+        val outcome = runCatching { verifyId() && (cachedSignature || verifySignature()) }
         outcome.exceptionOrNull()?.let { error ->
             Timber.e(error, "Event verification threw for id=$id")
         }

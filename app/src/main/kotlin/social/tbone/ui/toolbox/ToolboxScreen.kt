@@ -89,6 +89,10 @@ fun ToolboxScreen(
 
     val hasUpdate = LocalUpdateAvailable.current
 
+    // One short request instead of a session-long live subscription (see
+    // SteakRepository.refreshPendingBadge).
+    androidx.compose.runtime.LaunchedEffect(Unit) { viewModel.refreshPendingSteaks() }
+
     if (isLocked) {
         ToolboxLockScreen(onUnlocked = { lockViewModel.unlock() })
         return

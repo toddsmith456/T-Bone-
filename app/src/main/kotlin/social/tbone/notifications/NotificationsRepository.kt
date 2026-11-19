@@ -107,6 +107,11 @@ class NotificationsRepository @Inject constructor(
 
     private val rebuildSignals = Channel<Unit>(Channel.CONFLATED)
 
+    // Coalesced notification persistence (see persist/flushPendingPersist).
+    private val persistLock = Any()
+    private val pendingPersist = LinkedHashMap<String, NotificationEntity>()
+    private val persistFlushSignal = Channel<Unit>(Channel.CONFLATED)
+
     private val _groups = MutableStateFlow<List<NotifGroup>>(emptyList())
     val groups: StateFlow<List<NotifGroup>> = _groups.asStateFlow()
 
@@ -180,6 +185,8 @@ class NotificationsRepository @Inject constructor(
         private const val RECENT_WINDOW_SECONDS = 86_400L
         private const val CACHE_LIMIT = 200
         private const val SUMMARY_QUERY_LIMIT = 10_000
+        /** Coalescing window for notification row writes (ms). */
+        private const val PERSIST_FLUSH_WINDOW_MS = 250L
         private const val PAGE_SIZE = 200
         private const val PAGE_TIMEOUT_MS = 15_000L
         private const val SQLITE_IN_BATCH = 500
@@ -204,6 +211,15 @@ class NotificationsRepository @Inject constructor(
                 delay(16)
                 while (rebuildSignals.tryReceive().isSuccess) Unit
                 rebuild()
+            }
+        }
+        scope.launch {
+            for (signal in persistFlushSignal) {
+                // Coalesce a burst (a backfill page, a reconnect replay) into one
+                // transaction instead of one per notification.
+                delay(PERSIST_FLUSH_WINDOW_MS)
+                while (persistFlushSignal.tryReceive().isSuccess) Unit
+                flushPendingPersist()
             }
         }
         scope.launch {
@@ -357,6 +373,8 @@ class NotificationsRepository @Inject constructor(
 
     private fun stop() {
         currentPubkey = null
+        // Queued writes belong to the account that just went inactive.
+        synchronized(persistLock) { pendingPersist.clear() }
         notifSubId?.let { pool.unsubscribe(it) }
         notifSubId = null
         ownRefSubId?.let { pool.unsubscribe(it) }
@@ -575,23 +593,44 @@ class NotificationsRepository @Inject constructor(
         }
     }
 
-    /** Persist a merged notification and keep only the latest 200 rows/account. */
+    /**
+     * Queue a merged notification for persistence.
+     *
+     * This used to `scope.launch` one coroutine per notification, each doing its own
+     * INSERT followed by its own `keepLatest` trim. A 24 h backfill therefore issued
+     * thousands of separate transactions and thousands of DELETE passes, all on the
+     * same thread pool the feed's reads were using. Writes now coalesce into one
+     * batch insert and one trim per flush.
+     */
     private fun persist(item: FlatNotifItem) {
         val me = currentPubkey ?: return
-        scope.launch {
-            runCatching {
-                notificationDao.upsert(
-                    NotificationEntity(
-                        id = item.id,
-                        pubkey = me,
-                        type = item.type.name,
-                        json = NostrJson.encodeToString(FlatNotifItem.serializer(), item),
-                        createdAt = item.timestamp,
-                    )
-                )
-                notificationDao.keepLatest(me, CACHE_LIMIT)
-            }
+        val entity = NotificationEntity(
+            id = item.id,
+            pubkey = me,
+            type = item.type.name,
+            json = NostrJson.encodeToString(FlatNotifItem.serializer(), item),
+            createdAt = item.timestamp,
+        )
+        synchronized(persistLock) { pendingPersist[entity.id] = entity }
+        persistFlushSignal.trySend(Unit)
+    }
+
+    /** Writes every queued notification row in one transaction, then trims once. */
+    private suspend fun flushPendingPersist() {
+        val batch = synchronized(persistLock) {
+            if (pendingPersist.isEmpty()) return
+            pendingPersist.values.toList().also { pendingPersist.clear() }
         }
+        val me = currentPubkey
+        if (me == null) {
+            // Account went away mid-flush (sign-out, duress wipe). Drop the batch
+            // rather than write rows for a pubkey that is no longer active.
+            return
+        }
+        runCatching {
+            notificationDao.upsertAll(batch)
+            notificationDao.keepLatest(me, CACHE_LIMIT)
+        }.onFailure { Timber.w(it, "Failed persisting %d notification row(s)", batch.size) }
     }
 
     // ── "Load more" pagination ────────────────────────────────────────────────

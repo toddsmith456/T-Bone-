@@ -23,10 +23,30 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 object DatabaseModule {
 
+    /**
+     * Room's own query/transaction workers.
+     *
+     * Without these, Room falls back to a shared IO pool that the whole app uses,
+     * so a cold start put the feed's reads, profile hydration, engagement lookups
+     * and a 24 h notification backfill on the same handful of threads — and the
+     * notification backfill could starve the reads the first frame needs.
+     *
+     * Two fixed pools keep database work off the general IO pool and let reader
+     * queries run in parallel with writes, while transactions stay serialised per
+     * pool as SQLite requires. Both are daemon threads so they cannot hold the
+     * process open, and the name prefix makes them identifiable in a bug report.
+     */
+    private fun namedPool(name: String, threads: Int) =
+        Executors.newFixedThreadPool(threads) { runnable ->
+            Thread(runnable, name).apply { isDaemon = true }
+        }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, "tbone.db")
+            .setQueryExecutor(namedPool("tbone-db-query", 3))
+            .setTransactionExecutor(namedPool("tbone-db-tx", 2))
             .addMigrations(
                 AppDatabase.MIGRATION_1_2,
                 AppDatabase.MIGRATION_2_3,
@@ -48,6 +68,7 @@ object DatabaseModule {
                 AppDatabase.MIGRATION_18_19,
                 AppDatabase.MIGRATION_19_20,
                 AppDatabase.MIGRATION_20_21,
+                AppDatabase.MIGRATION_21_22,
             )
             .build()
 

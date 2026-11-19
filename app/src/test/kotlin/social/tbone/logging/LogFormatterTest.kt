@@ -11,6 +11,45 @@ import java.time.format.DateTimeFormatter
 
 class LogFormatterTest {
 
+    // ── performance section: separate from crash data ──────────────────────
+
+    private fun report(options: LogExportOptions, performance: String? = "=== PERFORMANCE (this session) ===\nFeed loads: 3") =
+        LogFormatter.formatReport(
+            appVersion = "0.6.2 (78)",
+            androidRelease = "14",
+            sdkInt = 34,
+            nowMillis = now,
+            options = options,
+            crashes = emptyList(),
+            systemExits = emptyList(),
+            logRecords = emptyList(),
+            zoneId = utc,
+            performanceSection = performance,
+        )
+
+    @Test fun `performance section is included by default and sits above crash content`() {
+        val text = report(LogExportOptions(includePerformance = true))
+        assertTrue(text.contains("PERFORMANCE (this session)"))
+        assertTrue(
+            "performance must come before the crash sections so it is seen first",
+            text.indexOf("PERFORMANCE") < text.indexOf("APP LOG").let { if (it < 0) Int.MAX_VALUE else it },
+        )
+    }
+
+    @Test fun `performance can be turned off without touching crash content`() {
+        val withPerf = report(LogExportOptions(includePerformance = true))
+        val withoutPerf = report(LogExportOptions(includePerformance = false))
+        assertFalse(withoutPerf.contains("PERFORMANCE (this session)"))
+        assertTrue("crash report structure must be unaffected", withoutPerf.contains("T-Bone Diagnostics Report"))
+        assertTrue(withPerf.length > withoutPerf.length)
+    }
+
+    @Test fun `crashes-only exports can still carry performance`() {
+        val text = report(LogExportOptions(crashesOnly = true, includePerformance = true))
+        assertTrue(text.contains("Scope: Crashes only"))
+        assertTrue(text.contains("PERFORMANCE (this session)"))
+    }
+
     private val utc = ZoneOffset.UTC
     private val fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS")
     private val now = Instant.parse("2026-11-14T18:00:00Z").toEpochMilli()
