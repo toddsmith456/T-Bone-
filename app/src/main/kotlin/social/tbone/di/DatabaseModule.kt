@@ -17,6 +17,8 @@ import social.tbone.db.NoteFolderDao
 import social.tbone.db.NoteDao
 import social.tbone.db.NotificationDao
 import social.tbone.db.ProfileDao
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import javax.inject.Singleton
 
 @Module
@@ -36,7 +38,10 @@ object DatabaseModule {
      * pool as SQLite requires. Both are daemon threads so they cannot hold the
      * process open, and the name prefix makes them identifiable in a bug report.
      */
-    private fun namedPool(name: String, threads: Int) =
+    // The explicit return type matters: Dagger's KSP pass walks every method in a
+    // @Module, and an inferred type here surfaces as `error.NonExistentClass` and
+    // fails the whole Hilt graph.
+    private fun namedPool(name: String, threads: Int): ExecutorService =
         Executors.newFixedThreadPool(threads) { runnable ->
             Thread(runnable, name).apply { isDaemon = true }
         }

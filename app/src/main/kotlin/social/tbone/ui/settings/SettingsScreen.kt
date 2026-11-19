@@ -2020,7 +2020,8 @@ private fun ShareLogsDialog(
                 }
 
                 Text(
-                    text = "may include relay URLs & crash details. share only with trusted parties.",
+                    text = "may include relay URLs, short key prefixes & crash details. " +
+                        "performance adds only timings & counts. share only with trusted parties.",
                     style = BonyType.metaDim.copy(color = BonyColors.TextMute),
                 )
             }

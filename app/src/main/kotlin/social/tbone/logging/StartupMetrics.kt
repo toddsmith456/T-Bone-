@@ -110,6 +110,12 @@ class StartupMetrics @Inject constructor() {
      * Contains only timings and counts: no note content, no pubkeys, no relay
      * URLs, no file paths. That is the point — it is the diagnostics a bug report
      * usually needs, without the traffic data.
+     *
+     * NOTE for anyone reading a shared report: the *rest* of the report is not
+     * this clean. The underlying log file records relay hostnames and short
+     * (8-character) pubkey/event-id prefixes, so "performance on" is a strictly
+     * smaller disclosure than "performance off", never a larger one. See
+     * docs/privacy-diagnostics.md.
      */
     fun report(): String = buildString {
         appendLine("=== PERFORMANCE (this session) ===")
