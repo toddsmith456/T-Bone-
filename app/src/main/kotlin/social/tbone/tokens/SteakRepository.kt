@@ -293,7 +293,7 @@ class SteakRepository @Inject constructor(
 
     private fun subscribeLive(pubkey: String) {
         val now = nowEpochSeconds()
-        val created = pool.subscribe(
+        val created = pool.subscribeTo(
             filters = listOf(
                 // My outgoing steak offers in the last 24h (per-recipient cooldown sync).
                 Filter(
