@@ -1,6 +1,5 @@
 package social.tbone.nostr
 
-import android.util.LruCache
 import androidx.compose.runtime.Immutable
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -11,12 +10,36 @@ import social.tbone.Tunables
 import timber.log.Timber
 import java.security.MessageDigest
 
-/** Caches verified event IDs so Schnorr verification is only done once per unique event. */
+/**
+ * Caches verified event IDs so the Schnorr curve maths is done once per unique
+ * event, no matter how many repositories, ViewModels or subscriptions handle it.
+ *
+ * Deliberately a plain access-ordered [LinkedHashMap] rather than
+ * `android.util.LruCache`: unit tests run on the JVM with `isReturnDefaultValues`,
+ * where the Android class is a stub whose `get` always returns null. That made
+ * every cache assertion in the test suite vacuously pass, so the verification
+ * invariants were effectively untested. This implementation behaves the same
+ * (access-ordered eviction, hard size bound) and works identically on both.
+ */
 object VerifiedEventCache {
-    // LruCache is internally synchronized and bounded, preventing unbounded growth.
-    private val cache = LruCache<String, Unit>(Tunables.VERIFIED_EVENT_CACHE_SIZE)
-    fun contains(id: String): Boolean = cache.get(id) != null
-    fun add(id: String) { cache.put(id, Unit) }
+    private val lock = Any()
+    private val cache = object : LinkedHashMap<String, Unit>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Unit>): Boolean =
+            size > Tunables.VERIFIED_EVENT_CACHE_SIZE
+    }
+
+    fun contains(id: String): Boolean = synchronized(lock) { cache.containsKey(id) }
+
+    fun add(id: String) {
+        synchronized(lock) { cache[id] = Unit }
+    }
+
+    /** Entry count, for tests and diagnostics. */
+    internal fun size(): Int = synchronized(lock) { cache.size }
+
+    internal fun clear() {
+        synchronized(lock) { cache.clear() }
+    }
 }
 
 /**

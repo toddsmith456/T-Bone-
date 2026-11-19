@@ -3,8 +3,10 @@ package social.tbone.nostr
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import social.tbone.nostr.geohash.GeohashKeyDerivation
 import java.security.SecureRandom
@@ -24,6 +26,9 @@ import java.security.SecureRandom
  */
 class EventVerifiedIdCacheTest {
 
+    @Before
+    fun resetCache() = VerifiedEventCache.clear()
+
     private fun key(): ByteArray = ByteArray(32).also { SecureRandom().nextBytes(it) }
 
     private fun sign(privkey: ByteArray, content: String, kind: Int = 1, tags: List<JsonArray> = emptyList()): Event {
@@ -40,6 +45,7 @@ class EventVerifiedIdCacheTest {
         assertTrue(event.verify())
         assertTrue("the id must be recorded once verified", VerifiedEventCache.contains(event.id))
         assertTrue("verification must be idempotent", event.verify())
+        assertEquals("exactly one entry for one event", 1, VerifiedEventCache.size())
     }
 
     @Test
