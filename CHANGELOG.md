@@ -5,6 +5,25 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.6.3]
+
+### Added
+- **Settings search.** Find settings across sections and jump to the relevant control. PIN-protected areas remain behind their gate.
+- **Performance diagnostics.** Share startup and feed timings plus relay counts separately from crash logs. See `docs/privacy-diagnostics.md` for what exports may contain.
+- **Richer share cards.** Poll options and Nostr references are rendered as readable card content.
+
+### Improved
+- Feed resuming keeps already-received Global posts instead of discarding partial results. Relay collection is less vulnerable to a slow consumer blocking other relays, and performance reports now include useful timing and backpressure measurements.
+- Steak live subscriptions start only while relevant surfaces are open. Notification persistence is coalesced, and database query and write work use separate worker pools.
+
+### Fixed
+- Reply publishing and reply-target lookup failures are handled more safely; settings search rows no longer overlap.
+- Fresh images and avatars use the saved Tor/media transport after startup instead of remaining on the temporary fail-closed client.
+
+### Privacy and verification
+- The performance section contains timings and counts, not note content. The accompanying app-log section can still contain relay URLs and identifiers; review `docs/privacy-diagnostics.md` before sharing.
+- CI build, unit tests, privacy gate, and release-signing checks are required for publication. No physical-device or live-relay acceptance test was performed for this release.
+
 ## [0.6.2] — 2026-11-17
 
 ### Added
