@@ -495,6 +495,18 @@ class ComposeViewModel @Inject constructor(
                 alt = label,
                 extension = prepared.extension,
             )
+            val musicMetadata = if (request.kind == "audio") withContext(Dispatchers.IO) {
+                val retriever = android.media.MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(prepared.file.absolutePath)
+                    listOf(
+                        retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_TITLE),
+                        retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ARTIST),
+                        retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_ALBUM),
+                    )
+                } catch (_: Exception) { emptyList<String?>() }
+                finally { retriever.release() }
+            } else emptyList()
             if (request.kind == "image" || request.kind == "video" || request.kind == "audio") {
                 val blurhash = if (request.kind == "image") {
                     withContext(Dispatchers.IO) {
@@ -506,6 +518,9 @@ class ComposeViewModel @Inject constructor(
                 uploadedMediaHints[url] = UploadedMediaHint(
                     url = url,
                     mime = prepared.mime,
+                    title = musicMetadata.getOrNull(0),
+                    artist = musicMetadata.getOrNull(1),
+                    album = musicMetadata.getOrNull(2),
                     width = prepared.width,
                     height = prepared.height,
                     blurhash = blurhash,
@@ -809,9 +824,10 @@ class ComposeViewModel @Inject constructor(
                 eventRepository.save(event, signer.pubkey)
                 selectedPlaylist?.let { playlist ->
                     val result = runCatching {
-                        bookmarkSyncRepository.addToOnlineFolder(playlist, event.id)
+                        if (playlist.isOnline) bookmarkSyncRepository.addToOnlineFolder(playlist, event.id)
+                        else { bookmarksRepository.addBookmark(event, playlist.id); null }
                     }.getOrNull()
-                    if (result?.ok != true) {
+                    if (playlist.isOnline && result?.ok != true) {
                         uploadErrorQueue.trySend(
                             "published the song, but couldn't add it to ${playlist.name}: " +
                                 (result?.message ?: "playlist update failed"),
@@ -851,12 +867,18 @@ internal data class UploadedMediaHint(
     val width: Int? = null,
     val height: Int? = null,
     val blurhash: String? = null,
+    val title: String? = null,
+    val artist: String? = null,
+    val album: String? = null,
 )
 
 /** The `imeta` tag entries for [hint], in tag order (bare values, no "imeta" head). */
 internal fun imetaTagEntries(hint: UploadedMediaHint): List<String> = buildList {
     add("url ${hint.url}")
     add("m ${hint.mime}")
+    hint.title?.takeIf { it.isNotBlank() }?.let { add("title $it") }
+    hint.artist?.takeIf { it.isNotBlank() }?.let { add("artist $it") }
+    hint.album?.takeIf { it.isNotBlank() }?.let { add("album $it") }
     if (hint.width != null && hint.height != null && hint.width > 0 && hint.height > 0) {
         add("dim ${hint.width}x${hint.height}")
     }

@@ -53,6 +53,8 @@ import social.tbone.media.MimeTypes
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 
+val LocalOpenAudioPlayer = androidx.compose.runtime.staticCompositionLocalOf<(String) -> Unit> { {} }
+
 /**
  * A compact, tap-to-load audio card. The URL is used only as the player source;
  * the visible card shows a generic title and format label, never the Blossom URL.
@@ -63,6 +65,7 @@ fun InlineAudioPlayer(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val openPlayer = LocalOpenAudioPlayer.current
     val format = remember(url) { audioFormatLabel(url) }
     var playerRequested by remember(url) { mutableStateOf(false) }
     var playWhenReady by remember(url) { mutableStateOf(false) }
@@ -81,6 +84,7 @@ fun InlineAudioPlayer(
             },
             onSeek = {},
             onCopyLink = { social.tbone.ui.feed.copyNoteLink(context, url) },
+            onOpenPlayer = { openPlayer(url) },
             modifier = modifier,
         )
     } else {
@@ -90,7 +94,8 @@ fun InlineAudioPlayer(
             AudioPlayerCard(format = format, isPlaying = false, isBuffering = !initializationFailed,
                 positionMs = 0L, durationMs = 0L, error = initializationFailed,
                 onPlayPause = { if (initializationFailed) retry++ }, onSeek = {},
-                onCopyLink = { social.tbone.ui.feed.copyNoteLink(context, url) }, modifier = modifier)
+                onCopyLink = { social.tbone.ui.feed.copyNoteLink(context, url) },
+            onOpenPlayer = { openPlayer(url) }, modifier = modifier)
             return
         }
         val lifecycleOwner = LocalLifecycleOwner.current
@@ -171,6 +176,7 @@ fun InlineAudioPlayer(
                 }
             },
             onCopyLink = { social.tbone.ui.feed.copyNoteLink(context, url) },
+            onOpenPlayer = { openPlayer(url) },
             modifier = modifier,
         )
     }
@@ -188,6 +194,7 @@ private fun AudioPlayerCard(
     onPlayPause: () -> Unit,
     onSeek: (Float) -> Unit,
     onCopyLink: () -> Unit,
+    onOpenPlayer: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val shape = appCornerShape(MaterialTheme.shapes.small, RoundedCornerShape(12.dp))
@@ -201,6 +208,9 @@ private fun AudioPlayerCard(
             .padding(horizontal = 10.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            androidx.compose.material3.IconButton(onClick = onOpenPlayer) {
+                Text("↗", color = BonyColors.Accent, modifier = Modifier.semantics { contentDescription = "Open in audio player" })
+            }
             Box(
                 modifier = Modifier
                     .size(48.dp)

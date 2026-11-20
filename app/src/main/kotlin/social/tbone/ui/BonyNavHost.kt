@@ -140,7 +140,7 @@ private const val ROUTE_CHECKLIST_EDITOR   = "checklist_editor?id={id}&folder={f
 private const val ROUTE_FOLDER             = "folder/{id}?name={name}"
 private const val ROUTE_NOTES_INFO         = "notes_info"
 private const val ROUTE_TOOLBOX            = "toolbox"
-private const val ROUTE_AUDIO_PLAYER       = "audio_player"
+private const val ROUTE_AUDIO_PLAYER       = "audio_player?url={url}"
 private const val ROUTE_STEAK_LEADERBOARD  = "steak_leaderboard"
 private const val ROUTE_VOICE              = "voice"
 private const val ROUTE_WALLET             = "wallet"
@@ -227,6 +227,7 @@ fun BonyNavHost() {
 
             CompositionLocalProvider(
                 LocalUiDeclutter provides uiDeclutter,
+                social.tbone.ui.media.LocalOpenAudioPlayer provides { url -> navController.navigate("audio_player?url=" + Uri.encode(url)) },
                 LocalImageLoadMode provides imageLoadMode,
                 LocalVideoQuality provides videoQuality,
                 LocalVideoPlaybackMode provides videoPlaybackMode,
@@ -322,7 +323,7 @@ fun BonyNavHost() {
                             onBack = { navController.switchToTab(BottomTab.HOME) },
                             onNotes = { navController.navigate(ROUTE_NOTES) },
                             onBookmarks = { navController.navigate(ROUTE_BOOKMARKS) },
-                            onAudioPlayer = { navController.navigate(ROUTE_AUDIO_PLAYER) },
+                            onAudioPlayer = { navController.navigate("audio_player") },
                             onVoiceRecorder = { navController.navigate(ROUTE_VOICE) },
                             onGeohashChannels = { navController.navigate(ROUTE_GEOHASH) },
                             onCalendar = { navController.navigate(ROUTE_CALENDAR) },
@@ -341,14 +342,13 @@ fun BonyNavHost() {
                         onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
                     )
                 }
-                composable(ROUTE_AUDIO_PLAYER) {
-                    WithBottomBar(current = BottomTab.TOOLS, navController = navController) {
+                composable(ROUTE_AUDIO_PLAYER, arguments = listOf(navArgument("url") { type = NavType.StringType; defaultValue = "" })) { entry ->
                         AudioPlayerScreen(
+                            initialUrl = entry.arguments?.getString("url").orEmpty(),
                             onBack = { navController.popBackStack() },
                             onThreadClick = { eventId -> navController.navigate("thread/$eventId") },
                             onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
                         )
-                    }
                 }
                 composable(ROUTE_BOOKMARKS) {
                     WithBottomBar(current = BottomTab.TOOLS, navController = navController) {

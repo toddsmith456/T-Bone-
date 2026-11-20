@@ -1,5 +1,30 @@
 package social.tbone.ui.audio
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Switch
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import social.tbone.media.audio.audioIdentity
+import social.tbone.ui.compose.ComposeViewModel
+import social.tbone.ui.compose.ComposeEffect
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -76,6 +101,8 @@ private data class AudioTrack(
     val url: String,
     val title: String,
     val artist: String,
+    val album: String = "",
+    val artwork: String? = null,
 )
 
 private data class PlaybackSnapshot(
@@ -85,22 +112,48 @@ private data class PlaybackSnapshot(
     val durationMs: Long = 0L,
     val title: String = "",
     val artist: String = "",
+    val album: String = "",
+    val artwork: ByteArray? = null,
+    val artworkUri: String? = null,
+    val poster: String = "",
+    val eventId: String = "",
     val hasPrevious: Boolean = false,
     val hasNext: Boolean = false,
 )
 
 @Composable
 fun AudioPlayerScreen(
+    initialUrl: String = "",
     onBack: () -> Unit,
     onThreadClick: (eventId: String) -> Unit,
     onProfileClick: (pubkey: String) -> Unit,
     viewModel: AudioPlayerViewModel = hiltViewModel(),
+    uploadViewModel: ComposeViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
     val backgroundPlaybackEnabled = LocalMediaBackgroundPlayback.current
     val controller = rememberPlaybackController()
-    var activeTab by rememberSaveable { mutableStateOf(AudioPlayerTab.PLAYLISTS) }
+    var activeTab by rememberSaveable { mutableStateOf(AudioPlayerTab.PLAYER) }
+    val uploadState by uploadViewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val uploadPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) uploadViewModel.attachMedia(uri, "audio", preserveOriginalAudio = true)
+    }
+    LaunchedEffect(uploadViewModel) {
+        uploadViewModel.uploadedMediaUrls.collect { url -> uploadViewModel.publish(url, tagHashtags = listOf("TboneMusic")) }
+    }
+    LaunchedEffect(uploadViewModel, viewModel) {
+        uploadViewModel.effects.collect { effect ->
+            if (effect is ComposeEffect.Published) viewModel.refreshMusicFeed()
+        }
+    }
+    LaunchedEffect(uploadViewModel) {
+        uploadViewModel.uploadErrors.collect { message -> android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show() }
+    }
+    var onlinePlaylist by remember { mutableStateOf(true) }
+    var showAbout by remember { mutableStateOf(false) }
+    var showMenu by remember { mutableStateOf(false) }
     var showCreatePlaylist by remember { mutableStateOf(false) }
     var newPlaylistName by remember { mutableStateOf("") }
     var snapshot by remember(controller) { mutableStateOf(PlaybackSnapshot()) }
@@ -111,14 +164,20 @@ fun AudioPlayerScreen(
             return
         }
         val item = p.currentMediaItem
+        val metadata = p.mediaMetadata
         val duration = p.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
         snapshot = PlaybackSnapshot(
             isPlaying = p.isPlaying,
             isBuffering = p.playbackState == Player.STATE_BUFFERING,
             positionMs = p.currentPosition.coerceAtLeast(0L),
             durationMs = duration,
-            title = item?.mediaMetadata?.title?.toString().orEmpty(),
-            artist = item?.mediaMetadata?.artist?.toString().orEmpty(),
+            title = metadata.title?.toString().orEmpty(),
+            artist = metadata.artist?.toString().orEmpty(),
+            album = metadata.albumTitle?.toString().orEmpty(),
+            artwork = metadata.artworkData,
+            artworkUri = metadata.artworkUri?.toString(),
+            poster = item?.mediaMetadata?.extras?.getString("poster").orEmpty(),
+            eventId = item?.mediaMetadata?.extras?.getString("eventId").orEmpty(),
             hasPrevious = p.hasPreviousMediaItem(),
             hasNext = p.hasNextMediaItem(),
         )
@@ -151,6 +210,13 @@ fun AudioPlayerScreen(
         }
     }
 
+    LaunchedEffect(controller, initialUrl) {
+        if (initialUrl.isNotBlank() && controller != null && controller.currentMediaItem?.localConfiguration?.uri?.toString() != initialUrl) {
+            controller.setMediaItem(MediaItem.fromUri(initialUrl))
+            controller.prepare()
+            controller.play()
+        }
+    }
     val selectedPlaylist = uiState.playlists.firstOrNull { it.id == uiState.selectedPlaylistId }
     val playlistTracks = remember(uiState.playlistTracks, profiles) {
         uiState.playlistTracks.mapNotNull { bookmark -> bookmark.event.toAudioTrack(profiles) }
@@ -175,7 +241,7 @@ fun AudioPlayerScreen(
             Column(modifier = Modifier.weight(1f)) {
                 Text("audio player", style = BonyType.title.copy(color = BonyColors.Text))
                 Text(
-                    text = if (selectedPlaylist != null && activeTab == AudioPlayerTab.PLAYLISTS) {
+                    text = if (selectedPlaylist != null && activeTab == AudioPlayerTab.LIBRARY) {
                         AudioPlaylists.displayName(selectedPlaylist.name)
                     } else "NIP-51 playlists · #TboneMusic",
                     style = BonyType.meta.copy(color = BonyColors.TextMute),
@@ -183,13 +249,23 @@ fun AudioPlayerScreen(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            Box {
+                IconButton(onClick = { showMenu = true }) {
+                    Icon(Icons.Default.MoreVert, "More audio options", tint = BonyColors.TextMute)
+                }
+                DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                    DropdownMenuItem(text = { Text("About this track") }, onClick = { showMenu = false; showAbout = true })
+                    DropdownMenuItem(text = { Text("Library") }, onClick = { showMenu = false; activeTab = AudioPlayerTab.LIBRARY })
+                    DropdownMenuItem(text = { Text("Stop playback") }, onClick = { showMenu = false; controller?.stop() })
+                }
+            }
             IconButton(
                 onClick = {
                     if (activeTab == AudioPlayerTab.DISCOVER) viewModel.refreshMusicFeed()
                     else viewModel.refreshPlaylists()
                 },
             ) {
-                if (uiState.isSyncingPlaylists && activeTab == AudioPlayerTab.PLAYLISTS) {
+                if (uiState.isSyncingPlaylists && activeTab == AudioPlayerTab.LIBRARY) {
                     CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = BonyColors.Accent)
                 } else {
                     Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = BonyColors.TextMute)
@@ -197,27 +273,10 @@ fun AudioPlayerScreen(
             }
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            PlayerTabChip(
-                label = "playlists",
-                selected = activeTab == AudioPlayerTab.PLAYLISTS,
-                onClick = { activeTab = AudioPlayerTab.PLAYLISTS },
-                modifier = Modifier.weight(1f),
-            )
-            PlayerTabChip(
-                label = "#TboneMusic",
-                selected = activeTab == AudioPlayerTab.DISCOVER,
-                onClick = { activeTab = AudioPlayerTab.DISCOVER },
-                modifier = Modifier.weight(1f),
-            )
-        }
-
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             when (activeTab) {
-                AudioPlayerTab.PLAYLISTS -> {
+                AudioPlayerTab.PLAYER -> FullPlayer(snapshot, controller)
+                AudioPlayerTab.LIBRARY -> {
                     if (selectedPlaylist == null) {
                         PlaylistsHome(
                             playlists = uiState.playlists,
@@ -250,13 +309,24 @@ fun AudioPlayerScreen(
                         isConnecting = controller == null,
                         onPlayTrack = { track -> playQueue(controller, listOf(track), 0) },
                         onAddToPlaylist = viewModel::addEventToPlaylist,
-                        onSelectPlaylistTab = { activeTab = AudioPlayerTab.PLAYLISTS },
+                        onSelectPlaylistTab = { activeTab = AudioPlayerTab.LIBRARY },
                         onOpenNote = { onThreadClick(it.id) },
                         onOpenProfile = onProfileClick,
                     )
+                    FloatingActionButton(
+                        onClick = { if (!uploadState.isUploading && !uploadState.isPublishing) uploadPicker.launch("audio/*") },
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(18.dp),
+                        containerColor = BonyColors.Accent,
+                    ) { Icon(Icons.Default.Add, "Upload original audio") }
                 }
             }
         }
+        if (uploadState.isUploading || uploadState.isPublishing) {
+            Text(if (uploadState.isUploading) "Uploading original audio · metadata preserved" else "Publishing #TboneMusic…",
+                style = BonyType.caption.copy(color = BonyColors.Accent), modifier = Modifier.padding(12.dp))
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = BonyColors.Accent)
+        }
+        uploadState.error?.let { Text(it, color = BonyColors.Danger, modifier = Modifier.padding(12.dp)) }
 
         uiState.statusMessage?.let { message ->
             Text(
@@ -269,11 +339,34 @@ fun AudioPlayerScreen(
                     .padding(horizontal = 14.dp, vertical = 5.dp),
             )
         }
-        PlaybackControls(
-            snapshot = snapshot,
-            controller = controller,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        if (activeTab != AudioPlayerTab.PLAYER && snapshot.title.isNotBlank()) {
+            MiniPlayer(snapshot, controller, onOpen = { activeTab = AudioPlayerTab.PLAYER })
+        }
+        Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(10.dp).clip(RoundedCornerShape(24.dp))
+            .background(BonyColors.Surface), verticalAlignment = Alignment.CenterVertically) {
+            AudioPlayerTab.entries.forEach { tab ->
+                Column(Modifier.weight(1f).clickable { activeTab = tab }.padding(vertical = 14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally) {
+                    val color = if (activeTab == tab) BonyColors.Accent else BonyColors.TextMute
+                    Icon(when (tab) {
+                        AudioPlayerTab.PLAYER -> Icons.Default.MusicNote
+                        AudioPlayerTab.LIBRARY -> Icons.Default.LibraryMusic
+                        AudioPlayerTab.DISCOVER -> Icons.Default.Explore
+                    }, tab.name.lowercase(), tint = color)
+                    Text(tab.name.lowercase().replaceFirstChar { it.uppercase() }, style = BonyType.caption.copy(color = color))
+                }
+            }
+        }
+    }
+    if (showAbout) {
+        AlertDialog(onDismissRequest = { showAbout = false }, title = { Text("About this track") },
+            text = { Column {
+                Text(snapshot.title.ifBlank { "Nothing playing" })
+                Text("Artist: ${snapshot.artist.ifBlank { "Unknown artist" }}")
+                Text("Album: ${snapshot.album.ifBlank { "Unknown album" }}")
+                Text("Shared by: ${snapshot.poster.ifBlank { "Unknown poster" }}")
+                if (snapshot.eventId.isNotBlank()) TextButton(onClick = { showAbout = false; onThreadClick(snapshot.eventId) }) { Text("View original post") }
+            } }, confirmButton = { TextButton(onClick = { showAbout = false }) { Text("Done") } })
     }
 
     if (showCreatePlaylist) {
@@ -283,9 +376,13 @@ fun AudioPlayerScreen(
             text = {
                 Column {
                     Text(
-                        "This is published as a standard NIP-51 kind-30003 bookmark set so other Nostr clients can read it.",
+                        "Online playlists sync using the same encrypted NIP-51 system as bookmarks. Offline playlists stay on this device (audio is streamed unless already cached).",
                         style = BonyType.meta.copy(color = BonyColors.TextMute),
                     )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (onlinePlaylist) "Online · sync with bookmarks" else "Offline · device only", modifier = Modifier.weight(1f))
+                        Switch(checked = onlinePlaylist, onCheckedChange = { onlinePlaylist = it })
+                    }
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         value = newPlaylistName,
@@ -299,7 +396,7 @@ fun AudioPlayerScreen(
                 TextButton(
                     enabled = newPlaylistName.isNotBlank() && !uiState.isCreatingPlaylist,
                     onClick = {
-                        viewModel.createPlaylist(newPlaylistName)
+                        viewModel.createPlaylist(newPlaylistName, onlinePlaylist)
                         newPlaylistName = ""
                         showCreatePlaylist = false
                     },
@@ -327,7 +424,7 @@ private fun PlaylistsHome(
             Column(modifier = Modifier.weight(1f)) {
                 Text("your playlists", style = BonyType.body.copy(color = BonyColors.Text))
                 Text(
-                    "Dedicated online audio lists · stored as NIP-51 bookmark sets",
+                    "Offline & online playlists · bookmark sync",
                     style = BonyType.caption.copy(color = BonyColors.TextMute),
                 )
             }
@@ -357,7 +454,7 @@ private fun PlaylistsHome(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        Text("online NIP-51 bookmark set", style = BonyType.caption.copy(color = BonyColors.TextMute))
+                        Text(if (playlist.isOnline) "Online · synced with bookmarks" else "Offline · device only", style = BonyType.caption.copy(color = BonyColors.TextMute))
                     }
                     Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
                 }
@@ -474,12 +571,12 @@ private fun AudioTrackRow(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        PlayButton(label = "Play ${track.title}", onClick = onPlay, enabled = !isConnecting)
+        TrackArt(track.artwork, null, Modifier.size(48.dp).clickable(onClick = onPlay))
         Spacer(Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(track.title, style = BonyType.body.copy(color = BonyColors.Text), maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(
-                profile?.bestName ?: track.artist,
+                track.artist,
                 style = BonyType.caption.copy(color = BonyColors.TextMute),
                 maxLines = 1,
                 modifier = Modifier.clickable(onClick = onOpenProfile),
@@ -504,9 +601,6 @@ private fun AudioPostRow(
     onOpenProfile: () -> Unit,
 ) {
     var menuExpanded by remember(track.event.id) { mutableStateOf(false) }
-    val noteText = remember(track.event.id, track.url) {
-        track.event.content.replace(track.url, " ").replace(Regex("\\s+"), " ").trim()
-    }
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -521,21 +615,13 @@ private fun AudioPostRow(
                 style = BonyType.caption.copy(color = BonyColors.TextMute),
             )
         }
-        if (noteText.isNotBlank()) {
-            Text(
-                text = noteText,
-                style = BonyType.body.copy(color = BonyColors.TextDim),
-                modifier = Modifier.padding(top = 5.dp, bottom = 8.dp),
-                maxLines = 4,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
         Row(verticalAlignment = Alignment.CenterVertically) {
+            TrackArt(track.artwork, null, Modifier.size(56.dp).clickable(onClick = onPlay))
             PlayButton(label = "Play ${track.title}", onClick = onPlay, enabled = !isConnecting)
             Spacer(Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(track.title, style = BonyType.body.copy(color = BonyColors.Text), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("audio · #TboneMusic", style = BonyType.caption.copy(color = BonyColors.TextMute))
+                Text(listOf(track.artist, track.album).filter { it.isNotBlank() }.joinToString(" · "), style = BonyType.caption.copy(color = BonyColors.TextMute))
             }
             Box {
                 Text(
@@ -674,12 +760,14 @@ private fun PlayButton(label: String, onClick: () -> Unit, enabled: Boolean = tr
 
 private fun Event.toAudioTrack(profiles: Map<String, ProfileContent>): AudioTrack? {
     val url = audioUrl(this) ?: return null
-    val artist = profiles[pubkey]?.bestName?.takeIf { it.isNotBlank() } ?: pubkey.take(12)
+    val identity = audioIdentity(this, url)
     return AudioTrack(
         event = this,
         url = url,
         title = audioTrackTitle(this, url),
-        artist = artist,
+        artist = identity.artist,
+        album = identity.album,
+        artwork = identity.artwork,
     )
 }
 
@@ -688,11 +776,17 @@ private fun playQueue(controller: MediaController?, tracks: List<AudioTrack>, st
     val mediaItems = tracks.map { track ->
         MediaItem.Builder()
             .setUri(track.url)
+            .setMediaId(track.event.id)
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(track.title)
                     .setArtist(track.artist)
-                    .setSubtitle("#TboneMusic")
+                    .setAlbumTitle(track.album)
+                    .setArtworkUri(track.artwork?.let(android.net.Uri::parse))
+                    .setExtras(android.os.Bundle().apply {
+                        putString("poster", track.event.pubkey)
+                        putString("eventId", track.event.id)
+                    })
                     .build(),
             )
             .build()
@@ -712,3 +806,45 @@ private fun formatPostDate(createdAt: Long): String = runCatching {
         .withZone(ZoneId.systemDefault())
         .format(Instant.ofEpochSecond(createdAt))
 }.getOrDefault("")
+
+@Composable
+private fun TrackArt(uri: String?, bytes: ByteArray?, modifier: Modifier = Modifier) {
+    val bitmap = remember(bytes) { bytes?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
+    Box(modifier.clip(RoundedCornerShape(16.dp)).background(BonyColors.SurfaceAlt), contentAlignment = Alignment.Center) {
+        when {
+            bitmap != null -> Image(bitmap, "Album art", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            uri != null -> coil.compose.AsyncImage(uri, "Album art", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            else -> Icon(Icons.Default.MusicNote, "No album art", Modifier.size(36.dp), tint = BonyColors.Accent)
+        }
+    }
+}
+
+@Composable
+private fun MiniPlayer(snapshot: PlaybackSnapshot, controller: MediaController?, onOpen: () -> Unit) {
+    Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp).fillMaxWidth().clip(RoundedCornerShape(24.dp))
+        .background(BonyColors.AccentBg).clickable(onClick = onOpen).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        TrackArt(snapshot.artworkUri, snapshot.artwork, Modifier.size(48.dp))
+        Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+            Text(snapshot.title, style = BonyType.body.copy(color = BonyColors.Text), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(snapshot.artist.ifBlank { "Unknown artist" }, style = BonyType.caption.copy(color = BonyColors.TextMute), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        IconButton(onClick = { controller?.seekToPrevious() }) { Icon(Icons.Default.SkipPrevious, "Previous track", tint = BonyColors.Accent) }
+        IconButton(onClick = { if (snapshot.isPlaying) controller?.pause() else controller?.play() }, modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(BonyColors.SurfaceAlt)) {
+            Icon(if (snapshot.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (snapshot.isPlaying) "Pause" else "Play", tint = BonyColors.Accent)
+        }
+        IconButton(onClick = { controller?.seekToNext() }) { Icon(Icons.Default.SkipNext, "Next track", tint = BonyColors.Accent) }
+    }
+}
+
+@Composable
+private fun FullPlayer(snapshot: PlaybackSnapshot, controller: MediaController?) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        TrackArt(snapshot.artworkUri, snapshot.artwork, Modifier.fillMaxWidth().aspectRatio(1f))
+        Spacer(Modifier.height(24.dp))
+        Text(snapshot.title.ifBlank { "Your music, front and centre" }, style = BonyType.title.copy(color = BonyColors.Text))
+        Text(snapshot.artist.ifBlank { "Choose a track in Library or Discover" }, style = BonyType.body.copy(color = BonyColors.TextMute), modifier = Modifier.padding(top = 8.dp))
+        if (snapshot.album.isNotBlank()) Text(snapshot.album, style = BonyType.caption.copy(color = BonyColors.TextMute), modifier = Modifier.padding(top = 6.dp))
+        Spacer(Modifier.height(24.dp))
+        PlaybackControls(snapshot, controller)
+    }
+}

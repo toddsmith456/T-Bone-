@@ -117,6 +117,7 @@ fun NoteActionsMenu(
     val activePubkey by viewModel.activePubkey.collectAsStateWithLifecycle()
     val bookmarkFolders by viewModel.bookmarkFolders.collectAsStateWithLifecycle()
     var expanded by remember(event.id) { mutableStateOf(false) }
+    var playlistOnly by remember(event.id) { mutableStateOf(false) }
     var bookmarkFoldersExpanded by remember(event.id) { mutableStateOf(false) }
     var rawJson by remember(event.id) { mutableStateOf<String?>(null) }
     var showRawJson by remember(event.id) { mutableStateOf(false) }
@@ -182,7 +183,15 @@ fun NoteActionsMenu(
                 }
                 NoteActionMenuItem(Icons.Outlined.BookmarkBorder, "Bookmark in…") {
                     expanded = false
+                    playlistOnly = false
                     bookmarkFoldersExpanded = true
+                }
+                if (social.tbone.media.audio.audioUrls(event).isNotEmpty()) {
+                    NoteActionMenuItem(Icons.Outlined.BookmarkBorder, "Add to playlist…") {
+                        expanded = false
+                        playlistOnly = true
+                        bookmarkFoldersExpanded = true
+                    }
                 }
                 NoteActionMenuItem(Icons.Outlined.Share, "Share Nostr event (nevent)") {
                     expanded = false
@@ -299,11 +308,11 @@ fun NoteActionsMenu(
                 properties = PopupProperties(focusable = true),
             ) {
                 Text(
-                    text = "save to folder",
+                    text = if (playlistOnly) "add to playlist" else "save to folder",
                     style = BonyType.caption.copy(color = BonyColors.TextMute),
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 )
-                bookmarkFolders.forEach { folder ->
+                bookmarkFolders.filter { social.tbone.media.audio.AudioPlaylists.isPlaylist(it) == playlistOnly }.forEach { folder ->
                     DropdownMenuItem(
                         text = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -317,7 +326,7 @@ fun NoteActionsMenu(
                                     modifier = Modifier.size(16.dp),
                                 )
                                 Spacer(Modifier.width(8.dp))
-                                Text(folder.name, style = BonyType.meta.copy(color = BonyColors.Text))
+                                Text(if (playlistOnly) social.tbone.media.audio.AudioPlaylists.displayName(folder.name) else folder.name, style = BonyType.meta.copy(color = BonyColors.Text))
                             }
                         },
                         onClick = {
@@ -328,9 +337,9 @@ fun NoteActionsMenu(
                         },
                     )
                 }
-                if (bookmarkFolders.isEmpty()) {
+                if (bookmarkFolders.none { social.tbone.media.audio.AudioPlaylists.isPlaylist(it) == playlistOnly }) {
                     Text(
-                        text = "Loading folders…",
+                        text = if (playlistOnly) "Create a playlist in Audio → Library first" else "No bookmark folders",
                         style = BonyType.meta.copy(color = BonyColors.TextMute),
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     )

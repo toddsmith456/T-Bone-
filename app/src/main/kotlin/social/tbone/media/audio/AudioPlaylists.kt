@@ -23,7 +23,7 @@ object AudioPlaylists {
     }
 
     fun isPlaylist(folder: BookmarkFolderUi): Boolean =
-        folder.isOnline && (
+        (
             folder.name.startsWith(TITLE_PREFIX, ignoreCase = true) ||
                 folder.dTag?.startsWith(D_TAG_PREFIX, ignoreCase = true) == true
             )
@@ -63,14 +63,29 @@ fun audioUrls(event: Event): List<String> {
 
 fun audioUrl(event: Event): String? = audioUrls(event).firstOrNull()
 
-/** Display title from the note prose, falling back to its attached filename. */
-fun audioTrackTitle(event: Event, url: String): String {
-    val prose = event.content
-        .replace(url, " ")
-        .replace(Regex("(?i)#tbonemusic\\b"), " ")
-        .replace(Regex("\\s+"), " ")
-        .trim()
-    if (prose.isNotBlank()) return prose.take(100)
-    val filename = url.substringBefore('?').substringBefore('#').substringAfterLast('/')
-    return filename.takeIf { it.isNotBlank() } ?: "untitled audio"
+/** Music identity comes from file/imeta metadata, never the sharing note's prose. */
+data class AudioIdentity(
+    val title: String,
+    val artist: String = "Unknown artist",
+    val album: String = "",
+    val artwork: String? = null,
+)
+
+fun audioIdentity(event: Event, url: String): AudioIdentity {
+    val fields = event.parsedTags.firstOrNull { tag ->
+        tag.name == "imeta" && tag.values.drop(1).any { it == "url $url" }
+    }?.values?.drop(1).orEmpty()
+    fun field(key: String) = fields.firstOrNull { it.startsWith("$key ") }
+        ?.substringAfter(' ')?.trim()?.takeIf { it.isNotEmpty() }
+    val filename = runCatching { java.net.URLDecoder.decode(
+        url.substringBefore('?').substringBefore('#').substringAfterLast('/').replace("+", "%2B"), "UTF-8",
+    ) }.getOrDefault(url.substringBefore('?').substringAfterLast('/')).substringBeforeLast('.').ifBlank { "Untitled track" }
+    return AudioIdentity(
+        title = field("title") ?: filename,
+        artist = field("artist") ?: "Unknown artist",
+        album = field("album").orEmpty(),
+        artwork = field("image"),
+    )
 }
+
+fun audioTrackTitle(event: Event, url: String): String = audioIdentity(event, url).title

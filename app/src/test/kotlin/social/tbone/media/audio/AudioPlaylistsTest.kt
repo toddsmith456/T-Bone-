@@ -22,7 +22,7 @@ class AudioPlaylistsTest {
         assertEquals("Road Mix", AudioPlaylists.displayName(title))
         assertEquals("Road Mix", AudioPlaylists.displayName("t-bone music / Road Mix"))
         assertTrue(AudioPlaylists.isPlaylist(playlist))
-        assertFalse(AudioPlaylists.isPlaylist(playlist.copy(kind = BookmarkFolderKind.OFFLINE)))
+        assertTrue(AudioPlaylists.isPlaylist(playlist.copy(kind = BookmarkFolderKind.OFFLINE)))
     }
 
     @Test
@@ -50,6 +50,24 @@ class AudioPlaylistsTest {
         )
 
         assertEquals(listOf(extensionless), audioUrls(note))
+    }
+
+    @Test
+    fun noteProseAndPosterAreNotMusicIdentity() {
+        val url = "https://cdn.example/song.mp3"
+        val note = event("A totally unrelated note $url", emptyList())
+        assertEquals("song", audioTrackTitle(note, url))
+        assertEquals("Unknown artist", audioIdentity(note, url).artist)
+    }
+
+    @Test
+    fun readsTitleArtistAndAlbumFromMatchingAttachmentOnly() {
+        val url = "https://cdn.example/song.flac"
+        val note = event("not a title", listOf(
+            listOf("imeta", "url https://cdn.example/other.flac", "title Wrong"),
+            listOf("imeta", "url $url", "m audio/flac", "title Song", "artist Artist", "album Album"),
+        ))
+        assertEquals(AudioIdentity("Song", "Artist", "Album"), audioIdentity(note, url))
     }
 
     private fun onlineFolder(name: String) = BookmarkFolderUi(

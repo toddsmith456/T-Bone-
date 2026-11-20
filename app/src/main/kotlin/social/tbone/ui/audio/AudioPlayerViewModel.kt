@@ -32,7 +32,7 @@ import social.tbone.nostr.relay.RelayPool
 import social.tbone.profile.ProfileRepository
 import javax.inject.Inject
 
-enum class AudioPlayerTab { PLAYLISTS, DISCOVER }
+enum class AudioPlayerTab { PLAYER, LIBRARY, DISCOVER }
 
 data class AudioPlayerUiState(
     val playlists: List<BookmarkFolderUi> = emptyList(),
@@ -108,7 +108,7 @@ class AudioPlayerViewModel @Inject constructor(
                 it.copy(
                     isSyncingPlaylists = false,
                     statusMessage = result.fold(
-                        onSuccess = { "${it.message} · audio playlists use online NIP-51 bookmark sets" },
+                        onSuccess = { "${it.message} · online playlists sync with bookmarks; offline playlists stay on this device" },
                         onFailure = { error -> "Playlist sync failed: ${error.message ?: "unknown error"}" },
                     ),
                 )
@@ -116,7 +116,7 @@ class AudioPlayerViewModel @Inject constructor(
         }
     }
 
-    fun createPlaylist(name: String) {
+    fun createPlaylist(name: String, online: Boolean = true) {
         val cleanName = name.trim()
         if (cleanName.isBlank()) {
             _uiState.update { it.copy(statusMessage = "Enter a playlist name") }
@@ -130,7 +130,11 @@ class AudioPlayerViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isCreatingPlaylist = true) }
             val result = runCatching {
-                bookmarkSyncRepository.createOnlineFolder(AudioPlaylists.title(cleanName))
+                if (online) bookmarkSyncRepository.createOnlineFolder(AudioPlaylists.title(cleanName))
+                else {
+                    bookmarksRepository.createFolder(AudioPlaylists.title(cleanName))
+                    null
+                }
             }
             val outcome = result.getOrNull()
             _uiState.update {
@@ -138,6 +142,7 @@ class AudioPlayerViewModel @Inject constructor(
                     isCreatingPlaylist = false,
                     statusMessage = when {
                         result.isFailure -> "Couldn't create playlist: ${result.exceptionOrNull()?.message ?: "unknown error"}"
+                         !online -> "Created device-only playlist “$cleanName”"
                         outcome?.ok == true -> "Created playlist “$cleanName” and published its NIP-51 bookmark set"
                         else -> outcome?.message ?: "Couldn't create playlist"
                     },
@@ -149,11 +154,15 @@ class AudioPlayerViewModel @Inject constructor(
     fun addEventToPlaylist(event: Event, playlistId: String) {
         val playlist = _uiState.value.playlists.firstOrNull { it.id == playlistId } ?: return
         viewModelScope.launch {
-            val result = runCatching { bookmarkSyncRepository.addToOnlineFolder(playlist, event.id) }
+            val result = runCatching {
+                if (playlist.isOnline) bookmarkSyncRepository.addToOnlineFolder(playlist, event.id)
+                else { bookmarksRepository.addBookmark(event, playlist.id); null }
+            }
             val outcome = result.getOrNull()
             _uiState.update {
                 it.copy(statusMessage = when {
                     result.isFailure -> "Couldn't add the song: ${result.exceptionOrNull()?.message ?: "unknown error"}"
+                    !playlist.isOnline -> "Playlist updated on this device"
                     outcome?.ok == true -> outcome.message
                     else -> outcome?.message ?: "Couldn't add the song"
                 })
@@ -164,11 +173,19 @@ class AudioPlayerViewModel @Inject constructor(
     fun removeEventFromPlaylist(eventId: String) {
         val playlist = _uiState.value.playlists.firstOrNull { it.id == _uiState.value.selectedPlaylistId } ?: return
         viewModelScope.launch {
-            val result = runCatching { bookmarkSyncRepository.removeFromOnlineFolder(playlist, eventId) }
+            val result = runCatching {
+                if (playlist.isOnline) bookmarkSyncRepository.removeFromOnlineFolder(playlist, eventId)
+                else {
+                    bookmarksRepository.getBookmarks(playlist.id).filter { it.event.id == eventId }
+                        .forEach { bookmarksRepository.deleteBookmark(it.id) }
+                    null
+                }
+            }
             val outcome = result.getOrNull()
             _uiState.update {
                 it.copy(statusMessage = when {
                     result.isFailure -> "Couldn't remove the song: ${result.exceptionOrNull()?.message ?: "unknown error"}"
+                    !playlist.isOnline -> "Playlist updated on this device"
                     outcome?.ok == true -> outcome.message
                     else -> outcome?.message ?: "Couldn't remove the song"
                 })
