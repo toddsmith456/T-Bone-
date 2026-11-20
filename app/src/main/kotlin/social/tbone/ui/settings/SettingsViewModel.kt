@@ -127,6 +127,7 @@ class SettingsViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), VideoPlaybackMode.LOAD_ON_TAP)
 
     val videoThumbnails: StateFlow<Boolean> = appSettings.videoThumbnails
+    val mediaBackgroundPlayback: StateFlow<Boolean> = appSettings.mediaBackgroundPlayback
     val mediaFittedLayout: StateFlow<Boolean> = appSettings.mediaFittedLayout
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
@@ -497,6 +498,10 @@ class SettingsViewModel @Inject constructor(
 
     fun setVideoThumbnails(enabled: Boolean) {
         viewModelScope.launch { appSettings.setVideoThumbnails(enabled) }
+    }
+
+    fun setMediaBackgroundPlayback(enabled: Boolean) {
+        viewModelScope.launch { appSettings.setMediaBackgroundPlayback(enabled) }
     }
 
     fun setMediaFittedLayout(enabled: Boolean) {

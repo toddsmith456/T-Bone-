@@ -149,6 +149,11 @@ object SettingsCatalog {
             "video,autoplay,play,preload,tap,inline",
         ),
         e(
+            "settings.media_background_playback", SettingsGroup.SETTINGS, "set_media", "media_background_playback",
+            "background playback", "continue full-screen video audio and Audio Player music when leaving or closing the player",
+            "audio,music,background,lock screen,notification,continue,keep playing",
+        ),
+        e(
             "settings.video_thumbnails", SettingsGroup.SETTINGS, "set_media", "video_thumbnails",
             "video thumbnails", "show the preview still a post supplies for its video",
             "video,thumbnails,thumbs,preview,still,poster",

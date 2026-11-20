@@ -72,6 +72,7 @@ import social.tbone.ui.media.LocalVideoPlaybackMode
 import social.tbone.ui.media.LocalVideoQuality
 import social.tbone.ui.media.LocalVideoThumbnails
 import social.tbone.ui.media.LocalMediaFitted
+import social.tbone.ui.media.LocalMediaBackgroundPlayback
 import social.tbone.ui.media.MediaSettingsViewModel
 import social.tbone.ui.notifications.NotificationsScreen
 import social.tbone.ui.notes.ChecklistEditorScreen
@@ -92,6 +93,7 @@ import social.tbone.ui.feed.FeedScreen
 import social.tbone.toolbox.feeds.FeedViewerScreen
 import social.tbone.ui.home.HomeFeedsScreen
 import social.tbone.ui.bookmarks.BookmarksScreen
+import social.tbone.ui.audio.AudioPlayerScreen
 import social.tbone.ui.hashtag.HashtagFeedScreen
 import social.tbone.ui.onboarding.OnboardingScreen
 import social.tbone.ui.profile.ProfileScreen
@@ -138,6 +140,7 @@ private const val ROUTE_CHECKLIST_EDITOR   = "checklist_editor?id={id}&folder={f
 private const val ROUTE_FOLDER             = "folder/{id}?name={name}"
 private const val ROUTE_NOTES_INFO         = "notes_info"
 private const val ROUTE_TOOLBOX            = "toolbox"
+private const val ROUTE_AUDIO_PLAYER       = "audio_player"
 private const val ROUTE_STEAK_LEADERBOARD  = "steak_leaderboard"
 private const val ROUTE_VOICE              = "voice"
 private const val ROUTE_WALLET             = "wallet"
@@ -182,6 +185,7 @@ fun BonyNavHost() {
     val videoQuality by mediaSettings.videoQuality.collectAsStateWithLifecycle()
     val videoPlaybackMode by mediaSettings.videoPlaybackMode.collectAsStateWithLifecycle()
     val videoThumbnails by mediaSettings.videoThumbnails.collectAsStateWithLifecycle()
+    val mediaBackgroundPlayback by mediaSettings.mediaBackgroundPlayback.collectAsStateWithLifecycle()
     val mediaFittedLayout by mediaSettings.mediaFittedLayout.collectAsStateWithLifecycle()
     val avatarMode by mediaSettings.avatarMode.collectAsStateWithLifecycle()
     val avatarAnimated by mediaSettings.avatarAnimated.collectAsStateWithLifecycle()
@@ -227,6 +231,7 @@ fun BonyNavHost() {
                 LocalVideoQuality provides videoQuality,
                 LocalVideoPlaybackMode provides videoPlaybackMode,
                 LocalVideoThumbnails provides videoThumbnails,
+                LocalMediaBackgroundPlayback provides mediaBackgroundPlayback,
                 LocalMediaFitted provides mediaFittedLayout,
                 LocalAvatarMode provides avatarMode,
                 LocalAnimatedAvatars provides avatarAnimated,
@@ -317,6 +322,7 @@ fun BonyNavHost() {
                             onBack = { navController.switchToTab(BottomTab.HOME) },
                             onNotes = { navController.navigate(ROUTE_NOTES) },
                             onBookmarks = { navController.navigate(ROUTE_BOOKMARKS) },
+                            onAudioPlayer = { navController.navigate(ROUTE_AUDIO_PLAYER) },
                             onVoiceRecorder = { navController.navigate(ROUTE_VOICE) },
                             onGeohashChannels = { navController.navigate(ROUTE_GEOHASH) },
                             onCalendar = { navController.navigate(ROUTE_CALENDAR) },
@@ -334,6 +340,15 @@ fun BonyNavHost() {
                         onBack = { navController.popBackStack() },
                         onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
                     )
+                }
+                composable(ROUTE_AUDIO_PLAYER) {
+                    WithBottomBar(current = BottomTab.TOOLS, navController = navController) {
+                        AudioPlayerScreen(
+                            onBack = { navController.popBackStack() },
+                            onThreadClick = { eventId -> navController.navigate("thread/$eventId") },
+                            onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
+                        )
+                    }
                 }
                 composable(ROUTE_BOOKMARKS) {
                     WithBottomBar(current = BottomTab.TOOLS, navController = navController) {

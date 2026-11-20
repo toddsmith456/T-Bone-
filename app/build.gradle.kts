@@ -182,6 +182,7 @@ dependencies {
     // AndroidX Core
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
@@ -256,6 +257,7 @@ dependencies {
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.database)
     implementation(libs.media3.ui)
+    implementation(libs.media3.session)
     implementation(libs.media3.datasource.okhttp)
 
     androidTestImplementation(platform(libs.androidx.compose.bom))

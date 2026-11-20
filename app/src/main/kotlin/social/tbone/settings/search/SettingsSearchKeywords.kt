@@ -67,6 +67,8 @@ object SettingsSearchKeywords {
         "pics" to listOf("images", "photos"),
         "thumbnails" to listOf("preview", "still", "thumbs"),
         "autoplay" to listOf("play", "video", "inline"),
+        "background" to listOf("playback", "audio", "music", "screen-off"),
+        "playback" to listOf("background", "audio", "music", "lockscreen"),
         "video" to listOf("videos", "playback", "media"),
         "gif" to listOf("animated", "animation"),
         "compression" to listOf("compress", "beaver", "upload"),

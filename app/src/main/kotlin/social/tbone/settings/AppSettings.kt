@@ -55,6 +55,7 @@ class AppSettings @Inject constructor(
         private val VIDEO_QUALITY = stringPreferencesKey("video_quality")
         private val VIDEO_PLAYBACK_MODE = stringPreferencesKey("video_playback_mode")
         private val VIDEO_THUMBNAILS = booleanPreferencesKey("video_thumbnails")
+        private val MEDIA_BACKGROUND_PLAYBACK = booleanPreferencesKey("media_background_playback")
         private val MEDIA_FITTED_LAYOUT = booleanPreferencesKey("media_fitted_layout")
         private val IMAGE_CACHE_LIGHTWEIGHT = booleanPreferencesKey("image_cache_lightweight")
         private val CACHE_PRESET = stringPreferencesKey("cache_preset")
@@ -268,6 +269,10 @@ class AppSettings @Inject constructor(
 
     private val _videoThumbnails = MutableStateFlow(true)
     val videoThumbnails = _videoThumbnails.asStateFlow()
+
+    /** When enabled, explicitly started fullscreen video/audio may continue in the background. */
+    private val _mediaBackgroundPlayback = MutableStateFlow(true)
+    val mediaBackgroundPlayback = _mediaBackgroundPlayback.asStateFlow()
 
     /** When true, inline media frames take the media's real shape instead of the fixed box. */
     private val _mediaFittedLayout = MutableStateFlow(true)
@@ -573,6 +578,7 @@ class AppSettings @Inject constructor(
                 _videoQuality.value = VideoQuality.fromPref(prefs[VIDEO_QUALITY])
                 _videoPlaybackMode.value = VideoPlaybackMode.fromPref(prefs[VIDEO_PLAYBACK_MODE])
                 _videoThumbnails.value = prefs[VIDEO_THUMBNAILS] ?: true
+                _mediaBackgroundPlayback.value = prefs[MEDIA_BACKGROUND_PLAYBACK] ?: true
                 // On by default. Only an explicit previous "off" turns it off, so
                 // existing installs that never touched this switch get the fitted
                 // layout too.
@@ -795,6 +801,11 @@ class AppSettings @Inject constructor(
 
     suspend fun setVideoThumbnails(enabled: Boolean) {
         dataStore.edit { it[VIDEO_THUMBNAILS] = enabled }
+    }
+
+    suspend fun setMediaBackgroundPlayback(enabled: Boolean) {
+        _mediaBackgroundPlayback.value = enabled
+        dataStore.edit { it[MEDIA_BACKGROUND_PLAYBACK] = enabled }
     }
 
     suspend fun setMediaFittedLayout(enabled: Boolean) {

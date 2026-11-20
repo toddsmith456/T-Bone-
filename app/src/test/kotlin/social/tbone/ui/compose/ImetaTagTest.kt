@@ -33,6 +33,20 @@ class ImetaTagTest {
     }
 
     @Test
+    fun `audio hint keeps url and mime without image-only metadata`() {
+        val tag = entries(
+            UploadedMediaHint(
+                url = "https://blossom.example/song-without-extension",
+                mime = "audio/mpeg",
+            ),
+        )
+        assertEquals(
+            listOf("imeta", "url https://blossom.example/song-without-extension", "m audio/mpeg"),
+            tag,
+        )
+    }
+
+    @Test
     fun `missing dimensions and blurhash are omitted`() {
         val tag = entries(
             UploadedMediaHint(url = "https://blossom.example/clip.mp4", mime = "video/mp4"),

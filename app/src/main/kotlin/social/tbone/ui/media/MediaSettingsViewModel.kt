@@ -36,6 +36,9 @@ class MediaSettingsViewModel @Inject constructor(
     val videoThumbnails: StateFlow<Boolean> = appSettings.videoThumbnails
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
+    val mediaBackgroundPlayback: StateFlow<Boolean> = appSettings.mediaBackgroundPlayback
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
     val mediaFittedLayout: StateFlow<Boolean> = appSettings.mediaFittedLayout
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 

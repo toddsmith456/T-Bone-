@@ -8,6 +8,7 @@ import social.tbone.settings.VideoQuality
 val LocalVideoQuality = staticCompositionLocalOf { VideoQuality.REGULAR }
 val LocalVideoPlaybackMode = staticCompositionLocalOf { VideoPlaybackMode.LOAD_ON_TAP }
 val LocalVideoThumbnails = staticCompositionLocalOf { true }
+val LocalMediaBackgroundPlayback = staticCompositionLocalOf { true }
 
 /**
  * True when inline media frames take the media's real shape.

@@ -47,6 +47,8 @@ import social.tbone.nostr.relay.RelayMessage
 import social.tbone.nostr.relay.RelayPool
 import social.tbone.nostr.quotedEventId
 import social.tbone.notes.BookmarksRepository
+import social.tbone.notes.BookmarkSyncRepository
+import social.tbone.media.audio.AudioPlaylists
 import social.tbone.profile.ProfileRepository
 import social.tbone.settings.AppSettings
 import social.tbone.settings.WriteAccountSwitcherStyle
@@ -80,6 +82,12 @@ data class ComposeUiState(
     val blossomAutoLabel: String = "random",
     /** Available Blossom servers (local enabled pool + published Beaver Mode servers). */
     val blossomServers: List<String> = emptyList(),
+    /** Audio attachments on the draft can optionally be added to one NIP-51 music playlist. */
+    val hasUploadedAudio: Boolean = false,
+    val uploadedAudioUrls: List<String> = emptyList(),
+    val originalAudioUrls: List<String> = emptyList(),
+    val audioPlaylists: List<social.tbone.notes.BookmarkFolderUi> = emptyList(),
+    val selectedAudioPlaylistId: String? = null,
 )
 
 /**
@@ -101,6 +109,7 @@ class ComposeViewModel @Inject constructor(
     private val accountRepository: AccountRepository,
     private val bookmarksRepository: BookmarksRepository,
     private val appSettings: AppSettings,
+    private val bookmarkSyncRepository: BookmarkSyncRepository,
     private val blossomUploader: BlossomUploader,
     private val relayListFetcher: RelayListFetcher,
     @ApplicationContext private val context: Context,
@@ -184,6 +193,8 @@ class ComposeViewModel @Inject constructor(
         val uri: Uri,
         val kind: String,
         val preferredServer: String?,
+        /** When true, audio must be copied byte-for-byte, ignoring both compression toggles. */
+        val preserveOriginalAudio: Boolean = false,
     )
 
     /** Display hints measured at upload time, keyed by the uploaded URL. */
@@ -218,6 +229,19 @@ class ComposeViewModel @Inject constructor(
     init {
         viewModelScope.launch {
             for (request in mediaUploadQueue) uploadMedia(request)
+        }
+        viewModelScope.launch {
+            bookmarksRepository.folders.collect { folders ->
+                val playlists = folders.filter(AudioPlaylists::isPlaylist)
+                    .sortedBy { AudioPlaylists.displayName(it.name).lowercase() }
+                _uiState.update { state ->
+                    state.copy(
+                        audioPlaylists = playlists,
+                        selectedAudioPlaylistId = state.selectedAudioPlaylistId
+                            ?.takeIf { id -> playlists.any { it.id == id } },
+                    )
+                }
+            }
         }
 
         audioPath?.takeIf { it.isNotBlank() }?.let { path ->
@@ -403,15 +427,22 @@ class ComposeViewModel @Inject constructor(
         _uiState.update { it.copy(blossomServer = normalized) }
     }
 
+    fun setSelectedAudioPlaylist(folderId: String?) {
+        val validId = folderId?.takeIf { id -> _uiState.value.audioPlaylists.any { it.id == id } }
+        _uiState.update { it.copy(selectedAudioPlaylistId = validId) }
+    }
+
     /** Queue one upload; multiple picker results are processed sequentially and all URLs kept. */
-    fun attachMedia(uri: Uri, kind: String) {
+    fun attachMedia(uri: Uri, kind: String, preserveOriginalAudio: Boolean = false) {
         if (kind !in setOf("image", "video", "audio", "file")) return
         val selectedServer = _uiState.value.blossomServer
             ?: savedStateHandle.get<String>(KEY_BLOSSOM_SERVER)?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
         synchronized(uploadQueueLock) {
             pendingUploads += 1
             _uiState.update { it.copy(isUploading = true) }
-            val queued = mediaUploadQueue.trySend(MediaUploadRequest(uri, kind, selectedServer))
+            val queued = mediaUploadQueue.trySend(
+                MediaUploadRequest(uri, kind, selectedServer, preserveOriginalAudio && kind == "audio"),
+            )
             if (queued.isFailure) {
                 pendingUploads = (pendingUploads - 1).coerceAtLeast(0)
                 _uiState.update {
@@ -440,10 +471,11 @@ class ComposeViewModel @Inject constructor(
                 "audio" -> MediaProcessor.prepareAudioMedia(
                     context,
                     request.uri,
-                    // Either compression toggle turns audio re-encoding on,
-                    // so tags/metadata are stripped whenever the user asked
-                    // for compression anywhere.
-                    compress = compress || appSettings.blossomAudioCompress.value,
+                    // Original-audio is an explicit override: copy source bytes
+                    // exactly, preserving ID3/container metadata regardless of
+                    // either compression preference.
+                    compress = !request.preserveOriginalAudio &&
+                        (compress || appSettings.blossomAudioCompress.value),
                 )
                 "file" -> MediaProcessor.prepareFileMedia(context, request.uri)
                 else -> null
@@ -463,7 +495,7 @@ class ComposeViewModel @Inject constructor(
                 alt = label,
                 extension = prepared.extension,
             )
-            if (request.kind == "image" || request.kind == "video") {
+            if (request.kind == "image" || request.kind == "video" || request.kind == "audio") {
                 val blurhash = if (request.kind == "image") {
                     withContext(Dispatchers.IO) {
                         runCatching {
@@ -478,6 +510,19 @@ class ComposeViewModel @Inject constructor(
                     height = prepared.height,
                     blurhash = blurhash,
                 )
+            }
+            if (request.kind == "audio") {
+                _uiState.update { state ->
+                    val uploadedUrls = (state.uploadedAudioUrls + url).distinct()
+                    val originalUrls = if (request.preserveOriginalAudio) {
+                        (state.originalAudioUrls + url).distinct()
+                    } else state.originalAudioUrls
+                    state.copy(
+                        hasUploadedAudio = true,
+                        uploadedAudioUrls = uploadedUrls,
+                        originalAudioUrls = originalUrls,
+                    )
+                }
             }
             uploadedUrlQueue.trySend(url)
         } catch (cancelled: CancellationException) {
@@ -624,6 +669,15 @@ class ComposeViewModel @Inject constructor(
     ) {
         val trimmed = content.trim()
         if (trimmed.isBlank()) return
+        val draftState = _uiState.value
+        val originalAudioPost = draftState.originalAudioUrls.any { url -> trimmed.contains(url) }
+        val hasAudioAttachment = draftState.uploadedAudioUrls.any { url -> trimmed.contains(url) }
+        val selectedPlaylist = draftState.audioPlaylists.firstOrNull {
+            it.id == draftState.selectedAudioPlaylistId
+        }.takeIf { hasAudioAttachment }
+        val bodyContent = if (originalAudioPost &&
+            !Regex("(?i)#tbonemusic\\b").containsMatchIn(trimmed)
+        ) "$trimmed\n\n#TboneMusic" else trimmed
         if (_uiState.value.replyTargetRequired && _uiState.value.replyToEvent == null) {
             _uiState.update {
                 it.copy(error = "Reply target is unavailable. Publishing is blocked so this cannot become a standalone note.")
@@ -671,21 +725,24 @@ class ComposeViewModel @Inject constructor(
                             add(buildJsonArray { add(JsonPrimitive("p")); add(JsonPrimitive(hex)) })
                         }
                     }
-                    tagHashtags.distinct().forEach { tag ->
-                        val clean = tag.trim().removePrefix("#").lowercase()
-                            .filter { it.isLetterOrDigit() || it in "_" }
-                        if (clean.isNotEmpty()) {
+                    (tagHashtags + if (originalAudioPost) listOf("TboneMusic") else emptyList())
+                        .map { tag ->
+                            tag.trim().removePrefix("#").lowercase()
+                                .filter { it.isLetterOrDigit() || it in "_" }
+                        }
+                        .filter(String::isNotEmpty)
+                        .distinct()
+                        .forEach { clean ->
                             add(buildJsonArray { add(JsonPrimitive("t")); add(JsonPrimitive(clean)) })
                         }
-                    }
                 }
 
                 // NIP-92 display hints for media uploaded in this session,
                 // so other clients (and this one) can size frames and show
                 // blurred previews before the media downloads.
                 val mediaTags = uploadedMediaHints.values
-                    .filter { hint -> trimmed.contains(hint.url) }
-                    .sortedBy { hint -> trimmed.indexOf(hint.url) }
+                    .filter { hint -> bodyContent.contains(hint.url) }
+                    .sortedBy { hint -> bodyContent.indexOf(hint.url) }
                     .map { hint -> buildImetaTag(hint) }
                 val tagsWithMedia = tags + mediaTags
 
@@ -701,11 +758,11 @@ class ComposeViewModel @Inject constructor(
                         }
                         "nostr:$reference"
                     }
-                    .filterNot { trimmed.contains(it) }
+                    .filterNot { bodyContent.contains(it) }
                 val finalContent = if (missingRefs.isNotEmpty()) {
-                    "$trimmed\n\n${missingRefs.joinToString("\n")}"
+                    "$bodyContent\n\n${missingRefs.joinToString("\n")}"
                 } else {
-                    trimmed
+                    bodyContent
                 }
 
                 val isPoll = _uiState.value.pollEnabled
@@ -750,6 +807,17 @@ class ComposeViewModel @Inject constructor(
                 }
                 pool.publish(event)
                 eventRepository.save(event, signer.pubkey)
+                selectedPlaylist?.let { playlist ->
+                    val result = runCatching {
+                        bookmarkSyncRepository.addToOnlineFolder(playlist, event.id)
+                    }.getOrNull()
+                    if (result?.ok != true) {
+                        uploadErrorQueue.trySend(
+                            "published the song, but couldn't add it to ${playlist.name}: " +
+                                (result?.message ?: "playlist update failed"),
+                        )
+                    }
+                }
                 _uiState.update { it.copy(isPublishing = false) }
                 publishEffectQueue.trySend(ComposeEffect.Published)
             } catch (cancelled: CancellationException) {

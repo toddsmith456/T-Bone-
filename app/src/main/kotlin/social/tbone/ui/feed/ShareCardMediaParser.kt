@@ -22,7 +22,10 @@ internal object ShareCardMediaParser {
     private val URL_REGEX = Regex("""https?://\S+""", RegexOption.IGNORE_CASE)
     private val imageExtensions = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "avif", "heic")
     private val videoExtensions = setOf("mp4", "webm", "mov", "m4v", "mkv", "ogv", "3gp", "avi", "m3u8")
-    private val audioExtensions = setOf("mp3", "m4a", "aac", "wav", "flac", "ogg", "opus", "weba", "aiff")
+    private val audioExtensions = setOf(
+        "mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus", "weba", "aiff", "aif",
+        "amr", "wma", "mid", "midi", "mka",
+    )
 
     fun parse(event: Event): List<ShareCardMedia> {
         val hints = LinkedHashMap<String, String?>()
@@ -93,7 +96,9 @@ internal object ShareCardMediaParser {
         val mime = mimeType?.substringBefore(';')?.trim()?.lowercase().orEmpty()
         if (mime.startsWith("image/")) return ShareMediaKind.IMAGE
         if (mime.startsWith("video/")) return ShareMediaKind.VIDEO
-        if (mime.startsWith("audio/")) return ShareMediaKind.AUDIO
+        if (mime.startsWith("audio/") || mime == "application/ogg" || mime == "application/x-ogg") {
+            return ShareMediaKind.AUDIO
+        }
         val path = url.substringBefore('?').substringBefore('#')
         val ext = path.substringAfterLast('.', "").lowercase()
         return when (ext) {

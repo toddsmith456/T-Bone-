@@ -44,10 +44,15 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import social.tbone.media.playback.rememberPlaybackController
+import social.tbone.media.playback.setVideoQuality
+import social.tbone.media.playback.setVideoTrackEnabled
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
@@ -69,16 +74,48 @@ import social.tbone.ui.theme.BonyType
 fun VideoViewer(
     url: String,
     quality: VideoQuality,
+    backgroundPlayback: Boolean,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     var confirmText by remember { mutableStateOf<String?>(null) }
-    val playerState = rememberVideoPlayer(url, quality, playWhenReady = true)
-    val player = playerState.player
-    var playerError by remember(url, player, playerState.errorMessage) {
-        mutableStateOf(playerState.errorMessage)
+    val localPlayerState = rememberVideoPlayer(
+        url = url,
+        quality = quality,
+        playWhenReady = true,
+        enabled = !backgroundPlayback,
+    )
+    val backgroundController = rememberPlaybackController(enabled = backgroundPlayback)
+    val player: Player? = if (backgroundPlayback) backgroundController else localPlayerState.player
+    val initialError = if (backgroundPlayback) null else localPlayerState.errorMessage
+    var playerError by remember(url, player, initialError) {
+        mutableStateOf(initialError)
+    }
+
+    LaunchedEffect(backgroundPlayback, backgroundController, url, quality) {
+        val controller = backgroundController ?: return@LaunchedEffect
+        val currentUrl = controller.currentMediaItem?.localConfiguration?.uri?.toString()
+        controller.setVideoTrackEnabled(true)
+        controller.setVideoQuality(quality)
+        if (currentUrl != url) {
+            controller.setMediaItem(MediaItem.fromUri(url))
+            controller.prepare()
+            controller.play()
+        } else if (!controller.isPlaying) {
+            controller.play()
+        }
+    }
+
+    DisposableEffect(player, backgroundPlayback) {
+        onDispose {
+            if (backgroundPlayback && player != null) {
+                // Leaving the full-screen viewer intentionally keeps only its
+                // audio renderer alive in the MediaSessionService.
+                player.setVideoTrackEnabled(false)
+            }
+        }
     }
 
     LaunchedEffect(confirmText) {
@@ -91,9 +128,15 @@ fun VideoViewer(
     // Keep only the attached video view awake, and only during active playback.
     var isPlaying by remember(player) { mutableStateOf(player?.isPlaying == true) }
 
-    DisposableEffect(lifecycleOwner, player) {
+    DisposableEffect(lifecycleOwner, player, backgroundPlayback) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) player?.pause()
+            when (event) {
+                Lifecycle.Event.ON_STOP -> {
+                    if (backgroundPlayback) player?.setVideoTrackEnabled(false) else player?.pause()
+                }
+                Lifecycle.Event.ON_START -> if (backgroundPlayback) player?.setVideoTrackEnabled(true)
+                else -> Unit
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
@@ -219,11 +262,17 @@ fun VideoViewerDialog(
     quality: VideoQuality,
     onClose: () -> Unit,
 ) {
+    val backgroundPlayback = LocalMediaBackgroundPlayback.current
     Dialog(
         onDismissRequest = onClose,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        VideoViewer(url = url, quality = quality, onClose = onClose)
+        VideoViewer(
+            url = url,
+            quality = quality,
+            backgroundPlayback = backgroundPlayback,
+            onClose = onClose,
+        )
     }
 }
 
@@ -243,37 +292,49 @@ fun rememberVideoPlayer(
     url: String,
     quality: VideoQuality,
     playWhenReady: Boolean,
+    enabled: Boolean = true,
 ): VideoPlayerState {
     val context = LocalContext.current
     // Resource creation belongs to a committed effect, never in remember's
     // composition calculation (which can be abandoned before disposal).
-    var state by remember(url, quality) { mutableStateOf(VideoPlayerState(null)) }
-    DisposableEffect(url, quality) {
+    var state by remember(url, quality, enabled) { mutableStateOf(VideoPlayerState(null)) }
+    DisposableEffect(url, quality, enabled) {
         var created: ExoPlayer? = null
         var leaseHeld = false
-        try {
-            val dataSourceFactory = social.tbone.cache.MediaCacheManager.acquireFactory()
-            leaseHeld = true
-            val instance = ExoPlayer.Builder(context)
-                .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
-                .build()
-            created = instance
-            instance.repeatMode = Player.REPEAT_MODE_OFF
-            if (quality == VideoQuality.LOW) {
-                instance.trackSelectionParameters = instance.trackSelectionParameters
-                    .buildUpon().setMaxVideoSize(640, 360).build()
+        if (enabled) {
+            try {
+                val dataSourceFactory = social.tbone.cache.MediaCacheManager.acquireFactory()
+                leaseHeld = true
+                val instance = ExoPlayer.Builder(context)
+                    .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+                    .build()
+                created = instance
+                instance.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(C.USAGE_MEDIA)
+                        .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                        .build(),
+                    /* handleAudioFocus = */ true,
+                )
+                instance.repeatMode = Player.REPEAT_MODE_OFF
+                if (quality == VideoQuality.LOW) {
+                    instance.trackSelectionParameters = instance.trackSelectionParameters
+                        .buildUpon().setMaxVideoSize(640, 360).build()
+                }
+                instance.setMediaItem(MediaItem.fromUri(url))
+                instance.prepare()
+                state = VideoPlayerState(instance)
+            } catch (error: Exception) {
+                runCatching { created?.release() }
+                created = null
+                if (leaseHeld) {
+                    social.tbone.cache.MediaCacheManager.releaseLease()
+                    leaseHeld = false
+                }
+                state = VideoPlayerState(null, "couldn't open this video; check the link or try another format")
             }
-            instance.setMediaItem(MediaItem.fromUri(url))
-            instance.prepare()
-            state = VideoPlayerState(instance)
-        } catch (error: Exception) {
-            runCatching { created?.release() }
-            created = null
-            if (leaseHeld) {
-                social.tbone.cache.MediaCacheManager.releaseLease()
-                leaseHeld = false
-            }
-            state = VideoPlayerState(null, "couldn't open this video; check the link or try another format")
+        } else {
+            state = VideoPlayerState(null)
         }
         onDispose {
             created?.release()

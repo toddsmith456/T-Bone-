@@ -9,6 +9,9 @@
     <uses-permission android:name="android.permission.UWB_RANGING" tools:node="remove" />
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Media3 background playback runs as a user-visible media foreground service. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <!-- Needed only when the user chooses to install a verified APK from GitHub or Zapstore. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Voice recorder (toolbox): needed to capture audio. -->
@@ -56,6 +59,15 @@
         android:supportsRtl="true"
         android:usesCleartextTraffic="false"
         android:theme="@style/Theme.Tbone">
+
+        <service
+            android:name=".media.playback.PlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
 
         <provider
             android:name="androidx.core.content.FileProvider"

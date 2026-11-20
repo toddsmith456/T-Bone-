@@ -139,6 +139,7 @@ fun SettingsScreen(
     val videoQuality by viewModel.videoQuality.collectAsStateWithLifecycle()
     val videoPlaybackMode by viewModel.videoPlaybackMode.collectAsStateWithLifecycle()
     val videoThumbnails by viewModel.videoThumbnails.collectAsStateWithLifecycle()
+    val mediaBackgroundPlayback by viewModel.mediaBackgroundPlayback.collectAsStateWithLifecycle()
     val mediaFittedLayout by viewModel.mediaFittedLayout.collectAsStateWithLifecycle()
     val cachePreset by viewModel.cachePreset.collectAsStateWithLifecycle()
     val cacheStats by viewModel.cacheStats.collectAsStateWithLifecycle()
@@ -268,7 +269,7 @@ fun SettingsScreen(
             ReactionSettingsSection(viewModel, compact = declutterMode, expanded = sectionExpanded("reactions"), onToggle = { toggleSection("reactions") })
         }
         SettingsSectionAnchor("set_media") {
-            SettingsMediaSection(viewModel, onProfileEdit, onBlossom, imageLoadMode, videoQuality, videoPlaybackMode, videoThumbnails, mediaFittedLayout, compact = declutterMode, expanded = sectionExpanded("media"), onToggle = { toggleSection("media") })
+            SettingsMediaSection(viewModel, onProfileEdit, onBlossom, imageLoadMode, videoQuality, videoPlaybackMode, videoThumbnails, mediaBackgroundPlayback, mediaFittedLayout, compact = declutterMode, expanded = sectionExpanded("media"), onToggle = { toggleSection("media") })
         }
         SettingsSectionAnchor("set_avatars") {
             SettingsAvatarSection(viewModel, avatarMode, avatarAnimated, compact = declutterMode, expanded = sectionExpanded("avatars"), onToggle = { toggleSection("avatars") })
@@ -593,7 +594,7 @@ SettingsAnchor("write_switcher") {
 }
 
 @Composable
-private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: () -> Unit, onBlossom: () -> Unit, imageLoadMode: ImageLoadMode, videoQuality: VideoQuality, videoPlaybackMode: VideoPlaybackMode, videoThumbnails: Boolean, mediaFittedLayout: Boolean, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
+private fun SettingsMediaSection(viewModel: SettingsViewModel, onProfileEdit: () -> Unit, onBlossom: () -> Unit, imageLoadMode: ImageLoadMode, videoQuality: VideoQuality, videoPlaybackMode: VideoPlaybackMode, videoThumbnails: Boolean, mediaBackgroundPlayback: Boolean, mediaFittedLayout: Boolean, compact: Boolean, expanded: Boolean, onToggle: () -> Unit) {
     // ── Media section ─────────────────────────────────────────────────────
     SettingsCategoryHeader("MEDIA", compact, expanded, onToggle)
     if (compact && !expanded) return
@@ -753,6 +754,26 @@ SettingsAnchor("video_quality") {
             "Only one inline video plays at a time. When a post supplies a preview still, it is shown on placeholders — nothing is extracted from videos on this device.",
             style = BonyType.meta.copy(color = BonyColors.TextMute),
         )
+        Spacer(Modifier.height(12.dp))
+    SettingsAnchor("media_background_playback") {
+        Row(
+            modifier = searchRowHighlight(Modifier.fillMaxWidth(), "media_background_playback"),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("background playback", style = BonyType.body.copy(color = BonyColors.TextDim))
+                Text(
+                    "when on, full-screen video audio and Audio Player music continue after leaving the player; closing a playing video keeps its audio in the background",
+                    style = BonyType.meta.copy(color = BonyColors.TextMute),
+                )
+            }
+            BonyToggle(
+                checked = mediaBackgroundPlayback,
+                enabled = true,
+                onCheckedChange = { viewModel.setMediaBackgroundPlayback(it) },
+            )
+        }
+    }
         Spacer(Modifier.height(12.dp))
     SettingsAnchor("video_thumbnails") {
         Row(

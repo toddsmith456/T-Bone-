@@ -139,6 +139,7 @@ fun ComposeScreen(
     val mentionSearching by viewModel.mentionSearching.collectAsStateWithLifecycle()
 
     // ── Media pickers (Blossom uploads) ──────────────────────────────────────
+    var preserveOriginalAudio by rememberSaveable { mutableStateOf(false) }
     // The document chooser lists every image the device can see — including
     // GIFs, which the system photo picker can hide behind its visual-media
     // filter. GIFs are uploaded byte-for-byte so the animation survives.
@@ -157,7 +158,9 @@ fun ComposeScreen(
     val audioPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.GetMultipleContents()
     ) { uris ->
-        uris.forEach { viewModel.attachMedia(it, "audio") }
+        uris.forEach {
+            viewModel.attachMedia(it, "audio", preserveOriginalAudio = preserveOriginalAudio)
+        }
     }
     // Any file — PDF, archive, document — uploaded to Blossom unchanged.
     val filePicker = rememberLauncherForActivityResult(
@@ -170,6 +173,7 @@ fun ComposeScreen(
     }
     var tagInput by rememberSaveable { mutableStateOf("") }
     var tagList by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var audioPlaylistMenuExpanded by remember { mutableStateOf(false) }
     // Mention label ("@Name") → hex pubkey, resolved to nostr:npub1… URIs on send.
     val mentionMap = remember { mutableStateMapOf<String, String>() }
     val mentionTransformation = remember(mentionMap.toMap()) {
@@ -209,6 +213,19 @@ fun ComposeScreen(
     // The @-mention token currently being typed (null when the caret isn't in one).
     val mentionQuery = mentionQueryAt(fieldValue.text, fieldValue.selection.end)
     LaunchedEffect(mentionQuery) { viewModel.setMentionQuery(mentionQuery) }
+    LaunchedEffect(uiState.originalAudioUrls) {
+        if (uiState.originalAudioUrls.isNotEmpty()) {
+            if (!Regex("(?i)#tbonemusic\\b").containsMatchIn(fieldValue.text)) {
+                val before = fieldValue.text.trimEnd()
+                val updatedText = if (before.isBlank()) "#TboneMusic" else "$before\n\n#TboneMusic"
+                val selection = TextRange(
+                    fieldValue.selection.start.coerceIn(0, updatedText.length),
+                    fieldValue.selection.end.coerceIn(0, updatedText.length),
+                )
+                fieldValue = fieldValue.copy(text = updatedText, selection = selection, composition = null)
+            }
+        }
+    }
 
     // Replaces the in-progress "@query" token with "@Name " and remembers the
     // mapping so SEND can convert it into a nostr:npub1… mention + p-tag.
@@ -496,6 +513,59 @@ fun ComposeScreen(
                 )
             }
 
+            if (uiState.hasUploadedAudio && uiState.uploadedAudioUrls.any { url -> fieldValue.text.contains(url) }) {
+                val selectedPlaylist = uiState.audioPlaylists.firstOrNull {
+                    it.id == uiState.selectedAudioPlaylistId
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(BonyColors.Surface)
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "add song to playlist · optional",
+                        style = BonyType.caption.copy(color = BonyColors.TextMute),
+                        modifier = Modifier.weight(1f),
+                    )
+                    Box {
+                        Text(
+                            text = selectedPlaylist?.let {
+                                social.tbone.media.audio.AudioPlaylists.displayName(it.name)
+                            } ?: if (uiState.audioPlaylists.isEmpty()) "no playlists" else "not added",
+                            style = BonyType.caption.copy(color = BonyColors.Accent),
+                            modifier = Modifier.clickable {
+                                if (uiState.audioPlaylists.isNotEmpty()) audioPlaylistMenuExpanded = true
+                            },
+                        )
+                        DropdownMenu(
+                            expanded = audioPlaylistMenuExpanded,
+                            onDismissRequest = { audioPlaylistMenuExpanded = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("not added") },
+                                onClick = {
+                                    viewModel.setSelectedAudioPlaylist(null)
+                                    audioPlaylistMenuExpanded = false
+                                },
+                            )
+                            uiState.audioPlaylists.forEach { playlist ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(social.tbone.media.audio.AudioPlaylists.displayName(playlist.name))
+                                    },
+                                    onClick = {
+                                        viewModel.setSelectedAudioPlaylist(playlist.id)
+                                        audioPlaylistMenuExpanded = false
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // ── Tag bar: add @mentions / #hashtags to the note ────────────────
             if (tagList.isNotEmpty()) {
                 Row(
@@ -583,6 +653,19 @@ fun ComposeScreen(
                     enabled = !uiState.isUploading,
                     onClick = { audioPicker.launch("audio/*") },
                 )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = if (preserveOriginalAudio) "original · keep tags ✓" else "original audio",
+                    style = BonyType.caption.copy(
+                        color = if (preserveOriginalAudio) BonyColors.Accent else BonyColors.TextMute,
+                    ),
+                    modifier = Modifier
+                        .appBorder(1.dp, if (preserveOriginalAudio) BonyColors.AccentDim else BonyColors.Rule)
+                        .clickable(enabled = !uiState.isUploading) {
+                            preserveOriginalAudio = !preserveOriginalAudio
+                        }
+                        .padding(horizontal = 7.dp, vertical = 4.dp),
+                )
                 Spacer(Modifier.width(10.dp))
                 ComposeMediaAction(
                     icon = Icons.Filled.AttachFile,
@@ -613,6 +696,16 @@ fun ComposeScreen(
                 Text(
                     text = "${fieldValue.text.length} / ∞",
                     style = BonyType.metaDim.copy(color = BonyColors.TextMute),
+                )
+            }
+            if (preserveOriginalAudio) {
+                Text(
+                    "Uploads the selected audio unchanged, including embedded tags and artwork. Review it first; private metadata may be retained.",
+                    style = BonyType.caption.copy(color = BonyColors.TextMute),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(BonyColors.Surface)
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
                 )
             }
             Spacer(Modifier.height(24.dp))

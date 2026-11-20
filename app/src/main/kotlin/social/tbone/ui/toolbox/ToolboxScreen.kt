@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.Audiotrack
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.Mic
@@ -71,6 +72,7 @@ fun ToolboxScreen(
     onBack: () -> Unit,
     onNotes: () -> Unit,
     onBookmarks: () -> Unit,
+    onAudioPlayer: () -> Unit,
     onVoiceRecorder: () -> Unit,
     onGeohashChannels: () -> Unit,
     onCalendar: () -> Unit,
@@ -105,6 +107,8 @@ fun ToolboxScreen(
             "notes, lists & attachments", onNotes))
         put("bookmarks", ToolEntry(Icons.Outlined.BookmarkBorder, "bookmarks",
             "encrypted saves & quotes", onBookmarks))
+        put("audio", ToolEntry(Icons.Outlined.Audiotrack, "audio player",
+            "playlists & #TboneMusic", onAudioPlayer))
         put("voice", ToolEntry(Icons.Outlined.Mic, "voice recorder",
             "record & share voice notes", onVoiceRecorder))
         put("geohash", ToolEntry(Icons.Outlined.Place, "geohash channels",

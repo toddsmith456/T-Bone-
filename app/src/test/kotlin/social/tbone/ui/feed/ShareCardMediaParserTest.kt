@@ -9,6 +9,59 @@ import social.tbone.nostr.Event
 
 class ShareCardMediaParserTest {
     @Test
+    fun recognizesExtensionlessAudioFromNip92Mime() {
+        val url = "https://blossom.example/blob/opaque-audio-id"
+        val event = Event(
+            id = "event-id",
+            pubkey = "author",
+            createdAt = 1L,
+            kind = 1,
+            tags = listOf(
+                buildJsonArray {
+                    add("imeta")
+                    add("url $url")
+                    add("m audio/mpeg")
+                },
+            ),
+            content = "#TboneMusic $url",
+            sig = "",
+        )
+
+        val media = ShareCardMediaParser.parse(event)
+
+        assertEquals(1, media.size)
+        assertEquals(ShareMediaKind.AUDIO, media.single().kind)
+        assertEquals(url, media.single().url)
+    }
+
+    @Test
+    fun recognizesOggApplicationMimesAsAudio() {
+        val mimeTypes = listOf("application/ogg", "application/x-ogg")
+        val urls = mimeTypes.indices.map { "https://blossom.example/blob/ogg-$it" }
+        val event = Event(
+            id = "event-id",
+            pubkey = "author",
+            createdAt = 1L,
+            kind = 1,
+            tags = mimeTypes.indices.map { index ->
+                buildJsonArray {
+                    add("imeta")
+                    add("url ${urls[index]}")
+                    add("m ${mimeTypes[index]}")
+                }
+            },
+            content = "",
+            sig = "",
+        )
+
+        val media = ShareCardMediaParser.parse(event)
+
+        assertEquals(2, media.size)
+        assertTrue(media.all { it.kind == ShareMediaKind.AUDIO })
+        assertEquals(urls, media.map { it.url })
+    }
+
+    @Test
     fun recognizesExtensionUrlsAndNip92MediaWithoutAnExtension() {
         val event = Event(
             id = "event-id",
