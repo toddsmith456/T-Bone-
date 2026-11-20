@@ -58,6 +58,18 @@ class AudioPlayerViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(AudioPlayerUiState())
     val uiState: StateFlow<AudioPlayerUiState> = _uiState.asStateFlow()
 
+    private val _metadata = MutableStateFlow<Map<String, social.tbone.media.audio.AudioMetadataReader.Metadata>>(emptyMap())
+    val metadata = _metadata.asStateFlow()
+    private val requestedMetadata = mutableSetOf<String>()
+    fun loadMetadata(url: String) {
+        if (!requestedMetadata.add(url)) return
+        viewModelScope.launch {
+            social.tbone.media.audio.AudioMetadataReader.read(url)?.let { result ->
+                _metadata.update { it + (url to result) }
+            }
+        }
+    }
+
     val profiles: StateFlow<Map<String, ProfileContent>> = profileRepository.profiles
 
     private var feedSubscriptionId: String? = null

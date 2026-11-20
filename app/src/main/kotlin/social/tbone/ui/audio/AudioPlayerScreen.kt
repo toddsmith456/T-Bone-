@@ -103,6 +103,8 @@ private data class AudioTrack(
     val artist: String,
     val album: String = "",
     val artwork: String? = null,
+    val artworkBytes: ByteArray? = null,
+    val poster: String = "",
 )
 
 private data class PlaybackSnapshot(
@@ -132,6 +134,7 @@ fun AudioPlayerScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val profiles by viewModel.profiles.collectAsStateWithLifecycle()
+    val metadata by viewModel.metadata.collectAsStateWithLifecycle()
     val backgroundPlaybackEnabled = LocalMediaBackgroundPlayback.current
     val controller = rememberPlaybackController()
     var activeTab by rememberSaveable { mutableStateOf(AudioPlayerTab.PLAYER) }
@@ -212,19 +215,28 @@ fun AudioPlayerScreen(
 
     LaunchedEffect(controller, initialUrl) {
         if (initialUrl.isNotBlank() && controller != null && controller.currentMediaItem?.localConfiguration?.uri?.toString() != initialUrl) {
-            controller.setMediaItem(MediaItem.fromUri(initialUrl))
+            val embedded = social.tbone.media.audio.AudioMetadataReader.read(initialUrl)
+            controller.setMediaItem(MediaItem.Builder().setUri(initialUrl).setMediaMetadata(
+                MediaMetadata.Builder()
+                    .setTitle(embedded?.title ?: initialUrl.substringBefore('?').substringAfterLast('/').substringBeforeLast('.'))
+                    .setArtist(embedded?.artist)
+                    .setAlbumTitle(embedded?.album)
+                    .setArtworkData(embedded?.artwork, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+                    .build()
+            ).build())
             controller.prepare()
             controller.play()
         }
     }
     val selectedPlaylist = uiState.playlists.firstOrNull { it.id == uiState.selectedPlaylistId }
-    val playlistTracks = remember(uiState.playlistTracks, profiles) {
-        uiState.playlistTracks.mapNotNull { bookmark -> bookmark.event.toAudioTrack(profiles) }
+    val playlistTracks = remember(uiState.playlistTracks, profiles, metadata) {
+        uiState.playlistTracks.mapNotNull { bookmark -> bookmark.event.toAudioTrack(profiles)?.withMetadata(metadata) }
     }
-    val discoveredTracks = remember(uiState.discoveredEvents, profiles) {
-        uiState.discoveredEvents.mapNotNull { it.toAudioTrack(profiles) }
+    val discoveredTracks = remember(uiState.discoveredEvents, profiles, metadata) {
+        uiState.discoveredEvents.mapNotNull { it.toAudioTrack(profiles)?.withMetadata(metadata) }
     }
 
+    androidx.compose.runtime.CompositionLocalProvider(LocalLoadAudioMetadata provides viewModel::loadMetadata) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -408,6 +420,7 @@ fun AudioPlayerScreen(
         )
     }
 }
+}
 
 @Composable
 private fun PlaylistsHome(
@@ -567,11 +580,14 @@ private fun AudioTrackRow(
     onOpenProfile: () -> Unit,
     onRemove: () -> Unit,
 ) {
+    val loadMetadata = LocalLoadAudioMetadata.current
+    val autoLoad = social.tbone.ui.media.LocalImageLoadMode.current != social.tbone.settings.ImageLoadMode.OFF
+    LaunchedEffect(track.url, autoLoad) { if (autoLoad) loadMetadata(track.url) }
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TrackArt(track.artwork, null, Modifier.size(48.dp).clickable(onClick = onPlay))
+        TrackArt(track.artwork, track.artworkBytes, Modifier.size(48.dp).clickable(onClick = onPlay))
         Spacer(Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(track.title, style = BonyType.body.copy(color = BonyColors.Text), maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -600,6 +616,9 @@ private fun AudioPostRow(
     onOpenNote: () -> Unit,
     onOpenProfile: () -> Unit,
 ) {
+    val loadMetadata = LocalLoadAudioMetadata.current
+    val autoLoad = social.tbone.ui.media.LocalImageLoadMode.current != social.tbone.settings.ImageLoadMode.OFF
+    LaunchedEffect(track.url, autoLoad) { if (autoLoad) loadMetadata(track.url) }
     var menuExpanded by remember(track.event.id) { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -616,7 +635,7 @@ private fun AudioPostRow(
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TrackArt(track.artwork, null, Modifier.size(56.dp).clickable(onClick = onPlay))
+            TrackArt(track.artwork, track.artworkBytes, Modifier.size(56.dp).clickable(onClick = onPlay))
             PlayButton(label = "Play ${track.title}", onClick = onPlay, enabled = !isConnecting)
             Spacer(Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -768,6 +787,7 @@ private fun Event.toAudioTrack(profiles: Map<String, ProfileContent>): AudioTrac
         artist = identity.artist,
         album = identity.album,
         artwork = identity.artwork,
+        poster = profiles[pubkey]?.bestName ?: pubkey,
     )
 }
 
@@ -780,11 +800,12 @@ private fun playQueue(controller: MediaController?, tracks: List<AudioTrack>, st
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(track.title)
-                    .setArtist(track.artist)
+                    .setArtist(track.artist.takeUnless { it == "Unknown artist" })
+                    .setArtworkData(track.artworkBytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
                     .setAlbumTitle(track.album)
                     .setArtworkUri(track.artwork?.let(android.net.Uri::parse))
                     .setExtras(android.os.Bundle().apply {
-                        putString("poster", track.event.pubkey)
+                        putString("poster", track.poster)
                         putString("eventId", track.event.id)
                     })
                     .build(),
@@ -809,7 +830,16 @@ private fun formatPostDate(createdAt: Long): String = runCatching {
 
 @Composable
 private fun TrackArt(uri: String?, bytes: ByteArray?, modifier: Modifier = Modifier) {
-    val bitmap = remember(bytes) { bytes?.let { android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() } }
+    val bitmap = remember(bytes) { bytes?.let {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size, bounds)
+        val options = android.graphics.BitmapFactory.Options().apply {
+            var sample = 1
+            while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 1024) sample *= 2
+            inSampleSize = sample
+        }
+        android.graphics.BitmapFactory.decodeByteArray(it, 0, it.size, options)?.asImageBitmap()
+    } }
     Box(modifier.clip(RoundedCornerShape(16.dp)).background(BonyColors.SurfaceAlt), contentAlignment = Alignment.Center) {
         when {
             bitmap != null -> Image(bitmap, "Album art", Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
@@ -847,4 +877,13 @@ private fun FullPlayer(snapshot: PlaybackSnapshot, controller: MediaController?)
         Spacer(Modifier.height(24.dp))
         PlaybackControls(snapshot, controller)
     }
+}
+
+private val LocalLoadAudioMetadata = androidx.compose.runtime.staticCompositionLocalOf<(String) -> Unit> { {} }
+
+private fun AudioTrack.withMetadata(metadata: Map<String, social.tbone.media.audio.AudioMetadataReader.Metadata>): AudioTrack {
+    val data = metadata[url] ?: return this
+    return copy(title = data.title?.takeIf { it.isNotBlank() } ?: title,
+        artist = data.artist?.takeIf { it.isNotBlank() } ?: artist,
+        album = data.album?.takeIf { it.isNotBlank() } ?: album, artworkBytes = data.artwork)
 }
