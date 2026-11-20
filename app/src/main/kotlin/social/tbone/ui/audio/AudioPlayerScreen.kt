@@ -126,6 +126,7 @@ private data class PlaybackSnapshot(
 @Composable
 fun AudioPlayerScreen(
     initialUrl: String = "",
+    initialPoster: String = "",
     onBack: () -> Unit,
     onThreadClick: (eventId: String) -> Unit,
     onProfileClick: (pubkey: String) -> Unit,
@@ -220,12 +221,26 @@ fun AudioPlayerScreen(
                 MediaMetadata.Builder()
                     .setTitle(embedded?.title ?: initialUrl.substringBefore('?').substringAfterLast('/').substringBeforeLast('.'))
                     .setArtist(embedded?.artist)
+                    .setExtras(android.os.Bundle().apply { putString("poster", initialPoster) })
                     .setAlbumTitle(embedded?.album)
                     .setArtworkData(embedded?.artwork, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
                     .build()
             ).build())
             controller.prepare()
             controller.play()
+        }
+    }
+    LaunchedEffect(controller, metadata) {
+        val current = controller?.currentMediaItem
+        val url = current?.localConfiguration?.uri?.toString()
+        val data = metadata[url]
+        if (current != null && data != null) {
+            val builder = current.mediaMetadata.buildUpon()
+            data.title?.takeIf { it.isNotBlank() }?.let { builder.setTitle(it) }
+            data.artist?.takeIf { it.isNotBlank() }?.let { builder.setArtist(it) }
+            data.album?.takeIf { it.isNotBlank() }?.let { builder.setAlbumTitle(it) }
+            data.artwork?.let { builder.setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER) }
+            controller.replaceMediaItem(controller.currentMediaItemIndex, current.buildUpon().setMediaMetadata(builder.build()).build())
         }
     }
     val selectedPlaylist = uiState.playlists.firstOrNull { it.id == uiState.selectedPlaylistId }
@@ -398,7 +413,7 @@ fun AudioPlayerScreen(
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         value = newPlaylistName,
-                        onValueChange = { newPlaylistName = it.take(64) },
+                        onValueChange = { newPlaylistName = it.take(48 - AudioPlaylists.TITLE_PREFIX.length) },
                         label = { Text("playlist name") },
                         singleLine = true,
                     )
@@ -623,8 +638,8 @@ private fun AudioPostRow(
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = profile?.bestName ?: track.artist,
-                style = BonyType.name.copy(color = BonyColors.Text),
+                text = "Shared by ${profile?.bestName ?: track.poster}",
+                style = BonyType.caption.copy(color = BonyColors.TextMute),
                 modifier = Modifier.weight(1f).clickable(onClick = onOpenProfile),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -669,81 +684,28 @@ private fun AudioPostRow(
 }
 
 @Composable
-private fun PlaybackControls(
-    snapshot: PlaybackSnapshot,
-    controller: MediaController?,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier
-            .background(BonyColors.Surface)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = snapshot.title.ifBlank { "nothing playing" },
-                    style = BonyType.body.copy(color = BonyColors.Text),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = when {
-                        controller == null -> "connecting to playback service…"
-                        snapshot.isBuffering -> "buffering…"
-                        snapshot.artist.isNotBlank() -> snapshot.artist
-                        else -> "audio player · lock-screen and notification controls"
-                    },
-                    style = BonyType.caption.copy(color = BonyColors.TextMute),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Text(
-                text = if (snapshot.isBuffering) "…" else if (snapshot.isPlaying) "Ⅱ" else "▶",
-                style = BonyType.title.copy(
-                    color = if (controller == null || snapshot.title.isBlank()) BonyColors.TextMute else BonyColors.Accent,
-                ),
-                modifier = Modifier
-                    .semantics { contentDescription = if (snapshot.isPlaying) "Pause" else "Play" }
-                    .clickable(enabled = controller != null && snapshot.title.isNotBlank()) {
-                        if (snapshot.isPlaying) controller?.pause() else controller?.play()
-                    }
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-            )
+private fun PlaybackControls(snapshot: PlaybackSnapshot, controller: MediaController?, modifier: Modifier = Modifier) {
+    Column(modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Slider(value = if (snapshot.durationMs > 0) (snapshot.positionMs.toFloat() / snapshot.durationMs).coerceIn(0f, 1f) else 0f,
+            onValueChange = { controller?.seekTo((snapshot.durationMs * it).toLong()) },
+            enabled = controller != null && snapshot.durationMs > 0)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(formatDuration(snapshot.positionMs), style = BonyType.caption.copy(color = BonyColors.TextMute))
+            Text(if (snapshot.isBuffering) "Buffering…" else formatDuration(snapshot.durationMs), style = BonyType.caption.copy(color = BonyColors.TextMute))
         }
-        if (snapshot.durationMs > 0L) {
-            Slider(
-                value = (snapshot.positionMs.toFloat() / snapshot.durationMs.toFloat()).coerceIn(0f, 1f),
-                onValueChange = { fraction -> controller?.seekTo((snapshot.durationMs * fraction).toLong()) },
-                enabled = controller != null,
-                modifier = Modifier.height(28.dp),
-            )
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(formatDuration(snapshot.positionMs), style = BonyType.caption.copy(color = BonyColors.TextMute))
-                Text(formatDuration(snapshot.durationMs), style = BonyType.caption.copy(color = BonyColors.TextMute))
+        Row(Modifier.fillMaxWidth().padding(top = 20.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { controller?.seekToPrevious() }, enabled = controller != null) {
+                Icon(Icons.Default.SkipPrevious, "Previous track", Modifier.size(32.dp), tint = BonyColors.Text)
             }
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "|◀",
-                style = BonyType.tag.copy(color = if (snapshot.hasPrevious) BonyColors.Accent else BonyColors.TextMute),
-                modifier = Modifier.clickable(enabled = controller != null && snapshot.hasPrevious) { controller?.seekToPreviousMediaItem() }.padding(10.dp),
-            )
-            Text(
-                "stop",
-                style = BonyType.caption.copy(color = BonyColors.TextMute),
-                modifier = Modifier.clickable(enabled = controller != null) { controller?.stop() }.padding(10.dp),
-            )
-            Text(
-                "▶|",
-                style = BonyType.tag.copy(color = if (snapshot.hasNext) BonyColors.Accent else BonyColors.TextMute),
-                modifier = Modifier.clickable(enabled = controller != null && snapshot.hasNext) { controller?.seekToNextMediaItem() }.padding(10.dp),
-            )
+            IconButton(onClick = { if (snapshot.isPlaying) controller?.pause() else controller?.play() },
+                enabled = controller != null && snapshot.title.isNotBlank(),
+                modifier = Modifier.size(72.dp).clip(RoundedCornerShape(24.dp)).background(BonyColors.AccentBg)) {
+                Icon(if (snapshot.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                    if (snapshot.isPlaying) "Pause" else "Play", Modifier.size(40.dp), tint = BonyColors.Accent)
+            }
+            IconButton(onClick = { controller?.seekToNext() }, enabled = controller != null && snapshot.hasNext) {
+                Icon(Icons.Default.SkipNext, "Next track", Modifier.size(32.dp), tint = BonyColors.Text)
+            }
         }
     }
 }

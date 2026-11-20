@@ -140,7 +140,7 @@ private const val ROUTE_CHECKLIST_EDITOR   = "checklist_editor?id={id}&folder={f
 private const val ROUTE_FOLDER             = "folder/{id}?name={name}"
 private const val ROUTE_NOTES_INFO         = "notes_info"
 private const val ROUTE_TOOLBOX            = "toolbox"
-private const val ROUTE_AUDIO_PLAYER       = "audio_player?url={url}"
+private const val ROUTE_AUDIO_PLAYER       = "audio_player?url={url}&poster={poster}"
 private const val ROUTE_STEAK_LEADERBOARD  = "steak_leaderboard"
 private const val ROUTE_VOICE              = "voice"
 private const val ROUTE_WALLET             = "wallet"
@@ -227,7 +227,7 @@ fun BonyNavHost() {
 
             CompositionLocalProvider(
                 LocalUiDeclutter provides uiDeclutter,
-                social.tbone.ui.media.LocalOpenAudioPlayer provides { url -> navController.navigate("audio_player?url=" + Uri.encode(url)) },
+                social.tbone.ui.media.LocalOpenAudioPlayer provides { url, poster -> navController.navigate("audio_player?url=" + Uri.encode(url) + "&poster=" + Uri.encode(poster.orEmpty())) },
                 LocalImageLoadMode provides imageLoadMode,
                 LocalVideoQuality provides videoQuality,
                 LocalVideoPlaybackMode provides videoPlaybackMode,
@@ -342,9 +342,10 @@ fun BonyNavHost() {
                         onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
                     )
                 }
-                composable(ROUTE_AUDIO_PLAYER, arguments = listOf(navArgument("url") { type = NavType.StringType; defaultValue = "" })) { entry ->
+                composable(ROUTE_AUDIO_PLAYER, arguments = listOf(navArgument("url") { type = NavType.StringType; defaultValue = "" }, navArgument("poster") { type = NavType.StringType; defaultValue = "" })) { entry ->
                         AudioPlayerScreen(
                             initialUrl = entry.arguments?.getString("url").orEmpty(),
+                            initialPoster = entry.arguments?.getString("poster").orEmpty(),
                             onBack = { navController.popBackStack() },
                             onThreadClick = { eventId -> navController.navigate("thread/$eventId") },
                             onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },

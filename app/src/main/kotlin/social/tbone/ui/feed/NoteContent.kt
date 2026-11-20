@@ -303,7 +303,7 @@ fun NoteMediaContent(
                             },
                         )
                 }
-                is MediaItem.Audio -> InlineAudioPlayer(url = item.url)
+                is MediaItem.Audio -> InlineAudioPlayer(url = item.url, authorPubkey = authorPubkey)
                 is MediaItem.Video -> {
                     // A token identifies this particular card, not just the URL: a
                     // quote and a feed item may contain the same video.

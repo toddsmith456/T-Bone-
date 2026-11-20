@@ -53,7 +53,7 @@ import social.tbone.media.MimeTypes
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 
-val LocalOpenAudioPlayer = androidx.compose.runtime.staticCompositionLocalOf<(String) -> Unit> { {} }
+val LocalOpenAudioPlayer = androidx.compose.runtime.staticCompositionLocalOf<(String, String?) -> Unit> { { _, _ -> } }
 
 /**
  * A compact, tap-to-load audio card. The URL is used only as the player source;
@@ -62,6 +62,7 @@ val LocalOpenAudioPlayer = androidx.compose.runtime.staticCompositionLocalOf<(St
 @Composable
 fun InlineAudioPlayer(
     url: String,
+    authorPubkey: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -84,7 +85,7 @@ fun InlineAudioPlayer(
             },
             onSeek = {},
             onCopyLink = { social.tbone.ui.feed.copyNoteLink(context, url) },
-            onOpenPlayer = { openPlayer(url) },
+            onOpenPlayer = { openPlayer(url, authorPubkey) },
             modifier = modifier,
         )
     } else {
@@ -95,7 +96,7 @@ fun InlineAudioPlayer(
                 positionMs = 0L, durationMs = 0L, error = initializationFailed,
                 onPlayPause = { if (initializationFailed) retry++ }, onSeek = {},
                 onCopyLink = { social.tbone.ui.feed.copyNoteLink(context, url) },
-            onOpenPlayer = { openPlayer(url) }, modifier = modifier)
+            onOpenPlayer = { openPlayer(url, authorPubkey) }, modifier = modifier)
             return
         }
         val lifecycleOwner = LocalLifecycleOwner.current
@@ -176,7 +177,7 @@ fun InlineAudioPlayer(
                 }
             },
             onCopyLink = { social.tbone.ui.feed.copyNoteLink(context, url) },
-            onOpenPlayer = { openPlayer(url) },
+            onOpenPlayer = { openPlayer(url, authorPubkey) },
             modifier = modifier,
         )
     }

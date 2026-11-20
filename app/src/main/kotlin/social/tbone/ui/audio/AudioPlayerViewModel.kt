@@ -134,8 +134,8 @@ class AudioPlayerViewModel @Inject constructor(
             _uiState.update { it.copy(statusMessage = "Enter a playlist name") }
             return
         }
-        if (cleanName.length > 64) {
-            _uiState.update { it.copy(statusMessage = "Playlist names can be at most 64 characters") }
+        if (cleanName.length > 48 - AudioPlaylists.TITLE_PREFIX.length) {
+            _uiState.update { it.copy(statusMessage = "Playlist name is too long (including its music prefix)") }
             return
         }
         if (_uiState.value.isCreatingPlaylist) return
