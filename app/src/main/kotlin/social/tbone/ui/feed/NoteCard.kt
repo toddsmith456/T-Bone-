@@ -551,6 +551,7 @@ fun NoteCard(
                         mediaItems = parsed.mediaItems,
                         modifier = Modifier.fillMaxWidth(),
                         authorPubkey = event.pubkey,
+                        sourceEventId = event.id,
                     )
                 }
 
@@ -853,7 +854,7 @@ fun QuotedNoteCard(
         // why an image in a quoted note was invisible on the feed.
         if (parsed.mediaItems.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
-            NoteMediaContent(mediaItems = parsed.mediaItems, authorPubkey = event.pubkey)
+            NoteMediaContent(mediaItems = parsed.mediaItems, authorPubkey = event.pubkey, sourceEventId = event.id)
         }
 
         // NIP-88 poll options: render interactive PollCard when vote wiring is

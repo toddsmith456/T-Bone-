@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -53,7 +54,7 @@ import social.tbone.media.MimeTypes
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 
-val LocalOpenAudioPlayer = androidx.compose.runtime.staticCompositionLocalOf<(String, String?) -> Unit> { { _, _ -> } }
+val LocalOpenAudioPlayer = androidx.compose.runtime.staticCompositionLocalOf<(String, String?, String?) -> Unit> { { _, _, _ -> } }
 
 /**
  * A compact, tap-to-load audio card. The URL is used only as the player source;
@@ -63,130 +64,59 @@ val LocalOpenAudioPlayer = androidx.compose.runtime.staticCompositionLocalOf<(St
 fun InlineAudioPlayer(
     url: String,
     authorPubkey: String? = null,
+    sourceEventId: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val openPlayer = LocalOpenAudioPlayer.current
-    val format = remember(url) { audioFormatLabel(url) }
-    var playerRequested by remember(url) { mutableStateOf(false) }
-    var playWhenReady by remember(url) { mutableStateOf(false) }
-
-    if (!playerRequested) {
-        AudioPlayerCard(
-            format = format,
-            isPlaying = false,
-            isBuffering = false,
-            positionMs = 0L,
-            durationMs = 0L,
-            error = false,
-            onPlayPause = {
-                playWhenReady = true
-                playerRequested = true
-            },
-            onSeek = {},
-            onCopyLink = { social.tbone.ui.feed.copyNoteLink(context, url) },
-            onOpenPlayer = { openPlayer(url, authorPubkey) },
-            modifier = modifier,
-        )
-    } else {
-        var retry by remember(url) { mutableStateOf(0) }
-        val (player, initializationFailed) = rememberAudioPlayer(url, retry)
-        if (player == null) {
-            AudioPlayerCard(format = format, isPlaying = false, isBuffering = !initializationFailed,
-                positionMs = 0L, durationMs = 0L, error = initializationFailed,
-                onPlayPause = { if (initializationFailed) retry++ }, onSeek = {},
-                onCopyLink = { social.tbone.ui.feed.copyNoteLink(context, url) },
-            onOpenPlayer = { openPlayer(url, authorPubkey) }, modifier = modifier)
-            return
+    val activeUrl by social.tbone.media.playback.AudioSessionActivity.url.collectAsState()
+    var requested by remember(url) { mutableStateOf(false) }
+    var pendingAction by remember(url) { mutableStateOf<String?>(null) }
+    var retryConnection by remember { mutableStateOf(0) }
+    val connection = social.tbone.media.playback.rememberPlaybackConnection(requested || activeUrl == url, retryConnection)
+    val player = connection.controller
+    val state = social.tbone.media.playback.rememberAudioPlaybackState(player, connection.error)
+    val selected = state.url == url
+    LaunchedEffect(player, pendingAction) {
+        val action = pendingAction ?: return@LaunchedEffect
+        if (player != null) {
+            val alreadySelected = player.currentMediaItem?.localConfiguration?.uri?.toString() == url
+            social.tbone.media.playback.selectInlineAudio(player,
+                social.tbone.media.playback.AudioTrackIdentity(url, sourceEventId.orEmpty(), authorPubkey.orEmpty()), autoplay = true)
+            pendingAction = null
+            if (action == "expand") openPlayer(url, authorPubkey, sourceEventId)
+            else if (alreadySelected) social.tbone.media.playback.toggleAudio(player)
         }
-        val lifecycleOwner = LocalLifecycleOwner.current
-        DisposableEffect(player, lifecycleOwner) {
-            val detach = pauseAudioOnStop(lifecycleOwner.lifecycle) { player.pause() }
-            onDispose { detach() }
-        }
-        var isPlaying by remember(player) { mutableStateOf(player.isPlaying) }
-        var isBuffering by remember(player) {
-            mutableStateOf(player.playbackState == Player.STATE_BUFFERING)
-        }
-        var positionMs by remember(player) { mutableStateOf(0L) }
-        var durationMs by remember(player) { mutableStateOf(0L) }
-        var hasError by remember(player) { mutableStateOf(false) }
-
-        DisposableEffect(player) {
-            val listener = object : Player.Listener {
-                override fun onIsPlayingChanged(isPlayingNow: Boolean) {
-                    isPlaying = isPlayingNow
-                }
-
-                override fun onPlaybackStateChanged(playbackState: Int) {
-                    isBuffering = playbackState == Player.STATE_BUFFERING
-                    durationMs = player.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
-                    if (playbackState == Player.STATE_READY) hasError = false
-                }
-
-                override fun onPlayerError(error: PlaybackException) {
-                    hasError = true
-                    isPlaying = false
-                    isBuffering = false
-                }
-            }
-            player.addListener(listener)
-            onDispose { player.removeListener(listener) }
-        }
-
-        LaunchedEffect(player) {
-            while (true) {
-                positionMs = player.currentPosition.coerceAtLeast(0L)
-                durationMs = player.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
-                delay(250)
-            }
-        }
-
-        LaunchedEffect(player, playWhenReady) {
-            if (playWhenReady) {
-                if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) player.play()
-                playWhenReady = false
-            }
-        }
-
-        AudioPlayerCard(
-            format = format,
-            isPlaying = isPlaying,
-            isBuffering = isBuffering,
-            positionMs = positionMs,
-            durationMs = durationMs,
-            error = hasError,
-            onPlayPause = {
-                when {
-                    hasError -> {
-                        player.seekTo(0L)
-                        player.prepare()
-                        player.play()
-                    }
-                    player.isPlaying -> player.pause()
-                    player.playbackState == Player.STATE_ENDED -> {
-                        player.seekTo(0L)
-                        player.play()
-                    }
-                    else -> player.play()
-                }
-            },
-            onSeek = { fraction ->
-                if (durationMs > 0L) {
-                    player.seekTo((durationMs * fraction.coerceIn(0f, 1f)).toLong())
-                }
-            },
-            onCopyLink = { social.tbone.ui.feed.copyNoteLink(context, url) },
-            onOpenPlayer = { openPlayer(url, authorPubkey) },
-            modifier = modifier,
-        )
     }
+    AudioPlayerCard(
+        format = audioFormatLabel(url),
+        title = if (selected) state.title else social.tbone.media.playback.audioFilename(url),
+        isPlaying = selected && state.isPlaying,
+        isBuffering = (selected && state.isBuffering) || (pendingAction != null && connection.error == null),
+        positionMs = if (selected) state.positionMs else 0,
+        durationMs = if (selected) state.durationMs else 0,
+        error = connection.error != null || (selected && state.error != null),
+        onPlayPause = {
+            requested = true
+            if (connection.error != null) retryConnection++
+            pendingAction = "play"
+        },
+        onSeek = { if (selected && state.durationMs > 0) player?.seekTo((state.durationMs * it).toLong()) },
+        onCopyLink = { social.tbone.ui.feed.copyNoteLink(context, url) },
+        onOpenPlayer = {
+            requested = true
+            if (connection.error != null) retryConnection++
+            pendingAction = "expand"
+        },
+        modifier = modifier,
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AudioPlayerCard(
     format: String,
+    title: String,
     isPlaying: Boolean,
     isBuffering: Boolean,
     positionMs: Long,
@@ -233,7 +163,7 @@ private fun AudioPlayerCard(
             Spacer(Modifier.width(10.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (error) "audio couldn't be played" else "audio · $format",
+                    text = if (error) "audio couldn't be played" else title.ifBlank { "audio · $format" },
                     style = BonyType.tag.copy(color = if (error) BonyColors.Danger else BonyColors.Text),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -266,54 +196,6 @@ private fun AudioPlayerCard(
             )
         }
     }
-}
-
-@Composable
-internal fun rememberAudioPlayer(url: String, retry: Int): Pair<ExoPlayer?, Boolean> {
-    val context = LocalContext.current
-    var player by remember(url, retry) { mutableStateOf<ExoPlayer?>(null) }
-    var initializationFailed by remember(url, retry) { mutableStateOf(false) }
-    DisposableEffect(url, retry) {
-        var created: ExoPlayer? = null
-        var leaseHeld = false
-        try {
-            val dataSourceFactory = social.tbone.cache.MediaCacheManager.acquireFactory()
-            leaseHeld = true
-            val instance = ExoPlayer.Builder(context)
-                .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
-                .build()
-            created = instance
-            instance.setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA)
-                .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
-            instance.repeatMode = Player.REPEAT_MODE_OFF
-            instance.setMediaItem(audioMediaItem(url))
-            instance.prepare()
-            player = instance
-        } catch (_: Exception) {
-            created?.release()
-            created = null
-            if (leaseHeld) {
-                social.tbone.cache.MediaCacheManager.releaseLease()
-                leaseHeld = false
-            }
-            initializationFailed = true
-        }
-        onDispose {
-            created?.release()
-            if (leaseHeld) social.tbone.cache.MediaCacheManager.releaseLease()
-        }
-    }
-    return player to initializationFailed
-}
-
-/** Normalize filename MIME aliases (notably `.mpga`) to Media3's canonical audio MIME. */
-private fun audioMediaItem(url: String): MediaItem {
-    val path = url.substringBefore('?').substringBefore('#')
-    val extension = path.substringAfterLast('/', "").substringAfterLast('.', "").lowercase()
-    val mime = MimeTypes.mimeForExtension(extension)?.takeIf { MimeTypes.isAudio(it) }
-    val builder = MediaItem.Builder().setUri(url)
-    if (mime != null) builder.setMimeType(mime)
-    return builder.build()
 }
 
 private fun audioFormatLabel(url: String): String = when (

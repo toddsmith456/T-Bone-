@@ -761,6 +761,6 @@ private fun BookmarkCard(
         if (parsed.text.isNotBlank()) {
             Text(parsed.text, style = BonyType.body.copy(color = BonyColors.Text))
         }
-        if (parsed.mediaItems.isNotEmpty()) NoteMediaContent(parsed.mediaItems, Modifier.fillMaxWidth())
+        if (parsed.mediaItems.isNotEmpty()) NoteMediaContent(parsed.mediaItems, Modifier.fillMaxWidth(), authorPubkey = bookmark.event.pubkey, sourceEventId = bookmark.event.id)
     }
 }

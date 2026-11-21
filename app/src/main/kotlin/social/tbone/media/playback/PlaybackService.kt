@@ -35,9 +35,11 @@ import timber.log.Timber
 @AndroidEntryPoint
 @OptIn(UnstableApi::class)
 class PlaybackService : MediaSessionService() {
+    @Inject lateinit var metadataCache: social.tbone.media.audio.AudioMetadataCache
     @Inject lateinit var appSettings: AppSettings
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var metadataJob: Job? = null
     private var settingsJob: Job? = null
     private var backgroundPlaybackAllowed = true
     private var mediaSession: MediaSession? = null
@@ -81,6 +83,21 @@ class PlaybackService : MediaSessionService() {
                     repeatMode = Player.REPEAT_MODE_OFF
                 }
             player = created
+            created.addListener(object : Player.Listener {
+                override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                    val url = mediaItem?.localConfiguration?.uri?.toString()
+                    val audioTrack = mediaItem?.mediaMetadata?.extras?.getBoolean("audioTrack") == true
+                    AudioSessionActivity.update(url.takeIf { audioTrack })
+                    metadataJob?.cancel()
+                    if (url == null || mediaItem == null || !audioTrack) return
+                    val id = mediaItem.mediaId
+                    metadataJob = serviceScope.launch {
+                        // Playback preparation never waits for these optional details.
+                        metadataCache.read(url, allowNetwork = false)?.let { applyDetails(created, id, url, it) }
+                        metadataCache.read(url)?.let { applyDetails(created, id, url, it) }
+                    }
+                }
+            })
             mediaSession = MediaSession.Builder(this, created).build()
         }.onFailure { error ->
             Timber.e(error, "Could not initialize the background media session")
@@ -94,9 +111,30 @@ class PlaybackService : MediaSessionService() {
     override fun onDestroy() {
         ProcessLifecycleOwner.get().lifecycle.removeObserver(processObserver)
         settingsJob?.cancel()
+        metadataJob?.cancel()
+        AudioSessionActivity.update(null)
         serviceScope.cancel()
         releasePlayback()
         super.onDestroy()
+    }
+
+    private fun applyDetails(
+        target: ExoPlayer, id: String, url: String,
+        details: social.tbone.media.audio.AudioMetadataReader.Metadata,
+    ) {
+        val current = target.currentMediaItem ?: return
+        if (current.mediaId != id || current.localConfiguration?.uri?.toString() != url) return
+        val old = current.mediaMetadata
+        if (!audioDetailsChanged(old.title?.toString(), old.artist?.toString(), old.albumTitle?.toString(), old.artworkData,
+                details.title, details.artist, details.album, details.artwork)) return
+        val metadata = old.buildUpon().apply {
+            details.title?.takeIf { it.isNotBlank() }?.let { setTitle(it) }
+            details.artist?.takeIf { it.isNotBlank() }?.let { setArtist(it) }
+            details.album?.takeIf { it.isNotBlank() }?.let { setAlbumTitle(it) }
+            details.artwork?.let { setArtworkData(it, androidx.media3.common.MediaMetadata.PICTURE_TYPE_FRONT_COVER) }
+        }.build()
+        // Same URI/media source: Media3 updates metadata without preparing/seeking/rebuilding the queue.
+        target.replaceMediaItem(target.currentMediaItemIndex, current.buildUpon().setMediaMetadata(metadata).build())
     }
 
     private fun releasePlayback() {

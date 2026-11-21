@@ -17,30 +17,40 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.MoreExecutors
 import social.tbone.settings.VideoQuality
 
-/** Connects a Compose surface to the single [PlaybackService] session. */
-@Composable
-fun rememberPlaybackController(enabled: Boolean = true): MediaController? {
-    if (!enabled) return null
-    val context = LocalContext.current.applicationContext
-    val future = remember(context) {
-        MediaController.Builder(
-            context,
-            SessionToken(context, ComponentName(context, PlaybackService::class.java)),
-        ).buildAsync()
-    }
-    var controller by remember(future) { mutableStateOf<MediaController?>(null) }
+data class PlaybackConnection(val controller: MediaController? = null, val error: String? = null)
 
-    DisposableEffect(future) {
-        future.addListener(
-            {
-                controller = runCatching { future.get() }.getOrNull()
-            },
-            MoreExecutors.directExecutor(),
-        )
-        onDispose { MediaController.releaseFuture(future) }
+/** Connections may be recreated without owning or resetting the service queue. */
+@Composable
+fun rememberPlaybackConnection(enabled: Boolean = true, retry: Int = 0): PlaybackConnection {
+    if (!enabled) return PlaybackConnection()
+    val context = LocalContext.current.applicationContext
+    var disconnected by remember(context, retry) { mutableStateOf(false) }
+    val future = remember(context, retry) {
+        MediaController.Builder(context, SessionToken(context, ComponentName(context, PlaybackService::class.java)))
+            .setListener(object : MediaController.Listener {
+                override fun onDisconnected(controller: MediaController) { disconnected = true }
+            }).buildAsync()
     }
-    return controller
+    var connection by remember(future) { mutableStateOf(PlaybackConnection()) }
+    DisposableEffect(future) {
+        var disposed = false
+        future.addListener({
+            if (!disposed) {
+                connection = runCatching { PlaybackConnection(controller = future.get()) }
+                    .getOrElse { PlaybackConnection(error = "Could not connect to audio playback. Tap Retry.") }
+            }
+        }, androidx.core.content.ContextCompat.getMainExecutor(context))
+        onDispose { disposed = true; MediaController.releaseFuture(future) }
+    }
+    androidx.compose.runtime.LaunchedEffect(future) {
+        kotlinx.coroutines.delay(15_000)
+        if (connection.controller == null) connection = PlaybackConnection(error = "Playback service did not respond. Tap Retry.")
+    }
+    return if (disconnected) PlaybackConnection(error = "Playback service disconnected. Tap Retry.") else connection
 }
+
+@Composable
+fun rememberPlaybackController(enabled: Boolean = true): MediaController? = rememberPlaybackConnection(enabled).controller
 
 /** Keep the audio renderer active while a video is detached in the background. */
 @OptIn(UnstableApi::class)

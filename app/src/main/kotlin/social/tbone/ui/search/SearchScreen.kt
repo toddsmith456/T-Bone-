@@ -284,7 +284,7 @@ private fun EventSearchResult(
                     Spacer(Modifier.size(12.dp))
                 }
                 if (parsed.mediaItems.isNotEmpty()) {
-                    NoteMediaContent(parsed.mediaItems, Modifier.fillMaxWidth())
+                    NoteMediaContent(parsed.mediaItems, Modifier.fillMaxWidth(), authorPubkey = event.pubkey, sourceEventId = event.id)
                     Spacer(Modifier.size(12.dp))
                 }
                 TextButton(onClick = onOpenInFeed, modifier = Modifier.fillMaxWidth()) {

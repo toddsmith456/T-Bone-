@@ -240,6 +240,7 @@ fun NoteMediaContent(
     mediaItems: List<MediaItem>,
     modifier: Modifier = Modifier,
     authorPubkey: String? = null,
+    sourceEventId: String? = null,
 ) {
     if (mediaItems.isEmpty()) return
     val imageMode = LocalImageLoadMode.current
@@ -303,7 +304,7 @@ fun NoteMediaContent(
                             },
                         )
                 }
-                is MediaItem.Audio -> InlineAudioPlayer(url = item.url, authorPubkey = authorPubkey)
+                is MediaItem.Audio -> InlineAudioPlayer(url = item.url, authorPubkey = authorPubkey, sourceEventId = sourceEventId)
                 is MediaItem.Video -> {
                     // A token identifies this particular card, not just the URL: a
                     // quote and a feed item may contain the same video.
