@@ -11,6 +11,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import social.tbone.settings.AppSettings
 import javax.inject.Inject
@@ -35,11 +36,20 @@ import timber.log.Timber
 @AndroidEntryPoint
 @OptIn(UnstableApi::class)
 class PlaybackService : MediaSessionService() {
+    @Inject lateinit var progressRepository: PodcastProgressRepository
+    @Inject lateinit var accounts: social.tbone.account.AccountRepository
     @Inject lateinit var metadataCache: social.tbone.media.audio.AudioMetadataCache
     @Inject lateinit var appSettings: AppSettings
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var metadataJob: Job? = null
+    private data class Episode(val owner: String, val key: String, var progress: PodcastProgress)
+    private var episode: Episode? = null
+    private var progressJob: Job? = null
+    private var resumeJob: Job? = null
+    private var episodeToken = 0L
+    private var userSoughtDuringResume = false
+    private var lastEpisodeUrl: String? = null
     private var settingsJob: Job? = null
     private var backgroundPlaybackAllowed = true
     private var mediaSession: MediaSession? = null
@@ -84,9 +94,49 @@ class PlaybackService : MediaSessionService() {
                 }
             player = created
             created.addListener(object : Player.Listener {
+                override fun onIsPlayingChanged(isPlaying: Boolean) { captureProgress(); if (!isPlaying) saveProgress() }
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    captureProgress()
+                    if (playbackState == Player.STATE_ENDED) saveProgress(completed = true)
+                }
+                override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+                    if (reason == Player.DISCONTINUITY_REASON_SEEK) userSoughtDuringResume = true
+                    val active = episode
+                    val oldKey = oldPosition.mediaItem?.mediaMetadata?.extras?.getString("audioUrlKey")
+                    if (active != null && active.key == oldKey) {
+                        val sameEpisode = newPosition.mediaItem?.mediaMetadata?.extras?.getString("audioUrlKey") == active.key
+                        active.progress = active.progress.copy(position = if (sameEpisode) newPosition.positionMs else oldPosition.positionMs)
+                        saveProgress(completed = !sameEpisode && reason == Player.DISCONTINUITY_REASON_AUTO_TRANSITION)
+                    }
+                }
                 override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
                     val url = mediaItem?.localConfiguration?.uri?.toString()
                     val audioTrack = mediaItem?.mediaMetadata?.extras?.getBoolean("audioTrack") == true
+                    val episodeIdentity = url?.let { it + ":" + (mediaItem?.mediaMetadata?.extras?.getBoolean("isPodcast") == true) }
+                    if (episodeIdentity != lastEpisodeUrl) {
+                        saveProgress()
+                        episode = null
+                        lastEpisodeUrl = episodeIdentity
+                        userSoughtDuringResume = false
+                        episodeToken++
+                        val token = episodeToken
+                        resumeJob?.cancel()
+                        created.setPlaybackSpeed(1f) // podcast speed must never leak into music/video
+                        if (audioTrack && mediaItem?.mediaMetadata?.extras?.getBoolean("isPodcast") == true && url != null) {
+                            resumeJob = serviceScope.launch {
+                                val owner = accounts.activeAccount.first()?.pubkey ?: return@launch
+                                val key = social.tbone.media.audio.AudioCachePolicy.key(url)
+                                val saved = progressRepository.read(owner, key)
+                                if (episodeToken != token) return@launch
+                                episode = Episode(owner, key, saved)
+                                created.setPlaybackSpeed(saved.speed)
+                                if (!userSoughtDuringResume && created.currentPosition < 2_000) {
+                                    val position = podcastResumePosition(saved)
+                                    if (position > 0) created.seekTo(position)
+                                }
+                            }
+                        }
+                    }
                     AudioSessionActivity.update(url.takeIf { audioTrack })
                     metadataJob?.cancel()
                     if (url == null || mediaItem == null || !audioTrack) return
@@ -98,6 +148,9 @@ class PlaybackService : MediaSessionService() {
                     }
                 }
             })
+            progressJob = serviceScope.launch {
+                while (true) { kotlinx.coroutines.delay(5_000); captureProgress(); saveProgress() }
+            }
             mediaSession = MediaSession.Builder(this, created).build()
         }.onFailure { error ->
             Timber.e(error, "Could not initialize the background media session")
@@ -110,12 +163,33 @@ class PlaybackService : MediaSessionService() {
 
     override fun onDestroy() {
         ProcessLifecycleOwner.get().lifecycle.removeObserver(processObserver)
+        captureProgress()
+        saveProgress()
+        progressJob?.cancel()
+        resumeJob?.cancel()
         settingsJob?.cancel()
         metadataJob?.cancel()
         AudioSessionActivity.update(null)
         serviceScope.cancel()
         releasePlayback()
         super.onDestroy()
+    }
+
+    private fun captureProgress() {
+        val p = player ?: return
+        val current = episode ?: return
+        if (p.currentMediaItem?.mediaMetadata?.extras?.getString("audioUrlKey") != current.key) return
+        current.progress = PodcastProgress(p.currentPosition.coerceAtLeast(0),
+            p.duration.takeIf { it > 0 && it != C.TIME_UNSET } ?: current.progress.duration, p.playbackParameters.speed)
+    }
+    private fun saveProgress(completed: Boolean = false) {
+        val current = episode ?: return
+        val snapshot = current.progress
+        val recordedAt = progressRepository.timestamp()
+        // Repository serializes through the existing wipe-aware Notes writer, even on service shutdown.
+        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+            runCatching { progressRepository.save(current.owner, current.key, snapshot, if (completed) true else null, recordedAt) }
+        }
     }
 
     private fun applyDetails(

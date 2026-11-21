@@ -47,6 +47,7 @@ data class AudioTrackIdentity(
     val eventId: String = "",
     val poster: String = "",
     val origin: String = "Inline audio",
+    val podcast: Boolean = false,
     val title: String? = null,
     val artist: String? = null,
     val album: String? = null,
@@ -57,7 +58,7 @@ data class AudioTrackIdentity(
         val metadata = MediaMetadata.Builder().setTitle(title).setArtist(artist).setAlbumTitle(album)
             .setArtworkUri(artworkUri?.let(Uri::parse)).setArtworkData(artwork, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
             .setExtras(Bundle().apply {
-                putString("audioUrlKey", social.tbone.media.audio.AudioCachePolicy.key(url)); putBoolean("audioTrack", true); putString("eventId", eventId); putString("poster", poster); putString("queueOrigin", origin)
+                putString("audioUrlKey", social.tbone.media.audio.AudioCachePolicy.key(url)); putBoolean("isPodcast", podcast); putBoolean("audioTrack", true); putString("eventId", eventId); putString("poster", poster); putString("queueOrigin", origin)
                 putString("fallbackTitle", title ?: audioFilename(url))
             }).build()
         val extension = url.substringBefore('?').substringBefore('#').substringAfterLast('.', "")
@@ -88,6 +89,8 @@ data class AudioPlaybackState(
     val hasNext: Boolean = false,
     val index: Int = -1,
     val queue: List<AudioQueueEntry> = emptyList(),
+    val podcast: Boolean = false,
+    val speed: Float = 1f,
     val shuffle: Boolean = false,
     val repeatMode: Int = Player.REPEAT_MODE_OFF,
 )
@@ -117,7 +120,8 @@ fun rememberAudioPlaybackState(controller: MediaController?, connectionError: St
                 val entry = p.getMediaItemAt(index)
                 AudioQueueEntry(entry.mediaId, (if (index == p.currentMediaItemIndex) metadata.title?.toString() else null) ?: entry.mediaMetadata.title?.toString() ?: entry.mediaMetadata.extras?.getString("fallbackTitle") ?: "Untitled track",
                     entry.mediaMetadata.artist?.toString().orEmpty(), index)
-            }, shuffle = p.shuffleModeEnabled, repeatMode = p.repeatMode,
+            }, podcast = extras?.getBoolean("isPodcast") == true, speed = p.playbackParameters.speed,
+            shuffle = p.shuffleModeEnabled, repeatMode = p.repeatMode,
         )
     }
     DisposableEffect(controller, connectionError) {

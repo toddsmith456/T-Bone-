@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicBoolean
@@ -59,7 +60,14 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
 
+enum class AudioUploadStage { IDLE, PREPARING, UPLOADING, UPLOADED, SIGNING, PUBLISHING, COMPLETE, UPLOAD_FAILED, PUBLISH_FAILED, CANCELLED }
+
 data class ComposeUiState(
+    val audioUploadStage: AudioUploadStage = AudioUploadStage.IDLE,
+    val audioUploadName: String = "",
+    val audioUploadCategory: String = "TboneMusic",
+    val audioRecoveryUrl: String? = null,
+    val audioOperationError: String? = null,
     val isPublishing: Boolean = false,
     val error: String? = null,
     val replyTargetRequired: Boolean = false,
@@ -197,11 +205,17 @@ class ComposeViewModel @Inject constructor(
         /** When true, audio must be copied byte-for-byte, ignoring both compression toggles. */
         val preserveOriginalAudio: Boolean = false,
         val audioCategory: String = "TboneMusic",
+        val recoverableAudio: Boolean = false,
     )
 
     /** Display hints measured at upload time, keyed by the uploaded URL. */
     private val uploadedMediaHints = java.util.concurrent.ConcurrentHashMap<String, UploadedMediaHint>()
 
+    private var failedAudioRequest: MediaUploadRequest? = null
+    private var activeAudioRequest: MediaUploadRequest? = null
+    private var activeUploadJob: kotlinx.coroutines.Job? = null
+    private var pendingSignedAudio: Event? = null
+    private var audioOwner: String? = null
     private val mediaUploadQueue = Channel<MediaUploadRequest>(Channel.UNLIMITED)
     private val uploadedUrlQueue = Channel<String>(Channel.UNLIMITED)
     private val uploadErrorQueue = Channel<String>(Channel.UNLIMITED)
@@ -230,7 +244,12 @@ class ComposeViewModel @Inject constructor(
 
     init {
         viewModelScope.launch {
-            for (request in mediaUploadQueue) uploadMedia(request)
+            for (request in mediaUploadQueue) kotlinx.coroutines.coroutineScope {
+                val job = launch { uploadMedia(request) }
+                activeUploadJob = job
+                job.join()
+                activeUploadJob = null
+            }
         }
         viewModelScope.launch {
             bookmarksRepository.folders.collect { folders ->
@@ -435,15 +454,22 @@ class ComposeViewModel @Inject constructor(
     }
 
     /** Queue one upload; multiple picker results are processed sequentially and all URLs kept. */
-    fun attachMedia(uri: Uri, kind: String, preserveOriginalAudio: Boolean = false, audioCategory: String = "TboneMusic") {
+    fun attachMedia(uri: Uri, kind: String, preserveOriginalAudio: Boolean = false, audioCategory: String = "TboneMusic", recoverableAudio: Boolean = false) {
         if (kind !in setOf("image", "video", "audio", "file")) return
+        if (recoverableAudio) {
+            failedAudioRequest = null
+            pendingSignedAudio = null
+            audioOwner = null
+            _uiState.update { it.copy(audioUploadStage = AudioUploadStage.PREPARING, audioRecoveryUrl = null,
+                audioOperationError = null, error = null, audioUploadCategory = audioCategory, audioUploadName = "Selected audio") }
+        }
         val selectedServer = _uiState.value.blossomServer
             ?: savedStateHandle.get<String>(KEY_BLOSSOM_SERVER)?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
         synchronized(uploadQueueLock) {
             pendingUploads += 1
             _uiState.update { it.copy(isUploading = true) }
             val queued = mediaUploadQueue.trySend(
-                MediaUploadRequest(uri, kind, selectedServer, preserveOriginalAudio && kind == "audio", if (audioCategory == "TbonePodcast") audioCategory else "TboneMusic"),
+                MediaUploadRequest(uri, kind, selectedServer, preserveOriginalAudio && kind == "audio", if (audioCategory == "TbonePodcast") audioCategory else "TboneMusic", recoverableAudio),
             )
             if (queued.isFailure) {
                 pendingUploads = (pendingUploads - 1).coerceAtLeast(0)
@@ -459,13 +485,21 @@ class ComposeViewModel @Inject constructor(
     }
 
     private suspend fun uploadMedia(request: MediaUploadRequest) {
-        _uiState.update {
-            it.copy(uploadingKind = request.kind)
+        activeAudioRequest = request
+        if (request.recoverableAudio) {
+            val filename = withContext(Dispatchers.IO) { runCatching {
+                context.contentResolver.query(request.uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                    if (it.moveToFirst()) it.getString(0) else null
+                }
+            }.getOrNull() ?: "Selected audio" }
+            _uiState.update { it.copy(audioUploadName = filename, audioUploadStage = AudioUploadStage.PREPARING, audioOperationError = null) }
         }
+        _uiState.update { it.copy(uploadingKind = request.kind) }
         var preparedFile: java.io.File? = null
         try {
             val signer = signerFactory.forActiveAccount()
                 ?: error("no active account")
+            if (request.recoverableAudio) audioOwner = signer.pubkey
             val compress = appSettings.blossomCompress.value
             val prepared = when (request.kind) {
                 "image" -> MediaProcessor.prepareImageMedia(context, request.uri, compress = compress)
@@ -489,6 +523,7 @@ class ComposeViewModel @Inject constructor(
                 "audio" -> "Uploading audio"
                 else -> "Uploading file"
             }
+            if (request.recoverableAudio) _uiState.update { it.copy(audioUploadStage = AudioUploadStage.UPLOADING) }
             val url = blossomUploader.upload(
                 file = prepared.file,
                 mime = prepared.mime,
@@ -542,16 +577,24 @@ class ComposeViewModel @Inject constructor(
                     )
                 }
             }
+            if (request.recoverableAudio) _uiState.update { it.copy(audioUploadStage = AudioUploadStage.UPLOADED, audioRecoveryUrl = url) }
             uploadedUrlQueue.trySend(url)
         } catch (cancelled: CancellationException) {
+            if (request.recoverableAudio) _uiState.update { it.copy(audioUploadStage = AudioUploadStage.CANCELLED, audioOperationError = null) }
             throw cancelled
         } catch (error: Exception) {
+            if (request.recoverableAudio) {
+                failedAudioRequest = request
+                _uiState.update { it.copy(audioUploadStage = AudioUploadStage.UPLOAD_FAILED,
+                    audioOperationError = "Upload failed. Retry, or choose the file again if access has expired.") }
+            }
             val message = error.message ?: "upload failed"
             uploadErrorQueue.trySend(message)
         } finally {
             // Option A hygiene: staging file lives in cacheDir — remove after upload
             try { preparedFile?.delete() } catch (_: Exception) {}
 
+            activeAudioRequest = null
             synchronized(uploadQueueLock) {
                 pendingUploads = (pendingUploads - 1).coerceAtLeast(0)
                 _uiState.update {
@@ -561,6 +604,19 @@ class ComposeViewModel @Inject constructor(
                     )
                 }
             }
+        }
+    }
+
+    fun retryAudioOperation() {
+        val state = _uiState.value
+        if (state.isUploading || state.isPublishing) return
+        state.audioRecoveryUrl?.let { publish(it); return }
+        val request = failedAudioRequest ?: return
+        attachMedia(request.uri, request.kind, request.preserveOriginalAudio, request.audioCategory, recoverableAudio = true)
+    }
+    fun cancelAudioUpload() {
+        if (activeAudioRequest?.recoverableAudio == true && _uiState.value.audioUploadStage in setOf(AudioUploadStage.PREPARING, AudioUploadStage.UPLOADING)) {
+            activeUploadJob?.cancel()
         }
     }
 
@@ -688,6 +744,7 @@ class ComposeViewModel @Inject constructor(
         val trimmed = content.trim()
         if (trimmed.isBlank()) return
         val draftState = _uiState.value
+        val recoverableAudio = draftState.audioRecoveryUrl == trimmed
         val originalAudioPost = draftState.originalAudioUrls.any { url -> trimmed.contains(url) }
         val hasAudioAttachment = draftState.uploadedAudioUrls.any { url -> trimmed.contains(url) }
         val selectedPlaylist = draftState.audioPlaylists.firstOrNull {
@@ -705,16 +762,21 @@ class ComposeViewModel @Inject constructor(
         // A fast double-tap on SEND must not create two publish jobs before
         // isPublishing recomposes. This is independent of the Compose flag.
         if (!publishInFlight.compareAndSet(false, true)) return
-        _uiState.update { it.copy(isPublishing = true, error = null) }
+        _uiState.update { it.copy(isPublishing = true, error = null,
+            audioOperationError = if (recoverableAudio) null else it.audioOperationError,
+            audioUploadStage = if (recoverableAudio) AudioUploadStage.SIGNING else it.audioUploadStage) }
 
         viewModelScope.launch {
             try {
                 val signer = signerFactory.forActiveAccount()
                 if (signer == null) {
-                    _uiState.update { it.copy(isPublishing = false, error = "No active account") }
+                    _uiState.update { it.copy(isPublishing = false, error = "No active account",
+                        audioUploadStage = if (recoverableAudio) AudioUploadStage.PUBLISH_FAILED else it.audioUploadStage,
+                        audioOperationError = if (recoverableAudio) "Sign in to the uploading account, then retry publishing." else it.audioOperationError) }
                     return@launch
                 }
 
+                if (recoverableAudio && audioOwner != signer.pubkey) error("Switch back to the account that uploaded this audio before retrying publication")
                 val replyTo = _uiState.value.replyToEvent
                 val explicitQuote = _uiState.value.quoteToEvent
                 // Quoting is explicit only: a reply to a note that itself
@@ -814,16 +876,32 @@ class ComposeViewModel @Inject constructor(
                 // getOrElse keeps signer failures in the error state. The outer
                 // catch also covers relays/Room/encoding failures that used to
                 // escape from Result.onSuccess and kill the app.
-                val event = signer.signEvent(unsigned).getOrElse { signError ->
+                val event = pendingSignedAudio?.takeIf { canReuseAudioSignature(recoverableAudio, it, signer.pubkey, unsigned.content) }
+                    ?: signer.signEvent(unsigned).getOrElse { signError ->
                     _uiState.update {
                         it.copy(
                             isPublishing = false,
                             error = signError.message?.takeIf { it.isNotBlank() } ?: "Couldn't sign note",
+                            audioUploadStage = if (recoverableAudio) AudioUploadStage.PUBLISH_FAILED else it.audioUploadStage,
+                            audioOperationError = if (recoverableAudio) "Signing was not completed. Retry publishing; the uploaded audio will be reused." else it.audioOperationError,
                         )
                     }
                     return@launch
                 }
-                pool.publish(event)
+                if (recoverableAudio) {
+                    pendingSignedAudio = event
+                    _uiState.update { it.copy(audioUploadStage = AudioUploadStage.PUBLISHING) }
+                    val ack = kotlinx.coroutines.coroutineScope {
+                        val result = async(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                            withTimeoutOrNull(20_000) {
+                                pool.messages.first { (_, message) -> message is RelayMessage.Ok && message.eventId == event.id && message.accepted }
+                            }
+                        }
+                        pool.publish(event)
+                        result.await()
+                    }
+                    check(ack != null) { "No relay confirmed the post. Retry sends the same signed note without uploading again." }
+                } else pool.publish(event)
                 eventRepository.save(event, signer.pubkey)
                 selectedPlaylist?.let { playlist ->
                     val result = runCatching {
@@ -837,7 +915,9 @@ class ComposeViewModel @Inject constructor(
                         )
                     }
                 }
-                _uiState.update { it.copy(isPublishing = false) }
+                _uiState.update { it.copy(isPublishing = false,
+                    audioUploadStage = if (recoverableAudio) AudioUploadStage.COMPLETE else it.audioUploadStage,
+                    audioOperationError = if (recoverableAudio) null else it.audioOperationError) }
                 publishEffectQueue.trySend(ComposeEffect.Published)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -845,6 +925,8 @@ class ComposeViewModel @Inject constructor(
                 _uiState.update {
                     it.copy(
                         isPublishing = false,
+                        audioUploadStage = if (recoverableAudio) AudioUploadStage.PUBLISH_FAILED else it.audioUploadStage,
+                        audioOperationError = if (recoverableAudio) (error.message?.takeIf { it.startsWith("Switch back to the account") } ?: if (pendingSignedAudio != null) "No relay confirmation. Retry resends the same note; the audio is not uploaded again." else "Could not publish. Retry reuses the uploaded audio.") else it.audioOperationError,
                         error = error.message?.take(240)?.takeIf { it.isNotBlank() }
                             ?: "Couldn't publish note",
                     )
@@ -933,3 +1015,6 @@ internal fun appendAudioHashtags(content: String, hashtags: List<String>): Strin
     }
     return if (missing.isEmpty()) content else content + "\n\n" + missing.joinToString(" ") { "#$it" }
 }
+
+internal fun canReuseAudioSignature(recoverableAudio: Boolean, signed: Event, pubkey: String, content: String): Boolean =
+    recoverableAudio && signed.pubkey == pubkey && signed.content == content

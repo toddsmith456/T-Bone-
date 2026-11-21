@@ -65,6 +65,7 @@ fun InlineAudioPlayer(
     url: String,
     authorPubkey: String? = null,
     sourceEventId: String? = null,
+    podcast: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -82,7 +83,7 @@ fun InlineAudioPlayer(
         if (player != null) {
             val alreadySelected = social.tbone.media.playback.isAudioSelected(player, url)
             social.tbone.media.playback.selectInlineAudio(player,
-                social.tbone.media.playback.AudioTrackIdentity(url, sourceEventId.orEmpty(), authorPubkey.orEmpty()), autoplay = true)
+                social.tbone.media.playback.AudioTrackIdentity(url, sourceEventId.orEmpty(), authorPubkey.orEmpty(), podcast = podcast), autoplay = true)
             pendingAction = null
             if (action == "expand") openPlayer(url, authorPubkey, sourceEventId)
             else if (alreadySelected) social.tbone.media.playback.toggleAudio(player)

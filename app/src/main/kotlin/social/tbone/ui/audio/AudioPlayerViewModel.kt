@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import social.tbone.db.EventRepository
@@ -55,6 +56,8 @@ data class AudioPlayerUiState(
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class AudioPlayerViewModel @Inject constructor(
+    private val savedState: androidx.lifecycle.SavedStateHandle,
+    private val podcastProgress: social.tbone.media.playback.PodcastProgressRepository,
     private val metadataCache: social.tbone.media.audio.AudioMetadataCache,
     private val settings: social.tbone.settings.AppSettings,
     private val offlineLists: social.tbone.lists.OfflineListRepository,
@@ -66,7 +69,26 @@ class AudioPlayerViewModel @Inject constructor(
     private val profileRepository: ProfileRepository,
     private val muteRepository: social.tbone.lists.MuteListRepository,
 ) : ViewModel() {
-    private val _uiState = MutableStateFlow(AudioPlayerUiState())
+    private val _uiState = MutableStateFlow(AudioPlayerUiState(
+        category = AudioCategory.entries.firstOrNull { it.name == savedState.get<String>("audio_category") } ?: AudioCategory.MUSIC,
+        audience = AudioAudience.entries.firstOrNull { it.name == savedState.get<String>("audio_audience") } ?: AudioAudience.GLOBAL,
+        selectedPlaylistId = savedState["audio_playlist"],
+    ))
+    private val _podcastPlayed = MutableStateFlow(false)
+    val podcastPlayed = _podcastPlayed.asStateFlow()
+    val progressRevision = podcastProgress.revision
+    suspend fun readPlayed(key: String) {
+        val owner = accounts.activeAccount.first()?.pubkey ?: return
+        _podcastPlayed.value = podcastProgress.read(owner, key).played
+    }
+    fun markPlayed(key: String, played: Boolean) {
+        viewModelScope.launch {
+            val owner = accounts.activeAccount.first()?.pubkey ?: return@launch
+            runCatching { podcastProgress.save(owner, key, podcastProgress.read(owner, key), played) }
+                .onSuccess { _podcastPlayed.value = played }
+                .onFailure { error -> _uiState.update { it.copy(statusMessage = "Could not save played state") } }
+        }
+    }
     val uiState: StateFlow<AudioPlayerUiState> = _uiState.asStateFlow()
 
     private val _metadata = MutableStateFlow<Map<String, social.tbone.media.audio.AudioMetadataReader.Metadata>>(emptyMap())
@@ -147,17 +169,20 @@ class AudioPlayerViewModel @Inject constructor(
 
     fun selectCategory(category: AudioCategory) {
         if (_uiState.value.category == category) return
+        savedState["audio_category"] = category.name
         _uiState.update { it.copy(category = category) }
         refreshMusicFeed()
     }
     fun selectAudience(audience: AudioAudience) {
         if (_uiState.value.audience == audience) return
+        savedState["audio_audience"] = audience.name
         _uiState.update { it.copy(audience = audience) }
         refreshMusicFeed()
     }
     suspend fun resolveMetadata(url: String) = metadataCache.read(url)
 
     fun selectPlaylist(id: String?) {
+        savedState["audio_playlist"] = id
         _uiState.update { it.copy(selectedPlaylistId = id, playlistTracks = emptyList()) }
     }
 

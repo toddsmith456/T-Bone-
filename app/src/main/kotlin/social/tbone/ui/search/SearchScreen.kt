@@ -284,7 +284,7 @@ private fun EventSearchResult(
                     Spacer(Modifier.size(12.dp))
                 }
                 if (parsed.mediaItems.isNotEmpty()) {
-                    NoteMediaContent(parsed.mediaItems, Modifier.fillMaxWidth(), authorPubkey = event.pubkey, sourceEventId = event.id)
+                    NoteMediaContent(parsed.mediaItems, Modifier.fillMaxWidth(), authorPubkey = event.pubkey, sourceEventId = event.id, podcast = event.parsedTags.any { it.name == "t" && it.value()?.equals("tbonepodcast", true) == true })
                     Spacer(Modifier.size(12.dp))
                 }
                 TextButton(onClick = onOpenInFeed, modifier = Modifier.fillMaxWidth()) {

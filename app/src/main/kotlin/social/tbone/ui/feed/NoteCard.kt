@@ -552,6 +552,7 @@ fun NoteCard(
                         modifier = Modifier.fillMaxWidth(),
                         authorPubkey = event.pubkey,
                         sourceEventId = event.id,
+                        podcast = event.parsedTags.any { it.name == "t" && it.value()?.equals("tbonepodcast", true) == true },
                     )
                 }
 
@@ -854,7 +855,7 @@ fun QuotedNoteCard(
         // why an image in a quoted note was invisible on the feed.
         if (parsed.mediaItems.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
-            NoteMediaContent(mediaItems = parsed.mediaItems, authorPubkey = event.pubkey, sourceEventId = event.id)
+            NoteMediaContent(mediaItems = parsed.mediaItems, authorPubkey = event.pubkey, sourceEventId = event.id, podcast = event.parsedTags.any { it.name == "t" && it.value()?.equals("tbonepodcast", true) == true })
         }
 
         // NIP-88 poll options: render interactive PollCard when vote wiring is

@@ -1,6 +1,18 @@
 package social.tbone.ui.audio
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.activity.compose.BackHandler
+import social.tbone.ui.compose.AudioUploadStage
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -126,6 +138,12 @@ fun AudioPlayerScreen(
     val connection = rememberPlaybackConnection(retry = connectionRetry)
     val controller = connection.controller
     val snapshot = rememberAudioPlaybackState(controller, connection.error)
+    val played by viewModel.podcastPlayed.collectAsStateWithLifecycle()
+    val progressRevision by viewModel.progressRevision.collectAsStateWithLifecycle()
+    LaunchedEffect(snapshot.urlKey, snapshot.podcast, progressRevision) {
+        if (snapshot.podcast) snapshot.urlKey?.let { viewModel.readPlayed(it) }
+    }
+    val listStates = rememberSaveableStateHolder()
     var showQueue by remember { mutableStateOf(false) }
     var activeTab by rememberSaveable { mutableStateOf(AudioPlayerTab.PLAYER) }
     val uploadState by uploadViewModel.uiState.collectAsStateWithLifecycle()
@@ -133,7 +151,7 @@ fun AudioPlayerScreen(
     var uploadCategory by rememberSaveable { mutableStateOf(AudioCategory.MUSIC) }
     var showUploadChoice by remember { mutableStateOf(false) }
     val uploadPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) uploadViewModel.attachMedia(uri, "audio", preserveOriginalAudio = true, audioCategory = uploadCategory.hashtag)
+        if (uri != null) uploadViewModel.attachMedia(uri, "audio", preserveOriginalAudio = true, audioCategory = uploadCategory.hashtag, recoverableAudio = true)
     }
     LaunchedEffect(uploadViewModel) {
         uploadViewModel.uploadedMediaUrls.collect { url -> uploadViewModel.publish(url) }
@@ -165,6 +183,7 @@ fun AudioPlayerScreen(
             initialSelectionHandled = true
         }
     }
+    BackHandler(enabled = uiState.selectedPlaylistId != null && activeTab == AudioPlayerTab.LIBRARY) { viewModel.selectPlaylist(null) }
     val selectedPlaylist = uiState.playlists.firstOrNull { it.id == uiState.selectedPlaylistId }
     val playlistTracks = remember(uiState.playlistTracks, profiles, metadata) {
         uiState.playlistTracks.mapNotNull { bookmark -> bookmark.event.toAudioTrack(profiles)?.withMetadata(metadata) }
@@ -184,7 +203,7 @@ fun AudioPlayerScreen(
             modifier = Modifier.fillMaxWidth().padding(start = 6.dp, end = 8.dp, top = 4.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onBack) {
+            IconButton(onClick = { if (activeTab == AudioPlayerTab.LIBRARY && uiState.selectedPlaylistId != null) viewModel.selectPlaylist(null) else onBack() }) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = BonyColors.TextMute)
             }
             Column(modifier = Modifier.weight(1f)) {
@@ -225,16 +244,19 @@ fun AudioPlayerScreen(
 
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             when (activeTab) {
-                AudioPlayerTab.PLAYER -> FullPlayer(snapshot, controller, onQueue = { showQueue = true })
+                AudioPlayerTab.PLAYER -> FullPlayer(snapshot, controller, played, onPlayed = { value -> snapshot.urlKey?.let { viewModel.markPlayed(it, value) } }, onQueue = { showQueue = true })
                 AudioPlayerTab.LIBRARY -> {
                     if (selectedPlaylist == null) {
+                        listStates.SaveableStateProvider("audio_library_home") {
                         PlaylistsHome(
                             playlists = uiState.playlists,
                             isSyncing = uiState.isSyncingPlaylists,
                             onCreate = { showCreatePlaylist = true },
                             onSelect = viewModel::selectPlaylist,
                         )
+                        }
                     } else {
+                        listStates.SaveableStateProvider("audio_playlist_${selectedPlaylist.id}") {
                         PlaylistDetails(
                             playlist = selectedPlaylist,
                             tracks = playlistTracks,
@@ -247,6 +269,7 @@ fun AudioPlayerScreen(
                             onOpenProfile = onProfileClick,
                             onRemove = viewModel::removeEventFromPlaylist,
                         )
+                        }
                     }
                 }
                 AudioPlayerTab.DISCOVER -> {
@@ -262,6 +285,7 @@ fun AudioPlayerScreen(
                                     { viewModel.selectAudience(audience) }, Modifier.weight(1f))
                             }
                         }
+                    listStates.SaveableStateProvider("audio_discover_${uiState.category}_${uiState.audience}") {
                     DiscoverFeed(
                         emptyMessage = if (uiState.audience == AudioAudience.FOLLOWS) "No ${uiState.category.label.lowercase()} from your follows yet. Try Global or follow more creators."
                             else "No audio posts tagged #${uiState.category.hashtag} yet",
@@ -284,6 +308,7 @@ fun AudioPlayerScreen(
                         onOpenProfile = onProfileClick,
                     )
                     }
+                    }
                     FloatingActionButton(
                         onClick = { if (!uploadState.isUploading && !uploadState.isPublishing) showUploadChoice = true },
                         modifier = Modifier.align(Alignment.BottomEnd).padding(18.dp),
@@ -302,12 +327,31 @@ fun AudioPlayerScreen(
             }
         }
         if (snapshot.phase == AudioPhase.CONNECTING) Text("Connecting to playback…", style = BonyType.caption.copy(color = BonyColors.TextMute), modifier = Modifier.padding(12.dp))
-        if (uploadState.isUploading || uploadState.isPublishing) {
-            Text(if (uploadState.isUploading) "Uploading original audio · metadata preserved" else "Publishing audio…",
-                style = BonyType.caption.copy(color = BonyColors.Accent), modifier = Modifier.padding(12.dp))
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = BonyColors.Accent)
+        if (uploadState.audioUploadStage != AudioUploadStage.IDLE) {
+            Column(Modifier.fillMaxWidth().background(BonyColors.SurfaceAlt).padding(12.dp)) {
+                Text("${if (uploadState.audioUploadCategory == "TbonePodcast") "Podcast" else "Music"} · ${uploadState.audioUploadName}", maxLines = 1, overflow = TextOverflow.Ellipsis, color = BonyColors.Text)
+                Text(when (uploadState.audioUploadStage) {
+                    AudioUploadStage.PREPARING -> "Preparing original file · no compression"
+                    AudioUploadStage.UPLOADING -> "Uploading original file…"
+                    AudioUploadStage.UPLOADED -> "File uploaded · preparing publication"
+                    AudioUploadStage.SIGNING -> "Waiting for note signing…"
+                    AudioUploadStage.PUBLISHING -> "Waiting for relay confirmation…"
+                    AudioUploadStage.COMPLETE -> "Published · confirmed by a relay"
+                    AudioUploadStage.UPLOAD_FAILED -> "Upload failed"
+                    AudioUploadStage.PUBLISH_FAILED -> "Publication not confirmed · uploaded file retained"
+                    AudioUploadStage.CANCELLED -> "Upload cancelled. The server may already have stored the file."
+                    else -> ""
+                }, style = BonyType.caption.copy(color = BonyColors.TextMute), modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                if (uploadState.isUploading || uploadState.isPublishing) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp), color = BonyColors.Accent)
+                uploadState.audioOperationError?.let { Text(it, color = BonyColors.Danger, style = BonyType.caption) }
+                Row {
+                    if (uploadState.audioUploadStage in setOf(AudioUploadStage.PREPARING, AudioUploadStage.UPLOADING)) TextButton(onClick = uploadViewModel::cancelAudioUpload) { Text("Cancel upload") }
+                    if (uploadState.audioUploadStage in setOf(AudioUploadStage.UPLOAD_FAILED, AudioUploadStage.PUBLISH_FAILED)) TextButton(onClick = uploadViewModel::retryAudioOperation, enabled = !uploadState.isUploading && !uploadState.isPublishing) {
+                        Text(if (uploadState.audioRecoveryUrl != null) "Retry publish (reuse file)" else "Retry upload")
+                    }
+                }
+            }
         }
-        uploadState.error?.let { Text(it, color = BonyColors.Danger, modifier = Modifier.padding(12.dp)) }
 
         uiState.statusMessage?.let { message ->
             Text(
@@ -326,7 +370,7 @@ fun AudioPlayerScreen(
         Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(10.dp).clip(RoundedCornerShape(24.dp))
             .background(BonyColors.Surface), verticalAlignment = Alignment.CenterVertically) {
             AudioPlayerTab.entries.forEach { tab ->
-                Column(Modifier.weight(1f).clickable { activeTab = tab }.padding(vertical = 14.dp),
+                Column(Modifier.weight(1f).selectable(selected = activeTab == tab, role = Role.Tab, onClick = { activeTab = tab }).defaultMinSize(minHeight = 48.dp).padding(vertical = 14.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
                     val color = if (activeTab == tab) BonyColors.Accent else BonyColors.TextMute
                     Icon(when (tab) {
@@ -405,6 +449,7 @@ private fun PlaylistsHome(
     onCreate: () -> Unit,
     onSelect: (String) -> Unit,
 ) {
+    val listState = rememberLazyListState()
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
@@ -429,7 +474,7 @@ private fun PlaylistsHome(
                 )
             }
         } else {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                 items(playlists, key = { it.id }) { playlist ->
                     Column(
                         modifier = Modifier
@@ -465,6 +510,7 @@ private fun PlaylistDetails(
     onOpenProfile: (String) -> Unit,
     onRemove: (String) -> Unit,
 ) {
+    val listState = rememberLazyListState()
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
@@ -488,7 +534,7 @@ private fun PlaylistDetails(
                 Text("this playlist has no audio posts yet", style = BonyType.body.copy(color = BonyColors.TextMute))
             }
         } else {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                 items(tracks, key = { it.event.id }) { track ->
                     AudioTrackRow(
                         track = track,
@@ -521,6 +567,7 @@ private fun DiscoverFeed(
     onOpenNote: (Event) -> Unit,
     onOpenProfile: (String) -> Unit,
 ) {
+    val listState = rememberLazyListState()
     if (loading && events.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = BonyColors.Accent)
@@ -530,7 +577,7 @@ private fun DiscoverFeed(
             Text(emptyMessage, style = BonyType.body.copy(color = BonyColors.TextMute))
         }
     } else {
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
             items(tracks, key = { it.event.id }) { track ->
                 AudioPostRow(
                     track = track,
@@ -559,6 +606,10 @@ private fun AudioTrackRow(
     onOpenProfile: () -> Unit,
     onRemove: () -> Unit,
 ) {
+    var menu by remember(track.event.id) { mutableStateOf(false) }
+    var about by remember(track.event.id) { mutableStateOf(false) }
+    val context = LocalContext.current
+    if (about) AudioTrackAboutDialog(track, profile, onDismiss = { about = false })
     val loadMetadata = LocalLoadAudioMetadata.current
     val autoLoad = social.tbone.ui.media.LocalImageLoadMode.current != social.tbone.settings.ImageLoadMode.OFF
     LaunchedEffect(track.url, autoLoad) { loadMetadata(track.url, autoLoad) }
@@ -574,11 +625,19 @@ private fun AudioTrackRow(
                 track.artist,
                 style = BonyType.caption.copy(color = BonyColors.TextMute),
                 maxLines = 1,
-                modifier = Modifier.clickable(onClick = onOpenProfile),
             )
-            Text("open post →", style = BonyType.caption.copy(color = BonyColors.Accent), modifier = Modifier.clickable(onClick = onOpenNote))
+            Text("Shared by ${profile?.bestName ?: track.poster}", style = BonyType.caption.copy(color = BonyColors.TextMute), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        Text("remove", style = BonyType.caption.copy(color = BonyColors.TextMute), modifier = Modifier.clickable(onClick = onRemove))
+        Box {
+            IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Track options for ${track.title}", tint = BonyColors.TextMute) }
+            DropdownMenu(menu, { menu = false }) {
+                DropdownMenuItem(text = { Text("About this track") }, onClick = { menu = false; about = true })
+                DropdownMenuItem(text = { Text("Original post") }, onClick = { menu = false; onOpenNote() })
+                DropdownMenuItem(text = { Text("View poster profile") }, onClick = { menu = false; onOpenProfile() })
+                DropdownMenuItem(text = { Text("Share original post") }, onClick = { menu = false; shareAudioPost(context, track.event) })
+                DropdownMenuItem(text = { Text("Remove from playlist") }, onClick = { menu = false; onRemove() })
+            }
+        }
     }
     Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 }
@@ -596,6 +655,9 @@ private fun AudioPostRow(
     onOpenNote: () -> Unit,
     onOpenProfile: () -> Unit,
 ) {
+    var about by remember(track.event.id) { mutableStateOf(false) }
+    val context = LocalContext.current
+    if (about) AudioTrackAboutDialog(track, profile, onDismiss = { about = false })
     val loadMetadata = LocalLoadAudioMetadata.current
     val autoLoad = social.tbone.ui.media.LocalImageLoadMode.current != social.tbone.settings.ImageLoadMode.OFF
     LaunchedEffect(track.url, autoLoad) { loadMetadata(track.url, autoLoad) }
@@ -605,7 +667,7 @@ private fun AudioPostRow(
             Text(
                 text = "Shared by ${profile?.bestName ?: track.poster}",
                 style = BonyType.caption.copy(color = BonyColors.TextMute),
-                modifier = Modifier.weight(1f).clickable(onClick = onOpenProfile),
+                modifier = Modifier.weight(1f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -623,14 +685,14 @@ private fun AudioPostRow(
                 Text(listOf(track.artist, track.album).filter { it.isNotBlank() }.joinToString(" · "), style = BonyType.caption.copy(color = BonyColors.TextMute))
             }
             Box {
-                Text(
-                    "•••",
-                    style = BonyType.caption.copy(color = if (playlists.isEmpty()) BonyColors.TextMute else BonyColors.Accent),
-                    modifier = Modifier.clickable {
-                        menuExpanded = true
-                    },
-                )
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(Icons.Default.MoreVert, "Track options for ${track.title}", tint = BonyColors.TextMute)
+                }
                 DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    DropdownMenuItem(text = { Text("About this track") }, onClick = { menuExpanded = false; about = true })
+                    DropdownMenuItem(text = { Text("Original post") }, onClick = { menuExpanded = false; onOpenNote() })
+                    DropdownMenuItem(text = { Text("View poster profile") }, onClick = { menuExpanded = false; onOpenProfile() })
+                    DropdownMenuItem(text = { Text("Share original post") }, onClick = { menuExpanded = false; shareAudioPost(context, track.event) })
                     DropdownMenuItem(text = { Text("Add to queue") }, enabled = !isConnecting, onClick = { menuExpanded = false; onQueue() })
                     if (playlists.isEmpty()) DropdownMenuItem(text = { Text("Create a playlist…") }, onClick = { menuExpanded = false; onSelectPlaylistTab() })
                     playlists.forEach { playlist ->
@@ -645,7 +707,6 @@ private fun AudioPostRow(
                 }
             }
         }
-        Text("open post →", style = BonyType.caption.copy(color = BonyColors.TextMute), modifier = Modifier.clickable(onClick = onOpenNote).padding(top = 6.dp))
     }
     Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 }
@@ -655,7 +716,8 @@ private fun PlaybackControls(snapshot: PlaybackSnapshot, controller: MediaContro
     Column(modifier.fillMaxWidth().padding(vertical = 8.dp)) {
         Slider(value = if (snapshot.durationMs > 0) (snapshot.positionMs.toFloat() / snapshot.durationMs).coerceIn(0f, 1f) else 0f,
             onValueChange = { controller?.seekTo((snapshot.durationMs * it).toLong()) },
-            enabled = controller != null && snapshot.durationMs > 0)
+            enabled = controller != null && snapshot.durationMs > 0,
+            modifier = Modifier.semantics { contentDescription = "Playback position"; stateDescription = "${formatDuration(snapshot.positionMs)} of ${formatDuration(snapshot.durationMs)}" })
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(formatDuration(snapshot.positionMs), style = BonyType.caption.copy(color = BonyColors.TextMute))
             Text(if (snapshot.isBuffering) "Buffering…" else formatDuration(snapshot.durationMs), style = BonyType.caption.copy(color = BonyColors.TextMute))
@@ -683,7 +745,8 @@ private fun PlayerTabChip(label: String, selected: Boolean, onClick: () -> Unit,
         modifier = modifier
             .appBorder(1.dp, if (selected) BonyColors.AccentDim else BonyColors.Rule)
             .background(if (selected) BonyColors.AccentBg else BonyColors.Surface)
-            .clickable(onClick = onClick)
+            .defaultMinSize(minHeight = 48.dp)
+            .selectable(selected = selected, role = Role.Tab, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -695,14 +758,14 @@ private fun PlayerTabChip(label: String, selected: Boolean, onClick: () -> Unit,
 private fun PlayButton(label: String, onClick: () -> Unit, enabled: Boolean = true) {
     Box(
         modifier = Modifier
-            .size(38.dp)
+            .size(48.dp)
             .clip(RoundedCornerShape(50))
             .background(if (enabled) BonyColors.AccentBg else BonyColors.SurfaceAlt)
             .clickable(enabled = enabled, onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
-        Text("▶", style = BonyType.body.copy(color = if (enabled) BonyColors.Accent else BonyColors.TextMute, fontSize = 14.sp))
+        Icon(Icons.Default.PlayArrow, label, tint = if (enabled) BonyColors.Accent else BonyColors.TextMute)
     }
 }
 
@@ -722,6 +785,7 @@ private fun Event.toAudioTrack(profiles: Map<String, ProfileContent>): AudioTrac
 
 private fun AudioTrack.mediaItem(origin: String): MediaItem = AudioTrackIdentity(
     url = url, eventId = event.id, poster = poster, origin = origin,
+    podcast = event.parsedTags.any { it.name == "t" && it.value()?.equals("tbonepodcast", true) == true },
     title = title.takeUnless { it == audioFilename(url) }, artist = artist.takeUnless { it == "Unknown artist" }, album = album.takeIf { it.isNotBlank() },
     artworkUri = artwork, artwork = artworkBytes,
 ).mediaItem()
@@ -735,7 +799,8 @@ private fun playQueue(controller: MediaController?, tracks: List<AudioTrack>, st
 
 private fun formatDuration(durationMs: Long): String {
     val totalSeconds = (durationMs.coerceAtLeast(0L) / 1_000L)
-    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
+    return if (totalSeconds >= 3600) "%d:%02d:%02d".format(totalSeconds / 3600, (totalSeconds / 60) % 60, totalSeconds % 60)
+    else "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
 }
 
 private fun formatPostDate(createdAt: Long): String = runCatching {
@@ -782,38 +847,71 @@ private fun MiniPlayer(snapshot: PlaybackSnapshot, controller: MediaController?,
     }
 }
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun FullPlayer(snapshot: PlaybackSnapshot, controller: MediaController?, onQueue: () -> Unit) {
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        TrackArt(snapshot.artworkUri, snapshot.artwork, Modifier.fillMaxWidth().aspectRatio(1f))
-        Spacer(Modifier.height(24.dp))
-        Text(snapshot.title.ifBlank { "Your music, front and centre" }, style = BonyType.title.copy(color = BonyColors.Text))
-        Text(snapshot.artist.ifBlank { "Choose a track in Library or Discover" }, style = BonyType.body.copy(color = BonyColors.TextMute), modifier = Modifier.padding(top = 8.dp))
-        if (snapshot.album.isNotBlank()) Text(snapshot.album, style = BonyType.caption.copy(color = BonyColors.TextMute), modifier = Modifier.padding(top = 6.dp))
-        Spacer(Modifier.height(24.dp))
-        Text(when (snapshot.phase) {
-            AudioPhase.PREPARING -> "Preparing audio…"
-            AudioPhase.ENDED -> "Playback finished · tap play to replay"
-            AudioPhase.ERROR -> "Playback needs attention"
-            AudioPhase.PAUSED -> "Paused"
-            AudioPhase.CONNECTING -> "Connecting…"
-            AudioPhase.IDLE -> if (snapshot.title.isBlank()) "Choose a track to begin" else "Stopped"
-            AudioPhase.PLAYING -> "Playing"
-        }, style = BonyType.caption.copy(color = BonyColors.TextMute))
-        PlaybackControls(snapshot, controller)
-        TextButton(onClick = onQueue) { Text("Queue · ${snapshot.queue.size} tracks") }
-        if (snapshot.origin.isNotBlank()) Text(snapshot.origin, style = BonyType.caption.copy(color = BonyColors.TextMute))
-        Row {
-            TextButton(onClick = { controller?.shuffleModeEnabled = !snapshot.shuffle }, enabled = controller != null && snapshot.queue.isNotEmpty()) { Text(if (snapshot.shuffle) "Shuffle: on" else "Shuffle: off") }
-            TextButton(onClick = { controller?.repeatMode = when (snapshot.repeatMode) {
-                Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
-                Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-                else -> Player.REPEAT_MODE_OFF
-            } }, enabled = controller != null && snapshot.queue.isNotEmpty()) {
-                Text("Repeat: " + when (snapshot.repeatMode) { Player.REPEAT_MODE_ALL -> "all"; Player.REPEAT_MODE_ONE -> "one"; else -> "off" })
+private fun FullPlayer(snapshot: PlaybackSnapshot, controller: MediaController?, played: Boolean, onPlayed: (Boolean) -> Unit, onQueue: () -> Unit) {
+    var remaining by rememberSaveable { mutableStateOf(false) }
+    var speedMenu by remember { mutableStateOf(false) }
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val compact = maxHeight < 420.dp || LocalDensity.current.fontScale > 1.4f
+        val artSize = if (compact) 88.dp else minOf(maxWidth - 48.dp, maxHeight * 0.34f, 260.dp).coerceAtLeast(88.dp)
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (compact) Row(verticalAlignment = Alignment.CenterVertically) {
+                TrackArt(snapshot.artworkUri, snapshot.artwork, Modifier.size(artSize))
+                Column(Modifier.weight(1f).padding(start = 12.dp)) { NowPlayingIdentity(snapshot) }
+            } else {
+                TrackArt(snapshot.artworkUri, snapshot.artwork, Modifier.size(artSize))
+                Spacer(Modifier.height(12.dp))
+                NowPlayingIdentity(snapshot)
+            }
+            Text(when (snapshot.phase) {
+                AudioPhase.PREPARING -> "Preparing audio…"
+                AudioPhase.ENDED -> "Playback finished · tap play to replay"
+                AudioPhase.ERROR -> "Playback needs attention"
+                AudioPhase.PAUSED -> "Paused"
+                AudioPhase.CONNECTING -> "Connecting…"
+                AudioPhase.IDLE -> if (snapshot.title.isBlank()) "Choose a track to begin" else "Stopped"
+                AudioPhase.PLAYING -> "Playing"
+            }, style = BonyType.caption.copy(color = BonyColors.TextMute), modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+            PlaybackControls(snapshot, controller)
+            if (snapshot.podcast) {
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.Center) {
+                    TextButton(onClick = { controller?.seekTo((snapshot.positionMs - 15_000).coerceAtLeast(0)) }, enabled = controller != null) { Text("−15 seconds") }
+                    TextButton(onClick = { controller?.seekTo((snapshot.positionMs + 30_000).coerceAtMost(if (snapshot.durationMs > 0) snapshot.durationMs else Long.MAX_VALUE)) }, enabled = controller != null) { Text("+30 seconds") }
+                    Box {
+                        TextButton(onClick = { speedMenu = true }, enabled = controller != null) { Text("Speed · ${snapshot.speed}×") }
+                        DropdownMenu(speedMenu, { speedMenu = false }) {
+                            listOf(0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f).forEach { speed ->
+                                DropdownMenuItem(text = { Text("${speed}×") }, onClick = { controller?.setPlaybackSpeed(speed); speedMenu = false })
+                            }
+                        }
+                    }
+                    TextButton(onClick = { remaining = !remaining }) { Text(if (remaining) "Remaining: ${formatDuration((snapshot.durationMs - snapshot.positionMs).coerceAtLeast(0))}" else "Elapsed: ${formatDuration(snapshot.positionMs)}") }
+                    TextButton(onClick = { onPlayed(!played) }) { Text(if (played) "Mark unplayed" else "Mark played") }
+                }
+            }
+            TextButton(onClick = onQueue) { Text("Queue · ${snapshot.queue.size} tracks") }
+            if (snapshot.origin.isNotBlank()) Text(snapshot.origin, style = BonyType.caption.copy(color = BonyColors.TextMute))
+            if (!snapshot.podcast) Row {
+                TextButton(onClick = { controller?.shuffleModeEnabled = !snapshot.shuffle }, enabled = controller != null && snapshot.queue.isNotEmpty()) { Text(if (snapshot.shuffle) "Shuffle: on" else "Shuffle: off") }
+                TextButton(onClick = { controller?.repeatMode = when (snapshot.repeatMode) {
+                    Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+                    Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+                    else -> Player.REPEAT_MODE_OFF
+                } }, enabled = controller != null && snapshot.queue.isNotEmpty()) {
+                    Text("Repeat: " + when (snapshot.repeatMode) { Player.REPEAT_MODE_ALL -> "all"; Player.REPEAT_MODE_ONE -> "one"; else -> "off" })
+                }
             }
         }
     }
+}
+
+@Composable
+private fun NowPlayingIdentity(snapshot: PlaybackSnapshot) {
+    Text(snapshot.title.ifBlank { "Your audio" }, style = BonyType.title.copy(color = BonyColors.Text), maxLines = 2, overflow = TextOverflow.Ellipsis)
+    Text(snapshot.artist.ifBlank { if (snapshot.title.isBlank()) "Choose a track in Library or Discover" else "Unknown artist" },
+        style = BonyType.body.copy(color = BonyColors.TextMute), maxLines = 2, overflow = TextOverflow.Ellipsis)
+    if (snapshot.album.isNotBlank()) Text(snapshot.album, style = BonyType.caption.copy(color = BonyColors.TextMute), maxLines = 1, overflow = TextOverflow.Ellipsis)
 }
 
 private val LocalLoadAudioMetadata = androidx.compose.runtime.staticCompositionLocalOf<(String, Boolean) -> Unit> { { _, _ -> } }
@@ -853,4 +951,23 @@ private fun AudioQueueSheet(snapshot: PlaybackSnapshot, controller: MediaControl
             TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("Done") }
         }
     }
+}
+
+@Composable
+private fun AudioTrackAboutDialog(track: AudioTrack, profile: ProfileContent?, onDismiss: () -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("About this track") },
+        text = { Column {
+            Text(track.title)
+            Text("Artist: ${track.artist}")
+            Text("Album / show: ${track.album.ifBlank { "Unknown" }}")
+            Text("Shared by: ${profile?.bestName ?: track.poster}")
+        } }, confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } })
+}
+
+private fun shareAudioPost(context: android.content.Context, event: Event) {
+    val uri = "nostr:" + social.tbone.nostr.Nip19.hexToNevent(event.id, event.pubkey, event.kind)
+    val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "text/plain"; putExtra(android.content.Intent.EXTRA_TEXT, uri)
+    }
+    runCatching { context.startActivity(android.content.Intent.createChooser(send, "Share original post")) }
 }
