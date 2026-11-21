@@ -57,7 +57,6 @@ object SettingsSections {
         // Home feeds.
         // Profile.
         // Reactions.
-        Def("reactions_screen", SettingsGroup.REACTIONS, "Reactions", "emoji saved picker like"),
     )
 
     private val byId: Map<String, Def> = all.associateBy { it.id }

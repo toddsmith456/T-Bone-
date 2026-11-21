@@ -25,7 +25,7 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
-import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.RepeatOne
@@ -919,7 +919,7 @@ private fun FullPlayer(snapshot: PlaybackSnapshot, controller: MediaController?,
                             else -> Player.REPEAT_MODE_OFF
                         } })
                 }
-                PlayerActionIcon(Icons.Default.QueueMusic, "Open playback queue", state = "${snapshot.queue.size} tracks", onClick = onQueue)
+                PlayerActionIcon(Icons.AutoMirrored.Filled.QueueMusic, "Open playback queue", state = "${snapshot.queue.size} tracks", onClick = onQueue)
             }
             if (snapshot.podcast) Text("${snapshot.speed}× · " + if (remaining) "−${formatDuration((snapshot.durationMs - snapshot.positionMs).coerceAtLeast(0))} remaining" else "${formatDuration(snapshot.positionMs)} elapsed",
                 style = BonyType.caption.copy(color = BonyColors.TextMute))
