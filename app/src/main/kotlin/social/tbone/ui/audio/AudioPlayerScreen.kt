@@ -3,6 +3,7 @@ package social.tbone.ui.audio
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.stateDescription
@@ -120,6 +121,7 @@ private data class AudioTrack(
     val poster: String = "",
 )
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun AudioPlayerScreen(
     initialUrl: String = "",
@@ -320,7 +322,7 @@ fun AudioPlayerScreen(
         snapshot.error?.let { error ->
             Column(Modifier.fillMaxWidth().background(BonyColors.SurfaceAlt).padding(12.dp)) {
                 Text(error, color = BonyColors.Danger)
-                Row {
+                androidx.compose.foundation.layout.FlowRow {
                     TextButton(onClick = { if (controller == null) connectionRetry++ else retryAudio(controller) }) { Text("Retry playback") }
                     if (snapshot.eventId.isNotBlank()) TextButton(onClick = { onThreadClick(snapshot.eventId) }) { Text("Original post") }
                 }
@@ -344,7 +346,7 @@ fun AudioPlayerScreen(
                 }, style = BonyType.caption.copy(color = BonyColors.TextMute), modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                 if (uploadState.isUploading || uploadState.isPublishing) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 6.dp), color = BonyColors.Accent)
                 uploadState.audioOperationError?.let { Text(it, color = BonyColors.Danger, style = BonyType.caption) }
-                Row {
+                androidx.compose.foundation.layout.FlowRow {
                     if (uploadState.audioUploadStage in setOf(AudioUploadStage.PREPARING, AudioUploadStage.UPLOADING)) TextButton(onClick = uploadViewModel::cancelAudioUpload) { Text("Cancel upload") }
                     if (uploadState.audioUploadStage in setOf(AudioUploadStage.UPLOAD_FAILED, AudioUploadStage.PUBLISH_FAILED)) TextButton(onClick = uploadViewModel::retryAudioOperation, enabled = !uploadState.isUploading && !uploadState.isPublishing) {
                         Text(if (uploadState.audioRecoveryUrl != null) "Retry publish (reuse file)" else "Retry upload")
@@ -923,15 +925,15 @@ private fun AudioTrack.withMetadata(metadata: Map<String, social.tbone.media.aud
         album = data.album?.takeIf { it.isNotBlank() } ?: album, artworkBytes = data.artwork)
 }
 
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun AudioQueueSheet(snapshot: PlaybackSnapshot, controller: MediaController?, onDismiss: () -> Unit) {
     androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss, containerColor = BonyColors.Surface) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Column(Modifier.fillMaxWidth().heightIn(max = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp.dp * 0.8f).padding(horizontal = 16.dp)) {
             Text("Playback queue", style = BonyType.title.copy(color = BonyColors.Text))
             Text(snapshot.origin.ifBlank { "No active queue" }, style = BonyType.caption.copy(color = BonyColors.TextMute))
             if (snapshot.queue.isEmpty()) Text("Queue is empty. Play a track or a playlist to begin.", modifier = Modifier.padding(vertical = 24.dp), color = BonyColors.TextMute)
-            LazyColumn(Modifier.fillMaxWidth().height(360.dp)) {
+            LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false)) {
                 items(snapshot.queue, key = { it.id + ":" + it.index }) { entry ->
                     fun indexNow(): Int = controller?.let { p -> (0 until p.mediaItemCount).firstOrNull { p.getMediaItemAt(it).mediaId == entry.id } } ?: -1
                     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
@@ -940,7 +942,7 @@ private fun AudioQueueSheet(snapshot: PlaybackSnapshot, controller: MediaControl
                             maxLines = 1, overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.clickable { val index = indexNow(); if (index >= 0) { controller?.seekToDefaultPosition(index); controller?.prepare(); controller?.play() } })
                         Text(entry.artist.ifBlank { "Unknown artist" }, style = BonyType.caption.copy(color = BonyColors.TextMute))
-                        Row {
+                        androidx.compose.foundation.layout.FlowRow {
                             TextButton(enabled = controller != null && entry.index > 0, onClick = { val index = indexNow(); audioQueueMoveTarget(index, controller?.mediaItemCount ?: 0, -1)?.let { controller?.moveMediaItem(index, it) } }) { Text("Move up") }
                             TextButton(enabled = controller != null && entry.index < snapshot.queue.lastIndex, onClick = { val index = indexNow(); audioQueueMoveTarget(index, controller?.mediaItemCount ?: 0, 1)?.let { controller?.moveMediaItem(index, it) } }) { Text("Move down") }
                             TextButton(enabled = controller != null, onClick = { val index = indexNow(); if (index >= 0) controller?.removeMediaItem(index) }) { Text("Remove") }

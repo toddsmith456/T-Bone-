@@ -94,7 +94,10 @@ class PlaybackService : MediaSessionService() {
                 }
             player = created
             created.addListener(object : Player.Listener {
-                override fun onIsPlayingChanged(isPlaying: Boolean) { captureProgress(); if (!isPlaying) saveProgress() }
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    captureProgress()
+                    if (isPlaying) beginEpisodePlayback() else saveProgress()
+                }
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     captureProgress()
                     if (playbackState == Player.STATE_ENDED) saveProgress(completed = true)
@@ -134,6 +137,7 @@ class PlaybackService : MediaSessionService() {
                                     val position = podcastResumePosition(saved)
                                     if (position > 0) created.seekTo(position)
                                 }
+                                if (created.isPlaying) beginEpisodePlayback()
                             }
                         }
                     }
@@ -179,16 +183,24 @@ class PlaybackService : MediaSessionService() {
         val p = player ?: return
         val current = episode ?: return
         if (p.currentMediaItem?.mediaMetadata?.extras?.getString("audioUrlKey") != current.key) return
-        current.progress = PodcastProgress(p.currentPosition.coerceAtLeast(0),
-            p.duration.takeIf { it > 0 && it != C.TIME_UNSET } ?: current.progress.duration, p.playbackParameters.speed)
+        current.progress = current.progress.copy(position = p.currentPosition.coerceAtLeast(0),
+            duration = p.duration.takeIf { it > 0 && it != C.TIME_UNSET } ?: current.progress.duration, speed = p.playbackParameters.speed)
     }
-    private fun saveProgress(completed: Boolean = false) {
+    private fun beginEpisodePlayback() {
         val current = episode ?: return
+        if (current.progress.played) {
+            current.progress = current.progress.copy(played = false)
+            saveProgress(playedOverride = false)
+        }
+    }
+    private fun saveProgress(completed: Boolean = false, playedOverride: Boolean? = null) {
+        val current = episode ?: return
+        if (completed) current.progress = current.progress.copy(played = true)
         val snapshot = current.progress
         val recordedAt = progressRepository.timestamp()
         // Repository serializes through the existing wipe-aware Notes writer, even on service shutdown.
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
-            runCatching { progressRepository.save(current.owner, current.key, snapshot, if (completed) true else null, recordedAt) }
+            runCatching { progressRepository.save(current.owner, current.key, snapshot, if (completed) true else playedOverride, recordedAt) }
         }
     }
 

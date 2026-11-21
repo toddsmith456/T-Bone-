@@ -532,6 +532,14 @@ class ComposeViewModel @Inject constructor(
                 alt = label,
                 extension = prepared.extension,
             )
+            // The server has the file now. Preserve this result before optional metadata work.
+            if (request.recoverableAudio) {
+                uploadedMediaHints[url] = UploadedMediaHint(url = url, mime = prepared.mime)
+                _uiState.update { state -> state.copy(audioUploadStage = AudioUploadStage.UPLOADED, audioRecoveryUrl = url,
+                    hasUploadedAudio = true, uploadedAudioUrls = (state.uploadedAudioUrls + url).distinct(),
+                    originalAudioUrls = (state.originalAudioUrls + url).distinct(),
+                    audioCategoryByUrl = state.audioCategoryByUrl + (url to request.audioCategory)) }
+            }
             val musicMetadata = if (request.kind == "audio") withContext(Dispatchers.IO) {
                 val retriever = android.media.MediaMetadataRetriever()
                 try {
@@ -585,8 +593,8 @@ class ComposeViewModel @Inject constructor(
         } catch (error: Exception) {
             if (request.recoverableAudio) {
                 failedAudioRequest = request
-                _uiState.update { it.copy(audioUploadStage = AudioUploadStage.UPLOAD_FAILED,
-                    audioOperationError = "Upload failed. Retry, or choose the file again if access has expired.") }
+                _uiState.update { it.copy(audioUploadStage = if (it.audioRecoveryUrl != null) AudioUploadStage.PUBLISH_FAILED else AudioUploadStage.UPLOAD_FAILED,
+                    audioOperationError = if (it.audioRecoveryUrl != null) "The file was uploaded. Retry publishing to reuse it." else "Upload failed. Retry, or choose the file again if access has expired.") }
             }
             val message = error.message ?: "upload failed"
             uploadErrorQueue.trySend(message)
