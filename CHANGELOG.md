@@ -5,6 +5,28 @@ All notable changes to this fork are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.6.4]
+
+### Added
+- **Dedicated audio tool.** Player, Library and Discover tabs with audio playlists, explicit queue controls, music/podcast categories and Follows/Global discovery. Discover starts the tapped item; playlists play their full queue.
+- **Podcast controls.** Encrypted, account-scoped listening progress, 15-second rewind, 30-second forward, playback speed, elapsed/remaining time and played/unplayed controls. Finished episodes replay from the start; podcast speed does not carry into music.
+- **Recoverable original-audio uploads.** Music/Podcast selection, operation status and upload cancellation. Publication retries reuse the uploaded URL and, once signed, the same note. Podcast posts receive the TbonePodcast tag.
+
+### Improved
+- Inline and full-player audio share one background playback session, with stable track identity, metadata enrichment, playback errors and retry. Background playback follows the saved preference.
+- Original audio uploads preserve file bytes and embedded metadata. Track artist/album/song identity stays separate from the sharing poster's credit.
+- Bounded audio metadata caching, per-feed/playlist scroll restoration, compact icon controls, larger portrait album art and accessible action labels.
+
+### Fixed
+- **Content Filters becoming unusable after settings search.** Normal navigation no longer injects a literal search placeholder or hides all controls. Redundant sub-screen settings-search bars and query-reset loops were removed; parental PIN gates remain intact.
+- Search results now open the selected result's owning screen rather than reranking the query. Reactions search entries point to the main Settings section.
+- Deferred podcast-history writes cannot restore progress after a data wipe. Upload-queue cleanup also runs when file preparation is cancelled.
+
+### Verification limits
+- The promoted beta passed signed beta and production builds/tests, privacy checks and signature/checksum verification. Public-release publication is separately gated by the release workflow.
+- No physical-device, TalkBack, large-font, live-relay or performance acceptance testing is claimed. Automated privacy checks are a limited static screen, not an end-to-end privacy guarantee.
+
+
 ## [0.6.3]
 
 ### Added
