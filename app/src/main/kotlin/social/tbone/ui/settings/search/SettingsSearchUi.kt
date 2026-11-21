@@ -1,5 +1,8 @@
 package social.tbone.ui.settings.search
 
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -71,17 +74,12 @@ class SettingsScreenSearchState(
 }
 
 @Composable
-fun rememberSettingsScreenSearch(query: String, limit: Int = 60): SettingsScreenSearchState {
+fun rememberSettingsScreenSearch(query: String, limit: Int = Int.MAX_VALUE): SettingsScreenSearchState {
     val hits = remember(query) {
         if (query.isBlank()) emptyList() else SettingsSearchIndex.search(query, limit = limit)
     }
     return remember(query, hits) { SettingsScreenSearchState(query = query, hits = hits) }
 }
-
-/** Query state that survives configuration changes and process death. */
-@Composable
-fun rememberSettingsSearchQuery(): androidx.compose.runtime.MutableState<String> =
-    rememberSaveable { mutableStateOf("") }
 
 /** Shared search field. */
 @Composable
@@ -91,38 +89,24 @@ fun SettingsSearchField(
     modifier: Modifier = Modifier,
     placeholder: String = "Search settings",
 ) {
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
         modifier = modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
         singleLine = true,
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { keyboard?.hide() }),
         shape = appCornerShape(androidx.compose.material3.MaterialTheme.shapes.medium),
         placeholder = { Text(placeholder, color = BonyColors.TextMute) },
-        leadingIcon = { Text("⌕", style = BonyType.title.copy(color = BonyColors.TextMute)) },
+        leadingIcon = { androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Search, contentDescription = "Search settings", tint = BonyColors.TextMute) },
         trailingIcon = {
             if (value.isNotEmpty()) {
                 IconButton(onClick = { onValueChange("") }) {
-                    Text("×", style = BonyType.body.copy(color = BonyColors.TextMute))
+                    androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Default.Clear, contentDescription = "Clear settings search", tint = BonyColors.TextMute)
                 }
             }
         },
-    )
-}
-
-/** "3 matches on this screen" / "nothing here — see below". */
-@Composable
-fun SettingsSearchSummary(state: SettingsScreenSearchState, group: SettingsGroup) {
-    if (!state.isActive) return
-    val here = state.hits.count { it.entry.group == group }
-    val text = when (here) {
-        0 -> "no matches on this screen"
-        1 -> "1 match on this screen"
-        else -> "$here matches on this screen"
-    }
-    Text(
-        text = text,
-        style = BonyType.meta.copy(color = if (here == 0) BonyColors.TextMute else BonyColors.Accent),
-        modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
     )
 }
 
@@ -155,44 +139,6 @@ fun SettingsElsewhereResults(
             Text(hit.entry.breadcrumb, style = BonyType.meta.copy(color = BonyColors.TextMute))
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
-    }
-    Spacer(Modifier.height(4.dp))
-}
-
-/**
- * Sub-screen variant of the "nothing here" line, with suggestions.
- *
- * Returns the suggestion the user tapped (if any) through [onPick] so the
- * screen can replace its own query without owning search logic.
- */
-@Composable
-fun SettingsSearchEmptyHint(
-    state: SettingsScreenSearchState,
-    group: SettingsGroup,
-    onPick: (String) -> Unit,
-) {
-    if (!state.isActive) return
-    if (state.hits.any { it.entry.group == group }) return
-    Text(
-        text = "no matches on this screen",
-        style = BonyType.meta.copy(color = BonyColors.TextMute),
-        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
-    )
-    val hints = androidx.compose.runtime.remember(state.query) {
-        SettingsSearchIndex.suggestions(state.query)
-    }
-    if (hints.isEmpty()) return
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
-    ) {
-        Text("try", style = BonyType.meta.copy(color = BonyColors.TextMute))
-        hints.forEach { hint ->
-            Text(
-                text = "  $hint",
-                style = BonyType.meta.copy(color = BonyColors.Accent),
-                modifier = Modifier.clickable { onPick(hint) }.padding(horizontal = 6.dp, vertical = 4.dp),
-            )
-        }
     }
     Spacer(Modifier.height(4.dp))
 }
@@ -252,11 +198,17 @@ fun SettingsAnchor(
  * Because the tint is drawn by the row itself, wrapping a row in an anchor can
  * never move it.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun searchRowHighlight(base: Modifier = Modifier, anchor: String): Modifier {
     val target = LocalSettingsJumpAnchor.current
     return if (target != null && target == anchor) {
-        base.background(BonyColors.AccentBg)
+        val requester = remember(anchor) { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+        androidx.compose.runtime.LaunchedEffect(target) {
+            androidx.compose.runtime.withFrameNanos { }
+            requester.bringIntoView()
+        }
+        base.bringIntoViewRequester(requester).background(BonyColors.AccentBg)
     } else {
         base
     }

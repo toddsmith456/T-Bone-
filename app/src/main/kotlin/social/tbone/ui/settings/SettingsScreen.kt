@@ -220,7 +220,7 @@ fun SettingsScreen(
             SettingsElsewhereResults(
                 state = screenSearch,
                 group = SettingsGroup.SETTINGS,
-                onOpen = { _, query -> onOpenSearchHit(query) },
+                onOpen = { hit, _ -> onOpenSearchHit(hit.entry.id) },
             )
         }
         CompositionLocalProvider(

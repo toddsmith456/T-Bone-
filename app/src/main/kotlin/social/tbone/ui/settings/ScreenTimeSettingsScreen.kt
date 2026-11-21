@@ -7,12 +7,7 @@ import social.tbone.settings.search.SettingsSearch as SettingsSearchIndex
 import social.tbone.ui.settings.search.LocalSettingsJumpAnchor
 import social.tbone.ui.settings.search.LocalSettingsScreenSearch
 import social.tbone.ui.settings.search.SettingsAnchor
-import social.tbone.ui.settings.search.SettingsSearchEmptyHint
-import social.tbone.ui.settings.search.SettingsSearchField
-import social.tbone.ui.settings.search.SettingsSearchSummary
 import social.tbone.ui.settings.search.SettingsSectionAnchor
-import social.tbone.ui.settings.search.rememberSettingsScreenSearch
-import social.tbone.ui.settings.search.rememberSettingsSearchQuery
 import social.tbone.ui.settings.search.searchRowHighlight
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -54,10 +49,6 @@ fun ScreenTimeSettingsScreen(
     initialSearch: String = "",
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
-    val searchQuery = rememberSettingsSearchQuery().apply {
-        if (value.isEmpty() && initialSearch.isNotEmpty()) value = initialSearch
-    }
-    val screenSearch = rememberSettingsScreenSearch(searchQuery.value)
     // Flash only the row an incoming jump handed over — typing in this
     // screen's own field shows every matching row instead of one target.
     val jumpAnchor = remember(initialSearch) {
@@ -103,15 +94,9 @@ fun ScreenTimeSettingsScreen(
             Text("screen time", style = BonyType.body.copy(color = BonyColors.Text))
         }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
-        SettingsSearchField(
-            value = searchQuery.value,
-            onValueChange = { searchQuery.value = it },
-        )
-        SettingsSearchSummary(screenSearch, SettingsGroup.SCREEN_TIME)
-        SettingsSearchEmptyHint(screenSearch, SettingsGroup.SCREEN_TIME) { searchQuery.value = it }
 
         CompositionLocalProvider(
-            LocalSettingsScreenSearch provides screenSearch,
+            LocalSettingsScreenSearch provides null,
             LocalSettingsJumpAnchor provides jumpAnchor,
         ) {
         SettingsSectionAnchor("st_all") {

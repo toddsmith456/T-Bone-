@@ -20,6 +20,16 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.material.icons.filled.Forward30
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.LibraryMusic
@@ -856,8 +866,8 @@ private fun FullPlayer(snapshot: PlaybackSnapshot, controller: MediaController?,
     var speedMenu by remember { mutableStateOf(false) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val compact = maxHeight < 420.dp || LocalDensity.current.fontScale > 1.4f
-        val artSize = if (compact) 88.dp else minOf(maxWidth - 48.dp, maxHeight * 0.34f, 260.dp).coerceAtLeast(88.dp)
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        val artSize = if (compact) 88.dp else minOf(maxWidth - 32.dp, maxHeight * 0.48f, 320.dp).coerceAtLeast(88.dp)
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             if (compact) Row(verticalAlignment = Alignment.CenterVertically) {
                 TrackArt(snapshot.artworkUri, snapshot.artwork, Modifier.size(artSize))
                 Column(Modifier.weight(1f).padding(start = 12.dp)) { NowPlayingIdentity(snapshot) }
@@ -876,35 +886,61 @@ private fun FullPlayer(snapshot: PlaybackSnapshot, controller: MediaController?,
                 AudioPhase.PLAYING -> "Playing"
             }, style = BonyType.caption.copy(color = BonyColors.TextMute), modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
             PlaybackControls(snapshot, controller)
-            if (snapshot.podcast) {
-                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.Center) {
-                    TextButton(onClick = { controller?.seekTo((snapshot.positionMs - 15_000).coerceAtLeast(0)) }, enabled = controller != null) { Text("−15 seconds") }
-                    TextButton(onClick = { controller?.seekTo((snapshot.positionMs + 30_000).coerceAtMost(if (snapshot.durationMs > 0) snapshot.durationMs else Long.MAX_VALUE)) }, enabled = controller != null) { Text("+30 seconds") }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                if (snapshot.podcast) {
+                    PlayerActionIcon(Icons.Default.Replay, "Rewind 15 seconds", enabled = controller != null,
+                        onClick = { controller?.seekTo((snapshot.positionMs - 15_000).coerceAtLeast(0)) })
+                    PlayerActionIcon(Icons.Default.Forward30, "Forward 30 seconds", enabled = controller != null,
+                        onClick = { controller?.seekTo((snapshot.positionMs + 30_000).coerceAtMost(if (snapshot.durationMs > 0) snapshot.durationMs else Long.MAX_VALUE)) })
                     Box {
-                        TextButton(onClick = { speedMenu = true }, enabled = controller != null) { Text("Speed · ${snapshot.speed}×") }
+                        PlayerActionIcon(Icons.Default.Speed, "Playback speed", state = "${snapshot.speed} times", enabled = controller != null,
+                            selected = snapshot.speed != 1f, onClick = { speedMenu = true })
                         DropdownMenu(speedMenu, { speedMenu = false }) {
                             listOf(0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f).forEach { speed ->
                                 DropdownMenuItem(text = { Text("${speed}×") }, onClick = { controller?.setPlaybackSpeed(speed); speedMenu = false })
                             }
                         }
                     }
-                    TextButton(onClick = { remaining = !remaining }) { Text(if (remaining) "Remaining: ${formatDuration((snapshot.durationMs - snapshot.positionMs).coerceAtLeast(0))}" else "Elapsed: ${formatDuration(snapshot.positionMs)}") }
-                    TextButton(onClick = { onPlayed(!played) }) { Text(if (played) "Mark unplayed" else "Mark played") }
+                    PlayerActionIcon(Icons.Default.Timer, "Toggle elapsed or remaining time", selected = remaining,
+                        state = if (remaining) "Remaining time" else "Elapsed time", onClick = { remaining = !remaining })
+                    PlayerActionIcon(if (played) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
+                        if (played) "Mark episode unplayed" else "Mark episode played", selected = played,
+                        state = if (played) "Played" else "Unplayed", onClick = { onPlayed(!played) })
+                } else {
+                    PlayerActionIcon(Icons.Default.Shuffle, "Toggle shuffle", enabled = controller != null && snapshot.queue.isNotEmpty(),
+                        selected = snapshot.shuffle, state = if (snapshot.shuffle) "On" else "Off",
+                        onClick = { controller?.shuffleModeEnabled = !snapshot.shuffle })
+                    PlayerActionIcon(if (snapshot.repeatMode == Player.REPEAT_MODE_ONE) Icons.Default.RepeatOne else Icons.Default.Repeat,
+                        "Change repeat mode", enabled = controller != null && snapshot.queue.isNotEmpty(), selected = snapshot.repeatMode != Player.REPEAT_MODE_OFF,
+                        state = when (snapshot.repeatMode) { Player.REPEAT_MODE_ALL -> "Repeat all"; Player.REPEAT_MODE_ONE -> "Repeat one"; else -> "Off" },
+                        onClick = { controller?.repeatMode = when (snapshot.repeatMode) {
+                            Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
+                            Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
+                            else -> Player.REPEAT_MODE_OFF
+                        } })
                 }
+                PlayerActionIcon(Icons.Default.QueueMusic, "Open playback queue", state = "${snapshot.queue.size} tracks", onClick = onQueue)
             }
-            TextButton(onClick = onQueue) { Text("Queue · ${snapshot.queue.size} tracks") }
-            if (snapshot.origin.isNotBlank()) Text(snapshot.origin, style = BonyType.caption.copy(color = BonyColors.TextMute))
-            if (!snapshot.podcast) Row {
-                TextButton(onClick = { controller?.shuffleModeEnabled = !snapshot.shuffle }, enabled = controller != null && snapshot.queue.isNotEmpty()) { Text(if (snapshot.shuffle) "Shuffle: on" else "Shuffle: off") }
-                TextButton(onClick = { controller?.repeatMode = when (snapshot.repeatMode) {
-                    Player.REPEAT_MODE_OFF -> Player.REPEAT_MODE_ALL
-                    Player.REPEAT_MODE_ALL -> Player.REPEAT_MODE_ONE
-                    else -> Player.REPEAT_MODE_OFF
-                } }, enabled = controller != null && snapshot.queue.isNotEmpty()) {
-                    Text("Repeat: " + when (snapshot.repeatMode) { Player.REPEAT_MODE_ALL -> "all"; Player.REPEAT_MODE_ONE -> "one"; else -> "off" })
-                }
-            }
+            if (snapshot.podcast) Text("${snapshot.speed}× · " + if (remaining) "−${formatDuration((snapshot.durationMs - snapshot.positionMs).coerceAtLeast(0))} remaining" else "${formatDuration(snapshot.positionMs)} elapsed",
+                style = BonyType.caption.copy(color = BonyColors.TextMute))
+            if (snapshot.origin.isNotBlank()) Text(snapshot.origin, style = BonyType.caption.copy(color = BonyColors.TextMute), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+    }
+}
+
+/** Compact visual icons with full-size touch targets and spoken state. */
+@Composable
+private fun PlayerActionIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String,
+    state: String = "", selected: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(48.dp).semantics {
+        contentDescription = label
+        if (state.isNotBlank()) stateDescription = state
+    }) {
+        Icon(icon, contentDescription = null, tint = when {
+            !enabled -> BonyColors.TextMute.copy(alpha = 0.45f)
+            selected -> BonyColors.Accent
+            else -> BonyColors.TextMute
+        })
     }
 }
 

@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.CompositionLocalProvider
 import social.tbone.settings.search.SettingsGroup
@@ -27,12 +29,7 @@ import social.tbone.settings.search.SettingsSearch as SettingsSearchIndex
 import social.tbone.ui.settings.search.LocalSettingsJumpAnchor
 import social.tbone.ui.settings.search.LocalSettingsScreenSearch
 import social.tbone.ui.settings.search.SettingsAnchor
-import social.tbone.ui.settings.search.SettingsSearchEmptyHint
-import social.tbone.ui.settings.search.SettingsSearchField
-import social.tbone.ui.settings.search.SettingsSearchSummary
 import social.tbone.ui.settings.search.SettingsSectionAnchor
-import social.tbone.ui.settings.search.rememberSettingsScreenSearch
-import social.tbone.ui.settings.search.rememberSettingsSearchQuery
 import social.tbone.ui.settings.search.searchRowHighlight
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
@@ -114,16 +111,22 @@ fun ContentFiltersScreen(
         return
     }
 
-    val searchQuery = rememberSettingsSearchQuery().apply {
-        if (value.isEmpty() && initialSearch.isNotEmpty()) value = initialSearch
-    }
-    val screenSearch = rememberSettingsScreenSearch(searchQuery.value)
     // Flash only the row an incoming jump handed over — typing in this
     // screen's own field shows every matching row instead of one target.
     val jumpAnchor = remember(initialSearch) {
         if (initialSearch.isBlank()) null
         else SettingsSearchIndex.search(initialSearch)
             .firstOrNull { it.entry.group == SettingsGroup.CONTENT_FILTERS }?.entry?.anchor
+    }
+
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val jumpSection = remember(initialSearch) {
+        SettingsSearchIndex.search(initialSearch).firstOrNull { it.entry.group == SettingsGroup.CONTENT_FILTERS }?.entry?.section
+    }
+    LaunchedEffect(jumpSection) {
+        val index = social.tbone.settings.search.SettingsSections.forGroup(SettingsGroup.CONTENT_FILTERS)
+            .indexOfFirst { it.id == jumpSection }
+        if (index >= 0) listState.scrollToItem(index)
     }
 
     var bleepInput by remember { mutableStateOf("") }
@@ -152,12 +155,6 @@ fun ContentFiltersScreen(
             Text("content filters", style = BonyType.body.copy(color = BonyColors.Text))
         }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
-        SettingsSearchField(
-            value = searchQuery.value,
-            onValueChange = { searchQuery.value = it },
-        )
-        SettingsSearchSummary(screenSearch, SettingsGroup.CONTENT_FILTERS)
-        SettingsSearchEmptyHint(screenSearch, SettingsGroup.CONTENT_FILTERS) { searchQuery.value = it }
 
         if (showSetPin) {
             ParentalPinSetup(
@@ -168,10 +165,10 @@ fun ContentFiltersScreen(
         }
 
         CompositionLocalProvider(
-            LocalSettingsScreenSearch provides screenSearch,
+            LocalSettingsScreenSearch provides null,
             LocalSettingsJumpAnchor provides jumpAnchor,
         ) {
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(state = listState, modifier = Modifier.weight(1f).imePadding().navigationBarsPadding()) {
             // ── Parental: screen time (lives inside the pin-locked folder so a
             // child can't turn the limit off without the parental pin) ──────
             item {

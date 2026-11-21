@@ -508,12 +508,12 @@ object SettingsCatalog {
 
         // ── Reactions ─────────────────────────────────────────────────────
         e(
-            "reactions.multi_emoji", SettingsGroup.REACTIONS, "reactions_screen", "reactions_multi",
+            "reactions.multi_emoji", SettingsGroup.SETTINGS, "set_reactions", "reactions_multi",
             "multi emoji reactions", "choose from saved emojis when you tap like",
             "emoji,reaction,like,heart,multi",
         ),
         e(
-            "reactions.saved_emojis", SettingsGroup.REACTIONS, "reactions_screen", "reactions_saved",
+            "reactions.saved_emojis", SettingsGroup.SETTINGS, "set_reactions", "reactions_saved",
             "saved emojis", "the emoji picker shown after tapping like",
             "emoji,saved,picker,add,limit",
         ),

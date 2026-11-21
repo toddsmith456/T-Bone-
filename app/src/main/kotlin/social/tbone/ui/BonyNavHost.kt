@@ -1,5 +1,7 @@
 package social.tbone.ui
 
+import social.tbone.settings.search.settingsDestination
+import social.tbone.settings.search.settingsSearchDestination
 import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -305,7 +307,7 @@ fun BonyNavHost() {
                             onSettingsClick = { navController.navigate("settings") },
                             onProfileClick = { pubkey -> navController.navigate("profile/$pubkey") },
                             onHashtagClick = { tag -> navController.navigate("hashtag/" + Uri.encode(tag)) },
-                            onRelayManagementClick = { navController.navigate(ROUTE_RELAY_MANAGEMENT) },
+                            onRelayManagementClick = { navController.navigate(settingsDestination(ROUTE_RELAY_MANAGEMENT)) },
                             onSearchClick = { navController.navigate("search?query=&autoOpen=false") },
                             onNotificationsClick = { navController.switchToTab(BottomTab.NOTIF) },
                             onToolboxClick = { navController.switchToTab(BottomTab.TOOLS) },
@@ -610,7 +612,7 @@ fun BonyNavHost() {
                     ) { entry ->
                         ContentFiltersScreen(
                             onBack = { navController.popBackStack() },
-                            onScreenTime = { navController.navigate(ROUTE_SCREEN_TIME) },
+                            onScreenTime = { navController.navigate(settingsDestination(ROUTE_SCREEN_TIME)) },
                             initialSearch = entry.arguments?.getString("q").orEmpty(),
                         )
                     }
@@ -676,32 +678,17 @@ fun BonyNavHost() {
                         SettingsScreen(
                             onBack = { navController.popBackStack() },
                             initialSearch = entry.arguments?.getString("q").orEmpty(),
-                            onOpenSearchHit = { query ->
-                                // Deep-feature hits land on the screen that owns
-                                // the control: content filters (and screen time
-                                // behind its PIN gate), relays, blossom, accounts.
-                                val top = social.tbone.settings.search.SettingsSearch
-                                    .bestHit(query)
-                                    ?.entry
-                                val route = when (top?.group) {
-                                    social.tbone.settings.search.SettingsGroup.RELAYS -> ROUTE_RELAY_MANAGEMENT
-                                    social.tbone.settings.search.SettingsGroup.BLOSSOM -> ROUTE_BLOSSOM
-                                    social.tbone.settings.search.SettingsGroup.ACCOUNTS -> ROUTE_ACCOUNT_MANAGEMENT
-                                    social.tbone.settings.search.SettingsGroup.SCREEN_TIME -> ROUTE_SCREEN_TIME
-                                    else -> ROUTE_CONTENT_FILTERS
-                                }
-                                navController.navigate(
-                                    route.replace("{q}", Uri.encode(query)),
-                                )
+                            onOpenSearchHit = { entryId ->
+                                settingsSearchDestination(entryId)?.let { navController.navigate(it) }
                             },
                             onAddAccount = { navController.navigate(ROUTE_ADD_ACCOUNT) },
-                            onAccountManagement = { navController.navigate(ROUTE_ACCOUNT_MANAGEMENT) },
-                            onRelayManagement = { navController.navigate(ROUTE_RELAY_MANAGEMENT) },
-                            onBlossom = { navController.navigate(ROUTE_BLOSSOM) },
+                            onAccountManagement = { navController.navigate(settingsDestination(ROUTE_ACCOUNT_MANAGEMENT)) },
+                            onRelayManagement = { navController.navigate(settingsDestination(ROUTE_RELAY_MANAGEMENT)) },
+                            onBlossom = { navController.navigate(settingsDestination(ROUTE_BLOSSOM)) },
                             onOfflineList = { type -> navController.navigate("offline_list/$type") },
                             onFollowLists = { navController.navigate(ROUTE_FOLLOW_LISTS) },
                             onProfileEdit = { navController.navigate(ROUTE_PROFILE_EDIT) },
-                            onContentFilters = { navController.navigate(ROUTE_CONTENT_FILTERS) },
+                            onContentFilters = { navController.navigate(settingsDestination(ROUTE_CONTENT_FILTERS)) },
                             onHomeFeeds = { navController.navigate(ROUTE_HOME_FEEDS) },
                             onPinSetup = { navController.navigate("pin_setup?duress=false") },
                             onDuressPinSetup = { navController.navigate("pin_setup?duress=true") },

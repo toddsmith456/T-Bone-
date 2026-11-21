@@ -3,11 +3,6 @@ package social.tbone.ui.settings
 import social.tbone.ui.theme.appBorder
 import social.tbone.settings.search.SettingsGroup
 import social.tbone.ui.settings.search.SettingsAnchor
-import social.tbone.ui.settings.search.SettingsSearchEmptyHint
-import social.tbone.ui.settings.search.SettingsSearchField
-import social.tbone.ui.settings.search.SettingsSearchSummary
-import social.tbone.ui.settings.search.rememberSettingsScreenSearch
-import social.tbone.ui.settings.search.rememberSettingsSearchQuery
 import social.tbone.ui.settings.search.searchRowHighlight
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -59,13 +54,9 @@ fun BlossomSettingsScreen(
     initialSearch: String = "",
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
-    val searchQuery = rememberSettingsSearchQuery().apply {
-        if (value.isEmpty() && initialSearch.isNotEmpty()) value = initialSearch
-    }
-    val screenSearch = rememberSettingsScreenSearch(searchQuery.value)
     val jumpAnchor = remember(initialSearch) {
         if (initialSearch.isBlank()) null
-        else screenSearch.hits.firstOrNull { it.entry.group == SettingsGroup.BLOSSOM }?.entry?.anchor
+        else social.tbone.settings.search.SettingsSearch.search(initialSearch).firstOrNull { it.entry.group == SettingsGroup.BLOSSOM }?.entry?.anchor
     }
     val servers by viewModel.blossomServers.collectAsStateWithLifecycle()
     val defaultServer by viewModel.blossomDefaultServer.collectAsStateWithLifecycle()
@@ -96,14 +87,12 @@ fun BlossomSettingsScreen(
             Spacer(Modifier.width(8.dp))
             Text("blossom uploads", style = BonyType.body.copy(color = BonyColors.Text))
         }
-        SettingsSearchField(
-            value = searchQuery.value,
-            onValueChange = { searchQuery.value = it },
-        )
-        SettingsSearchSummary(screenSearch, SettingsGroup.BLOSSOM)
-        SettingsSearchEmptyHint(screenSearch, SettingsGroup.BLOSSOM) { searchQuery.value = it }
         Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(BonyColors.Rule))
 
+        androidx.compose.runtime.CompositionLocalProvider(
+            social.tbone.ui.settings.search.LocalSettingsScreenSearch provides null,
+            social.tbone.ui.settings.search.LocalSettingsJumpAnchor provides jumpAnchor,
+        ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -332,6 +321,7 @@ fun BlossomSettingsScreen(
                 text = "when no server is chosen on the compose screen and no default is set, a random enabled server is picked for each upload.",
                 style = BonyType.caption.copy(color = BonyColors.TextMute),
             )
+        }
         }
     }
 

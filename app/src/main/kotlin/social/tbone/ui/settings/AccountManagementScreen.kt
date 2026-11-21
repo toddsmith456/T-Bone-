@@ -46,11 +46,6 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import social.tbone.settings.search.SettingsGroup
-import social.tbone.ui.settings.search.SettingsSearchEmptyHint
-import social.tbone.ui.settings.search.SettingsSearchField
-import social.tbone.ui.settings.search.SettingsSearchSummary
-import social.tbone.ui.settings.search.rememberSettingsScreenSearch
-import social.tbone.ui.settings.search.rememberSettingsSearchQuery
 import social.tbone.ui.theme.BonyColors
 import social.tbone.ui.theme.BonyType
 import social.tbone.ui.theme.appBorder
@@ -63,10 +58,6 @@ fun AccountManagementScreen(
     initialSearch: String = "",
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
-    val searchQuery = rememberSettingsSearchQuery().apply {
-        if (value.isEmpty() && initialSearch.isNotEmpty()) value = initialSearch
-    }
-    val screenSearch = rememberSettingsScreenSearch(searchQuery.value)
     val accounts by viewModel.accounts.collectAsStateWithLifecycle()
     val activeAccount by viewModel.activeAccount.collectAsStateWithLifecycle()
     val hiddenMessage by viewModel.hiddenUnlockMessage.collectAsStateWithLifecycle()
@@ -92,12 +83,6 @@ fun AccountManagementScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState()),
         ) {
-            SettingsSearchField(
-                value = searchQuery.value,
-                onValueChange = { searchQuery.value = it },
-            )
-            SettingsSearchSummary(screenSearch, SettingsGroup.ACCOUNTS)
-            SettingsSearchEmptyHint(screenSearch, SettingsGroup.ACCOUNTS) { searchQuery.value = it }
             accounts.forEach { account ->
                 val isActive = account.pubkey == activeAccount?.pubkey
                 val name = account.displayName
