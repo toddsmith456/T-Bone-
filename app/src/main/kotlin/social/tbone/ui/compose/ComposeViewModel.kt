@@ -85,6 +85,7 @@ data class ComposeUiState(
     /** Audio attachments on the draft can optionally be added to one NIP-51 music playlist. */
     val hasUploadedAudio: Boolean = false,
     val uploadedAudioUrls: List<String> = emptyList(),
+    val audioCategoryByUrl: Map<String, String> = emptyMap(),
     val originalAudioUrls: List<String> = emptyList(),
     val audioPlaylists: List<social.tbone.notes.BookmarkFolderUi> = emptyList(),
     val selectedAudioPlaylistId: String? = null,
@@ -195,6 +196,7 @@ class ComposeViewModel @Inject constructor(
         val preferredServer: String?,
         /** When true, audio must be copied byte-for-byte, ignoring both compression toggles. */
         val preserveOriginalAudio: Boolean = false,
+        val audioCategory: String = "TboneMusic",
     )
 
     /** Display hints measured at upload time, keyed by the uploaded URL. */
@@ -433,7 +435,7 @@ class ComposeViewModel @Inject constructor(
     }
 
     /** Queue one upload; multiple picker results are processed sequentially and all URLs kept. */
-    fun attachMedia(uri: Uri, kind: String, preserveOriginalAudio: Boolean = false) {
+    fun attachMedia(uri: Uri, kind: String, preserveOriginalAudio: Boolean = false, audioCategory: String = "TboneMusic") {
         if (kind !in setOf("image", "video", "audio", "file")) return
         val selectedServer = _uiState.value.blossomServer
             ?: savedStateHandle.get<String>(KEY_BLOSSOM_SERVER)?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
@@ -441,7 +443,7 @@ class ComposeViewModel @Inject constructor(
             pendingUploads += 1
             _uiState.update { it.copy(isUploading = true) }
             val queued = mediaUploadQueue.trySend(
-                MediaUploadRequest(uri, kind, selectedServer, preserveOriginalAudio && kind == "audio"),
+                MediaUploadRequest(uri, kind, selectedServer, preserveOriginalAudio && kind == "audio", if (audioCategory == "TbonePodcast") audioCategory else "TboneMusic"),
             )
             if (queued.isFailure) {
                 pendingUploads = (pendingUploads - 1).coerceAtLeast(0)
@@ -536,6 +538,7 @@ class ComposeViewModel @Inject constructor(
                         hasUploadedAudio = true,
                         uploadedAudioUrls = uploadedUrls,
                         originalAudioUrls = originalUrls,
+                        audioCategoryByUrl = state.audioCategoryByUrl + (url to request.audioCategory),
                     )
                 }
             }
@@ -690,9 +693,9 @@ class ComposeViewModel @Inject constructor(
         val selectedPlaylist = draftState.audioPlaylists.firstOrNull {
             it.id == draftState.selectedAudioPlaylistId
         }.takeIf { hasAudioAttachment }
-        val bodyContent = if (originalAudioPost &&
-            !Regex("(?i)#tbonemusic\\b").containsMatchIn(trimmed)
-        ) "$trimmed\n\n#TboneMusic" else trimmed
+        val audioHashtags = draftState.originalAudioUrls.filter(trimmed::contains)
+            .map { draftState.audioCategoryByUrl[it] ?: "TboneMusic" }.distinct()
+        val bodyContent = appendAudioHashtags(trimmed, audioHashtags)
         if (_uiState.value.replyTargetRequired && _uiState.value.replyToEvent == null) {
             _uiState.update {
                 it.copy(error = "Reply target is unavailable. Publishing is blocked so this cannot become a standalone note.")
@@ -740,7 +743,7 @@ class ComposeViewModel @Inject constructor(
                             add(buildJsonArray { add(JsonPrimitive("p")); add(JsonPrimitive(hex)) })
                         }
                     }
-                    (tagHashtags + if (originalAudioPost) listOf("TboneMusic") else emptyList())
+                    (tagHashtags + audioHashtags)
                         .map { tag ->
                             tag.trim().removePrefix("#").lowercase()
                                 .filter { it.isLetterOrDigit() || it in "_" }
@@ -922,4 +925,11 @@ private fun encodeBlurHashScaled(filePath: String): String? {
     } finally {
         if (!bmp.isRecycled) bmp.recycle()
     }
+}
+
+internal fun appendAudioHashtags(content: String, hashtags: List<String>): String {
+    val missing = hashtags.filter { it == "TboneMusic" || it == "TbonePodcast" }.distinct().filterNot {
+        Regex("(?i)#${Regex.escape(it)}\\b").containsMatchIn(content)
+    }
+    return if (missing.isEmpty()) content else content + "\n\n" + missing.joinToString(" ") { "#$it" }
 }

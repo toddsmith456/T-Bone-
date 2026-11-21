@@ -981,6 +981,10 @@ SettingsAnchor("cache_preset") {
                 value = "${social.tbone.cache.CacheStorageManager.formatBytes(cacheStats.mediaBytes)} / ${social.tbone.cache.CacheStorageManager.formatBudget(cachePreset.mediaDiskBytes)}",
             )
             CacheUsageRow(
+                label = "audio details (clear with photos)",
+                value = "${social.tbone.cache.CacheStorageManager.formatBytes(cacheStats.audioDetailsBytes)} / ${social.tbone.cache.CacheStorageManager.formatBudget(social.tbone.media.audio.AudioCachePolicy.diskBudget(cachePreset))}",
+            )
+            CacheUsageRow(
                 label = "videos & audio",
                 value = if (cachePreset.videoDiskBytes <= 0L) {
                     "off"

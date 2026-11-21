@@ -46,6 +46,7 @@ class DataWiper @Inject constructor(
     private val aiEngine: social.tbone.ai.NsfwEngine,
     private val mediaScanCache: social.tbone.ai.MediaScanCache,
     private val imageLoaderRegistry: social.tbone.cache.ImageLoaderRegistry,
+    private val audioMetadataCache: social.tbone.media.audio.AudioMetadataCache,
     private val mediaCacheManager: social.tbone.cache.MediaCacheManager,
     private val mediaPrefetcher: social.tbone.cache.MediaPrefetcher,
     private val profileRepository: social.tbone.profile.ProfileRepository,
@@ -117,6 +118,7 @@ class DataWiper @Inject constructor(
                 }
             }
             steps.run("clear cache") {
+                audioMetadataCache.clear(forWipe = true)
                 checkNotNull(context.cacheDir.listFiles()) { "cannot enumerate cache" }
                     .forEach { check(it.deleteRecursively()) { "cache deletion failed" } }
             }

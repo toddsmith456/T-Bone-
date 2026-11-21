@@ -17,6 +17,7 @@ import javax.inject.Singleton
 
 /** Live on-disk storage breakdown displayed in Settings → Storage & Cache. */
 data class CacheStorageStats(
+    val audioDetailsBytes: Long = 0L,
     val avatarBytes: Long = 0L,
     val mediaBytes: Long = 0L,
     val videoBytes: Long = 0L,
@@ -27,7 +28,7 @@ data class CacheStorageStats(
     val aiScanCount: Int = 0,
 ) {
     val totalCacheBytes: Long
-        get() = avatarBytes + mediaBytes + videoBytes + tempBytes
+        get() = avatarBytes + mediaBytes + videoBytes + tempBytes + audioDetailsBytes
 }
 
 /**
@@ -38,6 +39,7 @@ data class CacheStorageStats(
 @Singleton
 class CacheStorageManager @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val audioMetadataCache: social.tbone.media.audio.AudioMetadataCache,
     private val imageLoaders: ImageLoaderRegistry,
     private val mediaCache: MediaCacheManager,
     private val prefetcher: MediaPrefetcher,
@@ -77,6 +79,7 @@ class CacheStorageManager @Inject constructor(
         val aiScans = runCatching { mediaScanCacheDao.count() }.getOrDefault(0)
 
         CacheStorageStats(
+            audioDetailsBytes = dirSizeBytes(File(context.cacheDir, CacheDirectories.AUDIO_DETAILS_CACHE)),
             avatarBytes = avatarBytes,
             mediaBytes = mediaBytes,
             videoBytes = videoBytes,
@@ -90,6 +93,7 @@ class CacheStorageManager @Inject constructor(
 
     /** Clears only feed photos/banners/posters — keeps avatars intact. */
     suspend fun clearFeedMedia(): CacheStorageStats = withContext(Dispatchers.IO) {
+        audioMetadataCache.clear()
         imageLoaders.clearMediaCache()
         prefetcher.clearSessionDedup()
         measure()
@@ -110,6 +114,7 @@ class CacheStorageManager @Inject constructor(
 
     /** Clears feed photos, videos/audio, avatars, temps, engagement cache, and unfollowed profiles. */
     suspend fun clearAllCaches(): CacheStorageStats = withContext(Dispatchers.IO) {
+        audioMetadataCache.clear()
         imageLoaders.clearMediaCache()
         imageLoaders.clearAvatarCache()
         mediaCache.clearCache()

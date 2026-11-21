@@ -137,6 +137,10 @@ class EventRepository @Inject constructor(
             ?.also { memCache.put(it.id, it) }
     }
 
+    suspend fun recentAudioCandidates(): List<Event> = dao.recentAudioCandidates().mapNotNull {
+        runCatching { it.toEvent() }.getOrNull()?.also { event -> memCache.put(event.id, event) }
+    }
+
     suspend fun getLatestByAuthorAndKind(pubkey: String, kind: Int): Event? =
         dao.getLatestByAuthorAndKind(pubkey.lowercase(), kind)
             ?.let { runCatching { it.toEvent() }.getOrNull() }

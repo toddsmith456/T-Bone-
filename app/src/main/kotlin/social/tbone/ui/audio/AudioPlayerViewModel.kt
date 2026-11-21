@@ -32,9 +32,16 @@ import social.tbone.nostr.relay.RelayPool
 import social.tbone.profile.ProfileRepository
 import javax.inject.Inject
 
+enum class AudioCategory(val tag: String, val hashtag: String, val label: String) {
+    MUSIC("tbonemusic", "TboneMusic", "Music"),
+    PODCASTS("tbonepodcast", "TbonePodcast", "Podcasts");
+}
+enum class AudioAudience { FOLLOWS, GLOBAL }
 enum class AudioPlayerTab { PLAYER, LIBRARY, DISCOVER }
 
 data class AudioPlayerUiState(
+    val category: AudioCategory = AudioCategory.MUSIC,
+    val audience: AudioAudience = AudioAudience.GLOBAL,
     val playlists: List<BookmarkFolderUi> = emptyList(),
     val selectedPlaylistId: String? = null,
     val playlistTracks: List<BookmarkUi> = emptyList(),
@@ -48,6 +55,9 @@ data class AudioPlayerUiState(
 @OptIn(ExperimentalCoroutinesApi::class)
 @HiltViewModel
 class AudioPlayerViewModel @Inject constructor(
+    private val metadataCache: social.tbone.media.audio.AudioMetadataCache,
+    private val settings: social.tbone.settings.AppSettings,
+    private val accounts: social.tbone.account.AccountRepository,
     private val bookmarksRepository: BookmarksRepository,
     private val bookmarkSyncRepository: BookmarkSyncRepository,
     private val pool: RelayPool,
@@ -61,17 +71,28 @@ class AudioPlayerViewModel @Inject constructor(
     private val _metadata = MutableStateFlow<Map<String, social.tbone.media.audio.AudioMetadataReader.Metadata>>(emptyMap())
     val metadata = _metadata.asStateFlow()
     private val requestedMetadata = mutableSetOf<String>()
-    fun loadMetadata(url: String) {
+    fun loadMetadata(url: String, allowNetwork: Boolean = true) {
         if (!requestedMetadata.add(url)) return
         viewModelScope.launch {
-            social.tbone.media.audio.AudioMetadataReader.read(url)?.let { result ->
-                _metadata.update { it + (url to result) }
+            val generation = metadataCache.generation.value
+            fun publish(result: social.tbone.media.audio.AudioMetadataReader.Metadata?) {
+                if (result == null || generation != metadataCache.generation.value) return
+                _metadata.update { current -> (current.filterKeys { it != url } + (url to result))
+                    .entries.toList().takeLast(24).associate { it.key to it.value } }
             }
+            try {
+                publish(metadataCache.read(url, allowNetwork = false))
+                if (allowNetwork) publish(metadataCache.read(url))
+            } finally { requestedMetadata.remove(url) }
         }
     }
 
     val profiles: StateFlow<Map<String, ProfileContent>> = profileRepository.profiles
 
+    private var follows: Set<String> = emptySet()
+    private var accountPubkey: String? = null
+    private var reloadJob: Job? = null
+    private var feedGeneration = 0L
     private var feedSubscriptionId: String? = null
     private var feedCollectionJob: Job? = null
     private var feedTimeoutJob: Job? = null
@@ -102,8 +123,32 @@ class AudioPlayerViewModel @Inject constructor(
         }
 
         refreshPlaylists()
-        subscribeToMusicFeed()
+        viewModelScope.launch {
+            accounts.activeAccount.map { account ->
+                account?.pubkey to (account?.let { it.follows + it.followEntries.map { entry -> entry.pubkey } }.orEmpty().toSet())
+            }.distinctUntilChanged().collect { (pubkey, followed) ->
+                accountPubkey = pubkey
+                follows = followed
+                refreshMusicFeed()
+            }
+        }
+        viewModelScope.launch { settings.cachePreset.collect { metadataCache.trim() } }
+        viewModelScope.launch {
+            metadataCache.generation.collect { _metadata.value = emptyMap(); requestedMetadata.clear() }
+        }
     }
+
+    fun selectCategory(category: AudioCategory) {
+        if (_uiState.value.category == category) return
+        _uiState.update { it.copy(category = category) }
+        refreshMusicFeed()
+    }
+    fun selectAudience(audience: AudioAudience) {
+        if (_uiState.value.audience == audience) return
+        _uiState.update { it.copy(audience = audience) }
+        refreshMusicFeed()
+    }
+    suspend fun resolveMetadata(url: String) = metadataCache.read(url)
 
     fun selectPlaylist(id: String?) {
         _uiState.update { it.copy(selectedPlaylistId = id, playlistTracks = emptyList()) }
@@ -206,84 +251,70 @@ class AudioPlayerViewModel @Inject constructor(
     }
 
     fun refreshMusicFeed() {
+        feedGeneration++
+        val generation = feedGeneration
+        reloadJob?.cancel()
         feedCollectionJob?.cancel()
         feedTimeoutJob?.cancel()
         feedSubscriptionId?.let(pool::unsubscribe)
         feedSubscriptionId = null
-        feedSettled = false
-        synchronized(pendingFeedEvents) { pendingFeedEvents.clear() }
+        val category = _uiState.value.category
+        val audience = _uiState.value.audience
+        val authors = follows.toSet()
         _uiState.update { it.copy(discoveredEvents = emptyList(), isLoadingFeed = true) }
-        subscribeToMusicFeed()
-    }
-
-    private fun subscribeToMusicFeed() {
-        val id = pool.subscribe(
-            filters = listOf(
-                Filter(
-                    kinds = listOf(EventKind.TEXT_NOTE),
-                    tTags = listOf(MUSIC_TAG),
-                    limit = 100,
-                ),
-            ),
-            label = "audio-player-tbonemusic",
-        )
-        feedSubscriptionId = id
-
-        feedCollectionJob = viewModelScope.launch(Dispatchers.Default) {
-            pool.messages.collect { (_, message) ->
-                when (message) {
-                    is RelayMessage.EventMessage -> {
-                        if (message.subscriptionId != id) return@collect
-                        val event = message.event
-                        if (!event.verify() || event.kind != EventKind.TEXT_NOTE) return@collect
-                        if (event.pubkey in muteRepository.effectiveMuted.value) return@collect
-                        if (!event.parsedTags.any { it.name == "t" && it.value()?.equals(MUSIC_TAG, true) == true }) return@collect
-                        if (audioUrls(event).isEmpty()) return@collect
-                        eventRepository.saveQueued(event, "")
-                        if (!feedSettled) {
-                            synchronized(pendingFeedEvents) { pendingFeedEvents += event }
-                        } else {
-                            addFeedEvents(listOf(event))
+        reloadJob = viewModelScope.launch {
+            val cached = kotlinx.coroutines.withContext(Dispatchers.IO) { eventRepository.recentAudioCandidates() }
+                .filter { matchesAudioFeed(it, category, audience, authors) }
+                .filterNot { it.pubkey in muteRepository.effectiveMuted.value }
+                .take(100)
+            if (generation != feedGeneration) return@launch
+            _uiState.update { it.copy(discoveredEvents = cached) }
+            profileRepository.requestProfiles(cached.map { it.pubkey }.distinct())
+            // Never let an empty authors filter accidentally become a global query.
+            if (audience == AudioAudience.FOLLOWS && authors.isEmpty()) {
+                _uiState.update { it.copy(isLoadingFeed = false) }
+                return@launch
+            }
+            val filters = if (audience == AudioAudience.GLOBAL) listOf(Filter(
+                kinds = listOf(EventKind.TEXT_NOTE), tTags = listOf(category.tag), limit = 100,
+            )) else authors.chunked(200).map { chunk -> Filter(
+                authors = chunk, kinds = listOf(EventKind.TEXT_NOTE), tTags = listOf(category.tag), limit = 100,
+            ) }
+            val id = pool.subscribe(filters = filters, label = "audio-${category.tag}-${audience.name.lowercase()}")
+            feedSubscriptionId = id
+            feedCollectionJob = viewModelScope.launch(Dispatchers.Default) {
+                pool.messages.collect { (_, message) ->
+                    if (generation != feedGeneration) return@collect
+                    when (message) {
+                        is RelayMessage.EventMessage -> {
+                            if (message.subscriptionId != id) return@collect
+                            val event = message.event
+                            if (!event.verify() || !matchesAudioFeed(event, category, audience, authors)) return@collect
+                            if (event.pubkey in muteRepository.effectiveMuted.value) return@collect
+                            eventRepository.saveQueued(event, "")
+                            _uiState.update { state ->
+                                if (state.category != category || state.audience != audience || generation != feedGeneration) state
+                                else state.copy(discoveredEvents = (state.discoveredEvents + event)
+                                    .distinctBy(Event::id).sortedByDescending(Event::createdAt).take(100))
+                            }
+                            profileRepository.requestProfiles(listOf(event.pubkey))
                         }
-                        profileRepository.requestProfiles(listOf(event.pubkey))
+                        is RelayMessage.EndOfStoredEvents -> if (message.subscriptionId == id) {
+                            _uiState.update { if (generation == feedGeneration) it.copy(isLoadingFeed = false) else it }
+                        }
+                        else -> Unit
                     }
-                    is RelayMessage.EndOfStoredEvents -> {
-                        if (message.subscriptionId != id) return@collect
-                        feedSettled = true
-                        flushFeedEvents()
-                        _uiState.update { it.copy(isLoadingFeed = false) }
-                    }
-                    else -> Unit
                 }
             }
-        }
-
-        feedTimeoutJob = viewModelScope.launch {
-            delay(FEED_TIMEOUT_MS)
-            if (feedSubscriptionId == id && !feedSettled) {
-                feedSettled = true
-                flushFeedEvents()
-                _uiState.update { it.copy(isLoadingFeed = false) }
+            feedTimeoutJob = viewModelScope.launch {
+                delay(FEED_TIMEOUT_MS)
+                if (generation == feedGeneration) _uiState.update { it.copy(isLoadingFeed = false) }
             }
-        }
-    }
-
-    private fun flushFeedEvents() {
-        val batch = synchronized(pendingFeedEvents) {
-            pendingFeedEvents.toList().also { pendingFeedEvents.clear() }
-        }
-        if (batch.isNotEmpty()) addFeedEvents(batch)
-    }
-
-    private fun addFeedEvents(events: List<Event>) {
-        _uiState.update { state ->
-            state.copy(discoveredEvents = (state.discoveredEvents + events)
-                .distinctBy(Event::id)
-                .sortedByDescending(Event::createdAt))
         }
     }
 
     override fun onCleared() {
+        reloadJob?.cancel()
         feedCollectionJob?.cancel()
         feedTimeoutJob?.cancel()
         feedSubscriptionId?.let(pool::unsubscribe)
@@ -295,3 +326,8 @@ class AudioPlayerViewModel @Inject constructor(
         private const val FEED_TIMEOUT_MS = 12_000L
     }
 }
+
+internal fun matchesAudioFeed(event: Event, category: AudioCategory, audience: AudioAudience, follows: Set<String>): Boolean =
+    event.kind == EventKind.TEXT_NOTE &&
+        event.parsedTags.any { it.name == "t" && it.value()?.equals(category.tag, true) == true } &&
+        (audience == AudioAudience.GLOBAL || event.pubkey in follows) && audioUrls(event).isNotEmpty()

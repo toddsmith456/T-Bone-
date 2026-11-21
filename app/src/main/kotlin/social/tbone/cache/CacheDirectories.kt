@@ -20,11 +20,14 @@ object CacheDirectories {
     /** Media3 SimpleCache disk cache for video and audio playback. */
     const val EXO_MEDIA_CACHE = "exo_media_cache"
 
+    const val AUDIO_DETAILS_CACHE = "audio_details_cache"
+
     /** Directories managed by their own LRU evictors (skipped by CacheCleaner temp sweep). */
     val MANAGED_CACHE_DIRS: Set<String> = setOf(
         AVATAR_CACHE,
         MEDIA_CACHE,
         EXO_MEDIA_CACHE,
+        AUDIO_DETAILS_CACHE,
     )
 
     fun avatarDir(context: Context): File = File(context.cacheDir, AVATAR_CACHE)

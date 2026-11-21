@@ -26,6 +26,9 @@ interface EventDao {
     @Query("SELECT * FROM events WHERE id IN (:ids)")
     suspend fun getByIds(ids: List<String>): List<EventEntity>
 
+    @Query("SELECT * FROM events WHERE kind = 1 AND (lower(tagsJson) LIKE '%tbonemusic%' OR lower(tagsJson) LIKE '%tbonepodcast%') ORDER BY createdAt DESC LIMIT :limit")
+    suspend fun recentAudioCandidates(limit: Int = 400): List<EventEntity>
+
     /** Latest replaceable event (used for author-published NIP-A3 targets). */
     @Query("SELECT * FROM events WHERE pubkey = :pubkey AND kind = :kind ORDER BY createdAt DESC, id DESC LIMIT 1")
     suspend fun getLatestByAuthorAndKind(pubkey: String, kind: Int): EventEntity?
@@ -57,7 +60,8 @@ interface EventDao {
     @Query(
         "DELETE FROM events WHERE accountPubkey = '' AND id NOT IN (" +
             "SELECT id FROM events WHERE accountPubkey = '' ORDER BY createdAt DESC LIMIT :maxKeep" +
-            ")",
+            ") AND id NOT IN (SELECT id FROM events WHERE accountPubkey = '' AND kind = 1 AND " +
+            "(lower(tagsJson) LIKE '%tbonemusic%' OR lower(tagsJson) LIKE '%tbonepodcast%') ORDER BY createdAt DESC LIMIT 100)",
     )
     suspend fun keepLatestShared(maxKeep: Int): Int
 

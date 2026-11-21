@@ -141,11 +141,13 @@ fun AudioPlayerScreen(
     var activeTab by rememberSaveable { mutableStateOf(AudioPlayerTab.PLAYER) }
     val uploadState by uploadViewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    var uploadCategory by rememberSaveable { mutableStateOf(AudioCategory.MUSIC) }
+    var showUploadChoice by remember { mutableStateOf(false) }
     val uploadPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) uploadViewModel.attachMedia(uri, "audio", preserveOriginalAudio = true)
+        if (uri != null) uploadViewModel.attachMedia(uri, "audio", preserveOriginalAudio = true, audioCategory = uploadCategory.hashtag)
     }
     LaunchedEffect(uploadViewModel) {
-        uploadViewModel.uploadedMediaUrls.collect { url -> uploadViewModel.publish(url, tagHashtags = listOf("TboneMusic")) }
+        uploadViewModel.uploadedMediaUrls.collect { url -> uploadViewModel.publish(url) }
     }
     LaunchedEffect(uploadViewModel, viewModel) {
         uploadViewModel.effects.collect { effect ->
@@ -216,7 +218,7 @@ fun AudioPlayerScreen(
 
     LaunchedEffect(controller, initialUrl) {
         if (initialUrl.isNotBlank() && controller != null && controller.currentMediaItem?.localConfiguration?.uri?.toString() != initialUrl) {
-            val embedded = social.tbone.media.audio.AudioMetadataReader.read(initialUrl)
+            val embedded = viewModel.resolveMetadata(initialUrl)
             controller.setMediaItem(MediaItem.Builder().setUri(initialUrl).setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(embedded?.title ?: initialUrl.substringBefore('?').substringAfterLast('/').substringBeforeLast('.'))
@@ -270,7 +272,7 @@ fun AudioPlayerScreen(
                 Text(
                     text = if (selectedPlaylist != null && activeTab == AudioPlayerTab.LIBRARY) {
                         AudioPlaylists.displayName(selectedPlaylist.name)
-                    } else "NIP-51 playlists · #TboneMusic",
+                    } else "Music & podcasts · synced playlists",
                     style = BonyType.meta.copy(color = BonyColors.TextMute),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -327,7 +329,21 @@ fun AudioPlayerScreen(
                     }
                 }
                 AudioPlayerTab.DISCOVER -> {
+                    Column(Modifier.fillMaxSize()) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            AudioCategory.entries.forEach { category ->
+                                PlayerTabChip(category.label, uiState.category == category, { viewModel.selectCategory(category) }, Modifier.weight(1f))
+                            }
+                        }
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            AudioAudience.entries.forEach { audience ->
+                                PlayerTabChip(audience.name.lowercase().replaceFirstChar { it.uppercase() }, uiState.audience == audience,
+                                    { viewModel.selectAudience(audience) }, Modifier.weight(1f))
+                            }
+                        }
                     DiscoverFeed(
+                        emptyMessage = if (uiState.audience == AudioAudience.FOLLOWS) "No ${uiState.category.label.lowercase()} from your follows yet. Try Global or follow more creators."
+                            else "No audio posts tagged #${uiState.category.hashtag} yet",
                         events = uiState.discoveredEvents,
                         tracks = discoveredTracks,
                         profiles = profiles,
@@ -340,8 +356,9 @@ fun AudioPlayerScreen(
                         onOpenNote = { onThreadClick(it.id) },
                         onOpenProfile = onProfileClick,
                     )
+                    }
                     FloatingActionButton(
-                        onClick = { if (!uploadState.isUploading && !uploadState.isPublishing) uploadPicker.launch("audio/*") },
+                        onClick = { if (!uploadState.isUploading && !uploadState.isPublishing) showUploadChoice = true },
                         modifier = Modifier.align(Alignment.BottomEnd).padding(18.dp),
                         containerColor = BonyColors.Accent,
                     ) { Icon(Icons.Default.Add, "Upload original audio") }
@@ -349,7 +366,7 @@ fun AudioPlayerScreen(
             }
         }
         if (uploadState.isUploading || uploadState.isPublishing) {
-            Text(if (uploadState.isUploading) "Uploading original audio · metadata preserved" else "Publishing #TboneMusic…",
+            Text(if (uploadState.isUploading) "Uploading original audio · metadata preserved" else "Publishing audio…",
                 style = BonyType.caption.copy(color = BonyColors.Accent), modifier = Modifier.padding(12.dp))
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = BonyColors.Accent)
         }
@@ -384,6 +401,12 @@ fun AudioPlayerScreen(
                 }
             }
         }
+    }
+    if (showUploadChoice) {
+        AlertDialog(onDismissRequest = { showUploadChoice = false }, title = { Text("Upload original audio") },
+            text = { Text("Choose the discovery category. Original audio bytes and metadata are preserved; no compression is applied.") },
+            confirmButton = { TextButton(onClick = { uploadCategory = AudioCategory.MUSIC; showUploadChoice = false; uploadPicker.launch("audio/*") }) { Text("Music") } },
+            dismissButton = { TextButton(onClick = { uploadCategory = AudioCategory.PODCASTS; showUploadChoice = false; uploadPicker.launch("audio/*") }) { Text("Podcasts") } })
     }
     if (showAbout) {
         AlertDialog(onDismissRequest = { showAbout = false }, title = { Text("About this track") },
@@ -546,6 +569,7 @@ private fun PlaylistDetails(
 
 @Composable
 private fun DiscoverFeed(
+    emptyMessage: String,
     events: List<Event>,
     tracks: List<AudioTrack>,
     profiles: Map<String, ProfileContent>,
@@ -564,7 +588,7 @@ private fun DiscoverFeed(
         }
     } else if (events.isEmpty()) {
         Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-            Text("no audio posts tagged #TboneMusic yet", style = BonyType.body.copy(color = BonyColors.TextMute))
+            Text(emptyMessage, style = BonyType.body.copy(color = BonyColors.TextMute))
         }
     } else {
         LazyColumn(modifier = Modifier.fillMaxSize()) {
@@ -597,7 +621,7 @@ private fun AudioTrackRow(
 ) {
     val loadMetadata = LocalLoadAudioMetadata.current
     val autoLoad = social.tbone.ui.media.LocalImageLoadMode.current != social.tbone.settings.ImageLoadMode.OFF
-    LaunchedEffect(track.url, autoLoad) { if (autoLoad) loadMetadata(track.url) }
+    LaunchedEffect(track.url, autoLoad) { loadMetadata(track.url, autoLoad) }
     Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -633,7 +657,7 @@ private fun AudioPostRow(
 ) {
     val loadMetadata = LocalLoadAudioMetadata.current
     val autoLoad = social.tbone.ui.media.LocalImageLoadMode.current != social.tbone.settings.ImageLoadMode.OFF
-    LaunchedEffect(track.url, autoLoad) { if (autoLoad) loadMetadata(track.url) }
+    LaunchedEffect(track.url, autoLoad) { loadMetadata(track.url, autoLoad) }
     var menuExpanded by remember(track.event.id) { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -841,7 +865,7 @@ private fun FullPlayer(snapshot: PlaybackSnapshot, controller: MediaController?)
     }
 }
 
-private val LocalLoadAudioMetadata = androidx.compose.runtime.staticCompositionLocalOf<(String) -> Unit> { {} }
+private val LocalLoadAudioMetadata = androidx.compose.runtime.staticCompositionLocalOf<(String, Boolean) -> Unit> { { _, _ -> } }
 
 private fun AudioTrack.withMetadata(metadata: Map<String, social.tbone.media.audio.AudioMetadataReader.Metadata>): AudioTrack {
     val data = metadata[url] ?: return this
