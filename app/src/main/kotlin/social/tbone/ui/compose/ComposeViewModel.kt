@@ -486,6 +486,8 @@ class ComposeViewModel @Inject constructor(
 
     private suspend fun uploadMedia(request: MediaUploadRequest) {
         activeAudioRequest = request
+        var preparedFile: java.io.File? = null
+        try {
         if (request.recoverableAudio) {
             val filename = withContext(Dispatchers.IO) { runCatching {
                 context.contentResolver.query(request.uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
@@ -495,8 +497,6 @@ class ComposeViewModel @Inject constructor(
             _uiState.update { it.copy(audioUploadName = filename, audioUploadStage = AudioUploadStage.PREPARING, audioOperationError = null) }
         }
         _uiState.update { it.copy(uploadingKind = request.kind) }
-        var preparedFile: java.io.File? = null
-        try {
             val signer = signerFactory.forActiveAccount()
                 ?: error("no active account")
             if (request.recoverableAudio) audioOwner = signer.pubkey
