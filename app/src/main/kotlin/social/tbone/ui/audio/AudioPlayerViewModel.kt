@@ -57,6 +57,7 @@ data class AudioPlayerUiState(
 class AudioPlayerViewModel @Inject constructor(
     private val metadataCache: social.tbone.media.audio.AudioMetadataCache,
     private val settings: social.tbone.settings.AppSettings,
+    private val offlineLists: social.tbone.lists.OfflineListRepository,
     private val accounts: social.tbone.account.AccountRepository,
     private val bookmarksRepository: BookmarksRepository,
     private val bookmarkSyncRepository: BookmarkSyncRepository,
@@ -92,7 +93,7 @@ class AudioPlayerViewModel @Inject constructor(
     private var follows: Set<String> = emptySet()
     private var accountPubkey: String? = null
     private var reloadJob: Job? = null
-    private var feedGeneration = 0L
+    @Volatile private var feedGeneration = 0L
     private var feedSubscriptionId: String? = null
     private var feedCollectionJob: Job? = null
     private var feedTimeoutJob: Job? = null
@@ -124,8 +125,14 @@ class AudioPlayerViewModel @Inject constructor(
 
         refreshPlaylists()
         viewModelScope.launch {
-            accounts.activeAccount.map { account ->
-                account?.pubkey to (account?.let { it.follows + it.followEntries.map { entry -> entry.pubkey } }.orEmpty().toSet())
+            accounts.activeAccount.flatMapLatest { account ->
+                if (account == null) flowOf(null to emptySet<String>())
+                else offlineLists.state(social.tbone.lists.ListType.FOLLOWS, account.pubkey).map { local ->
+                    account.pubkey to audioFollowSet(
+                        (account.follows + account.followEntries.map { it.pubkey }).toSet(),
+                        local.enabled, local.pubkeySet(),
+                    )
+                }
             }.distinctUntilChanged().collect { (pubkey, followed) ->
                 accountPubkey = pubkey
                 follows = followed
@@ -331,3 +338,6 @@ internal fun matchesAudioFeed(event: Event, category: AudioCategory, audience: A
     event.kind == EventKind.TEXT_NOTE &&
         event.parsedTags.any { it.name == "t" && it.value()?.equals(category.tag, true) == true } &&
         (audience == AudioAudience.GLOBAL || event.pubkey in follows) && audioUrls(event).isNotEmpty()
+
+internal fun audioFollowSet(online: Set<String>, offlineEnabled: Boolean, offline: Set<String>): Set<String> =
+    if (offlineEnabled) offline else online

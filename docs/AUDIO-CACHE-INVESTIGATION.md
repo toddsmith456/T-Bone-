@@ -65,7 +65,7 @@ Public track metadata is rebuildable cache data, like cached public events, not 
 - Categories: Music (`#TboneMusic`) and Podcasts (`#TbonePodcast`).
 - Each category has Follows and Global selectors.
 - Follows queries send author-filtered relay requests, chunked into groups of 200, and also enforce follow membership locally. An empty follows set produces an empty follows view without issuing a match-all query.
-- Active-account/follow-list changes rebuild the subscription. Generation checks keep old in-flight results from crossing into the new selection.
+- The effective follow list respects the existing per-account offline-follow switch; when enabled, that local list is authoritative and is not silently replaced with relay follows. Active-account/follow-list changes rebuild the subscription. Generation checks keep old in-flight results from crossing into the new selection.
 - Upload asks Music or Podcasts before opening the picker. The choice is captured on the queued upload and associated with the resulting URL, not read from whichever Discover tab happens to be selected later.
 - Original audio remains byte-for-byte, without compression. The selected category is added to both visible note text and hashtag tags. A podcast upload is not silently cross-tagged as music.
 - These are tagged Nostr audio posts, not an RSS subscription/import feature. Both categories use the existing player and playlist system.

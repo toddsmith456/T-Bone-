@@ -20,6 +20,11 @@ class AudioDiscoveryTest {
         assertFalse(matchesAudioFeed(note("tbonemusic", "bob"), AudioCategory.MUSIC, AudioAudience.FOLLOWS, setOf("alice")))
         assertTrue(matchesAudioFeed(note("tbonemusic"), AudioCategory.MUSIC, AudioAudience.FOLLOWS, setOf("alice")))
     }
+    @Test fun offlineFollowModeIsAuthoritative() {
+        assertEquals(setOf("local"), audioFollowSet(setOf("relay"), true, setOf("local")))
+        assertEquals(emptySet<String>(), audioFollowSet(setOf("relay"), true, emptySet()))
+        assertEquals(setOf("relay"), audioFollowSet(setOf("relay"), false, setOf("local")))
+    }
     @Test fun hashtagWithoutAudioIsNotATrack() {
         assertFalse(matchesAudioFeed(note("tbonemusic", url = "hello"), AudioCategory.MUSIC, AudioAudience.GLOBAL, emptySet()))
     }
