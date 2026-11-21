@@ -10,6 +10,11 @@ class AudioPlaybackPolicyTest {
         assertFalse(preserveAudioSelection("https://a/other.mp3", "https://a/song.mp3"))
         assertFalse(preserveAudioSelection(null, "https://a/song.mp3"))
     }
+    @Test fun handoffSurvivesSessionTimelineSerializationWithoutTheUri() {
+        val key = social.tbone.media.audio.AudioCachePolicy.key("https://a/song.mp3?token=secret")
+        assertTrue(preserveAudioSelection(null, "https://a/song.mp3?token=secret", key))
+        assertFalse(preserveAudioSelection(null, "https://a/song.mp3?token=different", key))
+    }
     @Test fun identityIsStableButTracksAndProvenanceDoNotCollide() {
         assertEquals(stableAudioId("https://a/track", "event"), stableAudioId("https://a/track", "event"))
         assertNotEquals(stableAudioId("https://a/track", "one"), stableAudioId("https://a/track", "two"))

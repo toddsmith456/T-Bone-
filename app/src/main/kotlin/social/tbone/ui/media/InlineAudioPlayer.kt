@@ -76,11 +76,11 @@ fun InlineAudioPlayer(
     val connection = social.tbone.media.playback.rememberPlaybackConnection(requested || activeUrl == url, retryConnection)
     val player = connection.controller
     val state = social.tbone.media.playback.rememberAudioPlaybackState(player, connection.error)
-    val selected = state.url == url
+    val selected = state.urlKey == social.tbone.media.audio.AudioCachePolicy.key(url)
     LaunchedEffect(player, pendingAction) {
         val action = pendingAction ?: return@LaunchedEffect
         if (player != null) {
-            val alreadySelected = player.currentMediaItem?.localConfiguration?.uri?.toString() == url
+            val alreadySelected = social.tbone.media.playback.isAudioSelected(player, url)
             social.tbone.media.playback.selectInlineAudio(player,
                 social.tbone.media.playback.AudioTrackIdentity(url, sourceEventId.orEmpty(), authorPubkey.orEmpty()), autoplay = true)
             pendingAction = null

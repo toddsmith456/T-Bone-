@@ -57,7 +57,7 @@ data class AudioTrackIdentity(
         val metadata = MediaMetadata.Builder().setTitle(title).setArtist(artist).setAlbumTitle(album)
             .setArtworkUri(artworkUri?.let(Uri::parse)).setArtworkData(artwork, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
             .setExtras(Bundle().apply {
-                putBoolean("audioTrack", true); putString("eventId", eventId); putString("poster", poster); putString("queueOrigin", origin)
+                putString("audioUrlKey", social.tbone.media.audio.AudioCachePolicy.key(url)); putBoolean("audioTrack", true); putString("eventId", eventId); putString("poster", poster); putString("queueOrigin", origin)
                 putString("fallbackTitle", title ?: audioFilename(url))
             }).build()
         val extension = url.substringBefore('?').substringBefore('#').substringAfterLast('.', "")
@@ -82,7 +82,7 @@ data class AudioPlaybackState(
     val poster: String = "",
     val eventId: String = "",
     val origin: String = "",
-    val url: String? = null,
+    val urlKey: String? = null,
     val error: String? = null,
     val hasPrevious: Boolean = false,
     val hasNext: Boolean = false,
@@ -110,7 +110,7 @@ fun rememberAudioPlaybackState(controller: MediaController?, connectionError: St
             artist = metadata.artist?.toString().orEmpty(), album = metadata.albumTitle?.toString().orEmpty(),
             artwork = metadata.artworkData, artworkUri = metadata.artworkUri?.toString(),
             poster = extras?.getString("poster").orEmpty(), eventId = extras?.getString("eventId").orEmpty(), origin = extras?.getString("queueOrigin").orEmpty(),
-            url = item?.localConfiguration?.uri?.toString(),
+            urlKey = extras?.getString("audioUrlKey") ?: item?.localConfiguration?.uri?.toString()?.let(social.tbone.media.audio.AudioCachePolicy::key),
             error = p.playerError?.let { "Audio could not be played. Check your connection or try again. (${it.errorCodeName})" },
             hasPrevious = p.hasPreviousMediaItem(), hasNext = p.hasNextMediaItem(), index = p.currentMediaItemIndex,
             queue = (0 until p.mediaItemCount).map { index ->
@@ -136,7 +136,7 @@ fun rememberAudioPlaybackState(controller: MediaController?, connectionError: St
 
 /** A handoff to an already selected URI is a no-op: never reset position, queue or pause. */
 fun selectInlineAudio(player: Player, track: AudioTrackIdentity, autoplay: Boolean) {
-    if (preserveAudioSelection(player.currentMediaItem?.localConfiguration?.uri?.toString(), track.url)) return
+    if (isAudioSelected(player, track.url)) return
     player.setMediaItem(track.mediaItem())
     player.prepare()
     player.playWhenReady = autoplay
@@ -165,8 +165,15 @@ fun audioDetailsChanged(oldTitle: String?, oldArtist: String?, oldAlbum: String?
         (album?.takeIf(String::isNotBlank)?.let { it != oldAlbum } == true) ||
         (art != null && !art.contentEquals(oldArt))
 
-fun preserveAudioSelection(currentUrl: String?, requestedUrl: String): Boolean =
-    currentUrl != null && currentUrl == requestedUrl
+fun preserveAudioSelection(currentUrl: String?, requestedUrl: String, currentUrlKey: String? = null): Boolean =
+    (currentUrl != null && currentUrl == requestedUrl) ||
+        (currentUrlKey != null && currentUrlKey == social.tbone.media.audio.AudioCachePolicy.key(requestedUrl))
+
+/** Session timeline transport strips LocalConfiguration. Compare the safe URL hash in extras instead. */
+fun isAudioSelected(player: Player, url: String): Boolean = preserveAudioSelection(
+    player.currentMediaItem?.localConfiguration?.uri?.toString(), url,
+    player.currentMediaItem?.mediaMetadata?.extras?.getString("audioUrlKey"),
+)
 
 fun audioQueueMoveTarget(index: Int, count: Int, delta: Int): Int? =
     (index + delta).takeIf { index in 0 until count && it in 0 until count }
