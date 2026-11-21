@@ -115,7 +115,7 @@ fun rememberAudioPlaybackState(controller: MediaController?, connectionError: St
             hasPrevious = p.hasPreviousMediaItem(), hasNext = p.hasNextMediaItem(), index = p.currentMediaItemIndex,
             queue = (0 until p.mediaItemCount).map { index ->
                 val entry = p.getMediaItemAt(index)
-                AudioQueueEntry(entry.mediaId, entry.mediaMetadata.title?.toString() ?: entry.mediaMetadata.extras?.getString("fallbackTitle") ?: "Untitled track",
+                AudioQueueEntry(entry.mediaId, (if (index == p.currentMediaItemIndex) metadata.title?.toString() else null) ?: entry.mediaMetadata.title?.toString() ?: entry.mediaMetadata.extras?.getString("fallbackTitle") ?: "Untitled track",
                     entry.mediaMetadata.artist?.toString().orEmpty(), index)
             }, shuffle = p.shuffleModeEnabled, repeatMode = p.repeatMode,
         )

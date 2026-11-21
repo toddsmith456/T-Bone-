@@ -662,7 +662,7 @@ private fun PlaybackControls(snapshot: PlaybackSnapshot, controller: MediaContro
         }
         Row(Modifier.fillMaxWidth().padding(top = 20.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { controller?.seekToPreviousMediaItem() }, enabled = controller != null && snapshot.hasPrevious) {
-                Icon(Icons.Default.SkipPrevious, "Previous track", Modifier.size(32.dp), tint = BonyColors.Text)
+                Icon(Icons.Default.SkipPrevious, "Previous track", Modifier.size(32.dp), tint = if (snapshot.hasPrevious) BonyColors.Text else BonyColors.TextMute)
             }
             IconButton(onClick = { controller?.let(::toggleAudio) },
                 enabled = controller != null && snapshot.title.isNotBlank(),
@@ -671,7 +671,7 @@ private fun PlaybackControls(snapshot: PlaybackSnapshot, controller: MediaContro
                     if (snapshot.isPlaying) "Pause" else "Play", Modifier.size(40.dp), tint = BonyColors.Accent)
             }
             IconButton(onClick = { controller?.seekToNextMediaItem() }, enabled = controller != null && snapshot.hasNext) {
-                Icon(Icons.Default.SkipNext, "Next track", Modifier.size(32.dp), tint = BonyColors.Text)
+                Icon(Icons.Default.SkipNext, "Next track", Modifier.size(32.dp), tint = if (snapshot.hasNext) BonyColors.Text else BonyColors.TextMute)
             }
         }
     }
@@ -722,7 +722,7 @@ private fun Event.toAudioTrack(profiles: Map<String, ProfileContent>): AudioTrac
 
 private fun AudioTrack.mediaItem(origin: String): MediaItem = AudioTrackIdentity(
     url = url, eventId = event.id, poster = poster, origin = origin,
-    title = title, artist = artist.takeUnless { it == "Unknown artist" }, album = album,
+    title = title.takeUnless { it == audioFilename(url) }, artist = artist.takeUnless { it == "Unknown artist" }, album = album.takeIf { it.isNotBlank() },
     artworkUri = artwork, artwork = artworkBytes,
 ).mediaItem()
 
@@ -774,11 +774,11 @@ private fun MiniPlayer(snapshot: PlaybackSnapshot, controller: MediaController?,
             Text(snapshot.title, style = BonyType.body.copy(color = BonyColors.Text), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(snapshot.artist.ifBlank { "Unknown artist" }, style = BonyType.caption.copy(color = BonyColors.TextMute), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        IconButton(onClick = { controller?.seekToPreviousMediaItem() }, enabled = controller != null && snapshot.hasPrevious) { Icon(Icons.Default.SkipPrevious, "Previous track", tint = BonyColors.Accent) }
+        IconButton(onClick = { controller?.seekToPreviousMediaItem() }, enabled = controller != null && snapshot.hasPrevious) { Icon(Icons.Default.SkipPrevious, "Previous track", tint = if (snapshot.hasPrevious) BonyColors.Accent else BonyColors.TextMute) }
         IconButton(onClick = { controller?.let(::toggleAudio) }, modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(BonyColors.SurfaceAlt)) {
             Icon(if (snapshot.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (snapshot.isPlaying) "Pause" else "Play", tint = BonyColors.Accent)
         }
-        IconButton(onClick = { controller?.seekToNextMediaItem() }, enabled = controller != null && snapshot.hasNext) { Icon(Icons.Default.SkipNext, "Next track", tint = BonyColors.Accent) }
+        IconButton(onClick = { controller?.seekToNextMediaItem() }, enabled = controller != null && snapshot.hasNext) { Icon(Icons.Default.SkipNext, "Next track", tint = if (snapshot.hasNext) BonyColors.Accent else BonyColors.TextMute) }
     }
 }
 
