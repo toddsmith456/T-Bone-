@@ -84,7 +84,8 @@ class AudioPlayerViewModel @Inject constructor(
     fun markPlayed(key: String, played: Boolean) {
         viewModelScope.launch {
             val owner = accounts.activeAccount.first()?.pubkey ?: return@launch
-            runCatching { podcastProgress.save(owner, key, podcastProgress.read(owner, key), played) }
+            val epoch = podcastProgress.epoch()
+            runCatching { podcastProgress.save(owner, key, podcastProgress.read(owner, key), played, epoch = epoch) }
                 .onSuccess { _podcastPlayed.value = played }
                 .onFailure { error -> _uiState.update { it.copy(statusMessage = "Could not save played state") } }
         }

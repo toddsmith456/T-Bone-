@@ -29,6 +29,7 @@ class PodcastProgressRepository @Inject constructor(
 ) {
     private val prefs = context.getSharedPreferences("tbone_podcast_progress", Context.MODE_PRIVATE)
     private val clock = java.util.concurrent.atomic.AtomicLong(0)
+    fun epoch(): Long = writes.currentWipeEpoch()
     fun timestamp(): Long = clock.updateAndGet { maxOf(System.currentTimeMillis(), it + 1) }
     private val _revision = MutableStateFlow(0L)
     val revision: StateFlow<Long> = _revision
@@ -43,8 +44,7 @@ class PodcastProgressRepository @Inject constructor(
         PodcastProgress(row.optLong("position").coerceAtLeast(0), row.optLong("duration").coerceAtLeast(0),
             podcastSpeed(row.optDouble("speed", 1.0).toFloat()), row.optBoolean("played"))
     }
-    suspend fun save(owner: String, mediaKey: String, progress: PodcastProgress, played: Boolean? = null, recordedAt: Long = timestamp()) {
-        val epoch = writes.currentWipeEpoch()
+    suspend fun save(owner: String, mediaKey: String, progress: PodcastProgress, played: Boolean? = null, recordedAt: Long = timestamp(), epoch: Long = writes.currentWipeEpoch()) {
         writes.submitAtEpoch(epoch) {
             val id = key(owner, mediaKey)
             val existing = decode(prefs.getString(id, null))

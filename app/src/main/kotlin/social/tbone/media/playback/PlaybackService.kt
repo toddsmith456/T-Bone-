@@ -43,7 +43,7 @@ class PlaybackService : MediaSessionService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var metadataJob: Job? = null
-    private data class Episode(val owner: String, val key: String, var progress: PodcastProgress)
+    private data class Episode(val owner: String, val key: String, val epoch: Long, var progress: PodcastProgress)
     private var episode: Episode? = null
     private var progressJob: Job? = null
     private var resumeJob: Job? = null
@@ -129,9 +129,10 @@ class PlaybackService : MediaSessionService() {
                             resumeJob = serviceScope.launch {
                                 val owner = accounts.activeAccount.first()?.pubkey ?: return@launch
                                 val key = social.tbone.media.audio.AudioCachePolicy.key(url)
+                                val epoch = progressRepository.epoch()
                                 val saved = progressRepository.read(owner, key)
                                 if (episodeToken != token) return@launch
-                                episode = Episode(owner, key, saved)
+                                episode = Episode(owner, key, epoch, saved)
                                 created.setPlaybackSpeed(saved.speed)
                                 if (!userSoughtDuringResume && created.currentPosition < 2_000) {
                                     val position = podcastResumePosition(saved)
@@ -200,7 +201,7 @@ class PlaybackService : MediaSessionService() {
         val recordedAt = progressRepository.timestamp()
         // Repository serializes through the existing wipe-aware Notes writer, even on service shutdown.
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
-            runCatching { progressRepository.save(current.owner, current.key, snapshot, if (completed) true else playedOverride, recordedAt) }
+            runCatching { progressRepository.save(current.owner, current.key, snapshot, if (completed) true else playedOverride, recordedAt, current.epoch) }
         }
     }
 
